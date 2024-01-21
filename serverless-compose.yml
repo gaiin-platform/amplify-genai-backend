@@ -4,4 +4,7 @@ services:
     path: ./embedding
  
   sql_connector:
-    path: ./sql_connector
+    path: ./sql-connector
+  
+  langchain-base:
+    path: ./langchain-base
