@@ -159,6 +159,9 @@ functions:
     
 
 resources:
+  Conditions:
+    IsProd: !Equals [${self:provider.stage}, prod]
+
   Resources:
     RagPostgresDbCluster:
       DependsOn: RagPostgresDbSecurityGroup
@@ -188,9 +191,11 @@ resources:
         Engine: aurora-postgresql
         DBInstanceClass: db.serverless
         DBClusterIdentifier: !Ref RagPostgresDbCluster
-    
+        
+    #Only create the second instance if the stage is prod
     RagPostgresDbInstance2:
       Type: 'AWS::RDS::DBInstance'
+      Condition: IsProd
       Properties:
         Engine: aurora-postgresql
         DBInstanceClass: db.serverless
