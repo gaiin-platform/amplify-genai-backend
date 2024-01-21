@@ -1,6 +1,6 @@
 # serverless-compose.yml
 services:
-  embedding:
+  amplify-embedding:
     path: ./embedding
  
   sql_connector:

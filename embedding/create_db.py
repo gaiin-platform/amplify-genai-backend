@@ -15,17 +15,19 @@ create_table_command = """
 CREATE TABLE IF NOT EXISTS embeddings (
     id BIGSERIAL PRIMARY KEY,
     src VARCHAR(255),
-    location jsonb,
+    locations jsonb,
     orig_indexes jsonb,
     char_index INTEGER,
-    content TEXT,
+    token_count INTEGER,
+    embedding_index INTEGER,
     owner_email VARCHAR(255),
+    content TEXT,
     vector_embedding vector(1536),
-    embedding_index INTEGER
+    
+
     
 );
 """
-
 # Establish a connection to the database
 try:
     conn = psycopg2.connect(**db_params)

@@ -113,13 +113,14 @@ def extract_email_from_src(src):
     email_address = src.split('/')[0] if '/' in src else src
     return email_address
 
-def insert_chunk_data_to_db(content, locations, src, indexes, char_index, vector_embedding, owner_email, embedding_index, token_count, cursor):
+def insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, cursor):
     insert_query = """
-    INSERT INTO embeddings (content, locations, src, orig_indexes, char_index, vector_embedding, owner_email, embedding_index, token_count)
+    INSERT INTO embeddings (src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding)
+    
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
     try:
-        cursor.execute(insert_query, (content, Json(locations), src, Json(indexes), char_index, vector_embedding, owner_email, embedding_index, token_count))
+        cursor.execute(insert_query, (src, Json(locations), Json(orig_indexes), char_index, token_count, embedding_index, owner_email, content, vector_embedding))
         logging.info(f"Data inserted into the database for content: {content[:30]}...")  # Log first 30 characters of content
     except psycopg2.Error as e:
         logging.error(f"Failed to insert data into the database: {e}")
@@ -197,7 +198,7 @@ def embed_chunks(data, db_connection):
             for chunk in chunks:
                 content = chunk['content']
                 locations = chunk['locations']
-                indexes = chunk['indexes']
+                orig_indexes = chunk['orig_indexes']
                 char_index = chunk['char_index']
                 embedding_index += 1
                 
@@ -208,7 +209,7 @@ def embed_chunks(data, db_connection):
                 token_count = num_tokens_from_text(content, model_name)
                 
                 # Insert data into the database
-                insert_chunk_data_to_db(content, locations, src, indexes, char_index, embedding, owner_email, embedding_index, token_count, cursor)
+                insert_chunk_data_to_db(content, locations, src, orig_indexes, char_index, embedding, owner_email, embedding_index, token_count, cursor)
                 # Commit the transaction
                 db_connection.commit()
                 

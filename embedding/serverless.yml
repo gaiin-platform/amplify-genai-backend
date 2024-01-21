@@ -1,4 +1,4 @@
-service: embedding
+service: amplify-embedding
 
 
 frameworkVersion: '3'
@@ -160,7 +160,10 @@ functions:
 
 resources:
   Conditions:
-    IsProd: !Equals [${self:provider.stage}, prod]
+    IsProd:
+      'Fn::Equals':
+        - ${self:provider.stage}
+        - 'prod'
 
   Resources:
     RagPostgresDbCluster:
