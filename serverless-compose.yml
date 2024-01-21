@@ -1,0 +1,7 @@
+# serverless-compose.yml
+services:
+  embedding:
+    path: ./embedding
+ 
+  sql_connector:
+    path: ./sql_connector
