@@ -12,20 +12,19 @@ db_params = {
 
 # SQL command to create the embeddings table
 create_table_command = """
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS embeddings (
     id BIGSERIAL PRIMARY KEY,
     src VARCHAR(255),
     locations jsonb,
     orig_indexes jsonb,
-    char_index INTEGER,
+    char_index INTEGER[],
     token_count INTEGER,
     embedding_index INTEGER,
     owner_email VARCHAR(255),
     content TEXT,
-    vector_embedding vector(1536),
-    
-
-    
+    vector_embedding vector(1536)
 );
 """
 # Establish a connection to the database
