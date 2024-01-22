@@ -3,8 +3,11 @@ services:
   vu-amplify-embedding:
     path: ./embedding
  
-  sql_connector:
+  sql-connector:
     path: ./sql-connector
   
   langchain-base:
     path: ./langchain-base
+
+  langchain-sql:
+    path: ./langchain-sql
