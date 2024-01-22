@@ -1,4 +1,4 @@
-service: amplify-embedding
+service: vu-amplify-embedding
 
 
 frameworkVersion: '3'
@@ -97,11 +97,6 @@ provider:
     OPENAI_API_KEY_ARN: arn:aws:secretsmanager:us-east-1:514391678313:secret:OPENAI_API_KEY-REUULJ  
 
 
-
-# you can overwrite defaults here
-#  stage: dev
-#  region: us-east-1
-
   iam:
     role:
       statements:
@@ -118,9 +113,9 @@ provider:
             - dynamodb:DeleteItem
 
           Resource:
-            - 'arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw'
-            - 'arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw'
-            - 'arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC'
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
