@@ -134,9 +134,14 @@ def lambda_handler(event, context):
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     url_encoded_key = event['Records'][0]['s3']['object']['key']
     
+    #Print the bucket name and key for debugging purposes
+    print(f"url_key={url_encoded_key}")
     
     #url decode the key
     object_key = urllib.parse.unquote(url_encoded_key)
+    
+    #Print the bucket name and key for debugging purposes
+    print(f"bucket = {bucket_name} and key = {object_key}")
 
     
     # Create an S3 client
@@ -198,18 +203,19 @@ def embed_chunks(data, db_connection):
             for chunk in chunks:
                 content = chunk['content']
                 locations = chunk['locations']
-                orig_indexes = chunk['orig_indexes']
+                orig_indexes = chunk['indexes']
                 char_index = chunk['char_index']
                 embedding_index += 1
                 
                 # Generate embeddings for the content
-                embedding = generate_embeddings(content)
+                vector_embedding = generate_embeddings(content)
                 
                 # Calculate token count for the content
                 token_count = num_tokens_from_text(content, model_name)
                 
                 # Insert data into the database
-                insert_chunk_data_to_db(content, locations, src, orig_indexes, char_index, embedding, owner_email, embedding_index, token_count, cursor)
+                insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, cursor)
+                ()
                 # Commit the transaction
                 db_connection.commit()
                 
