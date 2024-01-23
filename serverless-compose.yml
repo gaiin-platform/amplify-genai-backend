@@ -11,3 +11,9 @@ services:
 
   langchain-sql:
     path: ./langchain-sql
+
+  amplify-lambda:
+    path: ./amplify-lambda 
+  
+  amplify-lambda-js:
+    path: ./amplify-lambda-js

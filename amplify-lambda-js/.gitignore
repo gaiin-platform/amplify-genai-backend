@@ -1,0 +1,9 @@
+# package directories
+.idea
+.env.*.local
+.env.local
+node_modules
+jspm_packages
+local_test_data
+# Serverless directories
+.serverless
