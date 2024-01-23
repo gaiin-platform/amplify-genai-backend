@@ -1,11 +1,6 @@
 service: vu-amplify-js
 frameworkVersion: '3'
 
-package:
-  exclude:
-    - node_modules/**
-    - venv/**
-
 plugins:
   - serverless-offline
 
