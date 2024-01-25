@@ -26,11 +26,6 @@ const getRequestState = async (user, requestId) => {
     return response.Item;
 }
 
-// write a function to poll the killswitch table and update the killswitch state
-// this function should be called periodically and return a promise that resolves
-// to the killswitch state (true is kill, false is continue). It should check the
-// returned value and the lastUpdatedTime to make sure that the last update is not
-// to long ago in the past
 export const shouldKill = async (user, requestId) => {
 
     if (!requestsTable) {
@@ -50,7 +45,7 @@ export const shouldKill = async (user, requestId) => {
     const response = await dynamodbClient.send(command);
 
     if (!response.Item) {
-        logger.debug("Killswitch state not found, assuming no limits...");
+        logger.debug("Request state not found, assuming no limits...");
         return false;
     }
 
@@ -69,8 +64,8 @@ export const deleteRequestState = async (user, requestId) => {
     // should remove the entry from dyanmo
 
     if (!requestsTable) {
-        logger.error("KILLSWITCH_DYNAMO_TABLE is not provided in the environment variables.");
-        throw new Error("KILLSWITCH_DYNAMO_TABLE is not provided in the environment variables.");
+        logger.error("REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables.");
+        throw new Error("REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables.");
     }
 
     try {
@@ -83,10 +78,10 @@ export const deleteRequestState = async (user, requestId) => {
             }
         });
 
-        logger.debug("Deleting killswitch state.");
+        logger.debug("Deleting request state.");
         await dynamodbClient.send(command);
 
-        logger.debug("Deleted killswitch state.");
+        logger.debug("Deleted request state.");
     } catch (e) {
         return false;
     }
@@ -97,8 +92,8 @@ export const deleteRequestState = async (user, requestId) => {
 export const updateKillswitch = async (user, requestId, killswitch) => {
 
     if (!requestsTable) {
-        logger.error("KILLSWITCH_DYNAMO_TABLE is not provided in the environment variables.");
-        throw new Error("KILLSWITCH_DYNAMO_TABLE is not provided in the environment variables.");
+        logger.error("REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables.");
+        throw new Error("REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables.");
     }
 
     const command = new PutItemCommand({
@@ -111,10 +106,10 @@ export const updateKillswitch = async (user, requestId, killswitch) => {
         }
     });
 
-    logger.debug("Updating killswitch state.");
+    logger.debug("Updating request state.");
     const response = await dynamodbClient.send(command);
 
-    logger.debug("Updated killswitch state.");
+    logger.debug("Updated request state.");
 
     return true;
 }
@@ -128,7 +123,7 @@ export const isKilled = async (user, responseStream, chatRequest) => {
                 try {
                     await deleteRequestState(user, requestId);
                 } catch (e) {
-                    logger.error("Error deleting killswitch: " + e);
+                    logger.error("Error deleting request state: " + e);
                 }
 
                 responseStream.end();

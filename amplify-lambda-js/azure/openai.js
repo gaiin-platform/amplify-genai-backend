@@ -1,15 +1,11 @@
 
-import { promisify } from 'util';
-import { pipeline as pipelineCallback, Writable  } from 'stream';
-import zlib from 'zlib';
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 
 const logger = getLogger("openai");
 
-const pipeline = promisify(pipelineCallback);
 
-export const chat = async (apiKey, chatBody, writable) => {
+export const chat = async (endpointProvider, chatBody, writable) => {
     let body = {...chatBody};
     const options = {...body.options};
     delete body.options;
@@ -47,15 +43,15 @@ export const chat = async (apiKey, chatBody, writable) => {
         data.tool_choice = tool_choice;
     }
 
+
+    const config = await endpointProvider(modelId);
+
     const headers = {
         'Content-Type': 'application/json',
-        'api-key': apiKey,
+        'api-key': config.key,
     };
 
-    const apiVersion = '2023-12-01-preview';
-    //const apiVersion = '2023-07-01-preview';
-    const endpoint = process.env.OPENAI_ENDPOINT || "https://api.openai.com";
-    const url = `${endpoint}/${modelId}/chat/completions?api-version=${apiVersion}`;
+    const url = config.url;
 
     logger.debug("Calling OpenAI API with url: "+url);
 
@@ -103,10 +99,4 @@ export const chat = async (apiKey, chatBody, writable) => {
     }
 
     return streamAxiosResponseToWritable(url, writable);
-    // console.log("Calling pipeline");
-    //
-    // await pipeline(
-    //     response.data,
-    //     writable
-    // );
 }

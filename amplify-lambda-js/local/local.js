@@ -1,14 +1,12 @@
 import {ConsoleWritableStream} from "./consoleWriteableStream.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
 import {chat} from "../azure/openai.js";
+import {getLLMConfig} from "./common/secrets.js";
 import {Models} from "../models/models.js";
 import {getSecret} from "../common/secrets.js";
 import * as fs from "fs";
 import {LLM} from "../common/llm.js";
 import {workflowSchema} from "../workflow/workflow.js";
-
-const secretData = await getSecret(process.env.SECRETS_NAME);
-const apiKey = JSON.parse(secretData).OPENAI_API_KEY;
 
 
 async function main() {
@@ -114,7 +112,7 @@ async function main() {
     dataSources = dataSources.map((s) => ({id:s}));
 
     const chatFn = async (body, writable, context, options) => {
-        return await chat(apiKey, body, writable, context);
+        return await chat(getLLMConfig, body, writable, context);
     }
 
     const llm = new LLM(

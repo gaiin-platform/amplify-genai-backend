@@ -2,20 +2,17 @@ import {chat} from "../azure/openai.js";
 import {Models} from "../models/models.js";
 import {executeWorkflow} from "../workflow/workflow.js";
 import {ConsoleWritableStream} from "./consoleWriteableStream.js";
-import {getSecret} from "../common/secrets.js";
-
-const secretData = await getSecret(process.env.SECRETS_NAME);
-const apiKey = JSON.parse(secretData).OPENAI_API_KEY;
+import {getLLMConfig} from "../common/secrets.js";
 
 async function main() {
     const modelId = process.argv.slice(2, 3)[0];
     const prompt = process.argv.slice(3, 4)[0];
-    const dataSources = ["s3://jules.white@vanderbilt.edu/2024-01-11/9927b362-609c-4b7d-90ec-4a09024ee27c.json"]
+    const dataSources = []
         .map((s) => ({id: s}));
 
 
     const chatFn = async (body, writable, context) => {
-        return await chat(apiKey, body, writable, context);
+        return await chat(getLLMConfig, body, writable, context);
     }
 
 

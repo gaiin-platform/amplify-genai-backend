@@ -157,7 +157,7 @@ export const csvAssistant = {
                 // For each group of chunkSize rows, we need to prompt the LLM for results
                 for (const [index, row] of rows.entries()) {
 
-                    const inputData = row.map((r) => r.content).join(" ");
+                    const inputData = row.map((r) => r.content.replace(/(\r\n|\n|\r)/gm, "\\n")).join(" ");
 
                     // We add the group of rows to the original prompt from the user as the
                     // context for the LLM

@@ -3,14 +3,12 @@ import {canReadDatasource} from "./common/permissions.js";
 import {Models} from "./models/models.js";
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {getLogger} from "./common/logging.js";
-import {getSecret} from "./common/secrets.js";
+import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 
 const logger = getLogger("router");
 
-const secretData = await getSecret(process.env.SECRETS_NAME);
-const apiKey = JSON.parse(secretData).OPENAI_API_KEY;
 
 
 function getRequestId(params) {
@@ -65,7 +63,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             let options = params.body.options ? {...params.body.options} : {};
 
             const chatFn = async (body, writable, context) => {
-                return await chat(apiKey, body, writable, context);
+                return await chat(getLLMConfig, body, writable, context);
             }
 
             if (!params.body.dataSources) {

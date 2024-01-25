@@ -21,9 +21,9 @@ provider:
   region: us-east-1
   versionFunctions: false
   environment:
-    KILLSWITCH_MAX_AGE: 10000
-    KILLSWITCH_ENABLED: true
     AZURE_OPENAI_RESOURCE_NAME: openai
+    LLM_ENDPOINTS_SECRETS_NAME: openai-endpoints
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
     S3_FILE_TEXT_BUCKET_NAME: vu-amplify-${sls:stage}-file-text
@@ -37,6 +37,7 @@ provider:
     USAGE_ENDPOINT: ${self:custom.stageVariables.USAGE_ENDPOINT}
     CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
+
   iam:
     role:
       statements:
@@ -49,6 +50,7 @@ provider:
             - dynamodb:PutItem
           Resource:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
+            - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
