@@ -157,30 +157,29 @@ export const csvAssistant = {
                 // For each group of chunkSize rows, we need to prompt the LLM for results
                 for (const [index, row] of rows.entries()) {
 
-                    const inputData = row.map((r) => r.content.replace(/(\r\n|\n|\r)/gm, "\\n")).join(" ");
+                    const inputData = row.map((r) => r.content.replace(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n')).join(" ");
 
                     // We add the group of rows to the original prompt from the user as the
                     // context for the LLM
                     const updatedChatBody = {
                         ...body,
                         messages: [
-                            ...body.messages.slice(0, -1),
+                            // ...body.messages.slice(0, -1),
+                            {role:"system", content: `
+You are going to perform tasks on rows of CSV. The task will be described in terms of processing all rows, but you
+must infer how to perform the task on each row. You will be provided with one row of data at a time. Be very precise
+and only do what is explicitly asked. If you are not sure, do your best. Do not offer any explanation or reasoning
+unless asked. Pay careful attention to the format of what the output should be.`},
                             {
                                 role: "user",
                                 content:
-                                    `
-You must be extremely accurate. 
-Make sure you output the original data exactly. The new columns should come after the original columns. 
-If the new columns have commas, make sure to wrap them in quotes.
+`You are going to be provided with one row of data at a time. DO NOT REPEAT the "Output" prefix. 
 
 ${taskMessage}
 
-Do not repeat the original data in the Output.
-
-Using the data:
-\`\`\`csv
+Perform the task on this row of the data:
+----------------
 Input: ${inputData}
-\`\`\`
 `
                             }
                         ]
@@ -195,7 +194,7 @@ Input: ${inputData}
 
                         if((await isKilled(user, responseStream, body))){
                             try{
-                               await limiter.stop();
+                                await limiter.stop();
                             } catch (e) {
                             }
                             return;
@@ -232,7 +231,7 @@ Input: ${inputData}
                         }
 
                         return row.map((r, index) => {
-                            return r.content + ","
+                            return ((r.content) ? r.content.replace(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : "") + ","
                                 + createColumn(response.rows[index].Output) + ","
                                 + createColumn(response.rows[index].Explanation);
                         }).join("\n");
