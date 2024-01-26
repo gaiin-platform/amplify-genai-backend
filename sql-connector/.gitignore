@@ -18,3 +18,9 @@ var/
 
 # Serverless directories
 .serverless
+
+test_script.py
+
+venv/
+
+__pycache__/

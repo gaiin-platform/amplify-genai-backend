@@ -19,7 +19,8 @@ custom:
 
   pythonRequirements:
     dockerizePip: non-linux
-  
+    layer: true
+
   stages:
     - dev
     - staging
@@ -45,7 +46,7 @@ provider:
   environment:
     #from stageVariables file
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${{self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     MIN_ACU: ${self:custom.stageVariables.MIN_ACU}
     MAX_ACU: ${self:custom.stageVariables.MAX_ACU}
     VPC_ID: ${self:custom.stageVariables.VPC_ID}
@@ -59,7 +60,7 @@ provider:
     #from resources built in this file
     MY_SQL_DB_CLUSTER: ${sls:stage}-mysql-cluster
     MY_SQL_DB_NAME: AmplifyMySQL_${sls:stage}
-    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-db-secret
+    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-postgres-db-secret
     MY_SQL_DB_USERNAME: mysqladmin_${sls:stage}
     MY_SQL_WRITE_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint
     MY_SQL_READ_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterReadEndpoint
@@ -78,28 +79,31 @@ provider:
             - rds-data:BeginTransaction
             - rds-data:CommitTransaction
             - rds-data:RollbackTransaction
-            - s3:GetObject
           Resource:
             - !GetAtt MySQLDbCluster.DBClusterArn
             - !Ref MySQLDbSecret
-            - !GetAtt CsvBucket.Arn
 functions:
-  hello:
-    handler: handler.hello
-    vpc: ${self:provider.environment.VPC_ID}
-
-  csvToMysql:
-    handler: handler.csv_to_mysql
-    events:
-      - s3:
-          bucket: ${self:service}-${self:provider.stage}-csv-bucket
-          event: s3:ObjectCreated:*
-          rules:
-            - suffix: .csv
-    vpc: ${self:provider.environment.VPC_ID}
+  execute_sql_query:
+    handler: assistants.execute_sql_query
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
            
 resources:
   Resources:
+    LambdaSecurityGroup:
+          Type: AWS::EC2::SecurityGroup
+          Properties:
+            GroupDescription: "Security group for  SQL Connector Lambda Function"
+            VpcId: ${self:provider.environment.VPC_ID}
+            SecurityGroupEgress:
+              - IpProtocol: -1
+                CidrIp: 0.0.0.0/0  
     MySQLDbCluster:
       DependsOn: MySQLDbSecurityGroup
       DeletionPolicy: Snapshot
@@ -163,17 +167,3 @@ resources:
         GenerateSecretString:
           PasswordLength: 16
           ExcludeCharacters: "\"@/\\"
-    
-    CsvBucket:
-      Type: 'AWS::S3::Bucket'
-      Properties:
-        BucketName: ${self:service}-${self:provider.stage}-csv-bucket
-        VersioningConfiguration:
-          Status: Enabled
-        PublicAccessBlockConfiguration:
-          BlockPublicAcls: true
-          IgnorePublicAcls: true
-          BlockPublicPolicy: true
-          RestrictPublicBuckets: true
-
-        
