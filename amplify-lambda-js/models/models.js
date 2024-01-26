@@ -11,13 +11,13 @@ export const Models = {
     [ModelID.GPT_4_TURBO_AZ]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo (Azure)',
-        tokenLimit: 128000,
+        tokenLimit: 120000,
         visible: true,
     },
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',
-        tokenLimit: 128000,
+        tokenLimit: 120000,
         visible: true,
     },
     [ModelID.GPT_3_5]: {

@@ -10,6 +10,8 @@ import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
+import OpenAI from "openai";
+import {ModelID, Models} from "../models/models.js";
 
 const logger = getLogger("chatWithData");
 
@@ -97,7 +99,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequest, dataSou
     logger.debug(`Chat with data called with request id ${requestId}`);
 
     const account = params.account;
-    const model = params.model;
+    const model = Models[params.model.id] || Models[ModelID.GPT_3_5_AZ];
     const options = params.options || {};
 
     let srcPrefix = options.source || defaultSource;
