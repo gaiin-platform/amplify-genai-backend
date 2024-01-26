@@ -7,6 +7,7 @@ package:
   exclude:
     - node_modules/**
     - venv/**
+    - test_script.py
 
 plugins:
   - serverless-offline

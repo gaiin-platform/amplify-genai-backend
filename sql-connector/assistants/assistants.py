@@ -9,8 +9,9 @@ from mysql.connector import Error
 from dotenv import load_dotenv
 
 
+# TODO check if .env exists so that this doesn't have to be removed/added for local testing
+# load_dotenv()  # Load environment variables from .env file
 # Set the values below in a local .env file in the root of the project for local testing
-load_dotenv()  # Load environment variables from .env file
 mysql_host = os.environ["MYSQL_DB_HOST"]
 mysql_user = os.environ["MYSQL_DB_USERNAME"]
 mysql_database = os.environ["MYSQL_DB_NAME"]
@@ -81,8 +82,13 @@ def get_db_connection():
     return db_connection
 
 
+# TODO implement validated
 # @validated(op="execute_sql")
+# TODO remove name,event,context param
 def execute_sql_query(event, context, current_user, name, data):
+    # something will read the event here
+    # it will set this: data.get("user_prompt")
+
     user_prompt = data.get("user_prompt")
     max_retries = 3
 
@@ -95,10 +101,9 @@ def execute_sql_query(event, context, current_user, name, data):
             try:
                 sql_query = generate_sql_query(user_prompt, schema_info, current_user)
 
-                # TODO extract sql query from markdown
-                cleaned_sql_query = ''
+                cleaned_sql_query = clean_sql_query(sql_query)
 
-                result = execute_query(db_connection, sql_query)
+                result = execute_query(db_connection, cleaned_sql_query)
 
                 return {"result": result}
             except Exception as e:
@@ -169,7 +174,7 @@ def generate_sql_query(user_prompt, schema_info, current_user):
         chain = prompt | llm | output_parser
 
         # Log the prompt
-        logging.info(f"Sending prompt to LLM:\n{formatted_prompt}")
+        # logging.info(f"Sending prompt to LLM:\n{formatted_prompt}")
 
         # Invoke the chain with an empty input since the prompt already contains all necessary information
         return chain.invoke({"input": ""})
@@ -177,6 +182,34 @@ def generate_sql_query(user_prompt, schema_info, current_user):
     except Exception as e:
         logging.error(f"Error in generate_sql_query: {e}")
         raise
+
+
+def clean_sql_query(sql_query):
+    # logging.info(f"SQL Query Before Cleaning:\n{sql_query}")
+
+    # Step 1: Extract text after '```sql'
+    start_index = sql_query.find("```sql")
+    if start_index == -1:
+        raise ValueError("The string '```sql' was not found in sql_query.")
+    else:
+        # Move past the '```sql'
+        start_index += len("```sql")
+
+        # Update sql_query to the substring after '```sql'
+        sql_query = sql_query[start_index:]
+
+    # Step 2: Extract text before the next '```'
+    end_index = sql_query.find("```")
+    if end_index == -1:
+        raise ValueError("The closing '```' was not found in sql_query.")
+    else:
+        # Update sql_query to the substring before '```'
+        sql_query = sql_query[:end_index]
+
+    # logging.info(f"Cleaned SQL Query:\n{sql_query}")
+
+    # Final cleaned SQL query
+    return sql_query.strip()
 
 
 # executes the query written by the generate_sql_query() function
