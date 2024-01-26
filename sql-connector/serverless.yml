@@ -59,7 +59,7 @@ provider:
     #from resources built in this file
     MY_SQL_DB_CLUSTER: ${sls:stage}-mysql-cluster
     MY_SQL_DB_NAME: AmplifyMySQL_${sls:stage}
-    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-postgres-db-secret
+    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-db-secret
     MY_SQL_DB_USERNAME: mysqladmin_${sls:stage}
     MY_SQL_WRITE_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint
     MY_SQL_READ_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterReadEndpoint
@@ -78,12 +78,24 @@ provider:
             - rds-data:BeginTransaction
             - rds-data:CommitTransaction
             - rds-data:RollbackTransaction
+            - s3:GetObject
           Resource:
             - !GetAtt MySQLDbCluster.DBClusterArn
             - !Ref MySQLDbSecret
+            - !GetAtt CsvBucket.Arn
 functions:
   hello:
     handler: handler.hello
+    vpc: ${self:provider.environment.VPC_ID}
+
+  csvToMysql:
+    handler: handler.csv_to_mysql
+    events:
+      - s3:
+          bucket: ${self:service}-${self:provider.stage}-csv-bucket
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .csv
     vpc: ${self:provider.environment.VPC_ID}
            
 resources:
@@ -151,3 +163,17 @@ resources:
         GenerateSecretString:
           PasswordLength: 16
           ExcludeCharacters: "\"@/\\"
+    
+    CsvBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:service}-${self:provider.stage}-csv-bucket
+        VersioningConfiguration:
+          Status: Enabled
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          IgnorePublicAcls: true
+          BlockPublicPolicy: true
+          RestrictPublicBuckets: true
+
+        
