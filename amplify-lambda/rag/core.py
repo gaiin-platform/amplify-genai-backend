@@ -295,6 +295,8 @@ def process_document_for_rag(event, context):
             text = None
             location_properties = []
 
+            creation_time = datetime.now().isoformat()
+
             if item:
                 try:
                     type = item['type']
@@ -322,6 +324,7 @@ def process_document_for_rag(event, context):
                         'totalItems': total_items,
                         'locationProperties': location_properties,
                         'content': text,
+                        'createdAt': creation_time,
                         'totalTokens': total_tokens,
                         'tags': tags,
                         'props': props,
@@ -349,7 +352,7 @@ def process_document_for_rag(event, context):
                     'totalItems': total_items,
                     'locationProperties': location_properties,
                     'contentKey': text_content_key,
-                    'createdAt': datetime.now().isoformat(),
+                    'createdAt': creation_time,
                     'totalTokens': total_tokens,
                     'tags': tags,
                     'props': props,
