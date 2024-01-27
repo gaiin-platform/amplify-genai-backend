@@ -62,12 +62,13 @@ const getChunkAggregator = (maxTokens, options) => {
     }
 
     return (dataSource, {currentChunk="", currentTokenCount=0, chunks=[], itemCount=0},
+            formattedSourceName,
             formattedContent,
             contentTokenCount) => {
         if ((currentTokenCount + contentTokenCount > maxTokens) || (itemCount + 1 > maxItemsPerChunk)) {
             // If the current chunk is too big, push it to the chunks array and start a new one
             if(currentChunk.length > 0) {
-                chunks.push({id: dataSource.id + "?chunk="+chunks.length, context: currentChunk, tokens: currentTokenCount});
+                chunks.push({id: dataSource.id + "?chunk="+chunks.length, context: formattedSourceName + currentChunk, tokens: currentTokenCount});
                 itemCount = 1;
             }
 
@@ -93,10 +94,10 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         let contentFormatter;
         if (firstLocation && firstLocation.slide) {
             logger.debug("Formatting data from: " + dataSource.id + " as slides");
-            contentFormatter = c => 'Slide: ' + c.location.slide + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: '+content.name+' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.page) {
             logger.debug("Formatting data from: " + dataSource.id + " as pages");
-            contentFormatter = c => 'Page: ' + c.location.page + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: '+content.name+' Page: ' + c.location.page + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.row_number) {
             logger.debug("Formatting data from: " + dataSource.id + " as rows");
             contentFormatter = c => c.content;
@@ -111,18 +112,17 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         let state = {chunks, currentChunk, currentTokenCount};
 
         const aggregator = getChunkAggregator(maxTokens,options);
+        const formattedSourceName = "Source:"+content.name+" Type:"+dataSource.type+"\n-------------\n";
 
         for (const part of content.content) {
-
             const formattedContent = contentFormatter(part);
             const contentTokenCount = tokenCounter(formattedContent);
-
-            state = aggregator(dataSource, state, formattedContent, contentTokenCount);
+            state = aggregator(dataSource, state, formattedSourceName, formattedContent, contentTokenCount);
         }
 
         // Add the last chunk if it has content
         if (state.currentChunk) {
-            chunks.push({ id: dataSource.id+"?chunk="+chunks.length, context: state.currentChunk, tokens: state.currentTokenCount });
+            chunks.push({ id: dataSource.id+"?chunk="+chunks.length, context: formattedSourceName + state.currentChunk, tokens: state.currentTokenCount });
         }
 
         return chunks;
