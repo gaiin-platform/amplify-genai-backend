@@ -1,32 +1,33 @@
 # set up retriever function that accepts a a query, user, and/or list of keys for where claus
 from openai import AzureOpenAI
 import os
+import json
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from core.credentials import get_credentials, get_endpoint
 import logging
 
-#For local testing
-yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
-
-dotenv_path = os.path.join(os.path.dirname(__file__), '.*')
-
-from dotenv import load_dotenv
-import yaml
-
-
-# Function to convert YAML content to .env format and load it
-def load_yaml_as_env(yaml_path):
-    with open(yaml_path, 'r') as stream:
-        data_loaded = yaml.safe_load(stream)
-
-    # Convert YAML dictionary to .env format (KEY=VALUE)
-    for key, value in data_loaded.items():
-        os.environ[key] = str(value)
-
-load_yaml_as_env(yaml_file_path)      
-
-user_email = os.environ['USER_EMAIL']
+##For local testing
+#yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
+#
+#dotenv_path = os.path.join(os.path.dirname(__file__), '.*')
+#
+#from dotenv import load_dotenv
+#import yaml
+#
+#
+## Function to convert YAML content to .env format and load it
+#def load_yaml_as_env(yaml_path):
+#    with open(yaml_path, 'r') as stream:
+#        data_loaded = yaml.safe_load(stream)
+#
+#    # Convert YAML dictionary to .env format (KEY=VALUE)
+#    for key, value in data_loaded.items():
+#        os.environ[key] = str(value)
+#
+#load_yaml_as_env(yaml_file_path)      
+#
+#user_email = os.environ['USER_EMAIL']
 #Remove to here for local testing
 
 
@@ -43,7 +44,6 @@ endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
 
 pg_password = get_credentials(rag_pg_password)
 
-chat_endpoint, chat_api_key = get_endpoint(chat_model_name, endpoints_arn)
 
 client = AzureOpenAI(
     api_key = api_key,
@@ -97,7 +97,7 @@ def get_top5_similar_docs(query_embedding, user_email):
 
         # Get the top 5 most similar documents using the KNN <=> operator limited to logged in user
         cur.execute("""
-            SELECT content 
+            SELECT content, src, locations, orig_indexes, char_index, owner_email
             FROM embeddings 
             WHERE owner_email = %s
             ORDER BY vector_embedding <=> %s 
@@ -110,22 +110,42 @@ def get_top5_similar_docs(query_embedding, user_email):
 
 
 # Function to process input with retrieval of most similar documents from the database
-def process_input_with_retrieval(user_input, user_email):
-    delimiter = "```"
+def process_input_with_retrieval(event, context=None):
+    # Parse the input from the event body
+    try:
+        # Assuming the body is passed as a JSON object and the Content-Type is application/json
+        body = json.loads(event['body'])
+        user_input = body['user_input']
+        user_email = body['user_email']
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"An error occurred while parsing the event body: {e}")
+        # Here, you should return a proper HTTP response to indicate the issue to the client
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"message": "Bad request. Please provide user_input and user_email."})
+        }
 
-    embeddings= get_embeddings(user_input)
-    print(f"This is some  of my embeddings - {embeddings}")
+    # Rest of your function ...
+    embeddings = get_embeddings(user_input)
+    print(f"This is some of my embeddings - {embeddings}")
 
-    #Step 1: Get documents related to the user input from database
+    # Step 1: Get documents related to the user input from the database
     related_docs = get_top5_similar_docs(embeddings, user_email)
     print(related_docs)
-    return related_docs
-    
-chat_prompt = "what can you tell me about the Wendell"
-response = process_input_with_retrieval(chat_prompt, user_email)
 
-print(chat_prompt)
-print(response)
+#    # Return the related documents as a HTTP response
+#    return {
+#        "statusCode": 200,
+#        "body": json.dumps(related_docs),
+#        "headers": {
+#            "Content-Type": "application/json"
+#        }
+#    }
+
+
+   
+
+
 
 
 
