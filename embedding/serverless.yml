@@ -16,6 +16,7 @@ plugins:
 custom:
   pythonRequirements:
     dockerizePip: non-linux
+    layer: true
   
   stages:
     - dev
@@ -141,6 +142,11 @@ functions:
          bucket: ${self:custom.environments.${opt:stage, self:custom.defaultStage}.AMPLIFY_LAMBDA_SERVICE}-rag-chunks
          event: s3:ObjectCreated:*
          existing: true
+
+  get_embeddingss:
+    runtime: python3.10
+    layers:
+      - Ref: PythonRequirementsLambdaLayer       
 
     environment:
       RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2

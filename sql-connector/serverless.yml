@@ -7,6 +7,7 @@ package:
   exclude:
     - node_modules/**
     - venv/**
+    - test_script.py
 
 plugins:
   - serverless-offline
@@ -19,7 +20,8 @@ custom:
 
   pythonRequirements:
     dockerizePip: non-linux
-  
+    layer: true
+
   stages:
     - dev
     - staging
@@ -45,7 +47,7 @@ provider:
   environment:
     #from stageVariables file
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${{self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     MIN_ACU: ${self:custom.stageVariables.MIN_ACU}
     MAX_ACU: ${self:custom.stageVariables.MAX_ACU}
     VPC_ID: ${self:custom.stageVariables.VPC_ID}
@@ -82,12 +84,27 @@ provider:
             - !GetAtt MySQLDbCluster.DBClusterArn
             - !Ref MySQLDbSecret
 functions:
-  hello:
-    handler: handler.hello
-    vpc: ${self:provider.environment.VPC_ID}
+  execute_sql_query:
+    handler: assistants.execute_sql_query
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
            
 resources:
   Resources:
+    LambdaSecurityGroup:
+          Type: AWS::EC2::SecurityGroup
+          Properties:
+            GroupDescription: "Security group for  SQL Connector Lambda Function"
+            VpcId: ${self:provider.environment.VPC_ID}
+            SecurityGroupEgress:
+              - IpProtocol: -1
+                CidrIp: 0.0.0.0/0  
     MySQLDbCluster:
       DependsOn: MySQLDbSecurityGroup
       DeletionPolicy: Snapshot
