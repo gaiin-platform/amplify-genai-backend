@@ -1,6 +1,6 @@
 openai
-pyscopg2
+psycopg2-binary
 pgvector
 botocore
-josepy
-
+python-jose
+tiktoken
