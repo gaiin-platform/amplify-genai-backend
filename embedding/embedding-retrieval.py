@@ -4,32 +4,8 @@ import os
 import json
 import psycopg2
 from pgvector.psycopg2 import register_vector
-from core.credentials import get_credentials, get_endpoint
+from common.credentials import get_credentials, get_endpoint
 import logging
-
-##For local testing
-#yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
-#
-#dotenv_path = os.path.join(os.path.dirname(__file__), '.*')
-#
-#from dotenv import load_dotenv
-#import yaml
-#
-#
-## Function to convert YAML content to .env format and load it
-#def load_yaml_as_env(yaml_path):
-#    with open(yaml_path, 'r') as stream:
-#        data_loaded = yaml.safe_load(stream)
-#
-#    # Convert YAML dictionary to .env format (KEY=VALUE)
-#    for key, value in data_loaded.items():
-#        os.environ[key] = str(value)
-#
-#load_yaml_as_env(yaml_file_path)      
-#
-#user_email = os.environ['USER_EMAIL']
-#Remove to here for local testing
-
 
 
 pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
