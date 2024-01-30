@@ -8,7 +8,7 @@ def always_allowed(event, data):
 
 
 permissions_by_state_type = {
-  "/": {
-    "hello": always_allowed
+  "/dar/execute_sql_query": {
+    "execute_sql": always_allowed
   },
 }

@@ -85,7 +85,13 @@ provider:
             - !Ref MySQLDbSecret
 functions:
   execute_sql_query:
-    handler: assistants.execute_sql_query
+    timeout: 600
+    handler: assistants.handler.execute_sql_query
+    events:
+      - http:
+          path: dar/execute_sql_query
+          method: post
+          cors: true
     layers:
       - Ref: PythonRequirementsLambdaLayer
     vpc: 

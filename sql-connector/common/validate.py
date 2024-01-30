@@ -36,7 +36,6 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-
 id_request_schema = {
     "type": "object",
     "properties": {
@@ -59,9 +58,20 @@ key_request_schema = {
     "required": ["key"]
 }
 
+task_schema = {
+    "type": "object",
+    "properties": {
+        "task": {
+            "type": "string"
+        }
+    },
+    "required": ["task"]
+}
 
 validators = {
-
+    "/dar/execute_sql_query": {
+        "execute_sql": task_schema
+    }
 }
 
 
@@ -142,7 +152,6 @@ def validated(op, validate_body=True):
 
 
 def get_claims(event, context):
-
     oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
     oauth_audience = os.getenv('OAUTH_AUDIENCE')
 

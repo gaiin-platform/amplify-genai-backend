@@ -1,4 +1,7 @@
 # Distribution / packaging
+.data.local
+.env.*.local
+.env.local
 .Python
 env/
 build/
