@@ -79,7 +79,7 @@ def get_top5_similar_docs(query_embedding, user_email):
             WHERE owner_email = %s
             ORDER BY vector_embedding <=> %s 
             LIMIT 5
-            """, (user_email, embedding_literal,))
+            """, (current_user, embedding_literal,))
         top5_docs = cur.fetchall()
     print(top5_docs)
     return top5_docs
