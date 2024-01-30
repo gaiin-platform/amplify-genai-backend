@@ -15,7 +15,11 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-
+__pycache__/
+core/
+Include/
+lib/
+Scripts/
 # Serverless directories
 .serverless
 
