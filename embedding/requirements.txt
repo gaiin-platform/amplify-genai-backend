@@ -2,4 +2,5 @@ openai
 pyscopg2
 pgvector
 botocore
+josepy
 

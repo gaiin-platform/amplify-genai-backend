@@ -5,6 +5,7 @@ import json
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint
+from common.validate import validated
 import logging
 
 
@@ -86,37 +87,29 @@ def get_top5_similar_docs(query_embedding, user_email):
 
 
 # Function to process input with retrieval of most similar documents from the database
-def process_input_with_retrieval(event, context=None):
-    # Parse the input from the event body
-    try:
-        # Assuming the body is passed as a JSON object and the Content-Type is application/json
-        body = json.loads(event['body'])
-        user_input = body['user_input']
-        user_email = body['user_email']
-    except (json.JSONDecodeError, KeyError) as e:
-        print(f"An error occurred while parsing the event body: {e}")
-        # Here, you should return a proper HTTP response to indicate the issue to the client
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"message": "Bad request. Please provide user_input and user_email."})
-        }
+@validated("retrieve")
+def process_input_with_retrieval(event, context, user, name, data):
+    data = data['data']
+    current_user = data['current_user']
+    user_input = data['user_input']
+
 
     # Rest of your function ...
     embeddings = get_embeddings(user_input)
     print(f"This is some of my embeddings - {embeddings}")
 
     # Step 1: Get documents related to the user input from the database
-    related_docs = get_top5_similar_docs(embeddings, user_email)
+    related_docs = get_top5_similar_docs(embeddings, current_user)
     print(related_docs)
 
-#    # Return the related documents as a HTTP response
-#    return {
-#        "statusCode": 200,
-#        "body": json.dumps(related_docs),
-#        "headers": {
-#            "Content-Type": "application/json"
-#        }
-#    }
+    # Return the related documents as a HTTP response
+    return {
+        "statusCode": 200,
+        "body": json.dumps(related_docs),
+        "headers": {
+            "Content-Type": "application/json"
+        }
+    }
 
 
    
