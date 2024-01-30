@@ -58,7 +58,7 @@ def get_embeddings(text):
         raise
 
 
-def get_top5_similar_docs(query_embedding, user_email):
+def get_top5_similar_docs(query_embedding, current_user):
     with get_db_connection() as conn:
         # Register pgvector extension
         register_vector(conn)
