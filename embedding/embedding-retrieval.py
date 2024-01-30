@@ -9,12 +9,11 @@ from common.validate import validated
 import logging
 
 
-pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
+pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
-chat_model_name = os.environ['CHAT_MODEL_NAME']
 endpoints_arn = os.environ['ENDPOINTS_ARN']
 
 endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
@@ -87,8 +86,8 @@ def get_top5_similar_docs(query_embedding, current_user):
 
 
 # Function to process input with retrieval of most similar documents from the database
-@validated("retrieval")
-def process_input_with_retrieval(event, context, user, name, data):
+#@validated("retrieval")
+def process_input_with_retrieval(data):
     data = data['data']
     current_user = data['current_user']
     user_input = data['user_input']
