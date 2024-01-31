@@ -90,7 +90,7 @@ def get_top5_similar_docs(query_embedding, user_email):
 @validated("retrieve")
 def process_input_with_retrieval(event, context, user, name, data):
     data = data['data']
-    current_user = data['current_user']
+    current_user = user
     user_input = data['user_input']
 
 
