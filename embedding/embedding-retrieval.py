@@ -86,8 +86,7 @@ def get_top5_similar_docs(query_embedding, current_user):
 
 
 
-# Function to process input with retrieval of most similar documents from the database
-#@validated("retrieval")
+@validated("retrieval")
 def process_input_with_retrieval(event, context, current_user, name, data):
     data = data['data']
     user_input = data['user_input']

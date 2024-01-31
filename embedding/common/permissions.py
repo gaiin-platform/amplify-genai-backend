@@ -111,7 +111,7 @@ permissions_by_state_type = {
   "/state/accounts/save": {
     "save": can_publish_item
   },
-  "/embeddding-retrieval": {
+  "/embedding-retrieval": {
     "retrieval": can_publish_item
   },
 }
