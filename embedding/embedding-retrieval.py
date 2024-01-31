@@ -2,6 +2,7 @@
 from openai import AzureOpenAI
 import os
 import json
+import jsonschema
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint
@@ -9,12 +10,11 @@ from common.validate import validated
 import logging
 
 
-pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
+pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
-chat_model_name = os.environ['CHAT_MODEL_NAME']
 endpoints_arn = os.environ['ENDPOINTS_ARN']
 
 endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
@@ -58,7 +58,7 @@ def get_embeddings(text):
         raise
 
 
-def get_top5_similar_docs(query_embedding, user_email):
+def get_top5_similar_docs(query_embedding, current_user):
     with get_db_connection() as conn:
         # Register pgvector extension
         register_vector(conn)
@@ -79,7 +79,7 @@ def get_top5_similar_docs(query_embedding, user_email):
             WHERE owner_email = %s
             ORDER BY vector_embedding <=> %s 
             LIMIT 5
-            """, (user_email, embedding_literal,))
+            """, (current_user, embedding_literal,))
         top5_docs = cur.fetchall()
     print(top5_docs)
     return top5_docs
@@ -87,12 +87,10 @@ def get_top5_similar_docs(query_embedding, user_email):
 
 
 # Function to process input with retrieval of most similar documents from the database
-@validated("retrieve")
-def process_input_with_retrieval(event, context, user, name, data):
+#@validated("retrieval")
+def process_input_with_retrieval(event, context, current_user, name, data):
     data = data['data']
-    current_user = user
     user_input = data['user_input']
-
 
     # Rest of your function ...
     embeddings = get_embeddings(user_input)

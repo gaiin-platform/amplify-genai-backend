@@ -61,8 +61,6 @@ provider:
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
     RAG_POSTGRES_DB_SECRET: ${self:service}-${sls:stage}-rag-postgres-db-secret
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
-    RAG_POSTGRES_WRITE_ENDPOINT: ${self:service}-${self:provider.stage}-RagPostgresDbClusterWriteEndpoint
-    RAG_POSTGRES_READ_ENDPOINT: ${self:service}-${self:provider.stage}-RagPostgresDbClusterReadEndpoint
     SES_SECRET_ARN: aws/ses/credentials-i82Vzw
     OPENAI_API_KEY_ARN: arn:aws:secretsmanager:us-east-1:514391678313:secret:OPENAI_API_KEY-REUULJ
     EMBEDDING_MODEL_NAME: ${self:custom.stageVariables.EMBEDDING_MODEL_NAME}
@@ -72,6 +70,8 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
 
   iam:
     role:
@@ -133,9 +133,9 @@ functions:
           path: /embedding-retrieval
           method: post
           cors: true
-          authorizer:
-            name: ${sls:stage}-cognito-authorizer
-            arn: arn:aws:cognito-idp:us-east-1:514391678313:userpool/${self:provider.environment.COGNITO_USER_POOL_ID}
+#          authorizer:
+#            name: ${sls:stage}-cognito-authorizer
+#            arn: arn:aws:cognito-idp:us-east-1:514391678313:userpool/${self:provider.environment.COGNITO_USER_POOL_ID}
 
 
     environment:

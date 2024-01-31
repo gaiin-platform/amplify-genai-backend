@@ -8,7 +8,7 @@ import boto3
 import smtplib
 from email.message import EmailMessage
 import logging
-from secrets import get_credentials, get_json_credetials, get_endpoint
+from common.credentials import get_credentials, get_json_credetials, get_endpoint
 import urllib.parse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,11 +21,11 @@ pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 ses_secret = os.environ['SES_SECRET_ARN']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
-model_name = os.environ['MODEL_NAME']
+embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['ENDPOINTS_ARN']
 
-endpoint, api_key = get_endpoint(model_name, endpoints_arn)
+endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
 
 pg_password = get_credentials(rag_pg_password)
 
@@ -93,12 +93,12 @@ def send_completion_email(owner_email, src, success=True):
         raise e
     
     #Get embedding token count from tiktoken
-def num_tokens_from_text(content, model_name):
-    encoding = tiktoken.encoding_for_model(model_name)
+def num_tokens_from_text(content, embedding_model_name):
+    encoding = tiktoken.encoding_for_model(embedding_model_name)
     num_tokens = len(encoding.encode(content))
     return num_tokens
     
-def generate_embeddings(text, model=model_name):
+def generate_embeddings(text, model=embedding_model_name):
     """Generates embeddings for the given text using the specified model."""
     try:
         response = client.embeddings.create(input=text, model=model)
@@ -211,7 +211,7 @@ def embed_chunks(data, db_connection):
                 vector_embedding = generate_embeddings(content)
                 
                 # Calculate token count for the content
-                token_count = num_tokens_from_text(content, model_name)
+                token_count = num_tokens_from_text(content, embedding_model_name)
                 
                 # Insert data into the database
                 insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, cursor)
