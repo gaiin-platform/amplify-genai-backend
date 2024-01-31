@@ -2,6 +2,7 @@
 from openai import AzureOpenAI
 import os
 import json
+import jsonschema
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint
@@ -87,8 +88,9 @@ def get_top5_similar_docs(query_embedding, current_user):
 
 # Function to process input with retrieval of most similar documents from the database
 #@validated("retrieval")
-def process_input_with_retrieval(data):
+def process_input_with_retrieval(event, context, current_user, name, data):
     data = data['data']
+    print(data)
     current_user = data['current_user']
     user_input = data['user_input']
 
