@@ -2,7 +2,6 @@
 from openai import AzureOpenAI
 import os
 import json
-import jsonschema
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint
@@ -16,9 +15,7 @@ pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 endpoints_arn = os.environ['ENDPOINTS_ARN']
-
 endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
-
 pg_password = get_credentials(rag_pg_password)
 
 

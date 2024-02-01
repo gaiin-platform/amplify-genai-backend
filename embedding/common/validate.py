@@ -412,14 +412,9 @@ process_input_schema = {
         "user_input": {
             "type": "string",
             "description": "User input text for embedding and document retrieval."
-        },
-        "current_user": {
-            "type": "string",
-            "format": "email",
-            "description": "Email of the user making the request."
         }
     },
-    "required": ["user_input", "current_user"]
+    "required": ["user_input"]
 }
 
 validators = {
