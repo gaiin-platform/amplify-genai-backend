@@ -1,4 +1,3 @@
-```
 # Amplify-Lambda-Mono
 
 ## Overview
