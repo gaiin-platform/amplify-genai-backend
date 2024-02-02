@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
-ses_secret = os.environ['SES_SECRET_ARN']
+ses_secret = os.environ['SES_SECRET_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
@@ -126,10 +126,11 @@ def insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_coun
         logging.error(f"Failed to insert data into the database: {e}")
         raise
 
-
+db_connection = None
 # AWS Lambda handler function
 def lambda_handler(event, context):
     logging.basicConfig(level=logging.INFO)
+    
     # Extract bucket name and file key from the S3 event
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     url_encoded_key = event['Records'][0]['s3']['object']['key']
