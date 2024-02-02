@@ -8,6 +8,24 @@ from common.credentials import get_credentials, get_endpoint
 from common.validate import validated
 import logging
 
+#from dotenv import load_dotenv
+import yaml
+import os
+# Function to convert YAML content to .env format and load it
+def load_yaml_as_env(yaml_path):
+    with open(yaml_path, 'r') as stream:
+        data_loaded = yaml.safe_load(stream)
+
+    # Convert YAML dictionary to .env format (KEY=VALUE)
+    for key, value in data_loaded.items():
+        os.environ[key] = str(value)
+
+yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
+load_yaml_as_env(yaml_file_path)
+
+
+
+
 
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
@@ -55,7 +73,7 @@ def get_embeddings(text):
         raise
 
 
-def get_top5_similar_docs(query_embedding, current_user):
+def get_top5_similar_docs(query_embedding, current_user, src_ids=None):
     with get_db_connection() as conn:
         # Register pgvector extension
         register_vector(conn)
@@ -66,18 +84,33 @@ def get_top5_similar_docs(query_embedding, current_user):
         print(f"here is the query embedding {query_embedding}")
 
         # Convert the query_embedding list to a PostgreSQL array literal
-        # This is assuming query_embedding is a list of floats
         embedding_literal = "[" + ",".join(map(str, query_embedding)) + "]"
 
-        # Get the top 5 most similar documents using the KNN <=> operator limited to logged in user
-        cur.execute("""
+        # Prepare SQL query and parameters based on whether src_ids are provided
+        query_params = [current_user]
+        src_clause = ""
+        
+        if src_ids:
+            # Convert src_ids list to a format suitable for the ANY clause in PostgreSQL
+            src_ids_array = "{" + ",".join(map(str, src_ids)) + "}"
+            src_clause = "AND src = ANY(%s)"
+            query_params.append(src_ids_array)
+        
+        query_params.append(embedding_literal)
+
+        # Create SQL query string with a placeholder for the optional src_clause
+        sql_query = f"""
             SELECT content, src, locations, orig_indexes, char_index, owner_email
             FROM embeddings 
             WHERE owner_email = %s
+            {src_clause}
             ORDER BY vector_embedding <=> %s 
             LIMIT 5
-            """, (current_user, embedding_literal,))
+        """
+
+        cur.execute(sql_query, query_params)
         top5_docs = cur.fetchall()
+        
     print(top5_docs)
     return top5_docs
 
@@ -86,24 +119,20 @@ def get_top5_similar_docs(query_embedding, current_user):
 @validated("retrieval")
 def process_input_with_retrieval(event, context, current_user, name, data):
     data = data['data']
-    user_input = data['user_input']
+    user_input = data['userInput']
+    src_ids = data['dataSources']
 
     # Rest of your function ...
     embeddings = get_embeddings(user_input)
     print(f"This is some of my embeddings - {embeddings}")
 
     # Step 1: Get documents related to the user input from the database
-    related_docs = get_top5_similar_docs(embeddings, current_user)
+    related_docs = get_top5_similar_docs(embeddings, current_user, src_ids)
     print(related_docs)
 
     # Return the related documents as a HTTP response
-    return {
-        "statusCode": 200,
-        "body": json.dumps(related_docs),
-        "headers": {
-            "Content-Type": "application/json"
-        }
-    }
+    return {"result":related_docs}
+    
 
 
    

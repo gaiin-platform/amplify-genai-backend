@@ -409,12 +409,17 @@ get_category_schema = {
 process_input_schema = {
     "type": "object",
     "properties": {
-        "user_input": {
+        "userInput": {
             "type": "string",
             "description": "User input text for embedding and document retrieval."
+        },
+        "dataSources": {
+            "type": "array",
+            "description": "A list of data sources to search for related documents."
         }
+
     },
-    "required": ["user_input"]
+    "required": ["dataSources", "userInput"]
 }
 
 validators = {
