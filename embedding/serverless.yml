@@ -59,9 +59,9 @@ provider:
     VPC_CIDR: ${self:custom.stageVariables.VPC_CIDR}
     RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-rag-cluster
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
-    RAG_POSTGRES_DB_SECRET: ${self:service}-${sls:stage}-rag-postgres-db-secret
+    RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
-    SES_SECRET_ARN: aws/ses/credentials-i82Vzw
+    SES_SECRET_NAME: aws/ses/credentials
     OPENAI_API_KEY_ARN: arn:aws:secretsmanager:us-east-1:514391678313:secret:OPENAI_API_KEY-REUULJ
     EMBEDDING_MODEL_NAME: ${self:custom.stageVariables.EMBEDDING_MODEL_NAME}
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
@@ -92,7 +92,7 @@ provider:
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
-            - "arn:aws:s3:::${sls:stage}.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
 
@@ -144,7 +144,7 @@ functions:
       RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-      SES_SECRET_ARN: ${self:provider.environment.SES_SECRET_ARN}
+      SES_SECRET_NAME: ${self:provider.environment.SES_SECRET_NAME}
       SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
       ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
       EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
