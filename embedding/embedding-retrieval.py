@@ -20,13 +20,6 @@ def load_yaml_as_env(yaml_path):
     for key, value in data_loaded.items():
         os.environ[key] = str(value)
 
-yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
-load_yaml_as_env(yaml_file_path)
-
-
-
-
-
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
