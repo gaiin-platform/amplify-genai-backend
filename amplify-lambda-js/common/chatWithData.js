@@ -116,7 +116,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // Query for related information from RAG
     const {messages:ragContextMsgs, sources} = (dataSourcesInConversation.length > 0) ?
         await getContextMessages(params, chatRequestOrig, dataSourcesInConversation) :
-        [];
+        {messages:[], sources:[]};
 
     if(dataSourcesInConversation.length > 0){
         sendStateEventToStream(responseStream, {
