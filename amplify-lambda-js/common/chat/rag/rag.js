@@ -33,12 +33,6 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
             }
         });
 
-        // const data = response.data.result.map((item) => {
-        //     `From: ${keyLookup[item[1]].name}
-        //      ${item[0]}
-        //     `
-        // });
-
         const excerpts = "Possibly relevant information:\n----------------\n" + response.data.result.map((item) => {
             const [content, key, locations, indexes, charIndex, user] = item;
 
@@ -47,9 +41,22 @@ Location: ${JSON.stringify(locations)}
 Content: ${content}
 `;}).join("\n\n");
 
-        return [{role:"user", content: excerpts}];
+        const sources = response.data.result.map((item) => {
+            const [content, key, locations, indexes, charIndex, user] = item;
+            const ds = keyLookup[key].name;
+            return {
+                name: ds,
+                key,
+                locations,
+                indexes,
+                charIndex,
+                user
+            }
+        });
+
+        return {messages:[{role:"user", content: excerpts}], sources};
     }catch (e) {
         logger.error("Error getting context messages from RAG", e);
-        return [];
+        return {messages:[], sources:[]};
     }
 }

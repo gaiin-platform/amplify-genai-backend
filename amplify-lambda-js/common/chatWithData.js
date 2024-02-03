@@ -12,6 +12,8 @@ import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getContextMessages} from "./chat/rag/rag.js";
 import {ModelID, Models} from "../models/models.js";
+import {sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
+import {newStatus} from "./status.js";
 
 const logger = getLogger("chatWithData");
 
@@ -101,10 +103,29 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         }).flatMap(m => m.data.dataSources);
 
 
+    const ragStatus = newStatus({
+        inProgress: true,
+        sticky: false,
+        message: `I am looking for relevant information.`,
+        icon: "aperture",
+    });
+    if(dataSourcesInConversation.length > 0){
+        sendStatusEventToStream(responseStream, ragStatus);
+    }
+
     // Query for related information from RAG
-    const ragContextMsgs = (dataSourcesInConversation.length > 0) ?
+    const {messages:ragContextMsgs, sources} = (dataSourcesInConversation.length > 0) ?
         await getContextMessages(params, chatRequestOrig, dataSourcesInConversation) :
         [];
+
+    if(dataSourcesInConversation.length > 0){
+        sendStateEventToStream(responseStream, {
+           rag:{sources}
+        });
+
+        ragStatus.inProgress = false;
+        sendStatusEventToStream(responseStream, ragStatus);
+    }
 
     // Remove any non-standard attributes on messages
     const safeMessages = [
