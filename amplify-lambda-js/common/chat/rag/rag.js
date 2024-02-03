@@ -1,6 +1,7 @@
 import axios from "axios";
 import {getAccessToken} from "../../params.js";
 import {getLogger} from "../../logging.js";
+import {extractKey} from "../../../datasource/datasources.js";
 
 const logger = getLogger("rag");
 
@@ -13,9 +14,15 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
 
         const lastMessage = chatBody.messages.slice(-1)[0];
 
+        const keyLookup = {};
+        dataSources.forEach(ds => {
+            const key = extractKey(ds.id) + ".content.json";
+            keyLookup[key] = ds;
+        });
+
         const ragRequest = {
             data: {
-                dataSources: dataSources.map(ds => ds.id + ".content.json"),
+                dataSources: Object.keys(keyLookup),
                 userInput: lastMessage.content
             },
         }
@@ -26,16 +33,21 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
             }
         });
 
-        // keyId, src s3 key, location obj, origin indexes, charIndex, tokenCount,
-        // embedding Index, owner email, content
-        const data = JSON.parse(response.data.body).map((item) => {
-            return {
-                role: "user",
-                content: JSON.stringify(item)
-            }
-        });
+        // const data = response.data.result.map((item) => {
+        //     `From: ${keyLookup[item[1]].name}
+        //      ${item[0]}
+        //     `
+        // });
 
-        return data;
+        const excerpts = "Possibly relevant information:\n----------------\n" + response.data.result.map((item) => {
+            const [content, key, locations, indexes, charIndex, user] = item;
+
+            return `From: ${keyLookup[key].name}
+Location: ${JSON.stringify(locations)}
+Content: ${content}
+`;}).join("\n\n");
+
+        return [{role:"user", content: excerpts}];
     }catch (e) {
         logger.error("Error getting context messages from RAG", e);
         return [];
