@@ -6,6 +6,7 @@ import {getLogger} from "./common/logging.js";
 import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
+import {sendStateEventToStream} from "./common/streams.js";
 
 const logger = getLogger("router");
 
@@ -127,7 +128,11 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 assistantParams,
                 responseStream);
 
+            const now = new Date();
             const assistant = await chooseAssistantForRequest(llm, model, body, dataSources);
+            const assistantSelectionTime = new Date() - now;
+            sendStateEventToStream(responseStream, {routingTime: assistantSelectionTime});
+            sendStateEventToStream(responseStream, {assistant: assistant.name});
 
             const response = await assistant.handler(
                 llm,
