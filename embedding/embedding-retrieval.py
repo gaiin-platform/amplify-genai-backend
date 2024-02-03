@@ -8,11 +8,6 @@ from common.credentials import get_credentials, get_endpoint
 from common.validate import validated
 import logging
 
-#from dotenv import load_dotenv
-import yaml
-import os
-
-
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
@@ -87,7 +82,7 @@ def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
 
         # Create SQL query string with a placeholder for the optional src_clause and a limit
         sql_query = f"""
-            SELECT content, src, locations, orig_indexes, char_index, owner_email
+            SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count
             FROM embeddings 
             WHERE owner_email = %s
             {src_clause}
