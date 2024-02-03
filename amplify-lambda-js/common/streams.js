@@ -97,6 +97,10 @@ export const sendStatusEventToStream = (resultStream, statusEvent) => {
     resultStream.write(`data: ${JSON.stringify({s: "meta", st: statusEvent})}\n\n`);
 }
 
+export const sendStateEventToStream = (resultStream, state) => {
+    resultStream.write(`data: ${JSON.stringify({s: "meta", state: state})}\n\n`);
+}
+
 export const sendToStream = (resultStream, src, data) => {
     if(!resultStream.writableEnded) {
         resultStream.write(`data: ${JSON.stringify({s: src, ...data})}\n\n`);

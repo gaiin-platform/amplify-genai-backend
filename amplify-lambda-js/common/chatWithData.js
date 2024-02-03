@@ -1,5 +1,5 @@
 import { Writable } from 'stream';
-import {getContexts} from "../datasource/datasources.js";
+import {extractKey, getContexts} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
@@ -10,8 +10,10 @@ import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
-import OpenAI from "openai";
+import {getContextMessages} from "./chat/rag/rag.js";
 import {ModelID, Models} from "../models/models.js";
+import {sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
+import {newStatus} from "./status.js";
 
 const logger = getLogger("chatWithData");
 
@@ -93,7 +95,65 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
 }
 
 
-export const chatWithDataStateless = async (params, chatFn, chatRequest, dataSources, responseStream) => {
+export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dataSources, responseStream) => {
+
+    const dataSourcesInConversation = chatRequestOrig.messages
+        .filter( m => {
+            return m.data && m.data.dataSources
+        }).flatMap(m => m.data.dataSources);
+
+    // This is helpful later to convert a key to a data source
+    // file name and type
+    const dataSourceDetailsLookup = {};
+    dataSourcesInConversation.forEach(ds => {
+        dataSourceDetailsLookup[ds.id] = ds;
+    });
+
+
+    const ragStatus = newStatus({
+        inProgress: true,
+        sticky: false,
+        message: `I am looking for relevant information in the document${dataSourcesInConversation.length> 1? "s" : ""}.`,
+        icon: "aperture",
+    });
+    if(dataSourcesInConversation.length > 0){
+        sendStatusEventToStream(responseStream, ragStatus);
+    }
+
+    // Query for related information from RAG
+    const {messages:ragContextMsgs, sources} = (dataSourcesInConversation.length > 0) ?
+        await getContextMessages(params, chatRequestOrig, dataSourcesInConversation) :
+        {messages:[], sources:[]};
+
+    if(dataSourcesInConversation.length > 0){
+        sendStateEventToStream(responseStream, {
+          sources: {
+              rag:{
+                  sources: sources
+              }
+          }
+        });
+
+        ragStatus.inProgress = false;
+        sendStatusEventToStream(responseStream, ragStatus);
+    }
+
+    // Remove any non-standard attributes on messages
+    const safeMessages = [
+        ...chatRequestOrig.messages.map(m => {
+            return {role: m.role, content: m.content}
+        })
+    ];
+
+    // Build the chat request and insert the rag context
+    const chatRequest = {
+        ...chatRequestOrig,
+        messages: [
+            ...safeMessages.slice(0, -1),
+            ...ragContextMsgs,
+            ...safeMessages.slice(-1)
+        ]
+    };
 
     const requestId = params.requestId || ""+uuidv4();
     logger.debug(`Chat with data called with request id ${requestId}`);
@@ -184,6 +244,17 @@ export const chatWithDataStateless = async (params, chatFn, chatRequest, dataSou
             })))
             .flat()
             .map((context) => {return {...context, id: srcPrefix+"#"+context.id};})
+
+        sendStateEventToStream(responseStream, {
+            sources: {
+                documentContext: {
+                    sources:dataSources.map(s => {
+                        const name = dataSourceDetailsLookup[s.id]?.name || "";
+                        return {key:s.id, name, type: s.type};
+                    }),
+                    data:{chunkCount: contexts.length}}
+            }
+        });
     } catch (e) {
         logger.error(e);
         logger.error("Error fetching contexts: "+e);
