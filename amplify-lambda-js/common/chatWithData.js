@@ -1,5 +1,5 @@
 import { Writable } from 'stream';
-import {getContexts} from "../datasource/datasources.js";
+import {extractKey, getContexts} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
@@ -102,11 +102,18 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             return m.data && m.data.dataSources
         }).flatMap(m => m.data.dataSources);
 
+    // This is helpful later to convert a key to a data source
+    // file name and type
+    const dataSourceDetailsLookup = {};
+    dataSourcesInConversation.forEach(ds => {
+        dataSourceDetailsLookup[ds.id] = ds;
+    });
+
 
     const ragStatus = newStatus({
         inProgress: true,
         sticky: false,
-        message: `I am looking for relevant information.`,
+        message: `I am looking for relevant information in the document${dataSourcesInConversation.length> 1? "s" : ""}.`,
         icon: "aperture",
     });
     if(dataSourcesInConversation.length > 0){
@@ -120,7 +127,11 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
     if(dataSourcesInConversation.length > 0){
         sendStateEventToStream(responseStream, {
-           rag:{sources}
+          sources: {
+              rag:{
+                  sources: sources
+              }
+          }
         });
 
         ragStatus.inProgress = false;
@@ -233,6 +244,17 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             })))
             .flat()
             .map((context) => {return {...context, id: srcPrefix+"#"+context.id};})
+
+        sendStateEventToStream(responseStream, {
+            sources: {
+                documentContext: {
+                    sources:dataSources.map(s => {
+                        const name = dataSourceDetailsLookup[s.id]?.name || "";
+                        return {key:s.id, name, type: s.type};
+                    }),
+                    data:{chunkCount: contexts.length}}
+            }
+        });
     } catch (e) {
         logger.error(e);
         logger.error("Error fetching contexts: "+e);

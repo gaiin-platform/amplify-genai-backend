@@ -43,10 +43,11 @@ Content: ${content}
 
         const sources = response.data.result.map((item) => {
             const [content, key, locations, indexes, charIndex, user] = item;
-            const ds = keyLookup[key].name;
+            const ds = keyLookup[key];
             return {
-                name: ds,
+                name: ds.name,
                 key,
+                type: ds.type,
                 locations,
                 indexes,
                 charIndex,
@@ -54,7 +55,8 @@ Content: ${content}
             }
         });
 
-        return {messages:[{role:"user", content: excerpts}], sources};
+        return {
+            messages:[{role:"user", content: excerpts}], sources};
     }catch (e) {
         logger.error("Error getting context messages from RAG", e);
         return {messages:[], sources:[]};
