@@ -10,7 +10,7 @@ import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
-import OpenAI from "openai";
+import {getContextMessages} from "./chat/rag/rag.js";
 import {ModelID, Models} from "../models/models.js";
 
 const logger = getLogger("chatWithData");
@@ -93,7 +93,35 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
 }
 
 
-export const chatWithDataStateless = async (params, chatFn, chatRequest, dataSources, responseStream) => {
+export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dataSources, responseStream) => {
+
+    const dataSourcesInConversation = chatRequestOrig.messages
+        .filter( m => {
+            return m.data && m.data.dataSources
+        }).flatMap(m => m.data.dataSources);
+
+
+    // Query for related information from RAG
+    const ragContextMsgs = (dataSourcesInConversation.length > 0) ?
+        await getContextMessages(params, chatRequestOrig, dataSourcesInConversation) :
+        [];
+
+    // Remove any non-standard attributes on messages
+    const safeMessages = [
+        ...chatRequestOrig.messages.map(m => {
+            return {role: m.role, content: m.content}
+        })
+    ];
+
+    // Build the chat request and insert the rag context
+    const chatRequest = {
+        ...chatRequestOrig,
+        messages: [
+            ...safeMessages.slice(0, -1),
+            ...ragContextMsgs,
+            ...safeMessages.slice(-1)
+        ]
+    };
 
     const requestId = params.requestId || ""+uuidv4();
     logger.debug(`Chat with data called with request id ${requestId}`);
