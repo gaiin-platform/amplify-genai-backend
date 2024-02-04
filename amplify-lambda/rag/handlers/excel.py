@@ -30,8 +30,8 @@ class ExcelHandler(TextExtractionHandler):
                                 'tokens': self.num_tokens_from_string(row_text),
                                 'location': {
                                     'sheet_number': sheet_number,
-                                    'sheet_name': current_sheet.title,
-                                    'row_number': row_number
+                                    'sheet': current_sheet.title,
+                                    'row': row_number
                                 },
                                 'canSplit': False
                     })

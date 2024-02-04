@@ -20,7 +20,7 @@ class PPTXHandler(TextExtractionHandler):
                         'content': slide_text,
                         'tokens': self.num_tokens_from_string(slide_text),
                         'location': {
-                            'slide_number': slide_number
+                            'slide': slide_number
                         },
                         'canSplit': True
                     })

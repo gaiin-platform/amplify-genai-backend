@@ -42,7 +42,7 @@ class CSVHandler(TextExtractionHandler):
                     chunks.append({
                         'content': row_text,
                         'tokens': self.num_tokens_from_string(row_text),
-                        'location': {'row_number': row_number},
+                        'location': {'row': row_number},
                         'canSplit': False
                     })
 
