@@ -245,16 +245,19 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             .flat()
             .map((context) => {return {...context, id: srcPrefix+"#"+context.id};})
 
-        sendStateEventToStream(responseStream, {
-            sources: {
-                documentContext: {
-                    sources:dataSources.map(s => {
-                        const name = dataSourceDetailsLookup[s.id]?.name || "";
-                        return {key:s.id, name, type: s.type};
-                    }),
-                    data:{chunkCount: contexts.length}}
-            }
-        });
+        if(contexts.length > 0) {
+            sendStateEventToStream(responseStream, {
+                sources: {
+                    documentContext: {
+                        sources: dataSources.map(s => {
+                            const name = dataSourceDetailsLookup[s.id]?.name || "";
+                            return {key: s.id, name, type: s.type};
+                        }),
+                        data: {chunkCount: contexts.length}
+                    }
+                }
+            });
+        }
     } catch (e) {
         logger.error(e);
         logger.error("Error fetching contexts: "+e);

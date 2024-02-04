@@ -23,7 +23,8 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
         const ragRequest = {
             data: {
                 dataSources: Object.keys(keyLookup),
-                userInput: lastMessage.content
+                userInput: lastMessage.content,
+                limit: 10
             },
         }
 
@@ -51,7 +52,8 @@ Content: ${content}
                 locations,
                 indexes,
                 charIndex,
-                user
+                user,
+                content
             }
         });
 
