@@ -27,7 +27,7 @@ class PDFHandler(TextExtractionHandler):
                 chunk = {
                         'content': text,
                         'tokens': self.num_tokens_from_string(text),
-                        'location': {'page': page_number},
+                        'location': {'page_number': page_number},
                         'canSplit': True
                 }
                 chunks.append(chunk)

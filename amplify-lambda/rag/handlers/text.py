@@ -35,7 +35,7 @@ class TextExtractionHandler:
                     'content': line,
                     'tokens': self.num_tokens_from_string(line),
                     'location': {
-                        'line': line_num
+                        'line_number': line_num
                     },
                     'canSplit': True
                 })
