@@ -416,6 +416,10 @@ process_input_schema = {
         "dataSources": {
             "type": "array",
             "description": "A list of data sources to search for related documents."
+        },
+        "limit": {
+            "type": "integer",
+            "description": "The maximum number of documents to return."
         }
 
     },

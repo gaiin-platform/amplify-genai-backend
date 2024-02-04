@@ -8,18 +8,6 @@ from common.credentials import get_credentials, get_endpoint
 from common.validate import validated
 import logging
 
-#from dotenv import load_dotenv
-import yaml
-import os
-# Function to convert YAML content to .env format and load it
-def load_yaml_as_env(yaml_path):
-    with open(yaml_path, 'r') as stream:
-        data_loaded = yaml.safe_load(stream)
-
-    # Convert YAML dictionary to .env format (KEY=VALUE)
-    for key, value in data_loaded.items():
-        os.environ[key] = str(value)
-
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
@@ -66,7 +54,7 @@ def get_embeddings(text):
         raise
 
 
-def get_top5_similar_docs(query_embedding, current_user, src_ids=None):
+def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
     with get_db_connection() as conn:
         # Register pgvector extension
         register_vector(conn)
@@ -90,22 +78,25 @@ def get_top5_similar_docs(query_embedding, current_user, src_ids=None):
             query_params.append(src_ids_array)
         
         query_params.append(embedding_literal)
+        query_params.append(limit)  # Append the limit to the query parameters
 
-        # Create SQL query string with a placeholder for the optional src_clause
+        # Create SQL query string with a placeholder for the optional src_clause and a limit
         sql_query = f"""
-            SELECT content, src, locations, orig_indexes, char_index, owner_email
+            SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count
             FROM embeddings 
             WHERE owner_email = %s
             {src_clause}
             ORDER BY vector_embedding <=> %s 
-            LIMIT 5
+            LIMIT %s  -- Use a placeholder for the limit
         """
 
         cur.execute(sql_query, query_params)
-        top5_docs = cur.fetchall()
+        top_docs = cur.fetchall()
         
-    print(top5_docs)
-    return top5_docs
+    print(top_docs)
+    return top_docs
+
+# Rest of your code...
 
 
 
@@ -114,13 +105,14 @@ def process_input_with_retrieval(event, context, current_user, name, data):
     data = data['data']
     user_input = data['userInput']
     src_ids = data['dataSources']
+    limit = data['limit']
 
     # Rest of your function ...
     embeddings = get_embeddings(user_input)
     print(f"This is some of my embeddings - {embeddings}")
 
     # Step 1: Get documents related to the user input from the database
-    related_docs = get_top5_similar_docs(embeddings, current_user, src_ids)
+    related_docs = get_top_similar_docs(embeddings, current_user, src_ids, limit)
     print(related_docs)
 
     # Return the related documents as a HTTP response
