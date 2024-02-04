@@ -34,6 +34,8 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
             }
         });
 
+        logger.debug("RAG result total", response.data.length);
+
         const excerpts = "Possibly relevant information:\n----------------\n" + response.data.result.map((item) => {
             const [content, key, locations, indexes, charIndex, user] = item;
 
