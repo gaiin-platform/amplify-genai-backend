@@ -97,10 +97,10 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
 
 export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dataSources, responseStream) => {
 
-    const dataSourcesInConversation = chatRequestOrig.messages
+    const dataSourcesInConversation = [...dataSources, ...chatRequestOrig.messages
         .filter( m => {
             return m.data && m.data.dataSources
-        }).flatMap(m => m.data.dataSources);
+        }).flatMap(m => m.data.dataSources)];
 
     // This is helpful later to convert a key to a data source
     // file name and type
@@ -113,19 +113,19 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     const ragStatus = newStatus({
         inProgress: true,
         sticky: false,
-        message: `I am looking for relevant information in the document${dataSourcesInConversation.length> 1? "s" : ""}.`,
+        message: "I am searching for relevant information.",
         icon: "aperture",
     });
-    if(dataSourcesInConversation.length > 0){
+    if(dataSourcesInConversation.length > 0 && !params.options.skipRag){
         sendStatusEventToStream(responseStream, ragStatus);
     }
 
     // Query for related information from RAG
-    const {messages:ragContextMsgs, sources} = (dataSourcesInConversation.length > 0) ?
-        await getContextMessages(params, chatRequestOrig, dataSourcesInConversation) :
+    const {messages:ragContextMsgs, sources} = (dataSourcesInConversation.length > 0 && !params.options.skipRag) ?
+        await getContextMessages(chatFn, params, chatRequestOrig, dataSourcesInConversation) :
         {messages:[], sources:[]};
 
-    if(dataSourcesInConversation.length > 0){
+    if(dataSourcesInConversation.length > 0 && !params.options.skipRag){
         sendStateEventToStream(responseStream, {
           sources: {
               rag:{
@@ -237,34 +237,38 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // context window of whatever model we are using. Each chunk becomes a "context" and we will prompt
     // against each context in a separate request to the LLM.
     let contexts = []
-    try{
-        contexts = (await Promise.all(
-            dataSources.map(dataSource => {
-                return getContexts(tokenCounter.countTokens, dataSource, maxTokens, options);
-            })))
-            .flat()
-            .map((context) => {return {...context, id: srcPrefix+"#"+context.id};})
+    if(!params.options.ragOnly) {
+        try {
+            contexts = (await Promise.all(
+                dataSources.map(dataSource => {
+                    return getContexts(tokenCounter.countTokens, dataSource, maxTokens, options);
+                })))
+                .flat()
+                .map((context) => {
+                    return {...context, id: srcPrefix + "#" + context.id};
+                })
 
-        if(contexts.length > 0) {
-            sendStateEventToStream(responseStream, {
-                sources: {
-                    documentContext: {
-                        sources: dataSources.map(s => {
-                            const name = dataSourceDetailsLookup[s.id]?.name || "";
-                            return {key: s.id, name, type: s.type};
-                        }),
-                        data: {chunkCount: contexts.length}
+            if (contexts.length > 0) {
+                sendStateEventToStream(responseStream, {
+                    sources: {
+                        documentContext: {
+                            sources: dataSources.map(s => {
+                                const name = dataSourceDetailsLookup[s.id]?.name || "";
+                                return {key: s.id, name, type: s.type};
+                            }),
+                            data: {chunkCount: contexts.length}
+                        }
                     }
-                }
-            });
+                });
+            }
+        } catch (e) {
+            logger.error(e);
+            logger.error("Error fetching contexts: " + e);
+            return {
+                statusCode: 404,
+                body: {error: "Data source not found."}
+            };
         }
-    } catch (e) {
-        logger.error(e);
-        logger.error("Error fetching contexts: "+e);
-        return {
-            statusCode: 404,
-            body: {error: "Data source not found."}
-        };
     }
 
     if(contexts.length === 0){

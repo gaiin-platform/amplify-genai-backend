@@ -1,5 +1,7 @@
 
-
+// This needs to be refactored into a class and all
+// of the places that use params need to be updated
+//
 // const assistantParams = {
 //     account: {
 //         user: params.user,
@@ -17,6 +19,10 @@ export const getRequestId = (params) => {
 
 export const getModel = (params) => {
     return params.model;
+}
+
+export const setModel = (params, model) => {
+    return {...params, model};
 }
 
 export const getOptions = (params) => {
