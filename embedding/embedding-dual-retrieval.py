@@ -105,7 +105,7 @@ def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
 
             # Create SQL query string with a placeholder for the optional src_clause and a limit
             sql_query = f"""
-                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count
+                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id
                 FROM embeddings 
                 WHERE owner_email = %s
                 {src_clause}
@@ -152,7 +152,7 @@ def get_top_similar_ft_docs(user_input, current_user, src_ids=None, limit=5):
             print(f"Here is the query params {query_params}")
             # Create SQL query string with a placeholder for the optional src_clause and a limit
             sql_query = f"""
-                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count,
+                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id
                     ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', %s)) AS text_rank
                 FROM embeddings 
                 WHERE owner_email = %s
@@ -184,8 +184,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     # Step 1: Get documents related to the user input from the database
     related_docs = get_top_similar_docs(embeddings, current_user, src_ids, limit)
     related_ft_docs = get_top_similar_ft_docs(user_input, current_user, src_ids, limit)
-    print(f"Here are the related vecotr {related_docs}")
-    print(f"Here are the related full text docs {related_ft_docs}")
+    related_docs.extend(related_ft_docs)
 
     # Return the related documents as a HTTP response
     return {"result":related_docs}
