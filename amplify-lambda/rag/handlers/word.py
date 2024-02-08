@@ -24,9 +24,9 @@ class DOCXHandler(TextExtractionHandler):
                     'content': paragraph.text,
                     'tokens': self.num_tokens_from_string(paragraph.text),
                     'location': {
-                        'section_index': current_section_index,
-                        'paragraph_index': i,
-                        'section_header': section_headers.get(current_section_index, '')
+                        'section_number': current_section_index,
+                        'paragraph_number': i,
+                        'section_title': section_headers.get(current_section_index, '')
                     },
                     'canSplit': True
                 }

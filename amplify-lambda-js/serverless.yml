@@ -23,6 +23,7 @@ provider:
   environment:
     AZURE_OPENAI_RESOURCE_NAME: openai
     RAG_ENDPOINT: ${self:custom.stageVariables.RAG_ENDPOINT}
+    RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
     LLM_ENDPOINTS_SECRETS_NAME: openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
