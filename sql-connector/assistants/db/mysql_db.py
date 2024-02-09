@@ -74,6 +74,20 @@ class DatabaseConnection:
 
         return schema_info
 
+    # this function only allows SELECT queries, no other types
+    def execute_query(self, sql_query):
+        if not sql_query.strip().lower().startswith("select"):
+            raise ValueError("Only SELECT queries are allowed.")
+        try:
+            with self.connection.cursor(dictionary=True) as cursor:
+                cursor.execute(sql_query)
+                result = cursor.fetchall()
+                # Assuming 'cursor.description' holds column headers
+                columns = [desc[0] for desc in cursor.description]
+                return {"columns": columns, "rows": result}
+        except Exception as e:
+            logging.error(f"Error executing query: {sql_query}, Error: {e}")
+            raise
 
 def get_connection():
     return DatabaseConnection(
