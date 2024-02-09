@@ -114,4 +114,7 @@ permissions_by_state_type = {
   "/embedding-retrieval": {
     "retrieval": can_publish_item
   },
+  "/embedding-dual-retrieval": {
+    "dual-retrieval": can_publish_item
+  }
 }
