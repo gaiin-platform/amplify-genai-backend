@@ -426,6 +426,26 @@ process_input_schema = {
     "required": ["dataSources", "userInput"]
 }
 
+dual_retrieval_schema = {
+    "type": "object",
+    "properties": {
+        "userInput": {
+            "type": "string",
+            "description": "User input text for embedding and document retrieval."
+        },
+        "dataSources": {
+            "type": "array",
+            "description": "A list of data sources to search for related documents."
+        },
+        "limit": {
+            "type": "integer",
+            "description": "The maximum number of documents to return."
+        }
+
+    },
+    "required": ["dataSources", "userInput"]
+}
+
 validators = {
     "/state/share": {
         "append": share_schema,
@@ -493,7 +513,10 @@ validators = {
     },
     "/embedding-retrieval": {
         "retrieval": process_input_schema 
-    }
+    },
+    "/embedding-dual-retrieval": {
+        "retrieval": dual_retrieval_schema
+        }
 }
 
 
