@@ -49,8 +49,8 @@ def execute_sql_query(event, context, current_user, name, data):
     :param data: data passed by the client in the foramt {data:{...}}
     :return:
     """
-    data = data['data']
-    model = data.get("model",None)
+    data = data["data"]
+    model = data.get("model", None)
     user_prompt = data.get("task")
     return query_db(model, current_user, user_prompt)
 
@@ -81,6 +81,7 @@ def query_db(model, current_user, user_prompt):
     :return:
     """
     print(f"current_user: {current_user}")
+    rows_per_page = 300
 
     max_retries = 3
     try:
@@ -89,20 +90,46 @@ def query_db(model, current_user, user_prompt):
 
         with get_connection() as db_connection:
             schema_info = db_connection.fetch_schema_info()
+            print(f"Schema: {schema_info}")
 
             for attempt in range(max_retries):
                 try:
-                    print(f"Attempt {attempt + 1} of {max_retries} to generate SQL query.")
-                    sql_query = generate_sql_query(model, user_prompt, schema_info, current_user)
+                    print(
+                        f"Attempt {attempt + 1} of {max_retries} to generate SQL query."
+                    )
+                    sql_query = generate_sql_query(
+                        model, user_prompt, schema_info, current_user
+                    )
                     print(f"Generated SQL query: {sql_query}")
 
                     cleaned_sql_query = clean_sql_query(sql_query)
                     print(f"Cleaned SQL query: {cleaned_sql_query}")
 
                     result = db_connection.execute_query(cleaned_sql_query)
-                    print(f"The result had {len(result)} rows.")
+                    total_rows = len(result["rows"])
+                    total_pages = (
+                        total_rows + rows_per_page - 1
+                    ) // rows_per_page  # Calculate total pages needed
+                    print(f"The result had {total_rows} rows.")
 
-                    return {"result": result}
+                    # Assuming you need to paginate the 'rows' part of the result
+                    paginated_rows = result["rows"][
+                        :rows_per_page
+                    ]  # Modify this as needed for dynamic paging
+                    formatted_result = {
+                        "data": paginated_rows,
+                        "pagination": {
+                            "currentPage": 1,
+                            "totalRows": total_rows,
+                            "totalPages": total_pages,
+                            "rowsPerPage": rows_per_page,
+                        },
+                        "columns": result[
+                            "columns"
+                        ],  # Include column names in the response
+                    }
+                    print(formatted_result)
+                    return formatted_result
                 except Exception as e:
                     logging.error(f"Attempt {attempt + 1} failed: {e}")
                     if attempt == max_retries - 1:

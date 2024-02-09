@@ -57,7 +57,12 @@ class DatabaseConnection:
 
             return schema_info
 
+    # TODO: implement the changes that are in the same function in mysql_db.py
+    # These changes are:
+    # 1. only sent SELECT queries
+    # 2. return data AND columns
 
+    # Should be able to copy the function directly from sql-connector/assistants/db/mysql_db.py
     def execute_query(self, sql_query):
         cursor = self.connection.cursor()
         try:
@@ -74,7 +79,6 @@ class DatabaseConnection:
             cursor.close()
             logging.error(f"Error executing query:\n{sql_query}\nException: {e}")
             raise
-
 
 
 def load_db(conn, directory):
