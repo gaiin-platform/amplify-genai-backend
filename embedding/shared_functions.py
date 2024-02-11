@@ -52,7 +52,7 @@ def generate_embeddings(content):
     api_version = api_version
 )
     try:
-        print(f"Getting embeddings for: {content}")
+        #print(f"Getting embeddings for: {content}")
         response = client.embeddings.create(input=content, model=embedding_model_name)
         return response.data[0].embedding
     except Exception as e:
@@ -79,10 +79,10 @@ def generate_keywords(content):
             max_tokens=10,
             temperature=0
         )
-        print(response)
+      
         raw_keywords = response.choices[0].message.content.strip()
         keywords = clean_text(raw_keywords)
-        print(f"Keywords: {keywords}")
+        #print(f"Keywords: {keywords}")
         return {
             "statusCode": 200,
             "body": {

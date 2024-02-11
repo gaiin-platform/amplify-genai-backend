@@ -142,7 +142,7 @@ def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5)
             # Append the limit to the query parameters
             query_params.append(limit)
             
-            print(f"Here are the query params {query_params}")
+            #print(f"Here are the query params {query_params}")
             # Create SQL query string with a placeholder for the optional src_clause and a limit
             sql_query = f"""
                 SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id,
