@@ -8,22 +8,6 @@ import boto3
 import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 
-###Local Vars Remove Before Commit
-import yaml
-import os
- #Function to convert YAML content to .env format and load it
-def load_yaml_as_env(yaml_path):
-    with open(yaml_path, 'r') as stream:
-        data_loaded = yaml.safe_load(stream)
-
-    # Convert YAML dictionary to .env format (KEY=VALUE)
-    for key, value in data_loaded.items():
-        os.environ[key] = str(value)
-
-yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
-load_yaml_as_env(yaml_file_path)
-###Local Vars Remove Before Commit
-
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -33,6 +17,11 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
 
+  #Get embedding token count from tiktoken
+def num_tokens_from_text(content, embedding_model_name):
+    encoding = tiktoken.encoding_for_model(embedding_model_name)
+    num_tokens = len(encoding.encode(content))
+    return num_tokens
 
 
 def clean_text(text):
@@ -42,9 +31,17 @@ def clean_text(text):
     cleaned_text = re.sub(r'\s+', ' ', text_without_punctuation)
     return cleaned_text.strip()
 
+def preprocess_text(text):
+    # Remove punctuation and other non-word characters
+    cleaned_text = re.sub(r'[^\w\s]', ' ', text)
+    # Split the text into words based on whitespace
+    words = cleaned_text.split()
+    # Join the words with a space, a | symbol, and another space
+    return ' | '.join(words)
 
 
-def get_embeddings(user_input):
+
+def generate_embeddings(content):
     print(f"Getting Embedding Endpoints")
     endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
     print(f"Endpoint: {endpoint}")
@@ -55,8 +52,8 @@ def get_embeddings(user_input):
     api_version = api_version
 )
     try:
-        #print(f"Getting embeddings for: {text}")
-        response = client.embeddings.create(input=user_input, model=embedding_model_name)
+        print(f"Getting embeddings for: {content}")
+        response = client.embeddings.create(input=content, model=embedding_model_name)
         return response.data[0].embedding
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -64,7 +61,7 @@ def get_embeddings(user_input):
         raise
 
 
-def generate_keywords(user_input):
+def generate_keywords(content):
     print(f"Getting Keywords Endpoints")
     endpoint, api_key = get_endpoint(keyword_model_name, endpoints_arn)
     print(f"Endpoint: {endpoint}")
@@ -77,8 +74,8 @@ def generate_keywords(user_input):
     try:
         response = client.chat.completions.create(
             model=keyword_model_name,
-            messages=[{"role": "system", "content": "You are an assistant that helps extract keywords from a given text. You can only respone with 4 total words. Provide output as a csv"},
-                     {"role": "user", "content": f"Please extract 3 keywords from the following text. Please return it in the following format --- dog cat word:\n\n{user_input}"}],
+            messages=[{"role": "system", "content": "You are an assistant that helps extract keywords from a given text. Create a complete but concise representation Provide output in the following format ('word1 word2 word3 word4 word5') "},
+                     {"role": "user", "content": f"Please extract keywords from the following text. #######:\n\n{content}"}],
             max_tokens=10,
             temperature=0
         )
@@ -102,9 +99,11 @@ def generate_keywords(user_input):
                 "error": f"An error occurred: {str(e)}"
             }
         }
-def generate_questions(user_input, model_name, max_tokens):
+def generate_questions(content):
 
+    print(f"Getting QA Endpoints")
     endpoint, api_key = get_endpoint(qa_model_name, endpoints_arn)
+    print(f"Endpoint: {endpoint}")
 
     client = AzureOpenAI(
     api_key = api_key,
@@ -112,13 +111,15 @@ def generate_questions(user_input, model_name, max_tokens):
     api_version = api_version
 )
     try:
-        response = client.completions.create(
+        response = client.chat.completions.create(
             model=qa_model_name,
-            prompt=f"Please create a list of detailed questions that could be answered by the following text:\n\n{user_input}",
-            max_tokens=max_tokens,
-            temperature=0.7,
+            messages=[{"role": "system", "content": "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."},
+                     {"role": "user", "content": content}],
+            max_tokens=500,
+            temperature=.7
         )
-        questions = response.choices[0].text.strip()
+        questions = response.choices[0].message.content.strip()
+        #print(f"Questions: {questions}")
 
         return {
             "statusCode": 200,
