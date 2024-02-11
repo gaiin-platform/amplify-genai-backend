@@ -9,6 +9,8 @@ import smtplib
 from email.message import EmailMessage
 import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
+
+from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
 import urllib.parse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,25 +27,13 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['ENDPOINTS_ARN']
 
-endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
-
 pg_password = get_credentials(rag_pg_password)
-
 
 ses_credentials = get_json_credetials(ses_secret)
 
 #initially set db_connection to none/closed 
 db_connection = None
 
-
-print(f"This call used Endpoint URL {endpoint}")
-
-# Azure OpenAI client
-client = AzureOpenAI(
-    api_key = api_key,
-    azure_endpoint = endpoint,
-    api_version = "2023-05-15"
-)
 
 # Function to establish a database connection
 def get_db_connection():
@@ -93,34 +83,22 @@ def send_completion_email(owner_email, src, success=True):
         raise e
     
     #Get embedding token count from tiktoken
-def num_tokens_from_text(content, embedding_model_name):
-    encoding = tiktoken.encoding_for_model(embedding_model_name)
-    num_tokens = len(encoding.encode(content))
-    return num_tokens
+
     
-def generate_embeddings(text, model=embedding_model_name):
-    """Generates embeddings for the given text using the specified model."""
-    try:
-        response = client.embeddings.create(input=text, model=model)
-        return response.data[0].embedding
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        # Optionally, re-raise the exception if you want it to propagate
-        raise
 
 def extract_email_from_src(src):
     # Split the src string on the forward slash and take the first part
     email_address = src.split('/')[0] if '/' in src else src
     return email_address
 
-def insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, cursor):
+def insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, qa_vector_embedding, cursor):
     insert_query = """
-    INSERT INTO embeddings (src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding)
+    INSERT INTO embeddings (src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, qa_vector_embedding)
     
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
     try:
-        cursor.execute(insert_query, (src, Json(locations), Json(orig_indexes), char_index, token_count, embedding_index, owner_email, content, vector_embedding))
+        cursor.execute(insert_query, (src, Json(locations), Json(orig_indexes), char_index, token_count, embedding_index, owner_email, content, vector_embedding, qa_vector_embedding))
         logging.info(f"Data inserted into the database for content: {content[:30]}...")  # Log first 30 characters of content
     except psycopg2.Error as e:
         logging.error(f"Failed to insert data into the database: {e}")
@@ -134,7 +112,8 @@ def lambda_handler(event, context):
     # Extract bucket name and file key from the S3 event
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     url_encoded_key = event['Records'][0]['s3']['object']['key']
-    
+
+
     #Print the bucket name and key for debugging purposes
     print(f"url_key={url_encoded_key}")
     
@@ -208,14 +187,29 @@ def embed_chunks(data, db_connection):
                 char_index = chunk['char_index']
                 embedding_index += 1
                 
-                # Generate embeddings for the content
+
                 vector_embedding = generate_embeddings(content)
+
+                response = generate_questions(content)
+                if response["statusCode"] == 200:
+                    qa_summary = response["body"]["questions"]
+                    
+                else:
+                    # If there was an error, you can handle it accordingly.
+                    error = response["body"]["error"]
+                    print(f"Error occurred: {error}")  
+                qa_vector_embedding = generate_embeddings(content=qa_summary)
+            
                 
                 # Calculate token count for the content
-                token_count = num_tokens_from_text(content, embedding_model_name)
+                vector_token_count = num_tokens_from_text(content, embedding_model_name)
+                qa_summary_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
+                token_count = vector_token_count + qa_summary_token_count
+               
+
                 
                 # Insert data into the database
-                insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, cursor)
+                insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, qa_vector_embedding, cursor)
                 ()
                 # Commit the transaction
                 db_connection.commit()
