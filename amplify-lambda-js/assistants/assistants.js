@@ -146,6 +146,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
             icon: "assistant",
             sticky: true
         }));
+    llm.forceFlush();
 
     return selected;
 }

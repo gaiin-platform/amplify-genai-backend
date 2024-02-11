@@ -12,7 +12,7 @@ import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getContextMessages} from "./chat/rag/rag.js";
 import {ModelID, Models} from "../models/models.js";
-import {sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
+import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
 
 const logger = getLogger("chatWithData");
@@ -118,6 +118,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     });
     if(dataSourcesInConversation.length > 0 && !params.options.skipRag){
         sendStatusEventToStream(responseStream, ragStatus);
+        forceFlush(responseStream);
     }
 
     // Query for related information from RAG
@@ -136,6 +137,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
         ragStatus.inProgress = false;
         sendStatusEventToStream(responseStream, ragStatus);
+        forceFlush(responseStream);
     }
 
     // Remove any non-standard attributes on messages
