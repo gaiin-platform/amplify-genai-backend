@@ -24,9 +24,36 @@ CREATE TABLE IF NOT EXISTS embeddings (
     embedding_index INTEGER,
     owner_email VARCHAR(255),
     content TEXT,
-    vector_embedding vector(1536)
+    vector_embedding vector(1536),
+    qa_vector_embedding vector(1536)
+    content_tsvector TSVECTOR
+
 );
 """
+
+# Create Indexes
+create INDEX on embeddings USING hnsw (vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
+
+## Create a trigger function: This function will be called whenever a row is inserted or updated in your table.
+CREATE OR REPLACE FUNCTION update_tsvector_column() RETURNS trigger AS $$
+BEGIN
+  NEW.content_tsvector := to_tsvector('english', coalesce(NEW.content, ''));
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+# Create a trigger: The trigger will associate your table with the trigger function you've just defined, specifying that it should be fired before an insert or update operation.
+CREATE TRIGGER content_vector_update BEFORE INSERT OR UPDATE
+ON embeddings FOR EACH ROW EXECUTE FUNCTION update_tsvector_column();
+
+
+# Create Index on tsvector column
+CREATE INDEX content_vector_idx ON embeddings USING GIN (content_tsvector);
+
+
+
+
+
 # Establish a connection to the database
 try:
     conn = psycopg2.connect(**db_params)
