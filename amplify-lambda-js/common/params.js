@@ -29,6 +29,10 @@ export const getOptions = (params) => {
     return params.options;
 }
 
+export const setUser = (params, user) => {
+    return {...params, account:{user}};
+}
+
 export const getUser = (params) => {
     return params.account.user;
 }
