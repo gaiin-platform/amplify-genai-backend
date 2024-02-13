@@ -50,7 +50,7 @@ def generate_embeddings(content):
     api_key = api_key,
     azure_endpoint = endpoint,
     api_version = api_version
-)
+    )
     try:
         #print(f"Getting embeddings for: {content}")
         response = client.embeddings.create(input=content, model=embedding_model_name)
@@ -130,6 +130,7 @@ def generate_questions(content):
 
 
     except Exception as e:
+        print(f"An error occurred: {e}")
         # Handle other errors
         return {
             "statusCode": 500,

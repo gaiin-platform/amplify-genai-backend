@@ -181,38 +181,42 @@ def embed_chunks(data, db_connection):
         with db_connection.cursor() as cursor:
             # Extract the 'content' field from each chunk
             for chunk in chunks:
-                content = chunk['content']
-                locations = chunk['locations']
-                orig_indexes = chunk['indexes']
-                char_index = chunk['char_index']
-                embedding_index += 1
-                
+                try:
+                    content = chunk['content']
+                    locations = chunk['locations']
+                    orig_indexes = chunk['indexes']
+                    char_index = chunk['char_index']
+                    embedding_index += 1
 
-                vector_embedding = generate_embeddings(content)
 
-                response = generate_questions(content)
-                if response["statusCode"] == 200:
-                    qa_summary = response["body"]["questions"]
-                    
-                else:
-                    # If there was an error, you can handle it accordingly.
-                    error = response["body"]["error"]
-                    print(f"Error occurred: {error}")  
-                qa_vector_embedding = generate_embeddings(content=qa_summary)
-            
-                
-                # Calculate token count for the content
-                vector_token_count = num_tokens_from_text(content, embedding_model_name)
-                qa_summary_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
-                token_count = vector_token_count + qa_summary_token_count
-               
+                    vector_embedding = generate_embeddings(content)
 
-                
-                # Insert data into the database
-                insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, qa_vector_embedding, cursor)
-                ()
-                # Commit the transaction
-                db_connection.commit()
+                    response = generate_questions(content)
+                    if response["statusCode"] == 200:
+                        qa_summary = response["body"]["questions"]
+
+                    else:
+                        # If there was an error, you can handle it accordingly.
+                        error = response["body"]["error"]
+                        print(f"Error occurred: {error}")
+                    qa_vector_embedding = generate_embeddings(content=qa_summary)
+
+
+                    # Calculate token count for the content
+                    vector_token_count = num_tokens_from_text(content, embedding_model_name)
+                    qa_summary_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
+                    token_count = vector_token_count + qa_summary_token_count
+
+
+                    # Insert data into the database
+                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, owner_email, content, vector_embedding, qa_vector_embedding, cursor)
+                    ()
+                    # Commit the transaction
+                    db_connection.commit()
+                except Exception as e:
+                    logging.error(f"An error occurred embedding chunk index: {embedding_index}")
+                    logging.error(f"An error occurred during the embedding process: {e}")
+
                 
         return True, owner_email, src  # Return True and owner_email if the process completes successfully
     except Exception as e:
