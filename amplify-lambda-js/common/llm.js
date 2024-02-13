@@ -10,6 +10,26 @@ import {
 import {chat} from "../azure/openai.js";
 import {transform} from "./chat/events/openaifn.js";
 import {parseValue} from "./incrementalJsonParser.js";
+import {setModel, setUser} from "./params.js";
+import {getLLMConfig} from "./secrets.js";
+
+
+export const getDefaultLLM = async (model, stream=null, user="default") => {
+    const chatFn = async (body, writable, context) => {
+        return await chat(getLLMConfig, body, writable, context);
+    }
+
+    let params = {
+        account: {
+            user
+        },
+        options: {
+            model
+        }
+    };
+
+    return new LLM(chatFn, params, stream);
+}
 
 export class LLM {
 
@@ -28,6 +48,10 @@ export class LLM {
         };
     }
 
+    setModel(model){
+        setModel(this.params, model);
+    }
+
     /**
      * Sets the source that outputs for this LLM will be sent to in the response stream.
      *
@@ -35,6 +59,44 @@ export class LLM {
      */
     setSource(source){
         this.params.options = {...this.params.options, source};
+    }
+
+    /**
+     * Extracts data from a string based on a list of prefixes. Each
+     * prefix should start a line in the input string. This is used to
+     * parse output from the LLM of the form:
+     *
+     * XYZ: some value
+     * QRS: another value
+     * TUV: yet another value
+     *
+     * and would return:
+     *
+     * {"XYZ": "some value", "QRS": "another value", "TUV": "yet another value"}
+     *
+     * In this case, the prefixes would be ["XYZ", "QRS", "TUV"] (":" is added automatically)
+     *
+     * You can prompt the llm and instruct it to output a plan, etc. with specific prefixes
+     * at the start of lines. You can then use this function to extract the data from the
+     * response.
+     *
+     * @param inputString
+     * @param prefixes
+     * @returns {{}}
+     */
+    prefixesToData(inputString, prefixes) {
+        const lines = inputString.split('\n');
+        const result = {};
+
+        lines.forEach((line) => {
+            prefixes.forEach((prefix) => {
+                if (line.startsWith(prefix+":" )) {
+                    result[prefix] = line.substring(prefix.length + 1).trim();
+                }
+            });
+        });
+
+        return result;
     }
 
     /**
@@ -157,6 +219,37 @@ export class LLM {
         const result = await this.promptForFunctionCallStreaming(body, functions, function_call, dataSources, resultCollector);
 
         return result['arguments'];
+    }
+
+    async promptForPrefixData(body, prefixes, dataSources = [], targetStream = this.responseStream, checker=(result)=>true, retries = 3) {
+        const updatedChatBody = {
+            ...this.defaultBody,
+            ...body,
+            options: {
+                ...(this.params.options || {}),
+                ...(body.options || {}),
+            }
+        };
+
+        const doPrompt = async () => {
+
+            const resultCollector = new StreamResultCollector();
+
+            await this.prompt(updatedChatBody, dataSources, resultCollector);
+
+            const result = findResult(resultCollector.result);
+            const data = this.prefixesToData(result, prefixes);
+            return data;
+        }
+
+        for(let i = 0; i < retries; i++){
+            const data = await doPrompt();
+            if(!checker || checker(data)){
+                return data;
+            }
+        }
+
+        return {};
     }
 
     // functions: [{name:'', description:'', parameters: schema}]

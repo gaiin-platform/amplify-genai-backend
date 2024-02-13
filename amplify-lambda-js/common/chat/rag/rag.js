@@ -84,8 +84,6 @@ export const getContextMessages = async (chatFn, params, chatBody, dataSources) 
 
         const ragDataSourceKeys = Object.keys(keyLookup);
 
-
-
         const ragLLMParams = setModel(params, Models[process.env.RAG_ASSISTANT_MODEL_ID]);
 
         const llm = new LLM(
