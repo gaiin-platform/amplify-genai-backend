@@ -58,7 +58,7 @@ def get_top_similar_qas(query_embedding, current_user, src_ids=None, limit=5):
             sql_query = f"""
                 SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id, ((qa_vector_embedding <#> '{embedding_literal}') * -1) AS distance
                 FROM embeddings 
-                WHERE owner_email = '{current_user}' and ((qa_vector_embedding <#> '{embedding_literal}') * -1) > .69
+                WHERE owner_email = '{current_user}' --and ((qa_vector_embedding <#> '{embedding_literal}') * -1) > .69
                 AND src = ANY('{src_ids_array}')
                 ORDER BY distance DESC  -- Order by distance for ordering  
                 LIMIT {limit}  -- Use a placeholder for the limit
@@ -107,7 +107,7 @@ def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
             sql_query = f"""
                 SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id, ((vector_embedding <#> '{embedding_literal}') * -1) AS distance
                 FROM embeddings 
-                WHERE owner_email = '{current_user}' and ((vector_embedding <#> '{embedding_literal}') * -1) > .69
+                WHERE owner_email = '{current_user}' --and ((vector_embedding <#> '{embedding_literal}') * -1) > .69
                 AND src = ANY('{src_ids_array}')
                 ORDER BY distance DESC  -- Order by distance for ordering  
                 LIMIT {limit}  -- Use a placeholder for the limit
@@ -149,7 +149,7 @@ def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5)
                     ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace('{input_keywords}',' ','|'))) AS text_rank
                     
                 FROM embeddings 
-                WHERE owner_email = '{current_user}' and ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace('{input_keywords}',' ','|'))) > .6
+                WHERE owner_email = '{current_user}' --and ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace('{input_keywords}',' ','|'))) > .6
                 AND to_tsvector('english', content) @@ to_tsquery('english', replace('{input_keywords}',' ','|'))
                 AND src = ANY('{src_ids_array}')
                 ORDER BY text_rank DESC  -- Order by text rank for ordering
