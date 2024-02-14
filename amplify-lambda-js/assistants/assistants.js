@@ -2,6 +2,8 @@ import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
+import {documentSearchAssistant} from "./statemachine/states.js";
+import {reportWriterAssistant} from "./reportWriter.js";
 
 const logger = getLogger("assistants");
 
@@ -24,7 +26,9 @@ const defaultAssistant = {
 
 export const defaultAssistants = [
     defaultAssistant,
+    //reportWriterAssistant,
     csvAssistant,
+    //documentSearchAssistant
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {
@@ -104,9 +108,9 @@ export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, a
 
 export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {
 
-    if (!dataSources || dataSources.length === 0) {
-        return [defaultAssistant];
-    }
+    // if (!dataSources || dataSources.length === 0) {
+    //     return [defaultAssistant];
+    // }
 
     return assistants.filter((assistant) => {
         return assistant.handlesDataSources(dataSources) && assistant.handlesModel(model);

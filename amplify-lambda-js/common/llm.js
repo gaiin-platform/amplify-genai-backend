@@ -14,7 +14,7 @@ import {setModel, setUser} from "./params.js";
 import {getLLMConfig} from "./secrets.js";
 
 
-export const getDefaultLLM = async (model, stream=null, user="default") => {
+export const getDefaultLLM = async (model, stream = null, user = "default") => {
     const chatFn = async (body, writable, context) => {
         return await chat(getLLMConfig, body, writable, context);
     }
@@ -48,7 +48,7 @@ export class LLM {
         };
     }
 
-    setModel(model){
+    setModel(model) {
         setModel(this.params, model);
     }
 
@@ -57,7 +57,7 @@ export class LLM {
      *
      * @param status
      */
-    setSource(source){
+    setSource(source) {
         this.params.options = {...this.params.options, source};
     }
 
@@ -90,7 +90,7 @@ export class LLM {
 
         lines.forEach((line) => {
             prefixes.forEach((prefix) => {
-                if (line.startsWith(prefix+":" )) {
+                if (line.startsWith(prefix + ":")) {
                     result[prefix] = line.substring(prefix.length + 1).trim();
                 }
             });
@@ -104,30 +104,32 @@ export class LLM {
      *
      * @param status
      */
-    sendStatus(status){
-        if(this.responseStream){
+    sendStatus(status) {
+        if (this.responseStream) {
             sendStatusEventToStream(this.responseStream, status);
         }
     }
 
-    enableOutOfOrderStreaming(){
-        if(this.responseStream){
+    enableOutOfOrderStreaming() {
+        if (this.responseStream) {
             sendOutOfOrderModeEventToStream(this.responseStream);
         }
     }
 
-    forceFlush(){
+    forceFlush() {
         // hack to force flush on AWS lambda streaming
         this.sendStatus(newStatus(
-                {inProgress: false,
-                    message: " ".repeat(100000)}));
+            {
+                inProgress: false,
+                message: " ".repeat(100000)
+            }));
     }
 
     /**
      * Determines if promptForXYZ functions should pass the result through to the response stream
      * in addition to returning the result.
      */
-    enablePassThrough(){
+    enablePassThrough() {
         this.passThrough = true;
     }
 
@@ -139,7 +141,7 @@ export class LLM {
      * StreamResultCollector as the targetStream rather than a stream that goes straight to the
      * client.
      */
-    disablePassThrough(){
+    disablePassThrough() {
         this.passThrough = false;
     }
 
@@ -151,7 +153,9 @@ export class LLM {
             model: (body.options && body.options.model) || (this.params.options && this.params.options.model),
             options: {
                 ...this.params.options,
-                ...body.options}};
+                ...body.options
+            }
+        };
 
         return chatWithDataStateless(
             updatedParams,
@@ -195,20 +199,19 @@ export class LLM {
         ];
 
         const resultCollector = new StreamResultCollector();
-        resultCollector.addTransformer((chunk)=>{
+        resultCollector.addTransformer((chunk) => {
             try {
                 chunk = JSON.parse(chunk);
                 if (chunk.tool_calls && chunk.tool_calls.length > 0 && chunk.tool_calls[0].arguments) {
                     return chunk.tool_calls[0].arguments;
-                }
-                else if (chunk.tool_calls &&
+                } else if (chunk.tool_calls &&
                     chunk.tool_calls.length > 0 &&
                     chunk.tool_calls[0].function &&
                     chunk.tool_calls[0].function.arguments
                 ) {
                     return chunk.tool_calls[0].function.arguments;
                 }
-            }catch(e){
+            } catch (e) {
                 console.log(e);
             }
             return "";
@@ -221,7 +224,99 @@ export class LLM {
         return result['arguments'];
     }
 
-    async promptForPrefixData(body, prefixes, dataSources = [], targetStream = this.responseStream, checker=(result)=>true, retries = 3) {
+    async promptForData(body, dataSources = [], prompt, dataItems, targetStream = this.responseStream, checker = (result) => true, retries = 3, includeThoughts = true) {
+        const dataDescs = Object.entries(dataItems).map(([name, schema]) => {
+            return name + ": " + schema;
+        }).join("\n");
+
+        const systemPrompt = `
+Analyze the task or question and output the requested data.
+
+You output with the data should be in the format:
+\`\`\`data
+thought: <INSERT THOUGHT>
+${dataDescs}
+\`\`\`
+
+You MUST provide the requested data:
+
+You ALWAYS output a \`\`\`data code block.
+`
+        const updatedChatBody = {
+            ...this.defaultBody,
+            ...body,
+            messages: [
+                ...(body.messages|| []),
+                {
+                    role: "system",
+                    content: systemPrompt
+                },
+                {
+                    role: "assistant",
+                    content: prompt + "\n```data\n"
+                }
+            ],
+            options: {
+                ...(this.params.options || {}),
+                ...(body.options || {}),
+                systemPrompt: systemPrompt,
+                prompt: prompt
+            }
+        };
+
+        const prefixes = Object.keys(dataItems);
+
+        if(includeThoughts) {
+            prefixes.push("thought");
+        }
+
+        return await this.promptForPrefixData(updatedChatBody, prefixes, dataSources, targetStream, checker, retries);
+    }
+
+    async promptForString(body, dataSources = [], prompt, targetStream = this.responseStream, retries = 3) {
+
+        const updatedChatBody = {
+            ...this.defaultBody,
+            ...body,
+            messages: [
+                ...(body.messages|| []),
+                {
+                    role: "assistant",
+                    content: prompt
+                }
+            ],
+            options: {
+                ...(this.params.options || {}),
+                ...(body.options || {}),
+            }
+        };
+
+        const doPrompt = async () => {
+
+            const resultCollector = new StreamResultCollector();
+            if(this.passThrough && targetStream) {
+                resultCollector.addOutputStream(targetStream);
+            }
+
+            await this.prompt(updatedChatBody, dataSources, resultCollector);
+
+            const result = findResult(resultCollector.result);
+            return result;
+        }
+
+        let result = null;
+        for (let i = 0; i < retries; i++) {
+            result = await doPrompt();
+            if (result && result.length > 0) {
+                break;
+            }
+        }
+
+        return result || "";
+    }
+
+
+    async promptForPrefixData(body, prefixes, dataSources = [], targetStream = this.responseStream, checker = (result) => true, retries = 3) {
         const updatedChatBody = {
             ...this.defaultBody,
             ...body,
@@ -234,6 +329,9 @@ export class LLM {
         const doPrompt = async () => {
 
             const resultCollector = new StreamResultCollector();
+            if(this.passThrough && targetStream) {
+                resultCollector.addOutputStream(targetStream);
+            }
 
             await this.prompt(updatedChatBody, dataSources, resultCollector);
 
@@ -242,9 +340,9 @@ export class LLM {
             return data;
         }
 
-        for(let i = 0; i < retries; i++){
+        for (let i = 0; i < retries; i++) {
             const data = await doPrompt();
-            if(!checker || checker(data)){
+            if (!checker || checker(data)) {
                 return data;
             }
         }
@@ -274,7 +372,7 @@ export class LLM {
         const result = findResult(resultCollector.result);
         const {value} = parseValue(result);
 
-        if(targetStream && this.passThrough){
+        if (targetStream && this.passThrough) {
             sendResultToStream(targetStream, resultCollector.result);
         }
 
@@ -293,7 +391,7 @@ export class LLM {
         const function_call = "answer";
         const result = await this.promptForFunctionCall(body, functions, function_call, dataSources, null);
 
-        if(targetStream && this.passThrough){
+        if (targetStream && this.passThrough) {
             sendResultToStream(targetStream, result['arguments']);
         }
 
@@ -314,7 +412,7 @@ export class LLM {
 
         const result = await this.promptForJson(body, schema, dataSources, null);
 
-        if(targetStream && this.passThrough){
+        if (targetStream && this.passThrough) {
             sendResultToStream(targetStream, result.value);
         }
 
@@ -326,7 +424,7 @@ export class LLM {
         const schema = {
             "type": "object",
             "properties": {
-                "thought" : {
+                "thought": {
                     "type": "string",
                     "description": "How did you come up with this choice?",
                 },
@@ -336,13 +434,13 @@ export class LLM {
                     "description": "The best choice based on your thought.",
                 },
             },
-            "required": ["thought","bestChoiceBasedOnThought"],
+            "required": ["thought", "bestChoiceBasedOnThought"],
             "additionalProperties": false
         };
 
         const result = await this.promptForJson(body, schema, dataSources, null);
 
-        if(targetStream  && this.passThrough){
+        if (targetStream && this.passThrough) {
             sendResultToStream(targetStream, result.bestChoiceBasedOnThought);
         }
 

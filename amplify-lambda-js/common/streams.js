@@ -57,7 +57,7 @@ export class StreamResultCollector extends Writable {
                     this.result[tokenKey] += 1;
 
                     this.outputStreams.forEach((outputStream) => {
-                        outputStream.write(textChunk + "\n");
+                        outputStream.write(textChunk + "\n\n");
                     });
                 }
             } catch (e) {

@@ -44,7 +44,7 @@ export const csvAssistant = {
     name: "batch",
     displayName: "Batch Processing Assistant",
     handlesDataSources: (ds) => {
-        return ds.every((ds) => {
+        return ds && ds.length > 0 && ds.every((ds) => {
             return ds.type === "text/csv";
         });
     },
