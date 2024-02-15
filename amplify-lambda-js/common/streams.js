@@ -2,6 +2,88 @@ import {Writable} from "stream";
 import {TextDecoder} from "util";
 import {newStatus} from "./status.js";
 
+
+export class StatusOutputStream extends Writable {
+    constructor(options, statusStream, status) {
+        super(options);
+        // Initialize a TextDecoder to decode UTF-8 text by default
+        this.decoder = new TextDecoder('utf-8');
+        this.transformers = [];
+        this.outputStreams = [];
+        this.statusStream = statusStream;
+        this.status = status;
+        this.message = "";
+    }
+
+    addOutputStream(outputStream){
+        this.outputStreams.push(outputStream);
+    }
+
+    addTransformer(transformer){
+        this.transformers.push(transformer);
+    }
+
+    handleChunk(textChunk) {
+        if (textChunk.trim().length > 0) {
+
+            const json = textChunk.slice(6);
+            try {
+
+                const delta = JSON.parse(json);
+
+                if (delta && delta.s && delta.s === "meta" && delta.d) {
+                    this.meta = delta.d;
+                } else if (delta && delta.d) {
+                    if (this.meta && this.meta.sources) {
+                        delta.s = this.meta.sources[delta.s];
+                    }
+                    if (typeof delta.d !== "string") {
+                        delta.d = JSON.stringify(delta.d);
+                    }
+
+                    const value = this.transformers.reduce((acc, transformer) => {
+                        return transformer(acc);
+                    }, delta.d);
+
+                    if(delta.d) {
+                        this.status.message += delta.d;
+                        sendStatusEventToStream(this.statusStream, this.status);
+                    }
+
+                    this.outputStreams.forEach((outputStream) => {
+                        outputStream.write(textChunk + "\n\n");
+                    });
+                }
+            } catch (e) {
+                console.log(e);
+            }
+
+        }
+    }
+
+    _write(chunk, encoding, callback) {
+        // Convert the chunk (which must be a Buffer) to a string
+        const textChunks = this.decoder.decode(chunk, {stream: true});
+
+        for (const textChunk of textChunks.split('\n')) {
+            this.handleChunk(textChunk);
+        }
+
+        // Indicate that the chunk has been processed successfully
+        callback();
+    }
+
+    _final(callback) {
+        // Flush any remaining text from the TextDecoder, but since
+        // we've been streaming, there shouldn't be anything left to flush unless the stream ended unexpectedly.
+        const remaining = this.decoder.decode();
+        if (remaining) {
+            this.handleChunk(remaining);
+        }
+        callback();
+    }
+}
+
 export class StreamResultCollector extends Writable {
     constructor(options) {
         super(options);

@@ -1,10 +1,10 @@
 import {
     AssistantState, chainActions,
     DoneState,
-    HintState, invokeAction, llmAction, mapKeysAction, outputAction,
+    HintState, invokeAction, llmAction, mapKeysAction, outputAction, outputToResponse,
     PromptAction, PromptForDataAction,
     reduceKeysAction,
-    StateBasedAssistant
+    StateBasedAssistant, updateStatus
 } from "./statemachine/states.js";
 
 
@@ -13,7 +13,14 @@ const writeSection =
         "sectionOfReport");
 
 const writeSections = mapKeysAction(
-    writeSection,
+    outputToResponse(
+        chainActions([
+            updateStatus("writeSection", {summary: "Writing Section: {{arg}}", inProgress: true}),
+            writeSection,
+            updateStatus("writeSection", {summary: "Done writing.", inProgress: false}),
+        ]),
+        "## {{arg}}"
+    ),
     "section",
     null,
     "sectionOfReport"
@@ -25,13 +32,6 @@ const combineSections = reduceKeysAction(
     "report",
     "report");
 
-const writeReportAction = chainActions([
-    writeSections,
-    combineSections,
-    outputAction("The report is:\n{{report}}")
-    ]
-);
-
 const States = {
     outline: new AssistantState("outline",
         "Creating an outline",
@@ -42,12 +42,15 @@ const States = {
                 "section3":"the third section",
                 "section4":"the fourth section",
                 "section5":"the fifth section"
+            },
+            (m) => {
+                return m.section1 && m.section2;
             }
         ),
     ),
     writeSections: new AssistantState("writeSections",
         "Writing the sections",
-        writeReportAction
+        writeSections
     ),
     done: new DoneState(),
 };

@@ -48,6 +48,15 @@ export class LLM {
         };
     }
 
+    clone() {
+        const llm = new LLM(
+            this.chatFn,
+            this.params,
+            this.responseStream);
+        llm.passThrough = this.passThrough;
+        return llm;
+    }
+
     setModel(model) {
         setModel(this.params, model);
     }

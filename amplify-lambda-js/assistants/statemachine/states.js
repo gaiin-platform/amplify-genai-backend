@@ -2,7 +2,7 @@ import {getDefaultLLM} from "../../common/llm.js";
 import {ModelID, Models} from "../../models/models.js";
 import {ConsoleWritableStream} from "../../local/consoleWriteableStream.js";
 import {newStatus} from "../../common/status.js";
-import {sendDeltaToStream} from "../../common/streams.js";
+import {sendDeltaToStream, sendStatusEventToStream, StatusOutputStream} from "../../common/streams.js";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -30,7 +30,7 @@ const formatInformationSources = (sources) => {
 }
 
 const formatContextInformationItem = (source) => {
-    return `${source[0]}: ${source ? source[1].replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') :  ""}`;
+    return `${source[0]}: ${source ? source[1].replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
 }
 
 const formatContextInformation = (sources) => {
@@ -74,7 +74,6 @@ You ALWAYS output a \`\`\`next code block.
 }
 
 
-
 const buildStatePrompt = (context, state, dataSources) => {
     const prompt = `
 ${state.extraInstructions.postInstructions || ""}
@@ -103,14 +102,86 @@ export const llmAction = (fn) => {
     return {
         execute: (llm, context, dataSources) => {
             const result = fn(llm, context, dataSources);
-            if(result) {
+            if (result) {
                 context.data = {...context.data, ...result};
             }
         }
     };
 }
 
-export const outputAction = (template, src="assistant") => {
+export const outputToResponse = (action, prefix = "", suffix = "") => {
+
+
+    return {
+        execute: async (llm, context, dataSources) => {
+            const responseLLM = llm.clone();
+            responseLLM.responseStream = context.responseStream;
+
+            const start = fillInTemplate(prefix, context.data);
+            sendDeltaToStream(context.responseStream, "assistant", start);
+
+            await action.execute(responseLLM, context, dataSources);
+
+            const end = fillInTemplate(suffix, context.data);
+            sendDeltaToStream(context.responseStream, "assistant", suffix);
+
+        }
+    };
+}
+
+export const outputToStatus = (status, action) => {
+    return {
+        execute: async (llm, context, dataSources) => {
+            const statusLLM = llm.clone();
+            status.inProgress = true;
+
+            if(status.summary){
+                status.summary = fillInTemplate(status.summary, context.data);
+            }
+
+            statusLLM.responseStream = context.responseStream;
+            statusLLM.sendStatus(status);
+            statusLLM.forceFlush();
+
+            statusLLM.responseStream = new StatusOutputStream({},
+                llm.responseStream,
+                status);
+
+            try {
+                await action.execute(statusLLM, context, dataSources);
+            } finally {
+                status.inProgress = false;
+                statusLLM.responseStream = context.responseStream;
+                llm.sendStatus(status);
+                llm.forceFlush();
+            }
+        }
+    };
+}
+
+export const updateStatus = (id, status) => {
+
+    return {
+        execute: async (llm, context, dataSources) => {
+
+            const statusEvent = (context.status[id]) ? context.status[id] : newStatus(status);
+
+            if (status.summary) {
+                statusEvent.summary = fillInTemplate(status.summary, context.data);
+            }
+            if (status.message) {
+                statusEvent.message = fillInTemplate(status.message, context.data);
+            }
+
+            sendStatusEventToStream(context.responseStream, statusEvent);
+
+            context.status[id] = statusEvent;
+        }
+    }
+}
+
+
+export const outputAction = (template, src = "assistant") => {
     return {
         execute: (llm, context, dataSources) => {
             const msg = fillInTemplate(template, context.data);
@@ -123,11 +194,11 @@ export const outputAction = (template, src="assistant") => {
 export const invokeAction = (fn, keys, outputKey) => {
 
     // Make sure that the keys are defined and an array
-    if(!keys || !Array.isArray(keys)) {
+    if (!keys || !Array.isArray(keys)) {
         throw new Error("keys must be defined and an array");
     }
     // Check that the outputKey is a string if it is defined
-    if(outputKey && typeof outputKey !== "string") {
+    if (outputKey && typeof outputKey !== "string") {
         throw new Error("outputKey must be defined and a string");
     }
 
@@ -135,24 +206,23 @@ export const invokeAction = (fn, keys, outputKey) => {
         execute: async (llm, context, dataSources) => {
             const args = keys.map(k => context.data[k]);
             const result = await fn(...args);
-            if(result && !outputKey) {
+            if (result && !outputKey) {
                 context.data = {...context.data, ...result};
-            }
-            else if(result && outputKey) {
+            } else if (result && outputKey) {
                 context.data[outputKey] = result;
             }
         }
     };
 }
 
-export const mapKeysAction = (action, keyPrefix, outputKey=null, extractKey=null) => {
+export const mapKeysAction = (action, keyPrefix, outputKey = null, extractKey = null) => {
 
     // Make sure that the keyPrefix is defined and a string
-    if(!keyPrefix || typeof keyPrefix !== "string") {
+    if (!keyPrefix || typeof keyPrefix !== "string") {
         throw new Error("keyPrefix must be defined and a string");
     }
     // Do the same for outputKey
-    if(outputKey && typeof outputKey !== "string") {
+    if (outputKey && typeof outputKey !== "string") {
         throw new Error("outputKey must be defined and a string");
     }
 
@@ -163,37 +233,37 @@ export const mapKeysAction = (action, keyPrefix, outputKey=null, extractKey=null
             const args = keys.map(k => context.data[k]);
             const resultList = [];
 
-            for(let i=0; i<args.length; i++) {
+            for (let i = 0; i < args.length; i++) {
                 const arg = args[i];
-                let newContext = {...context, data:{...context.data, arg, i}};
+                let newContext = {...context, data: {...context.data, arg, i}};
                 await action.execute(llm, newContext, dataSources);
 
-                if(extractKey) {
+                if (extractKey) {
                     newContext.data = newContext.data[extractKey];
                 }
 
-                if(!outputKey) {
-                    context.data = {...context.data, [keys[i]]:newContext.data};
+                if (!outputKey) {
+                    context.data = {...context.data, [keys[i]]: newContext.data};
                 }
 
                 resultList.push(newContext.data);
             }
 
-            if(outputKey) {
+            if (outputKey) {
                 context.data[outputKey] = resultList;
             }
         }
     };
 }
 
-export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey=null) => {
+export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null) => {
 
     // Make sure that the keyPrefix is defined and a string
-    if(!keyPrefix || typeof keyPrefix !== "string") {
+    if (!keyPrefix || typeof keyPrefix !== "string") {
         throw new Error("keyPrefix must be defined and a string");
     }
     // Do the same for outputKey
-    if(!outputKey || typeof outputKey !== "string") {
+    if (!outputKey || typeof outputKey !== "string") {
         throw new Error("outputKey must be defined and a string");
     }
 
@@ -204,10 +274,10 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey=null) 
             const keys = allKeys.filter(k => k.startsWith(keyPrefix));
             const args = keys.map(k => context.data[k]);
 
-            const newContext = {...context, data:{...context.data, arg:args}};
+            const newContext = {...context, data: {...context.data, arg: args}};
             await action.execute(llm, newContext, dataSources);
 
-            if(extractKey){
+            if (extractKey) {
                 newContext.data = newContext.data[extractKey];
             }
 
@@ -221,7 +291,7 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey=null) 
 export const chainActions = (actions) => {
     return {
         execute: async (llm, context, dataSources) => {
-            for(const action of actions) {
+            for (const action of actions) {
                 await action.execute(llm, context, dataSources);
             }
         }
@@ -232,7 +302,7 @@ export const parallelActions = (actions) => {
     return {
         execute: async (llm, context, dataSources) => {
             const results = [];
-            for(const action of actions) {
+            for (const action of actions) {
                 results.push(action.execute(llm, context, dataSources));
             }
             await Promise.all(results);
@@ -249,7 +319,7 @@ function fillInTemplate(template, context) {
 
 export class PromptForDataAction {
 
-    constructor(prompt, stateKeys, stateChecker, retries=3) {
+    constructor(prompt, stateKeys, stateChecker, retries = 3) {
         this.prompt = prompt;
         this.stateKeys = stateKeys;
         this.stateChecker = stateChecker || ((result) => Object.keys(stateKeys).every(k => result[k]))
@@ -263,7 +333,7 @@ export class PromptForDataAction {
         let promptText = fillInTemplate(this.prompt, context.data);
 
         const result = await llm.promptForData(
-            {messages:[...context.history, {role:"user", content:promptText}]},
+            {messages: [...context.history, {role: "user", content: promptText}]},
             dataSources,
             this.prompt,
             this.stateKeys,
@@ -273,7 +343,7 @@ export class PromptForDataAction {
             this.includeThoughts
         );
 
-        if(result) {
+        if (result) {
             context.data = {...context.data, ...result};
         }
     }
@@ -282,7 +352,7 @@ export class PromptForDataAction {
 
 export class PromptAction {
 
-    constructor(prompt, outputKey="response", retries=3, streamResults=true) {
+    constructor(prompt, outputKey = "response", retries = 3, streamResults = true) {
         this.prompt = prompt;
         this.outputKey = outputKey || "response";
         this.streamResults = streamResults;
@@ -294,69 +364,59 @@ export class PromptAction {
         let promptText = fillInTemplate(this.prompt, context.data);
 
         const result = await llm.promptForString(
-            {messages:[...context.history, {role:"user", content:promptText}]},
+            {messages: [...context.history, {role: "user", content: promptText}]},
             dataSources,
             this.prompt,
             (this.streamResults) ? llm.responseStream : null,
             this.retries
         );
 
-        if(result) {
+        if (result) {
             context.data = {...context.data, [this.outputKey]: result};
         }
     }
 }
 
 
+const STATUS_STREAM = "status";
+const RESPONSE_STREAM = "response";
 
 export class AssistantState {
 
-    constructor(name, description, entryAction=null, endState=false,
-                extraInstructions={preInstructions:"", postInstructions:""}) {
+    constructor(name, description, entryAction = null, endState = false,
+                config = {
+                    extraInstructions: {preInstructions: "", postInstructions: ""},
+                    stream: {target: STATUS_STREAM, passThrough: true}
+                }) {
         this.name = name;
         this.description = description;
         this.entryAction = entryAction;
-        this.extraInstructions = extraInstructions || {};
+        this.extraInstructions = config.extraInstructions || {};
         this.transitions = [];
         this.endState = endState;
+        this.stream = config.stream || {target: STATUS_STREAM, passThrough: true};
     }
 
     addTransition(toStateName, description) {
-        this.transitions.push({to:toStateName, description:description});
+        this.transitions.push({to: toStateName, description: description});
     }
 
     buildPrompt(context, dataSources) {
         return [
-            {role:"system", content:buildSystemPrompt(this)},
-            {role:"user", content:buildStatePrompt(context, this, dataSources)},
+            {role: "system", content: buildSystemPrompt(this)},
+            {role: "user", content: buildStatePrompt(context, this, dataSources)},
         ]
     }
 
-    async enter(llm, context, dataSources) {
-        if (this.entryAction) {
-            try {
-                await this.entryAction.execute(llm, context, dataSources);
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
+    async getNextState(llm, context, dataSources) {
         const messages = this.buildPrompt(context, dataSources);
-
         const chatRequest = {messages};
-        const prefixes = ["thought","state"];
+        const prefixes = ["thought", "state"];
         const checkResult = (result) => {
             // Verify we got a valid next state and that it is in the list of transitions
-           return result.state && this.transitions.map(t => t.to).includes(result.state);
+            return result.state && this.transitions.map(t => t.to).includes(result.state);
         }
         const maxAttempts = 3;
-
-        if(this.transitions.length === 0) {
-            return this.name;
-        }
-        else if(this.transitions.length === 1) {
-            return this.transitions[0].to;
-        }
 
         const result = await llm.promptForPrefixData(
             chatRequest,
@@ -366,13 +426,59 @@ export class AssistantState {
             checkResult,
             maxAttempts);
 
+        return result;
+    }
+
+    async invokeEntryAction(llm, context, dataSources) {
+        const actionLLM = llm.clone();
+
+        const status = newStatus({inProgress: true, summary: this.description, message: "", icon: "bolt"})
+
+        if (this.stream.target === STATUS_STREAM) {
+            actionLLM.responseStream = new StatusOutputStream({},
+                llm.responseStream,
+                status);
+        }
+
+        if (this.stream.passThrough) {
+            actionLLM.enablePassThrough();
+        }
+
+        if (this.entryAction) {
+            try {
+                await this.entryAction.execute(actionLLM, context, dataSources);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        if (this.stream.target === STATUS_STREAM) {
+            status.inProgress = false;
+            actionLLM.responseStream = context.responseStream;
+            actionLLM.sendStatus(status);
+            actionLLM.forceFlush();
+        }
+    }
+
+    async enter(llm, context, dataSources) {
+        await this.invokeEntryAction(llm, context, dataSources);
+
+        if (this.transitions.length === 0) {
+            return this.name;
+        } else if (this.transitions.length === 1) {
+            return this.transitions[0].to;
+        }
+
+        const result = await this.getNextState(llm, context, dataSources);
+
         return result.state;
     }
+
 }
 
 export class HintState extends AssistantState {
     constructor(name, description, hint, endState = false) {
-        super(name, description, null, endState, {postInstructions: hint});
+        super(name, description, null, endState, {extraInstructions: {postInstructions: hint}});
     }
 }
 
@@ -385,7 +491,7 @@ export class DoneState extends AssistantState {
 
 export class AssistantStateMachine {
 
-    constructor(name, description, statesByName, currentState, config={}) {
+    constructor(name, description, statesByName, currentState, config = {}) {
         this.name = name;
         this.description = description;
         this.statesByName = statesByName;
@@ -395,34 +501,19 @@ export class AssistantStateMachine {
 
     async on(llm, context, dataSources) {
 
-        if(!context.data){
+        if (!context.data) {
             context.data = {};
         }
 
         let transitionsLeft = this.maxTransitions;
 
-        const status = newStatus(
-            {
-                inProgress: true,
-                message: "",
-                icon: "bolt",
-            });
-
-        const updateStatusForState = (state) => {
-            status.message = state.description;
-            llm.sendStatus(status);
-            llm.forceFlush();
-        }
-
-        while(!this.currentState.endState && transitionsLeft > 0) {
-
-            updateStatusForState(this.currentState);
+        while (!this.currentState.endState && transitionsLeft > 0) {
 
             transitionsLeft -= 1;
             const nextName = await this.currentState.enter(llm, context, dataSources);
             this.currentState = this.statesByName[nextName];
 
-            if(this.currentState === undefined) {
+            if (this.currentState === undefined) {
                 break;
             }
         }
@@ -452,8 +543,10 @@ export class StateBasedAssistant {
 
     async handler(llm, params, body, dataSources, responseStream) {
         const context = {
-            data:{},
-            history:body.messages,
+            data: {},
+            status: {},
+            responseStream,
+            history: body.messages,
         };
 
         const stateMachine = this.createAssistantStateMachine();
@@ -474,14 +567,14 @@ const States = {
         "If the question or task is general, such as 'what are all the policies', you will need to read the document. " +
         "If the question or task is specific, such as 'what are the AI policies', you can try a targeted search. " +
         "If you aren't sure, just read the document.",
-        ),
+    ),
     targetedSearch: new AssistantState("targetedSearch",
         "Targeted Search",
         new PromptAction("Create a 2-3 detailed questions to look for answers for in the document to help accomplish the task.",
             {
-                "question1":"a specific question",
-                "question2":"another specific question",
-                "question3":"another specific question"
+                "question1": "a specific question",
+                "question2": "another specific question",
+                "question3": "another specific question"
             },
             (result) => {
                 return result.question1;
@@ -491,22 +584,21 @@ const States = {
         "Targeted Search",
         new PromptAction("What page in the document should we read next? If you aren't sure, just output '1'",
             {
-                "page":"a number specifying the page"
+                "page": "a number specifying the page"
             }
         )),
     plan: new AssistantState("plan",
         "PLan State",
         new PromptAction("Create a 5-10 step plan to accomplish the task requested by the user",
-            {"plan":"a step by step plan"}
+            {"plan": "a step by step plan"}
         )),
     gather: new AssistantState("gather",
         "Information Gathering",
         new PromptAction("Create a 5-10 step plan to accomplish the task requested by the user",
-            {"plan":"a step by step plan"}
+            {"plan": "a step by step plan"}
         )),
     done: new DoneState(),
 };
-
 
 
 const current = States.initial;
@@ -520,8 +612,12 @@ export const documentSearchAssistant = new StateBasedAssistant(
     "Document Search Assistant",
     "Document Search Assistant",
     "Document Search Assistant",
-    (m) => {return true},
-    (m) => {return true},
+    (m) => {
+        return true
+    },
+    (m) => {
+        return true
+    },
     States,
     current
 );
