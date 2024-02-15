@@ -28,7 +28,7 @@ logging.basicConfig(
 
 # @validate will check the incoming JWT, determine the current user, and
 # make sure that the incoming request body has the format {data:{task:"what to do"}}
-@validated(op="execute_rename")
+@validated("execute-rename")
 def execute_rename(event, context, current_user, name, data):
     """
     This is entry point to the lambda function.
