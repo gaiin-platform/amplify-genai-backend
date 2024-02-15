@@ -3,6 +3,8 @@ import {ModelID, Models} from "../../models/models.js";
 import {ConsoleWritableStream} from "../../local/consoleWriteableStream.js";
 import {newStatus} from "../../common/status.js";
 import {sendDeltaToStream, sendStatusEventToStream, StatusOutputStream} from "../../common/streams.js";
+import Handlebars from "handlebars";
+import yaml from 'js-yaml';
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -22,6 +24,26 @@ const formatRagInformationSource = (source) => {
      *                             }
      */
     return `From ${source.name} at ${JSON.stringify(source.locations)}: ${source.content.replaceAll.replace(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n')}`;
+}
+
+const diffMaps = (map1, map2) => {
+    const diff = {};
+
+    if(!map2){
+        return {};
+    }
+    if(!map1){
+        return map2;
+    }
+
+    const keys = Object.keys(map2);
+    keys.forEach((key) => {
+        if (!map1[key] || map1[key] !== map2[key]) {
+            diff[key] = map2[key];
+        }
+    });
+
+    return diff;
 }
 
 const formatInformationSources = (sources) => {
@@ -135,7 +157,7 @@ export const outputToStatus = (status, action) => {
             const statusLLM = llm.clone();
             status.inProgress = true;
 
-            if(status.summary){
+            if (status.summary) {
                 status.summary = fillInTemplate(status.summary, context.data);
             }
 
@@ -240,6 +262,8 @@ export const mapKeysAction = (action, keyPrefix, outputKey = null, extractKey = 
 
                 if (extractKey) {
                     newContext.data = newContext.data[extractKey];
+                } else {
+                    newContext.data = diffMaps(context.data, newContext.data);
                 }
 
                 if (!outputKey) {
@@ -279,6 +303,8 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
 
             if (extractKey) {
                 newContext.data = newContext.data[extractKey];
+            } else {
+                newContext.data = diffMaps(context.data, newContext.data);
             }
 
             outputKey = outputKey || keyPrefix;
@@ -298,6 +324,15 @@ export const chainActions = (actions) => {
     };
 }
 
+export const outputContext = (template) => {
+    return {
+        execute: async (llm, context, dataSources) => {
+            const result = fillInTemplate(template, context.data);
+            sendDeltaToStream(context.responseStream, "assistant", result);
+        }
+    };
+}
+
 export const parallelActions = (actions) => {
     return {
         execute: async (llm, context, dataSources) => {
@@ -310,11 +345,115 @@ export const parallelActions = (actions) => {
     };
 }
 
-function fillInTemplate(template, context) {
-    for (const entry of Object.entries(context)) {
-        template = template.replaceAll(`{{${entry[0]}}}`, entry[1]);
+function renderMarkdownOutline(data, depth = 0, omit=["arg","i"]) {
+    const indent = '  '.repeat(depth);
+    const bullet = depth > 0 ? '*' : ''; // Use bullets only for nested items
+
+    if (Array.isArray(data)) {
+        // Handling arrays
+        return "\n"+data.map((item, index) => {
+            const content = renderMarkdownOutline(item, depth + 1);
+            return `${indent} ${index + 1}. ${content}\n`; // Enumerate with 1., 2., etc.
+        }).join("");
+    } else if (typeof data === 'object' && data !== null) {
+        // Handling objects
+        return "\n"+ Object.entries(data).map(([key, value]) => {
+            if(!omit.includes(key)) {
+                const content = renderMarkdownOutline(value, depth + 1);
+                return `${indent}${bullet} **${key}**: ${content}\n`; // Make key bold
+            } else {
+                return "";
+            };
+        }).join("");
+    } else {
+        // Handling primitives (strings, numbers, etc.)
+        return `${data}`;
     }
-    return template;
+}
+
+function matchKeys(context, keyRegex) {
+    try {
+        const pattern = new RegExp(keyRegex, "i");
+        // Filter the entries in the context and collect a list of all entries
+        // with keys that match the pattern
+        const matches = Object.entries(context).filter(([key, val]) => {
+            return pattern.test(key);
+        });
+        return matches;
+    } catch (e) {
+        console.error(e);
+        return [];
+    }
+}
+
+function matchKeysStr(context, keyRegex) {
+    return matchKeys(context, keyRegex).map(e => `${e[0]}: ${JSON.stringify(e[1])}`).join("\n");
+}
+
+function fillInTemplate(templateStr, contextData) {
+
+    let result = templateStr;
+    try {
+        Handlebars.registerHelper('json', function (context) {
+            return JSON.stringify(contextData);
+        });
+
+        Handlebars.registerHelper('yaml', function (context) {
+            return yaml.dump(contextData);
+        });
+
+        Handlebars.registerHelper("contextOutline",function (conf) {
+            let obj = this;
+
+            if(conf.hash.pattern){
+                obj = matchKeys(obj, conf.hash.pattern || ".*").map((key,value)=>{
+                    return {key:key, value:value};
+                });
+            }
+
+            const outline = renderMarkdownOutline(obj);
+            return outline;
+        })
+
+        Handlebars.registerHelper("contextOutlineWith",function (obj, options) {
+            const pattern = options.hash.pattern;
+            let withObj = obj;
+
+            if(pattern){
+                withObj = matchKeys(obj, pattern || ".*").map((key,value)=>{
+                    return {key:key, value:value};
+                });
+            }
+
+            return renderMarkdownOutline(withObj);
+        })
+
+        Handlebars.registerHelper("contextList", function(context, options) {
+            const pattern = options.hash.pattern;
+            const newContext = matchKeys(context, pattern || ".*").map(
+                e => {return {key:e[0], value:e[1]}}
+            );
+
+            return options.fn({contextItems:newContext});
+        });
+
+        Handlebars.registerHelper('contextWith', function (obj, options) {
+            const pattern = options.hash.pattern;
+            return matchKeysStr(obj, pattern || ".*");
+        })
+
+        Handlebars.registerHelper('context', function (pattern) {
+            return matchKeysStr(contextData, pattern || ".*");
+        })
+
+        const template = Handlebars.compile(templateStr);
+        result = template(contextData);
+
+    } catch (e) {
+        console.error(e);
+    }
+
+    return result;
 }
 
 export class PromptForDataAction {
