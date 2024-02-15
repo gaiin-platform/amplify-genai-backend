@@ -48,7 +48,7 @@ task_schema = {
 }
 
 validators = {
-    "/execute-rename": {
+    "/execute_rename": {
         "rename_chat": task_schema
     }
 }
