@@ -36,25 +36,22 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-id_request_schema = {
-    "type": "object",
-    "properties": {"id": {"type": "string", "description": "Id."}},
-    "required": ["id"],
-}
-
-key_request_schema = {
-    "type": "object",
-    "properties": {"key": {"type": "string", "description": "Key."}},
-    "required": ["key"],
-}
 
 task_schema = {
     "type": "object",
-    "properties": {"task": {"type": "string"}},
-    "required": ["task"],
+    "properties": {
+        "task": {
+            "type": "string"
+        }
+    },
+    "required": ["task"]
 }
 
-validators = {"/rename_chats": {"execute_rename": task_schema}}
+validators = {
+    "/execute_rename": {
+        "rename_chat": task_schema
+    }
+}
 
 
 def validate_data(name, op, data):
@@ -72,11 +69,11 @@ def parse_and_validate(current_user, event, op, validate_body=True):
     data = {}
     if validate_body:
         try:
-            data = json.loads(event["body"]) if event.get("body") else {}
+            data = json.loads(event['body']) if event.get('body') else {}
         except json.decoder.JSONDecodeError as e:
             raise BadRequest("Unable to parse JSON body.")
 
-    name = event.get("path", "/")
+    name = event.get('path', '/')
 
     if not name:
         raise BadRequest("Unable to perform the operation, invalid request.")
@@ -103,8 +100,8 @@ def validated(op, validate_body=True):
 
                 claims = get_claims(event, context)
 
-                get_email = lambda text: text.split("_", 1)[1] if "_" in text else None
-                current_user = get_email(claims["username"])
+                get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
+                current_user = get_email(claims['username'])
 
                 print(f"User: {current_user}")
 
@@ -113,19 +110,19 @@ def validated(op, validate_body=True):
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
-                [name, data] = parse_and_validate(
-                    current_user, event, op, validate_body
-                )
+                [name, data] = parse_and_validate(current_user, event, op, validate_body)
                 result = f(event, context, current_user, name, data)
 
                 return {
                     "statusCode": 200,
-                    "body": json.dumps(result, cls=CombinedEncoder),
+                    "body": json.dumps(result, cls=CombinedEncoder)
                 }
             except HTTPException as e:
                 return {
                     "statusCode": e.status_code,
-                    "body": json.dumps({"error": f"Error: {e.status_code} - {e}"}),
+                    "body": json.dumps({
+                        "error": f"Error: {e.status_code} - {e}"
+                    })
                 }
 
         return wrapper
@@ -134,23 +131,22 @@ def validated(op, validate_body=True):
 
 
 def get_claims(event, context):
+    oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
+    oauth_audience = os.getenv('OAUTH_AUDIENCE')
 
-    oauth_issuer_base_url = os.getenv("OAUTH_ISSUER_BASE_URL")
-    oauth_audience = os.getenv("OAUTH_AUDIENCE")
-
-    jwks_url = f"{oauth_issuer_base_url}/.well-known/jwks.json"
+    jwks_url = f'{oauth_issuer_base_url}/.well-known/jwks.json'
     jwks = requests.get(jwks_url).json()
 
     token = None
-    normalized_headers = {k.lower(): v for k, v in event["headers"].items()}
-    authorization_key = "authorization"
+    normalized_headers = {k.lower(): v for k, v in event['headers'].items()}
+    authorization_key = 'authorization'
 
     if authorization_key in normalized_headers:
         parts = normalized_headers[authorization_key].split()
 
         if len(parts) == 2:
             scheme, token = parts
-            if scheme.lower() != "bearer":
+            if scheme.lower() != 'bearer':
                 token = None
 
     if not token:
@@ -165,7 +161,7 @@ def get_claims(event, context):
                 "kid": key["kid"],
                 "use": key["use"],
                 "n": key["n"],
-                "e": key["e"],
+                "e": key["e"]
             }
 
     if rsa_key:
@@ -174,7 +170,7 @@ def get_claims(event, context):
             rsa_key,
             algorithms=ALGORITHMS,
             audience=oauth_audience,
-            issuer=oauth_issuer_base_url,
+            issuer=oauth_issuer_base_url
         )
         return payload
     else:

@@ -6,6 +6,7 @@ from langchain_openai import AzureChatOpenAI
 
 from common.secrets import get_secret_value
 
+secret_name = os.environ["LLM_ENDPOINTS_SECRETS_NAME_ARN"]
 
 def get_chat_llm(model_name, temperature=0.7):
     conf = get_llm_config(model_name)
@@ -47,7 +48,8 @@ def get_endpoint_data(parsed_data, model_name):
 
 
 def get_llm_config(model_name):
-    secret_name = os.environ['LLM_ENDPOINTS_SECRETS_NAME']
+    # secret_name = os.environ['LLM_ENDPOINTS_SECRETS_NAME']
+    # secret_name = "openai-endpoints"
     secret_data = get_secret_value(secret_name)
     parsed_secret = json.loads(secret_data)
 
