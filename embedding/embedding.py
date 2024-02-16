@@ -15,6 +15,21 @@ import urllib.parse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+from dotenv import load_dotenv
+import yaml
+import os
+ #Function to convert YAML content to .env format and load it
+def load_yaml_as_env(yaml_path):
+    with open(yaml_path, 'r') as stream:
+        data_loaded = yaml.safe_load(stream)
+
+    # Convert YAML dictionary to .env format (KEY=VALUE)
+    for key, value in data_loaded.items():
+        os.environ[key] = str(value)
+
+yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
+load_yaml_as_env(yaml_file_path)
+
 
 # Set through os.environ and secrets mgr environment variables
 
@@ -30,6 +45,17 @@ endpoints_arn = os.environ['ENDPOINTS_ARN']
 pg_password = get_credentials(rag_pg_password)
 
 ses_credentials = get_json_credetials(ses_secret)
+
+def trim_keyname(src):
+    # Split the keyname by '.json'
+    parts = src.split('.json')
+    # Rejoin the first part with '.json' if there are any parts after splitting
+    trimmed_keyname = parts[0] + '.json' if len(parts) > 1 else src
+    return trimmed_src
+
+
+
+
 
 #initially set db_connection to none/closed 
 db_connection = None
@@ -110,9 +136,10 @@ def lambda_handler(event, context):
     logging.basicConfig(level=logging.INFO)
     
     # Extract bucket name and file key from the S3 event
-    bucket_name = event['Records'][0]['s3']['bucket']['name']
-    url_encoded_key = event['Records'][0]['s3']['object']['key']
-
+    #bucket_name = event['Records'][0]['s3']['bucket']['name']
+    #url_encoded_key = event['Records'][0]['s3']['object']['key']
+    bucket_name = "vu-amplify-dev-rag-chunks"
+    url_encoded_key = "allen.karns@vanderbilt.edu/2024-01-21/755c5529-fad6-4e5d-9e62-cbf7277ead2f.json.content.json.chunks.json"
 
     #Print the bucket name and key for debugging purposes
     print(f"url_key={url_encoded_key}")
@@ -126,6 +153,8 @@ def lambda_handler(event, context):
     
     # Create an S3 client
     s3_client = boto3.client('s3')
+
+    db_connection = None
     
     try:
         # Get the object from the S3 bucket
@@ -154,16 +183,16 @@ def lambda_handler(event, context):
             'body': json.dumps('Embedding process completed successfully.')
         }
     except Exception as e:
-            logging.exception("An error occurred during the lambda_handler execution.")
-            return {
-                'statusCode': 500,
-                'body': json.dumps('An error occurred during the embedding process.')
-            }
+        logging.exception("An error occurred during the lambda_handler execution.")
+        return {
+            'statusCode': 500,
+            'body': json.dumps('An error occurred during the embedding process.')
+        }
     finally:
         # Ensure the database connection is closed
         if db_connection is not None:
             db_connection.close()
-        logging.info("Database connection closed.")        
+        logging.info("Database connection closed.")      
         
 # Function to extract the chunks from the JSON data and insert them into the database
 def embed_chunks(data, db_connection):
@@ -176,17 +205,23 @@ def embed_chunks(data, db_connection):
         embedding_index = 0
         # Extract the owner email from the src field
         owner_email = extract_email_from_src(src)
+        trimmed_src = trim_keyname(src)
         
         # Create a cursor using the existing database connection
         with db_connection.cursor() as cursor:
             # Extract the 'content' field from each chunk
-            for chunk in chunks:
+            for chunk_index, chunk in enumerate(chunks, start=1):  # Start enumeration at 1
                 try:
                     content = chunk['content']
                     locations = chunk['locations']
                     orig_indexes = chunk['indexes']
                     char_index = chunk['char_index']
                     embedding_index += 1
+
+                    # Get the total number of chunks
+                    total_chunks = len(chunks)
+                    #Print the current number and total chunks
+                    print(f"Processing chunk {chunk_index} of {total_chunks}")
 
 
                     vector_embedding = generate_embeddings(content)
@@ -214,7 +249,7 @@ def embed_chunks(data, db_connection):
                     # Commit the transaction
                     db_connection.commit()
                 except Exception as e:
-                    logging.error(f"An error occurred embedding chunk index: {embedding_index}")
+                    logging.error(f"An error occurred embedding chunk index: {chunk_index}")
                     logging.error(f"An error occurred during the embedding process: {e}")
 
                 
@@ -223,4 +258,5 @@ def embed_chunks(data, db_connection):
         logging.exception("An error occurred during the embed_chunks execution.")
         db_connection.rollback()
         return False, owner_email, src
+
 
