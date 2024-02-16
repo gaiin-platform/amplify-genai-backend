@@ -160,16 +160,68 @@ def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5)
             cur.execute(sql_query)
             top_ft_docs = cur.fetchall()
         return top_ft_docs
+    
 
+def classify_src_ids_by_access(raw_src_ids, current_user):
+    accessible_src_ids = []
+    access_denied_src_ids = []
 
+    # Define the permission levels that grant access
+    permission_levels = ['read', 'write', 'owner']  # Use a list for permission_levels
+    
+    # Establish a connection to the PostgreSQL database
+    with psycopg2.connect(
+        host=pg_host,
+        database=pg_database,
+        user=pg_user,
+        password=pg_password,
+        port=3306
+    ) as conn:
+        with conn.cursor() as cur:
 
+            # Prepare a query to get all accessible src_ids for the user
+            access_query = """
+            SELECT object_id FROM object_access
+            WHERE
+                principal_id = %s AND
+                object_id = ANY(%s) AND
+                permission_level = ANY(%s);
+            """
 
+            try:
+                # Execute the query with the user_email and list of src_ids
+                cur.execute(access_query, (current_user, raw_src_ids, permission_levels))
+                results = cur.fetchall()  # Fetch all results of the query
+
+                # Create a set of accessible src_ids from the query results
+                result_set = {row[0] for row in results}
+
+                # Classify each src_id based on whether it's in the result_set
+                for src_id in raw_src_ids:
+                    if src_id in result_set:
+                        accessible_src_ids.append(src_id)
+                    else:
+                        access_denied_src_ids.append(src_id)
+
+            except Exception as e:
+                logging.error(f"An error occurred while classifying src_ids by access: {e}")
+                # Depending on the use case, you may want to handle the error differently
+                # Here we're considering all src_ids as denied if there's an error
+                access_denied_src_ids.extend(raw_src_ids)
+
+    return accessible_src_ids, access_denied_src_ids
+
+ 
 @validated("dual-retrieval")
 def process_input_with_dual_retrieval(event, context, current_user, name, data):
     data = data['data']
     content = data['userInput']
-    src_ids = data['dataSources']
+    raw_src_ids = data['dataSources']
     limit = data['limit']
+
+    accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
+    src_ids = accessible_src_ids
+    src_ids_message = f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}"
 
     # Rest of your function ...
     embeddings = generate_embeddings(content)
@@ -179,7 +231,8 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     else:
         # If there was an error, you can handle it accordingly.
         error = response["body"]["error"]
-        print(f"Error occurred: {error}")    
+        print(f"Error occurred: {error}") 
+
 
 
     # Step 1: Get documents related to the user input from the database
@@ -188,6 +241,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     related_docs.extend(related_qas)
     related_ft_docs = get_top_similar_ft_docs(input_keywords, current_user, src_ids, limit)
     related_docs.extend(related_ft_docs)
+    related_docs.extend(src_ids_message)
 
     # Return the related documents as a HTTP response
     return {"result":related_docs}

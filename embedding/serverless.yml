@@ -98,6 +98,7 @@ provider:
             - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
 
 functions:
 
@@ -158,6 +159,24 @@ functions:
           method: post
           cors: true
 
+  embeddings:
+    runtime: python3.10
+    handler: embedding.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 300
+    events:
+      - http:
+          path: /embedding
+          method: post
+          cors: true
+
     environment:
       RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
       MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
@@ -171,6 +190,7 @@ functions:
       KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
       QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
       API_VERSION: ${self:provider.environment.API_VERSION}
+      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
 
 resources:
   Conditions:

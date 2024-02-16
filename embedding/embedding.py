@@ -9,29 +9,13 @@ import smtplib
 from email.message import EmailMessage
 import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
+from botocore.exceptions import ClientError
 
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
 import urllib.parse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-from dotenv import load_dotenv
-import yaml
-import os
- #Function to convert YAML content to .env format and load it
-def load_yaml_as_env(yaml_path):
-    with open(yaml_path, 'r') as stream:
-        data_loaded = yaml.safe_load(stream)
-
-    # Convert YAML dictionary to .env format (KEY=VALUE)
-    for key, value in data_loaded.items():
-        os.environ[key] = str(value)
-
-yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
-load_yaml_as_env(yaml_file_path)
-
-
-# Set through os.environ and secrets mgr environment variables
 
 pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
@@ -40,18 +24,49 @@ ses_secret = os.environ['SES_SECRET_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
-endpoints_arn = os.environ['ENDPOINTS_ARN']
+endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
+user_files_table = os.environ['USER_FILES_TABLE']
 
 pg_password = get_credentials(rag_pg_password)
 
 ses_credentials = get_json_credetials(ses_secret)
 
-def trim_keyname(src):
+def trim_src(src):
     # Split the keyname by '.json'
     parts = src.split('.json')
     # Rejoin the first part with '.json' if there are any parts after splitting
-    trimmed_keyname = parts[0] + '.json' if len(parts) > 1 else src
+    trimmed_src = parts[0] + '.json' if len(parts) > 1 else src
     return trimmed_src
+
+
+
+def update_dynamodb_status(table, trimmed_src, chunk_index, total_chunks, status):
+    """
+    Update the DynamoDB table with the current status of the chunk processing.
+    """
+    try:
+        response = table.update_item(
+            Key={'id': trimmed_src},
+            UpdateExpression="SET #data.#rag = :rag",
+            ExpressionAttributeNames={
+                "#data": "data",
+                "#rag": "rag"
+            },
+            ExpressionAttributeValues={
+                ":rag": {
+                    "embedded": chunk_index,  # Assuming chunk_index is an integer
+                    "total": total_chunks,    # Assuming total_chunks is an integer
+                    "status": status          # Assuming status is a string
+                }
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        logging.info(f"DynamoDB update response: {response}")
+    except ClientError as e:
+        logging.error("Failed to update DynamoDB table.")
+        logging.error(e)
+        raise
+
 
 
 
@@ -136,10 +151,9 @@ def lambda_handler(event, context):
     logging.basicConfig(level=logging.INFO)
     
     # Extract bucket name and file key from the S3 event
-    #bucket_name = event['Records'][0]['s3']['bucket']['name']
-    #url_encoded_key = event['Records'][0]['s3']['object']['key']
-    bucket_name = "vu-amplify-dev-rag-chunks"
-    url_encoded_key = "allen.karns@vanderbilt.edu/2024-01-21/755c5529-fad6-4e5d-9e62-cbf7277ead2f.json.content.json.chunks.json"
+    bucket_name = event['Records'][0]['s3']['bucket']['name']
+    url_encoded_key = event['Records'][0]['s3']['object']['key']
+   
 
     #Print the bucket name and key for debugging purposes
     print(f"url_key={url_encoded_key}")
@@ -167,13 +181,15 @@ def lambda_handler(event, context):
         db_connection = get_db_connection()
         
         # Call the embed_chunks function with the JSON data
-        success, owner_email, src = embed_chunks(data, db_connection)
+        success, owner_email, src = embed_chunks(data, user_files_table, db_connection)
         
         # If the extraction process was successful, send a completion email
         if success and owner_email:
-            send_completion_email(owner_email, src, success=True)
+            print(f"Embedding process completed successfully for {src}.")
+            #send_completion_email(owner_email, src, success=True)
         else:
-            send_completion_email(owner_email, src, success=False)
+            print(f"An error occurred during the embedding process for {src}.")
+            #send_completion_email(owner_email, src, success=False)
         
 
             db_connection.close()
@@ -195,7 +211,9 @@ def lambda_handler(event, context):
         logging.info("Database connection closed.")      
         
 # Function to extract the chunks from the JSON data and insert them into the database
-def embed_chunks(data, db_connection):
+def embed_chunks(data, user_files_table, db_connection):
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(user_files_table)
     owner_email = None
     src = None
     try:
@@ -205,7 +223,12 @@ def embed_chunks(data, db_connection):
         embedding_index = 0
         # Extract the owner email from the src field
         owner_email = extract_email_from_src(src)
-        trimmed_src = trim_keyname(src)
+        trimmed_src = trim_src(src)
+        # Get the total number of chunks
+        total_chunks = len(chunks)
+
+        # Update the DynamoDB table with the initial status
+        update_dynamodb_status(table, trimmed_src, embedding_index, total_chunks, "embedding")        
         
         # Create a cursor using the existing database connection
         with db_connection.cursor() as cursor:
@@ -218,11 +241,13 @@ def embed_chunks(data, db_connection):
                     char_index = chunk['char_index']
                     embedding_index += 1
 
-                    # Get the total number of chunks
-                    total_chunks = len(chunks)
+                   
+                    
                     #Print the current number and total chunks
                     print(f"Processing chunk {chunk_index} of {total_chunks}")
 
+                    # Update the DynamoDB table with the current chunk index
+                    update_dynamodb_status(table, trimmed_src, chunk_index, total_chunks, "embedding")
 
                     vector_embedding = generate_embeddings(content)
 
@@ -251,11 +276,18 @@ def embed_chunks(data, db_connection):
                 except Exception as e:
                     logging.error(f"An error occurred embedding chunk index: {chunk_index}")
                     logging.error(f"An error occurred during the embedding process: {e}")
+                    update_dynamodb_status(table, trimmed_src, chunk_index, total_chunks, "failed")
+                    raise
 
-                
-        return True, owner_email, src  # Return True and owner_email if the process completes successfully
+        # After all chunks are processed, update the status to 'complete'
+        update_dynamodb_status(table, trimmed_src, total_chunks, total_chunks, "complete")        
+        
+        # Return True and owner_email if the process completes successfully
+        return True, owner_email, src  
+    
     except Exception as e:
         logging.exception("An error occurred during the embed_chunks execution.")
+        update_dynamodb_status(table, trimmed_src, embedding_index, total_chunks, "failed")
         db_connection.rollback()
         return False, owner_email, src
 

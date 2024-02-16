@@ -515,7 +515,7 @@ validators = {
         "retrieval": process_input_schema 
     },
     "/embedding-dual-retrieval": {
-        "retrieval": dual_retrieval_schema
+        "dual-retrieval": dual_retrieval_schema
         }
 }
 
