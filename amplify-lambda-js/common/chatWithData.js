@@ -102,8 +102,12 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // 2. Do we even need the documents farther back in the conversation to answer the question?
     // 3. Is the document done processing wtih RAG, if not, run against the whole document.
 
+    const msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
 
-    const dataSourcesInConversation = [...dataSources, ...chatRequestOrig.messages
+    const ragDataSources = [
+        ...(params.options.ragOnly? dataSources : []),
+        ...(params.options.ragOnly? msgDataSources : []),
+        ...chatRequestOrig.messages.slice(0,-1)
         .filter( m => {
             return m.data && m.data.dataSources
         }).flatMap(m => m.data.dataSources)];
@@ -111,7 +115,10 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // This is helpful later to convert a key to a data source
     // file name and type
     const dataSourceDetailsLookup = {};
-    dataSourcesInConversation.forEach(ds => {
+    ragDataSources.forEach(ds => {
+        dataSourceDetailsLookup[ds.id] = ds;
+    });
+    dataSources.forEach(ds => {
         dataSourceDetailsLookup[ds.id] = ds;
     });
 
@@ -122,17 +129,17 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         message: "I am searching for relevant information.",
         icon: "aperture",
     });
-    if(dataSourcesInConversation.length > 0 && !params.options.skipRag){
+    if(ragDataSources.length > 0 && !params.options.skipRag){
         sendStatusEventToStream(responseStream, ragStatus);
         forceFlush(responseStream);
     }
 
     // Query for related information from RAG
-    const {messages:ragContextMsgs, sources} = (dataSourcesInConversation.length > 0 && !params.options.skipRag) ?
-        await getContextMessages(chatFn, params, chatRequestOrig, dataSourcesInConversation) :
+    const {messages:ragContextMsgs, sources} = (ragDataSources.length > 0 && !params.options.skipRag) ?
+        await getContextMessages(chatFn, params, chatRequestOrig, ragDataSources) :
         {messages:[], sources:[]};
 
-    if(dataSourcesInConversation.length > 0 && !params.options.skipRag){
+    if(ragDataSources.length > 0 && !params.options.skipRag){
         sendStateEventToStream(responseStream, {
           sources: {
               rag:{
@@ -261,7 +268,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                     sources: {
                         documentContext: {
                             sources: dataSources.map(s => {
-                                const name = dataSourceDetailsLookup[s.id]?.name || "";
+                                const name = dataSourceDetailsLookup[s.id]?.name || "Attached Document ("+s.type+")";
                                 return {key: s.id, name, type: s.type};
                             }),
                             data: {chunkCount: contexts.length}

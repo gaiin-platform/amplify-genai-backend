@@ -55,7 +55,24 @@ const formatInformationSources = (sources) => {
 }
 
 const formatContextInformationItem = (source) => {
-    return `${source[0]}: ${source ? source[1].replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
+    if(!source){
+        return "";
+    }
+
+    try {
+
+        let value = source[1];
+        // check if value is a string or convert to json if not
+        if (typeof value !== "string") {
+            value = JSON.stringify(value);
+        }
+
+        return `${source[0]}: ${source ? value.replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
+    } catch (e) {
+        console.error("Error formatting context information item", source);
+        console.error(e);
+        return "";
+    }
 }
 
 const formatContextInformation = (sources) => {
@@ -550,19 +567,42 @@ export class PromptForDataAction {
 
 export class PromptAction {
 
-    constructor(prompt, outputKey = "response", retries = 3, streamResults = true) {
+    constructor(prompt, outputKey = "response", retries = 3, streamResults = true,
+                config={skipRag: true, ragOnly: false}) {
         this.prompt = prompt;
         this.outputKey = outputKey || "response";
         this.streamResults = streamResults;
         this.retries = retries;
+        this.config = config;
     }
 
-    async execute(llm, context, dataSources) {
+    async execute(ollm, context, dataSources) {
 
-        let promptText = fillInTemplate(this.prompt, context.data);
+        const llm = ollm.clone();
+        llm.params.options = {
+            ...llm.params.options,
+            skipRag: (this.config.skipRag !== undefined) ? this.config.skipRag : true,
+            ragOnly: (this.config.ragOnly !== undefined) ? this.config.ragOnly : false,
+        }
+
+        if(this.config.params !== undefined){
+            llm.params = {...llm.params, ...this.config.params};
+        }
+
+        if(this.config.options !== undefined){
+            llm.params.options = {...llm.params.options, ...this.config.options};
+        }
+
+        if(this.config.dataSources !== undefined){
+            dataSources = this.config.dataSources;
+        }
+
+        let newMessages = (this.prompt != null) ?
+            {role: "user", content:fillInTemplate(this.prompt, context.data)} :
+            [];
 
         const result = await llm.promptForString(
-            {messages: [...context.history, {role: "user", content: promptText}]},
+            {messages: [...context.history, ...newMessages]},
             dataSources,
             this.prompt,
             (this.streamResults) ? llm.responseStream : null,
@@ -625,7 +665,7 @@ export class AssistantState {
         const result = await llm.promptForPrefixData(
             chatRequest,
             prefixes,
-            dataSources,
+            [],
             null,
             checkResult,
             maxAttempts);
@@ -749,9 +789,6 @@ export class AssistantStateMachine {
 
         let transitionsLeft = this.maxTransitions;
 
-        const user = getUser(context.params);
-        const body = context.body;
-
         while (!this.currentState.endState && transitionsLeft > 0) {
 
             if(await isAssistantKilled(context)){
@@ -780,6 +817,8 @@ export class StateBasedAssistant {
         this.description = description;
         this.states = states;
         this.initialState = initialState;
+        this.includeUserName = true;
+        this.includeUserEmail = true;
     }
 
     createAssistantStateMachine() {
@@ -791,11 +830,17 @@ export class StateBasedAssistant {
     }
 
     async handler(llm, params, body, dataSources, responseStream) {
+
+        const user = getUser(params).split("@")[0];
+        const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+
         const context = {
             data: {
                 dataSources: dataSources.map((ds,i) => {
                     return {id:i, type:ds.type, name:ds.name, metadata:ds.metadata};
                 }),
+                userName: niceUserName,
+                userEmail: getUser(params),
             },
             dataSources,
             status: {},
