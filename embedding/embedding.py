@@ -51,7 +51,7 @@ def trim_keyname(src):
     parts = src.split('.json')
     # Rejoin the first part with '.json' if there are any parts after splitting
     trimmed_keyname = parts[0] + '.json' if len(parts) > 1 else src
-    return trimmed_src
+    return trimmed_keyname
 
 
 
