@@ -1,8 +1,8 @@
 import {
     AssistantState, chainActions,
     DoneState,
-    HintState, invokeAction, llmAction, mapKeysAction, outputAction, outputToResponse,
-    PromptAction, PromptForDataAction,
+    HintState, invokeAction, llmAction, mapKeysAction, outputAction, outputContext, outputToResponse,
+    PromptAction, PromptForDataAction, ragAction,
     reduceKeysAction,
     StateBasedAssistant, updateStatus
 } from "./statemachine/states.js";
@@ -38,7 +38,22 @@ import {
 // key in the context.data.
 const writeSection =
     // This is the prompt for the LLM.
-    new PromptAction("Write a section about: {{arg}}",
+    new PromptAction("Write a section about: {{arg.title}}\n" +
+        "Please include the following points:\n" +
+        "-----------------------------------\n" +
+        "{{contextWith arg pattern='point[0-9]'}}" + // This is a special helper that will pull all
+        // keys that match the pattern and format them into a string with "key:\"value\"", one per line.
+        // The first argument is the object to pull the keys from. The pattern is the regex to match the keys.
+
+        "{{#contextList arg pattern='point[0-9]*'}}" + // This does roughly the same thing as the prior line,
+        // but it will format the keys and values into a list of objects that can be used to
+        // populate a template. This is useful for more complex formatting of the context. This
+        // uses the #each block to iterate over the contextItems and format them into a list of objects
+        // with the current index and the key and value of each item.
+        "    {{#each contextItems}}" +
+        "        {{@index}}. {{key}}:{{value}}\n" +
+        "    {{/each}}" +
+        "{{/contextList}}",
         // This is the key that the result will be stored under in the context.data.
         "sectionOfReport");
 
@@ -55,7 +70,7 @@ const writeSections = mapKeysAction(
         chainActions([
             // This is a helper action that updates the status, which is the message boxes that are seen
             // at the top of the assistant response indicating what is happening.
-            updateStatus("writeSection", {summary: "Writing Section: {{arg}}", inProgress: true}),
+            updateStatus("writeSection", {summary: "Writing Section: {{arg.title}}", inProgress: true}),
             // This is the actual map function that will be applied to the value of each key with the specified
             // prefix. It will be passed the value of the key in the arg key in context.data.
             writeSection,
@@ -63,7 +78,7 @@ const writeSections = mapKeysAction(
         ]),
         // This is a prefix that will be added to the assistant output. It can be a template that
         // refers to items in context.data.
-        "## {{arg}}"
+        "## {{arg.title}}"
     ),
     // This is the prefix for the keys that will be processed by map. All keys that start with this
     // prefix will be identified and their values turned into a list. Each item in the list will be
@@ -72,9 +87,11 @@ const writeSections = mapKeysAction(
     // You can optionally have all of the values of the keys with the specified prefix combined into a single
     // list and saved under new key in context.data. This is the name of that key.
     null,
-    // All actions update the context.data. By default, mapKeysAction will update the context.data with the
-    // a list of all the new context.data values that were created by the map function. If, however, you just
-    // want a single key to become the result, you specifiy it like this.
+    // All actions update the context.data. By default, mapKeysAction will return a map representing the
+    // result of the map function (E.g., new keys it added to context.data) and then assign this map to the
+    // key that was mapped. Each map operation will result in a new map that is bound to the key that was mapped
+    // with whatever keys were added to context.data by the map function. If, however, you just want a single
+    // key to become the result, you specify it like this.
     "sectionOfReport"
 )
 
@@ -86,12 +103,13 @@ const combineSections = reduceKeysAction(
     // An invokeAction takes a normal Javascript function and specifies keys "['arg']" from the context.data
     // that should be turned into a list of arguments and passed to the function. The result of the
     // function will be stored in the context.data under the specified outputKey, which is "report".
-    invokeAction((sections)=>sections.join("\n\n"), ["arg"], "report"),
-"section",
+    invokeAction((sections) => sections.join("\n\n"), ["arg"], "report"),
+    "section",
     // This specifies the new key that will be stored in the context.data with the result of the reduce
     // operation.
     "report",
-    // By default, reduce will take the entire new context.data as the result. This tells the reduce to
+    // By default, reduce will diff the original context.data and the resulting context.data from the
+    // reduce operation and use the map that is produced by the diff as the result. This tells the reduce to
     // extract a specific key from the invokeAction's context.data and use that key's value as the
     // result of the reduce.
     "report");
@@ -100,6 +118,54 @@ const combineSections = reduceKeysAction(
 const States = {
     // We start in the outline state and produce an outline of the report that we are going to write.
     // The outline will be a list of sections that we will write.
+    search: new AssistantState("search",
+        "Posing questions to answer with the documents",
+        // PromptForDataAction is a special action that allows us to reliably produce key/value pairs and extract
+        // them. This action will automatically convert the specified key/value pairs into a dictionary and store
+        // each key/value pair in the context.data.
+        new PromptForDataAction(
+
+            // This is the prompt that will be sent to the LLM
+            "Available Documents:\n" +
+            "-------------------------" +
+            "{{yaml dataSources}}\n" +
+            "-------------------------" +
+            "\n" +
+            "Look at any included documents in the conversation. Think of any questions that you would like" +
+            " to search the documents for answers for to perform the task described in the conversation." +
+            " What questions do you need answered to write an exceptional report on the topic using these sources?",
+
+            // This is the set of key/value pairs that we want to extract. The key is the key that the
+            // LLM should produce and the value is the description that will be provided to the LLM in the
+            // prompt so that it knows what to do. If you want one of a small set of values, you can do
+            // something like "key":"yes|no|maybe" and the LLM will usually only output one of the values.
+            {
+                "thought":"explain your reasoning...",
+                "question1": "the first question",
+                "question2": "the second question",
+                "question3": "etc.."
+            },
+
+            // This is a function that will be called after the data is extracted and turned into a dictionary.
+            // The function can decide if the LLM output is OK or if the LLM should be prompted again to produce
+            // a different value. The function has a configurable "retries" parameter that defaults to 3 and
+            // determines how many times the LLM will be prompted to produce a new value.
+            (m) => {
+                return m.question1;
+            }
+        ),
+        false,
+        {omitDocuments:true}
+    ),
+    rag: new AssistantState("rag",
+        "Using RAG to find relevant information",
+        mapKeysAction(
+            ragAction({query:"{{arg}}"}),
+            "question"
+        ),
+        false,
+        {omitDocuments:true}
+    ),
     outline: new AssistantState("outline",
         "Creating an outline",
         // PromptForDataAction is a special action that allows us to reliably produce key/value pairs and extract
@@ -107,18 +173,23 @@ const States = {
         // each key/value pair in the context.data.
         new PromptForDataAction(
             // This is the prompt that will be sent to the LLM
+            "Possibly Relevant Information:\n" +
+            "----------------------------\n" +
+            "{{yaml possiblyRelevantInformation}}\n" +
+            "----------------------------\n" +
             "Write an outline for the report and output each section on a new " +
-            "line with the section prefix as shown",
+            "line with the section prefix as shown. Refer to the possiblyRelevantInformation" +
+            "to help determine appropriate sections.",
             // This is the set of key/value pairs that we want to extract. The key is the key that the
             // LLM should produce and the value is the description that will be provided to the LLM in the
             // prompt so that it knows what to do. If you want one of a small set of values, you can do
             // something like "key":"yes|no|maybe" and the LLM will usually only output one of the values.
             {
-                "section1":"the first section",
-                "section2":"the second section",
-                "section3":"the third section",
-                "section4":"the fourth section",
-                "section5":"the fifth section"
+                "section1": "the first section",
+                "section2": "the second section",
+                "section3": "the third section",
+                "section4": "the fourth section",
+                "section5": "the fifth section"
             },
             // This is a function that will be called after the data is extracted and turned into a dictionary.
             // The function can decide if the LLM output is OK or if the LLM should be prompted again to produce
@@ -127,6 +198,59 @@ const States = {
             (m) => {
                 return m.section1 && m.section2;
             }
+        ),
+    ),
+    outlineSection: new AssistantState("outlineSection",
+        "Outline what should go in the section",
+        // PromptForDataAction is a special action that allows us to reliably produce key/value pairs and extract
+        // them. This action will automatically convert the specified key/value pairs into a dictionary and store
+        // each key/value pair in the context.data.
+        chainActions([
+                mapKeysAction(
+                    new PromptForDataAction(
+                        // This is the prompt that will be sent to the LLM.
+                        // The templates use Handlebars https://handlebarsjs.com/guide/
+                        // The context.data is passed to the template to render it.
+                        // There are a few special functions that are registered in Handlebars, as
+                        // shown below "matchKeys" takes a regular expression and fetches all matching
+                        // keys from the context.data and then formats them into a string with "key:\"value\"",
+                        // one per line. It automatically does JSON.stringify(value), so it will still generate
+                        // a string if the value is an object or array.
+                        "" +
+                        "The sections before this section are:\n" +
+                        "-------------------------------------\n" +
+                        "{{context 'section[0-9]*'}}\n" + // This is a special helper that will pull all
+                        // keys in context.data that match the pattern and format them into a string with
+                        // "key:\"value\"", one per line. It automatically calls JSON.stringify on the value.
+                        "-------------------------------------\n" +
+                        "Take into account the sections that came before to avoid duplication and create a list of bullet " +
+                        "points that should go in the section about: \n" +
+                        "{{arg}}. ",
+                        // This is the set of key/value pairs that we want to extract. The key is the key that the
+                        // LLM should produce and the value is the description that will be provided to the LLM in the
+                        // prompt so that it knows what to do. If you want one of a small set of values, you can do
+                        // something like "key":"yes|no|maybe" and the LLM will usually only output one of the values.
+                        {
+                            "title": "the title of the section",
+                            "point1": "the first point to cover",
+                            "point2": "the second point to cover",
+                            "point3": "the third point to cover",
+                            "point4": "the fourth point to cover",
+                            "point5": "the fifth point to cover"
+                        },
+                        // This is a function that will be called after the data is extracted and turned into a dictionary.
+                        // The function can decide if the LLM output is OK or if the LLM should be prompted again to produce
+                        // a different value. The function has a configurable "retries" parameter that defaults to 3 and
+                        // determines how many times the LLM will be prompted to produce a new value.
+                        (m) => {
+                            return m.title && m.point1 && m.point2;
+                        }
+                    ),
+                    "section"),
+                outputContext(
+                    "## Outline of Report\n\n" +
+                    "{{contextOutline}}")
+            ]
         ),
     ),
     // Once we produce an outline of the report to write, we need to write the sections of the report
@@ -143,10 +267,13 @@ const States = {
 };
 
 // We start in the outline state.
-const current = States.outline;
+const current = States.search;
 
 // We add transitions to the state machine to define the state machine.
-States.outline.addTransition(States.writeSections.name, "Write the Report");
+States.search.addTransition(States.rag.name, "Outline each section of the report");
+States.rag.addTransition(States.outline.name, "Use RAG to find relevant document chunks");
+States.outline.addTransition(States.outlineSection.name, "Outline each section of the report");
+States.outlineSection.addTransition(States.writeSections.name, "Write the report");
 States.writeSections.addTransition(States.done.name, "Done");
 
 // We create the assistant with the state machine and the current state.
@@ -159,9 +286,13 @@ export const reportWriterAssistant = new StateBasedAssistant(
     // prompt that the user sent. An assistant should not respond if a message includes a dataSource type that
     // the assistant does not support. This function should return true if the assistant can support the
     // dataSources and false otherwise.
-    (m) => {return true},
+    (m) => {
+        return true
+    },
     // This function determines if the assistant will work with the given model, such as GPT-3.5, etc.
-    (m) => {return true},
+    (m) => {
+        return true
+    },
     // This is the state machine that the assistant will use to process requests.
     States,
     // This is the current state that the assistant will start in.

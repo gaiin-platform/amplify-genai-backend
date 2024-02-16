@@ -3,6 +3,11 @@ import {ModelID, Models} from "../../models/models.js";
 import {ConsoleWritableStream} from "../../local/consoleWriteableStream.js";
 import {newStatus} from "../../common/status.js";
 import {sendDeltaToStream, sendStatusEventToStream, StatusOutputStream} from "../../common/streams.js";
+import Handlebars from "handlebars";
+import yaml from 'js-yaml';
+import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
+import {isKilled} from "../../requests/requestState.js";
+import {getUser} from "../../common/params.js";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -24,13 +29,50 @@ const formatRagInformationSource = (source) => {
     return `From ${source.name} at ${JSON.stringify(source.locations)}: ${source.content.replaceAll.replace(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n')}`;
 }
 
+const diffMaps = (map1, map2) => {
+    const diff = {};
+
+    if(!map2){
+        return {};
+    }
+    if(!map1){
+        return map2;
+    }
+
+    const keys = Object.keys(map2);
+    keys.forEach((key) => {
+        if (!map1[key] || map1[key] !== map2[key]) {
+            diff[key] = map2[key];
+        }
+    });
+
+    return diff;
+}
+
 const formatInformationSources = (sources) => {
     return (sources.length === 0 ? "NONE" :
         sources.map(source => formatInformationSource(source)).join("\n"));
 }
 
 const formatContextInformationItem = (source) => {
-    return `${source[0]}: ${source ? source[1].replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
+    if(!source){
+        return "";
+    }
+
+    try {
+
+        let value = source[1];
+        // check if value is a string or convert to json if not
+        if (typeof value !== "string") {
+            value = JSON.stringify(value);
+        }
+
+        return `${source[0]}: ${source ? value.replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
+    } catch (e) {
+        console.error("Error formatting context information item", source);
+        console.error(e);
+        return "";
+    }
 }
 
 const formatContextInformation = (sources) => {
@@ -135,7 +177,7 @@ export const outputToStatus = (status, action) => {
             const statusLLM = llm.clone();
             status.inProgress = true;
 
-            if(status.summary){
+            if (status.summary) {
                 status.summary = fillInTemplate(status.summary, context.data);
             }
 
@@ -234,12 +276,19 @@ export const mapKeysAction = (action, keyPrefix, outputKey = null, extractKey = 
             const resultList = [];
 
             for (let i = 0; i < args.length; i++) {
+
+                if(await isAssistantKilled(context)){
+                    return;
+                }
+
                 const arg = args[i];
                 let newContext = {...context, data: {...context.data, arg, i}};
                 await action.execute(llm, newContext, dataSources);
 
                 if (extractKey) {
                     newContext.data = newContext.data[extractKey];
+                } else {
+                    newContext.data = diffMaps(context.data, newContext.data);
                 }
 
                 if (!outputKey) {
@@ -279,11 +328,64 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
 
             if (extractKey) {
                 newContext.data = newContext.data[extractKey];
+            } else {
+                newContext.data = diffMaps(context.data, newContext.data);
             }
 
             outputKey = outputKey || keyPrefix;
 
             context.data[outputKey] = newContext.data;
+        }
+    };
+}
+
+export const ragAction = (config={addToHistory:true, addToContext:true}) => {
+    return {
+        execute: async (llm, context, dataSources) => {
+
+            const dataSourcesInConversation = [...dataSources, ...context.history
+                .filter( m => {
+                    return m.data && m.data.dataSources
+                }).flatMap(m => m.data.dataSources)];
+
+            const dataSourceDetailsLookup = {};
+            dataSourcesInConversation.forEach(ds => {
+                dataSourceDetailsLookup[ds.id] = ds;
+            });
+
+            const selectedDataSources = context.dataSources;
+
+            const messages = (config.query) ?
+                [{role:"user", content:fillInTemplate(config.query, context.data)}] :
+                context.history;
+
+            const ragLLM = llm.clone();
+            ragLLM.params = {
+                ...llm.params,
+                messages,
+                options: {
+                    ...llm.defaultBody,
+                    model: Models[process.env.RAG_ASSISTANT_MODEL_ID],
+                    skipRag: true
+                }
+            };
+
+            const result = await getContextMessagesWithLLM(
+                ragLLM,
+                ragLLM.params,
+                {...ragLLM.defaultBody, messages: context.history},
+                selectedDataSources)
+
+            if(config.addToHistory || config.addToHistory === undefined){
+                context.history = [
+                    ...context.history.slice(0,-1),
+                    ...result.messages,
+                    ...context.history.slice(-1)
+                ];
+            }
+            if(config.addToContext || config.addToContext === undefined){
+                context.data = {...context.data, possiblyRelevantInformation: result.sources};
+            }
         }
     };
 }
@@ -294,6 +396,15 @@ export const chainActions = (actions) => {
             for (const action of actions) {
                 await action.execute(llm, context, dataSources);
             }
+        }
+    };
+}
+
+export const outputContext = (template) => {
+    return {
+        execute: async (llm, context, dataSources) => {
+            const result = fillInTemplate(template, context.data);
+            sendDeltaToStream(context.responseStream, "assistant", result);
         }
     };
 }
@@ -310,11 +421,115 @@ export const parallelActions = (actions) => {
     };
 }
 
-function fillInTemplate(template, context) {
-    for (const entry of Object.entries(context)) {
-        template = template.replaceAll(`{{${entry[0]}}}`, entry[1]);
+function renderMarkdownOutline(data, depth = 0, omit=["arg","i"]) {
+    const indent = '  '.repeat(depth);
+    const bullet = depth > 0 ? '*' : ''; // Use bullets only for nested items
+
+    if (Array.isArray(data)) {
+        // Handling arrays
+        return "\n"+data.map((item, index) => {
+            const content = renderMarkdownOutline(item, depth + 1);
+            return `${indent} ${index + 1}. ${content}\n`; // Enumerate with 1., 2., etc.
+        }).join("");
+    } else if (typeof data === 'object' && data !== null) {
+        // Handling objects
+        return "\n"+ Object.entries(data).map(([key, value]) => {
+            if(!omit.includes(key)) {
+                const content = renderMarkdownOutline(value, depth + 1);
+                return `${indent}${bullet} **${key}**: ${content}\n`; // Make key bold
+            } else {
+                return "";
+            };
+        }).join("");
+    } else {
+        // Handling primitives (strings, numbers, etc.)
+        return `${data}`;
     }
-    return template;
+}
+
+function matchKeys(context, keyRegex) {
+    try {
+        const pattern = new RegExp(keyRegex, "i");
+        // Filter the entries in the context and collect a list of all entries
+        // with keys that match the pattern
+        const matches = Object.entries(context).filter(([key, val]) => {
+            return pattern.test(key);
+        });
+        return matches;
+    } catch (e) {
+        console.error(e);
+        return [];
+    }
+}
+
+function matchKeysStr(context, keyRegex) {
+    return matchKeys(context, keyRegex).map(e => `${e[0]}: ${JSON.stringify(e[1])}`).join("\n");
+}
+
+function fillInTemplate(templateStr, contextData) {
+
+    let result = templateStr;
+    try {
+        Handlebars.registerHelper('json', function (context) {
+            return JSON.stringify(contextData);
+        });
+
+        Handlebars.registerHelper('yaml', function (context) {
+            return yaml.dump(contextData);
+        });
+
+        Handlebars.registerHelper("contextOutline",function (conf) {
+            let obj = this;
+
+            if(conf.hash.pattern){
+                obj = matchKeys(obj, conf.hash.pattern || ".*").map((key,value)=>{
+                    return {key:key, value:value};
+                });
+            }
+
+            const outline = renderMarkdownOutline(obj);
+            return outline;
+        })
+
+        Handlebars.registerHelper("contextOutlineWith",function (obj, options) {
+            const pattern = options.hash.pattern;
+            let withObj = obj;
+
+            if(pattern){
+                withObj = matchKeys(obj, pattern || ".*").map((key,value)=>{
+                    return {key:key, value:value};
+                });
+            }
+
+            return renderMarkdownOutline(withObj);
+        })
+
+        Handlebars.registerHelper("contextList", function(context, options) {
+            const pattern = options.hash.pattern;
+            const newContext = matchKeys(context, pattern || ".*").map(
+                e => {return {key:e[0], value:e[1]}}
+            );
+
+            return options.fn({contextItems:newContext});
+        });
+
+        Handlebars.registerHelper('contextWith', function (obj, options) {
+            const pattern = options.hash.pattern;
+            return matchKeysStr(obj, pattern || ".*");
+        })
+
+        Handlebars.registerHelper('context', function (pattern) {
+            return matchKeysStr(contextData, pattern || ".*");
+        })
+
+        const template = Handlebars.compile(templateStr);
+        result = template(contextData);
+
+    } catch (e) {
+        console.error(e);
+    }
+
+    return result;
 }
 
 export class PromptForDataAction {
@@ -352,19 +567,42 @@ export class PromptForDataAction {
 
 export class PromptAction {
 
-    constructor(prompt, outputKey = "response", retries = 3, streamResults = true) {
+    constructor(prompt, outputKey = "response", retries = 3, streamResults = true,
+                config={skipRag: true, ragOnly: false}) {
         this.prompt = prompt;
         this.outputKey = outputKey || "response";
         this.streamResults = streamResults;
         this.retries = retries;
+        this.config = config;
     }
 
-    async execute(llm, context, dataSources) {
+    async execute(ollm, context, dataSources) {
 
-        let promptText = fillInTemplate(this.prompt, context.data);
+        const llm = ollm.clone();
+        llm.params.options = {
+            ...llm.params.options,
+            skipRag: (this.config.skipRag !== undefined) ? this.config.skipRag : true,
+            ragOnly: (this.config.ragOnly !== undefined) ? this.config.ragOnly : false,
+        }
+
+        if(this.config.params !== undefined){
+            llm.params = {...llm.params, ...this.config.params};
+        }
+
+        if(this.config.options !== undefined){
+            llm.params.options = {...llm.params.options, ...this.config.options};
+        }
+
+        if(this.config.dataSources !== undefined){
+            dataSources = this.config.dataSources;
+        }
+
+        let newMessages = (this.prompt != null) ?
+            {role: "user", content:fillInTemplate(this.prompt, context.data)} :
+            [];
 
         const result = await llm.promptForString(
-            {messages: [...context.history, {role: "user", content: promptText}]},
+            {messages: [...context.history, ...newMessages]},
             dataSources,
             this.prompt,
             (this.streamResults) ? llm.responseStream : null,
@@ -385,6 +623,8 @@ export class AssistantState {
 
     constructor(name, description, entryAction = null, endState = false,
                 config = {
+                    failOnError:false,
+                    omitDocuments: false,
                     extraInstructions: {preInstructions: "", postInstructions: ""},
                     stream: {target: STATUS_STREAM, passThrough: true}
                 }) {
@@ -395,6 +635,10 @@ export class AssistantState {
         this.transitions = [];
         this.endState = endState;
         this.stream = config.stream || {target: STATUS_STREAM, passThrough: true};
+        this.config = config;
+
+        // If insertDocuments is not defined, default to true
+        this.omitDocuments = config.omitDocuments;
     }
 
     addTransition(toStateName, description) {
@@ -421,7 +665,7 @@ export class AssistantState {
         const result = await llm.promptForPrefixData(
             chatRequest,
             prefixes,
-            dataSources,
+            [],
             null,
             checkResult,
             maxAttempts);
@@ -431,6 +675,13 @@ export class AssistantState {
 
     async invokeEntryAction(llm, context, dataSources) {
         const actionLLM = llm.clone();
+
+        if(this.omitDocuments){
+            actionLLM.params = {
+                ...actionLLM.params,
+                options:{...actionLLM.params.options, skipRag:true, ragOnly:true}
+            };
+        }
 
         const status = newStatus({inProgress: true, summary: this.description, message: "", icon: "bolt"})
 
@@ -448,7 +699,12 @@ export class AssistantState {
             try {
                 await this.entryAction.execute(actionLLM, context, dataSources);
             } catch (e) {
+                console.error("Error invoking entry action in state: " + this.name);
                 console.error(e);
+
+                if(this.failOnError){
+                    throw e;
+                }
             }
         }
 
@@ -461,12 +717,20 @@ export class AssistantState {
     }
 
     async enter(llm, context, dataSources) {
+        if(await isAssistantKilled(context)){
+            return null;
+        }
+
         await this.invokeEntryAction(llm, context, dataSources);
 
         if (this.transitions.length === 0) {
             return this.name;
         } else if (this.transitions.length === 1) {
             return this.transitions[0].to;
+        }
+
+        if(await isAssistantKilled(context)){
+            return null;
         }
 
         const result = await this.getNextState(llm, context, dataSources);
@@ -486,6 +750,24 @@ export class HintState extends AssistantState {
 export class DoneState extends AssistantState {
     constructor() {
         super("done", "Done", null, true);
+    }
+}
+
+export const isAssistantKilled = async (context) => {
+    try {
+        if(context.assistantKilled){
+            return true;
+        }
+
+        const user = getUser(context.params);
+        const body = context.body;
+        const killed = await isKilled(user, context.responseStream, body);
+        if(killed){
+            context.assistantKilled = true;
+        }
+        return killed;
+    } catch (e){
+        return true;
     }
 }
 
@@ -509,6 +791,10 @@ export class AssistantStateMachine {
 
         while (!this.currentState.endState && transitionsLeft > 0) {
 
+            if(await isAssistantKilled(context)){
+                return;
+            }
+
             transitionsLeft -= 1;
             const nextName = await this.currentState.enter(llm, context, dataSources);
             this.currentState = this.statesByName[nextName];
@@ -531,6 +817,8 @@ export class StateBasedAssistant {
         this.description = description;
         this.states = states;
         this.initialState = initialState;
+        this.includeUserName = true;
+        this.includeUserEmail = true;
     }
 
     createAssistantStateMachine() {
@@ -542,10 +830,23 @@ export class StateBasedAssistant {
     }
 
     async handler(llm, params, body, dataSources, responseStream) {
+
+        const user = getUser(params).split("@")[0];
+        const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+
         const context = {
-            data: {},
+            data: {
+                dataSources: dataSources.map((ds,i) => {
+                    return {id:i, type:ds.type, name:ds.name, metadata:ds.metadata};
+                }),
+                userName: niceUserName,
+                userEmail: getUser(params),
+            },
+            dataSources,
             status: {},
             responseStream,
+            params,
+            body,
             history: body.messages,
         };
 
