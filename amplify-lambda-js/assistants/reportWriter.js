@@ -2,7 +2,7 @@ import {
     AssistantState, chainActions,
     DoneState,
     HintState, invokeAction, llmAction, mapKeysAction, outputAction, outputContext, outputToResponse,
-    PromptAction, PromptForDataAction,
+    PromptAction, PromptForDataAction, ragAction,
     reduceKeysAction,
     StateBasedAssistant, updateStatus
 } from "./statemachine/states.js";
@@ -118,6 +118,54 @@ const combineSections = reduceKeysAction(
 const States = {
     // We start in the outline state and produce an outline of the report that we are going to write.
     // The outline will be a list of sections that we will write.
+    search: new AssistantState("search",
+        "Posing questions to answer with the documents",
+        // PromptForDataAction is a special action that allows us to reliably produce key/value pairs and extract
+        // them. This action will automatically convert the specified key/value pairs into a dictionary and store
+        // each key/value pair in the context.data.
+        new PromptForDataAction(
+
+            // This is the prompt that will be sent to the LLM
+            "Available Documents:\n" +
+            "-------------------------" +
+            "{{yaml dataSources}}\n" +
+            "-------------------------" +
+            "\n" +
+            "Look at any included documents in the conversation. Think of any questions that you would like" +
+            " to search the documents for answers for to perform the task described in the conversation." +
+            " What questions do you need answered to write an exceptional report on the topic using these sources?",
+
+            // This is the set of key/value pairs that we want to extract. The key is the key that the
+            // LLM should produce and the value is the description that will be provided to the LLM in the
+            // prompt so that it knows what to do. If you want one of a small set of values, you can do
+            // something like "key":"yes|no|maybe" and the LLM will usually only output one of the values.
+            {
+                "thought":"explain your reasoning...",
+                "question1": "the first question",
+                "question2": "the second question",
+                "question3": "etc.."
+            },
+
+            // This is a function that will be called after the data is extracted and turned into a dictionary.
+            // The function can decide if the LLM output is OK or if the LLM should be prompted again to produce
+            // a different value. The function has a configurable "retries" parameter that defaults to 3 and
+            // determines how many times the LLM will be prompted to produce a new value.
+            (m) => {
+                return m.question1;
+            }
+        ),
+        false,
+        {omitDocuments:true}
+    ),
+    rag: new AssistantState("rag",
+        "Using RAG to find relevant information",
+        mapKeysAction(
+            ragAction({query:"{{arg}}"}),
+            "question"
+        ),
+        false,
+        {omitDocuments:true}
+    ),
     outline: new AssistantState("outline",
         "Creating an outline",
         // PromptForDataAction is a special action that allows us to reliably produce key/value pairs and extract
@@ -125,8 +173,13 @@ const States = {
         // each key/value pair in the context.data.
         new PromptForDataAction(
             // This is the prompt that will be sent to the LLM
+            "Possibly Relevant Information:\n" +
+            "----------------------------\n" +
+            "{{yaml possiblyRelevantInformation}}\n" +
+            "----------------------------\n" +
             "Write an outline for the report and output each section on a new " +
-            "line with the section prefix as shown",
+            "line with the section prefix as shown. Refer to the possiblyRelevantInformation" +
+            "to help determine appropriate sections.",
             // This is the set of key/value pairs that we want to extract. The key is the key that the
             // LLM should produce and the value is the description that will be provided to the LLM in the
             // prompt so that it knows what to do. If you want one of a small set of values, you can do
@@ -214,9 +267,11 @@ const States = {
 };
 
 // We start in the outline state.
-const current = States.outline;
+const current = States.search;
 
 // We add transitions to the state machine to define the state machine.
+States.search.addTransition(States.rag.name, "Outline each section of the report");
+States.rag.addTransition(States.outline.name, "Use RAG to find relevant document chunks");
 States.outline.addTransition(States.outlineSection.name, "Outline each section of the report");
 States.outlineSection.addTransition(States.writeSections.name, "Write the report");
 States.writeSections.addTransition(States.done.name, "Done");

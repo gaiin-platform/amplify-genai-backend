@@ -97,6 +97,12 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
 
 export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dataSources, responseStream) => {
 
+    // To RAG or not to RAG, that is the question...
+    // 1. Is the document beneath a token threshold where we can just dump it in the prompt?
+    // 2. Do we even need the documents farther back in the conversation to answer the question?
+    // 3. Is the document done processing wtih RAG, if not, run against the whole document.
+
+
     const dataSourcesInConversation = [...dataSources, ...chatRequestOrig.messages
         .filter( m => {
             return m.data && m.data.dataSources

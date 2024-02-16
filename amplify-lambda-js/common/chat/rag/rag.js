@@ -69,6 +69,41 @@ async function getRagResults(token, search, ragDataSourceKeys, count) {
  */
 
 export const getContextMessages = async (chatFn, params, chatBody, dataSources) => {
+    const ragLLMParams = setModel(
+        {...params, options: {skipRag: true}},
+        Models[process.env.RAG_ASSISTANT_MODEL_ID]);
+
+    const llm = new LLM(
+        chatFn,
+        ragLLMParams,
+        null);
+
+    return await getContextMessagesWithLLM(llm, params, chatBody, dataSources);
+}
+
+function createSuperset(arrayOfObjects) {
+    const superset = {};
+
+    arrayOfObjects.forEach(obj => {
+        Object.keys(obj).forEach(key => {
+            if (!superset[key]) {
+                // Initialize a new Set if the key is new
+                superset[key] = new Set();
+            }
+            // Add the value to the Set to ensure uniqueness
+            superset[key].add(obj[key]);
+        });
+    });
+
+    // Convert Sets to arrays for a more standard object structure
+    Object.keys(superset).forEach(key => {
+        superset[key] = Array.from(superset[key]);
+    });
+
+    return superset;
+}
+
+export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSources) => {
 
     try {
         const token = getAccessToken(params);
@@ -91,16 +126,6 @@ export const getContextMessages = async (chatFn, params, chatBody, dataSources) 
         });
 
         const ragDataSourceKeys = Object.keys(keyLookup);
-
-        const ragLLMParams = setModel(
-            {...params, options: {skipRag: true}},
-            Models[process.env.RAG_ASSISTANT_MODEL_ID]);
-
-        const llm = new LLM(
-            chatFn,
-            ragLLMParams,
-            null);
-
 
         const searches = await llm.promptForData(
             chatBody, [],
@@ -183,9 +208,12 @@ export const getContextMessages = async (chatFn, params, chatBody, dataSources) 
                         const searchString = idea.descriptionOfSpecificHelpfulInformation;
                         const response = await getRagResults(token, searchString, ragDataSourceKeys, resultsPerIdea);
                         const sources = response.data.result.map((item) => {
-                            const [content, key, locations, indexes, charIndex, user] = item;
+                            const [content, key, locations, indexes, charIndex, user, tokenCount,  ragId, score] = item;
                             const ds = keyLookup[key];
                             return {
+                                ragId,
+                                tokenCount,
+                                score: score || 0.5,
                                 name: ds.name,
                                 key,
                                 type: ds.type,
@@ -206,44 +234,51 @@ export const getContextMessages = async (chatFn, params, chatBody, dataSources) 
 
         const sources = (await Promise.all(ragPromises)).flat();
 
-        logger.debug("RAG result total", sources.length);
+        // Sort the sources by score
+        sources.sort((a, b) => -1 * (b.score - a.score));
+
+        logger.debug("RAG raw result total", sources.length);
+
+        // Filter the list of sources to only include one copy of each item
+        // based on the ragId
+        const uniqueSources = [];
+        const seen = new Set();
+        for (const item of sources) {
+            if (!seen.has(item.ragId) && !seen.has(item.content)) {
+                uniqueSources.push(item);
+                seen.add(item.ragId);
+                seen.add(item.content);
+            }
+        }
+
+        logger.debug("RAG unique result total", uniqueSources.length);
+
+        // Group the unique sources by the key
+        const groupedSources = {};
+        for (const item of uniqueSources) {
+            if (!groupedSources[item.key]) {
+                groupedSources[item.key] = [];
+            }
+            groupedSources[item.key].push(item);
+        }
 
         const messages = [
             {role: "user", content: "Possibly relevant information:\n----------------\n"},
-            ...sources.map((item, index) => {
-                return {
-                    role: "user", content: `${index + 1}. From: ${keyLookup[item.key].name}
-Location: ${JSON.stringify(item.locations)}
+            ...Object.entries(groupedSources).map(([key,contentsFromKey], index) => {
+                const content = contentsFromKey.map(item => {
+                    return `Location: ${JSON.stringify(createSuperset(item.locations))}
 Content: ${item.content}
+                    `
+                }).join("\n");
+
+                return {
+                    role: "user", content: `${index + 1}. From: ${keyLookup[key].name}
+${content}
 `
                 }
             })];
 
-
-        // const relevantPages = await llm.promptForData(
-        //     chatBody, [],
-        //     `
-        //     I am trying to accomplish this task:
-        //     ----------------
-        //     ${search}
-        //
-        //     The information:
-        //     ----------------
-        //     ${messages.map(m => m.content).join("\n")}
-        //     ----------------
-        //
-        //     Please list the most important locations to review based on the available information.
-        //     `,
-        //     {
-        //         "location1": "the most important location to review based on the available information.",
-        //         "location2": "the second most important location to review based on the available information.",
-        //         "location3": "the third most important location to review based on the available information.",
-        //     },
-        //     null,
-        //     null, 3);
-
-
-        return {messages, sources};
+        return {messages, sources:uniqueSources};
     } catch (e) {
         logger.error("Error getting context messages from RAG", e);
         return {messages: [], sources: []};

@@ -5,6 +5,9 @@ import {newStatus} from "../../common/status.js";
 import {sendDeltaToStream, sendStatusEventToStream, StatusOutputStream} from "../../common/streams.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
+import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
+import {isKilled} from "../../requests/requestState.js";
+import {getUser} from "../../common/params.js";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -256,6 +259,11 @@ export const mapKeysAction = (action, keyPrefix, outputKey = null, extractKey = 
             const resultList = [];
 
             for (let i = 0; i < args.length; i++) {
+
+                if(await isAssistantKilled(context)){
+                    return;
+                }
+
                 const arg = args[i];
                 let newContext = {...context, data: {...context.data, arg, i}};
                 await action.execute(llm, newContext, dataSources);
@@ -310,6 +318,57 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
             outputKey = outputKey || keyPrefix;
 
             context.data[outputKey] = newContext.data;
+        }
+    };
+}
+
+export const ragAction = (config={addToHistory:true, addToContext:true}) => {
+    return {
+        execute: async (llm, context, dataSources) => {
+
+            const dataSourcesInConversation = [...dataSources, ...context.history
+                .filter( m => {
+                    return m.data && m.data.dataSources
+                }).flatMap(m => m.data.dataSources)];
+
+            const dataSourceDetailsLookup = {};
+            dataSourcesInConversation.forEach(ds => {
+                dataSourceDetailsLookup[ds.id] = ds;
+            });
+
+            const selectedDataSources = context.dataSources;
+
+            const messages = (config.query) ?
+                [{role:"user", content:fillInTemplate(config.query, context.data)}] :
+                context.history;
+
+            const ragLLM = llm.clone();
+            ragLLM.params = {
+                ...llm.params,
+                messages,
+                options: {
+                    ...llm.defaultBody,
+                    model: Models[process.env.RAG_ASSISTANT_MODEL_ID],
+                    skipRag: true
+                }
+            };
+
+            const result = await getContextMessagesWithLLM(
+                ragLLM,
+                ragLLM.params,
+                {...ragLLM.defaultBody, messages: context.history},
+                selectedDataSources)
+
+            if(config.addToHistory || config.addToHistory === undefined){
+                context.history = [
+                    ...context.history.slice(0,-1),
+                    ...result.messages,
+                    ...context.history.slice(-1)
+                ];
+            }
+            if(config.addToContext || config.addToContext === undefined){
+                context.data = {...context.data, possiblyRelevantInformation: result.sources};
+            }
         }
     };
 }
@@ -524,6 +583,8 @@ export class AssistantState {
 
     constructor(name, description, entryAction = null, endState = false,
                 config = {
+                    failOnError:false,
+                    omitDocuments: false,
                     extraInstructions: {preInstructions: "", postInstructions: ""},
                     stream: {target: STATUS_STREAM, passThrough: true}
                 }) {
@@ -534,6 +595,10 @@ export class AssistantState {
         this.transitions = [];
         this.endState = endState;
         this.stream = config.stream || {target: STATUS_STREAM, passThrough: true};
+        this.config = config;
+
+        // If insertDocuments is not defined, default to true
+        this.omitDocuments = config.omitDocuments;
     }
 
     addTransition(toStateName, description) {
@@ -571,6 +636,13 @@ export class AssistantState {
     async invokeEntryAction(llm, context, dataSources) {
         const actionLLM = llm.clone();
 
+        if(this.omitDocuments){
+            actionLLM.params = {
+                ...actionLLM.params,
+                options:{...actionLLM.params.options, skipRag:true, ragOnly:true}
+            };
+        }
+
         const status = newStatus({inProgress: true, summary: this.description, message: "", icon: "bolt"})
 
         if (this.stream.target === STATUS_STREAM) {
@@ -587,7 +659,12 @@ export class AssistantState {
             try {
                 await this.entryAction.execute(actionLLM, context, dataSources);
             } catch (e) {
+                console.error("Error invoking entry action in state: " + this.name);
                 console.error(e);
+
+                if(this.failOnError){
+                    throw e;
+                }
             }
         }
 
@@ -600,12 +677,20 @@ export class AssistantState {
     }
 
     async enter(llm, context, dataSources) {
+        if(await isAssistantKilled(context)){
+            return null;
+        }
+
         await this.invokeEntryAction(llm, context, dataSources);
 
         if (this.transitions.length === 0) {
             return this.name;
         } else if (this.transitions.length === 1) {
             return this.transitions[0].to;
+        }
+
+        if(await isAssistantKilled(context)){
+            return null;
         }
 
         const result = await this.getNextState(llm, context, dataSources);
@@ -628,6 +713,24 @@ export class DoneState extends AssistantState {
     }
 }
 
+export const isAssistantKilled = async (context) => {
+    try {
+        if(context.assistantKilled){
+            return true;
+        }
+
+        const user = getUser(context.params);
+        const body = context.body;
+        const killed = await isKilled(user, context.responseStream, body);
+        if(killed){
+            context.assistantKilled = true;
+        }
+        return killed;
+    } catch (e){
+        return true;
+    }
+}
+
 export class AssistantStateMachine {
 
     constructor(name, description, statesByName, currentState, config = {}) {
@@ -646,7 +749,14 @@ export class AssistantStateMachine {
 
         let transitionsLeft = this.maxTransitions;
 
+        const user = getUser(context.params);
+        const body = context.body;
+
         while (!this.currentState.endState && transitionsLeft > 0) {
+
+            if(await isAssistantKilled(context)){
+                return;
+            }
 
             transitionsLeft -= 1;
             const nextName = await this.currentState.enter(llm, context, dataSources);
@@ -682,9 +792,16 @@ export class StateBasedAssistant {
 
     async handler(llm, params, body, dataSources, responseStream) {
         const context = {
-            data: {},
+            data: {
+                dataSources: dataSources.map((ds,i) => {
+                    return {id:i, type:ds.type, name:ds.name, metadata:ds.metadata};
+                }),
+            },
+            dataSources,
             status: {},
             responseStream,
+            params,
+            body,
             history: body.messages,
         };
 
