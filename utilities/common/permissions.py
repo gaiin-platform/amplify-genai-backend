@@ -9,6 +9,6 @@ def always_allowed(event, data):
 
 permissions_by_state_type = {
     "/execute_rename": {
-        "execute-rename": always_allowed
+        "execute_rename": always_allowed
       }
   }
