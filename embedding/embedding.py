@@ -153,8 +153,7 @@ def lambda_handler(event, context):
     # Extract bucket name and file key from the S3 event
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     url_encoded_key = event['Records'][0]['s3']['object']['key']
-   
-
+    
     #Print the bucket name and key for debugging purposes
     print(f"url_key={url_encoded_key}")
     
