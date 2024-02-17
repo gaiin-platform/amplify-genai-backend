@@ -10,7 +10,6 @@ from email.message import EmailMessage
 import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 from botocore.exceptions import ClientError
-
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
 import urllib.parse
 
@@ -39,7 +38,6 @@ def trim_src(src):
     return trimmed_src
 
 
-
 def update_dynamodb_status(table, trimmed_src, chunk_index, total_chunks, status):
     """
     Update the DynamoDB table with the current status of the chunk processing.
@@ -66,9 +64,6 @@ def update_dynamodb_status(table, trimmed_src, chunk_index, total_chunks, status
         logging.error("Failed to update DynamoDB table.")
         logging.error(e)
         raise
-
-
-
 
 
 
@@ -153,7 +148,7 @@ def lambda_handler(event, context):
     # Extract bucket name and file key from the S3 event
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     url_encoded_key = event['Records'][0]['s3']['object']['key']
-    
+        
     #Print the bucket name and key for debugging purposes
     print(f"url_key={url_encoded_key}")
     
@@ -207,7 +202,30 @@ def lambda_handler(event, context):
         # Ensure the database connection is closed
         if db_connection is not None:
             db_connection.close()
-        logging.info("Database connection closed.")      
+        logging.info("Database connection closed.")    
+
+# Function to assign the owner permission to the user for the embedding object
+def insert_into_object_access(src, owner_email, cursor):
+    object_type = "embedding"
+    principal_type = "user"
+    permission_level = "owner"
+    principal_id = owner_email
+    # Correctly prepare the parameters for the query
+    query_params = (src, object_type, principal_type, principal_id, permission_level)
+    insert_query = """
+    INSERT INTO object_access (object_id, object_type, principle_type, principal_id, permission_level)
+    VALUES (%s, %s, %s, %s, %s);
+    """
+    try:
+        # Execute the query with the correct parameters
+        cursor.execute(insert_query, query_params)
+        logging.info(f"Data inserted into the object_access table for src: {src}")
+        print(f"Data inserted into the object_access table for src: {src}")
+    except psycopg2.Error as e:
+        # Log the error and re-raise the exception
+        logging.error(f"Failed to insert data into the object_access table: {e}")
+        print(f"Failed to insert data into the object_access table: {e}")
+        raise  # Re-raise the exception to be handled by the caller  
         
 # Function to extract the chunks from the JSON data and insert them into the database
 def embed_chunks(data, user_files_table, db_connection):
@@ -231,6 +249,9 @@ def embed_chunks(data, user_files_table, db_connection):
         
         # Create a cursor using the existing database connection
         with db_connection.cursor() as cursor:
+            # Insert the owner permission for the embedding object
+            insert_into_object_access(src, owner_email, cursor)
+            db_connection.commit()
             # Extract the 'content' field from each chunk
             for chunk_index, chunk in enumerate(chunks, start=1):  # Start enumeration at 1
                 try:
