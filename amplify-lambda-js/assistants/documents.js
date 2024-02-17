@@ -12,40 +12,47 @@ import {
 const States = {
     assess: new AssistantState("assess",
         "I am planning how to best accomplish this task.",
-        outputToStatus(
-            {summary:"I am planning how to best accomplish this task."},
-            new PromptForDataAction(
-                "Look at the task that the user has ask to be performed. We need to determine" +
-                " if the documents in the conversation are needed to perform the task. Also, if we need the " +
-                "documents, we need to determine if we need to read the entire document or perform targeted searches. " +
-                "If the document is less than 2,000 tokens, we should just read the whole thing always." +
-                "If the task is very specific and easy to search for the needed information, then search. " +
-                "If you are unsure, just search. " +
-                "",
-                {
-                    "thought":"explain your reasoning",
-                    "useDocuments":"yes|no",
-                    "readingStrategy":"search|entireDocument"},
-                (data) => {
-                    return data.useDocuments && data.readingStrategy;
-                })
-        )
+        new PromptForDataAction(
+            "Always do a search!!!",
+            // "Look at the task that the user has ask to be performed. We need to determine" +
+            // " if the documents in the conversation are needed to perform the task. Also, if we need the " +
+            // "documents, we need to determine if we need to read the entire document or perform targeted searches. " +
+            // "If the document is less than 2,000 tokens, we should just read the whole thing always." +
+            // "If the task is very specific and easy to search for the needed information, then search. " +
+            // "If you are unsure, just search. " +
+            "",
+            {
+                "thought": "explain your reasoning",
+                "useDocuments": "yes|no",
+                "readingStrategy": "search|entireDocument"
+            },
+            (data) => {
+                return data.useDocuments && data.readingStrategy;
+            })
     ),
     answerWithSearch: new AssistantState("answerWithSearch",
         "I am going to search for relevant information and respond.",
-        outputToStatus(
-            new PromptAction(
-                null, // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
-                "response", 3, true, {skipRag:false, ragOnly:true})
-        )
+        chainActions([
+            updateStatus("answer", {summary: "I am searching for relevant information.", inProgress: true}),
+            outputToResponse(
+                new PromptAction(
+                    null, // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
+                    "response", 3, true, {skipRag: false, ragOnly: true})
+            ),
+            updateStatus("answer", {summary: "I am searching for relevant information.", inProgress: false})
+        ])
     ),
     answerWithReadingEntireDocument: new AssistantState("answerWithReadingEntireDocument",
         "I am going to read the provided documents and respond.",
-        outputToResponse(
-            new PromptAction(
-                null, // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
-                "response", 3, true, {skipRag:true, ragOnly:false})
-        )
+        chainActions([
+            updateStatus("answer", {summary: "I am reading the document(s).", inProgress: true}),
+            outputToResponse(
+                new PromptAction(
+                    null, // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
+                    "response", 3, true, {skipRag: true, ragOnly: false})
+            ),
+            updateStatus("answer", {summary: "I am reading the document(s).", inProgress: false}),
+        ])
     ),
     // This is the end state.
     done: new DoneState(),

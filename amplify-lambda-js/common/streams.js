@@ -141,6 +141,10 @@ export class StreamResultCollector extends Writable {
                     this.outputStreams.forEach((outputStream) => {
                         outputStream.write(textChunk + "\n\n");
                     });
+                } else if(delta.s === "meta") {
+                    this.outputStreams.forEach((outputStream) => {
+                        outputStream.write(textChunk + "\n\n");
+                    });
                 }
             } catch (e) {
             }
@@ -192,6 +196,12 @@ export const sendStateEventToStream = (resultStream, state) => {
 export const sendToStream = (resultStream, src, data) => {
     if(!resultStream.writableEnded) {
         resultStream.write(`data: ${JSON.stringify({s: src, ...data})}\n\n`);
+    }
+}
+
+export const sendDirectToStream = (resultStream, data) => {
+    if(!resultStream.writableEnded) {
+        resultStream.write(data);
     }
 }
 

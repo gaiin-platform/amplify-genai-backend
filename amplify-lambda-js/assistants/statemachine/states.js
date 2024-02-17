@@ -159,13 +159,21 @@ export const outputToResponse = (action, prefix = "", suffix = "") => {
             const responseLLM = llm.clone();
             responseLLM.responseStream = context.responseStream;
 
-            const start = fillInTemplate(prefix, context.data);
-            sendDeltaToStream(context.responseStream, "assistant", start);
+            if(prefix) {
+                const start = fillInTemplate(prefix, context.data);
+                if(start) {
+                    sendDeltaToStream(context.responseStream, "assistant", start);
+                }
+            }
 
             await action.execute(responseLLM, context, dataSources);
 
-            const end = fillInTemplate(suffix, context.data);
-            sendDeltaToStream(context.responseStream, "assistant", suffix);
+            if(suffix) {
+                const end = fillInTemplate(suffix, context.data);
+                if(end) {
+                    sendDeltaToStream(context.responseStream, "assistant", suffix);
+                }
+            }
 
         }
     };
@@ -186,7 +194,7 @@ export const outputToStatus = (status, action) => {
             statusLLM.forceFlush();
 
             statusLLM.responseStream = new StatusOutputStream({},
-                llm.responseStream,
+                context.responseStream,
                 status);
 
             try {
@@ -534,16 +542,21 @@ function fillInTemplate(templateStr, contextData) {
 
 export class PromptForDataAction {
 
-    constructor(prompt, stateKeys, stateChecker, retries = 3) {
+    constructor(prompt, stateKeys, stateChecker, retries = 3,
+                config={skipRag: true, ragOnly: false, includeThoughts:false, streamResult:true}) {
         this.prompt = prompt;
         this.stateKeys = stateKeys;
         this.stateChecker = stateChecker || ((result) => Object.keys(stateKeys).every(k => result[k]))
         this.retries = retries;
         this.streamResults = true;
-        this.includeThoughts = false;
+        this.includeThoughts = config.includeThoughts;
+        this.config = config;
     }
 
-    async execute(llm, context, dataSources) {
+    async execute(ollm, context, dataSources) {
+
+        const llm = ollm.clone();
+        configureLLM(this.config, llm);
 
         let promptText = fillInTemplate(this.prompt, context.data);
 
@@ -564,6 +577,28 @@ export class PromptForDataAction {
     }
 }
 
+const getParam = (config, key, defaultValue) => {
+    if(config[key] === undefined){
+        return defaultValue;
+    }
+    return config[key] || defaultValue;
+}
+
+const configureLLM = (config, llm) => {
+    llm.params.options = {
+        ...llm.params.options,
+        skipRag: (config.skipRag !== undefined) ? config.skipRag : true,
+        ragOnly: (config.ragOnly !== undefined) ? config.ragOnly : false,
+    }
+
+    if (config.params !== undefined) {
+        llm.params = {...llm.params, ...config.params};
+    }
+
+    if (config.options !== undefined) {
+        llm.params.options = {...llm.params.options, ...config.options};
+    }
+}
 
 export class PromptAction {
 
@@ -579,32 +614,20 @@ export class PromptAction {
     async execute(ollm, context, dataSources) {
 
         const llm = ollm.clone();
-        llm.params.options = {
-            ...llm.params.options,
-            skipRag: (this.config.skipRag !== undefined) ? this.config.skipRag : true,
-            ragOnly: (this.config.ragOnly !== undefined) ? this.config.ragOnly : false,
-        }
-
-        if(this.config.params !== undefined){
-            llm.params = {...llm.params, ...this.config.params};
-        }
-
-        if(this.config.options !== undefined){
-            llm.params.options = {...llm.params.options, ...this.config.options};
-        }
+        configureLLM(this.config, llm);
 
         if(this.config.dataSources !== undefined){
             dataSources = this.config.dataSources;
         }
 
         let newMessages = (this.prompt != null) ?
-            {role: "user", content:fillInTemplate(this.prompt, context.data)} :
-            [];
+            [...context.history, {role: "user", content:fillInTemplate(this.prompt, context.data)}] :
+            [...context.history.slice(0,-1)];
 
         const result = await llm.promptForString(
-            {messages: [...context.history, ...newMessages]},
+            {messages: newMessages},
             dataSources,
-            this.prompt,
+            this.prompt || context.history.slice(-1)[0].content,
             (this.streamResults) ? llm.responseStream : null,
             this.retries
         );
@@ -683,7 +706,7 @@ export class AssistantState {
             };
         }
 
-        const status = newStatus({inProgress: true, summary: this.description, message: "", icon: "bolt"})
+        const status = newStatus({sticky:true, inProgress: true, summary: this.description, message: "", icon: "bolt"})
 
         if (this.stream.target === STATUS_STREAM) {
             actionLLM.responseStream = new StatusOutputStream({},

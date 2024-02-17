@@ -78,7 +78,16 @@ export const getContextMessages = async (chatFn, params, chatBody, dataSources) 
         ragLLMParams,
         null);
 
-    return await getContextMessagesWithLLM(llm, params, chatBody, dataSources);
+    const updatedBody = {
+        ...chatBody,
+        options: {
+            ...chatBody.options,
+            skipRag: true, // Prevent the use of documents
+            ragOnly: true  // in any way
+        }
+    }
+
+    return await getContextMessagesWithLLM(llm, params, updatedBody, dataSources);
 }
 
 function createSuperset(arrayOfObjects) {
@@ -146,12 +155,9 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 "thirdQuestion": "Third specific FAQ question to look for.",
             },
             null,
-            null, 3);
-
-
-        // beforeDelta: 0, 2
-        // afterDelta: 0, 2
-        // Location range: 0, 2
+            (r)=>{
+                return r.firstQuestion
+            }, 3);
 
         const result = {
             ideas: [
@@ -163,41 +169,6 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
             ]
         }
 
-
-        const ideasSchema = {
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "properties": {
-                "ideas": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "descriptionOfSpecificHelpfulInformation": {
-                                "type": "string"
-                            }
-                        },
-                        "required": ["descriptionOfSpecificHelpfulInformation"],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": ["ideas"],
-            "additionalProperties": false
-        }
-
-        // const result = {ideas:[{descriptionOfSpecificHelpfulInformation:search}]}
-        // const result = await llm.promptForJson(
-        //     {
-        //         messages:[
-        //             {role:"user",
-        //                 content:"Please provide three very detailed two-sentence descriptions of specific types of information that " +
-        //                 "would help me perform the following task for the user:\nTask:\n----------------\n" + search
-        //             }]
-        //     },
-        //     ideasSchema,
-        //     []
-        // );
 
         const resultsPerIdea = 5;
         const ragPromises = [];

@@ -290,7 +290,7 @@ You ALWAYS output a \`\`\`data code block.
             messages: [
                 ...(body.messages|| []),
                 {
-                    role: "assistant",
+                    role: "user",
                     content: prompt
                 }
             ],
