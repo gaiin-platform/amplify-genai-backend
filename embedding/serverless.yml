@@ -76,6 +76,7 @@ provider:
     QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
 
   iam:
     role:

@@ -4,10 +4,8 @@ import re
 import json
 import os
 import boto3
-
 import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
-
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
