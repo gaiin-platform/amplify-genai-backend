@@ -55,6 +55,10 @@ provider:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
+    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVariables.ORGANIZATION_EMAIL_DOMAIN}
+    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
+    PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
+    S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME: ${self:service}-${sls:stage}-personal-assistant-email
 
 
   iam:
@@ -101,6 +105,7 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
@@ -116,6 +121,7 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
@@ -433,7 +439,10 @@ functions:
         rag_chunk_document_queue_url:
           Ref: RagChunkDocumentQueue
 
-
+  email_assistant:
+    handler: personal/assistant.process_email
+    events:
+      - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
       
 resources:
   Resources:
@@ -707,6 +716,24 @@ resources:
             KeyType: HASH
         TableName: ${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}
 
+    EmailSettingsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+          -
+            AttributeName: tag
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+          - AttributeName: tag
+            KeyType: RANGE
+        TableName: ${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}
+
     AccountingChatUsageDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -731,6 +758,19 @@ resources:
                  AllowedMethods: ['GET']
                  AllowedHeaders: ['*']
                  MaxAge: 3000
+
+
+    PersonalAssistantEmailBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}
+           CorsConfiguration:
+             CorsRules:
+               - AllowedOrigins: ['*']
+                 AllowedMethods: ['GET','PUT', 'POST']
+                 AllowedHeaders: ['*']
+                 MaxAge: 3000
+
 
     ConversionInputBucket:
          Type: AWS::S3::Bucket
@@ -809,7 +849,6 @@ resources:
           Properties:
             VisibilityTimeout: 300
             QueueName: ${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}
-
 
     
 
