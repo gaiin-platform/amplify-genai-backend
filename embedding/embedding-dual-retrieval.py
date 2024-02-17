@@ -9,8 +9,6 @@ from common.validate import validated
 from shared_functions import generate_keywords, generate_embeddings
 import logging
 
-
-
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
