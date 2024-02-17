@@ -78,34 +78,58 @@ export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, a
             honor the user's choice if they request a specific assistant.
             `
         },
-        {
-            "role": "user",
-            "content": `
-            Think step by step how to perform the task. What are the steps? 
-            Which assistant is the best fit to solve the given task based on the
-            steps? Is the user asking for a specific assistant?
-            
-            If you are not sure, please choose the default assistant.
-            
-            ${buildAssistantDescriptionMessages(assistants)}
-            ${buildDataSourceDescriptionMessages(dataSources)}
-            
-            Please choose the best assistant to help with the task:
-            ---------------
-            ${body.messages.slice(-1)[0].content}
-            ---------------
-            `
-        },
+        // {
+        //     "role": "user",
+        //     "content": `
+        //     Think step by step how to perform the task. What are the steps?
+        //     Which assistant is the best fit to solve the given task based on the
+        //     steps? Is the user asking for a specific assistant?
+        //
+        //     If you are not sure, please choose the default assistant.
+        //
+        //     ${buildAssistantDescriptionMessages(assistants)}
+        //     ${buildDataSourceDescriptionMessages(dataSources)}
+        //
+        //     Please choose the best assistant to help with the task:
+        //     ---------------
+        //     ${body.messages.slice(-1)[0].content}
+        //     ---------------
+        //     `
+        // },
 
     ];
 
+    const prompt = `
+Think step by step how to perform the task. What are the steps? 
+Which assistant is the best fit to solve the given task based on the
+steps? Is the user asking for a specific assistant?
+
+If you are not sure, please choose the default assistant.
+
+${buildAssistantDescriptionMessages(assistants)}
+${buildDataSourceDescriptionMessages(dataSources)}
+
+Please choose the best assistant to help with the task:
+---------------
+${body.messages.slice(-1)[0].content}
+---------------
+`;
+
     const model =
-        //Models[ModelID.GPT_3_5_AZ];
-        Models["gpt-4-1106-Preview"];
+    //    Models[ModelID.GPT_3_5_AZ];
+    Models["gpt-4-1106-Preview"];
+
+    const updatedBody = {messages, options:{model}};
 
     const names = assistants.map((a) => a.name);
 
-    return await llm.promptForChoice({messages, options:{model}}, names, []);
+    //return await llm.promptForChoice({messages, options:{model}}, names, []);
+    const result = await llm.promptForData(updatedBody, [], prompt,
+        {bestAssistant:names.join("|")}, null, (r) => {
+       return r.bestAssistant && assistants.find((a) => a.name === r.bestAssistant);
+    }, 3);
+
+    return result.bestAssistant || defaultAssistant.name;
 }
 
 export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {
@@ -123,13 +147,22 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     let selected = defaultAssistant;
 
+    // Look for any body.messages.data.state.currentAssistant going in reverse order through the messages
+    // and choose the first one that is found.
+    const currentAssistant = body.messages.map((m) => {
+        return (m.data && m.data.state && m.data.state.currentAssistant) ? m.data.state.currentAssistant : null;
+    }).reverse().find((a) => a !== null);
 
     const status = newStatus({inProgress: true, message: "Choosing an assistant to help"});
     llm.sendStatus(status);
     llm.forceFlush();
 
     // Hack to make AWS lambda send the status update and not buffer
-    const availableAssistants = getAvailableAssistantsForDataSources(model, dataSources, assistants);
+    let availableAssistants = getAvailableAssistantsForDataSources(model, dataSources, assistants);
+
+    if(availableAssistants.some((a) => a.name === currentAssistant)){
+        availableAssistants = [assistants.find((a) => a.name === currentAssistant)]
+    }
 
     const start = new Date().getTime();
     const selectedAssistantName = (availableAssistants.length > 1) ?
