@@ -1,0 +1,293 @@
+service: vu-amplify-object-access
+
+
+frameworkVersion: '3'
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-deployment-bucket
+  - serverless-iam-roles-per-function
+  
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: python3.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
+
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}  
+  
+  environment:
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    MIN_ACU: ${self:custom.stageVariables.MIN_ACU}
+    MAX_ACU: ${self:custom.stageVariables.MAX_ACU}
+    VPC_ID: ${self:custom.stageVariables.VPC_ID}
+    PRIVATE_SUBNET_ONE: ${self:custom.stageVariables.PRIVATE_SUBNET_ONE}
+    PRIVATE_SUBNET_TWO: ${self:custom.stageVariables.PRIVATE_SUBNET_TWO}
+    VPC_CIDR: ${self:custom.stageVariables.VPC_CIDR}
+    SES_SECRET_NAME: aws/ses/credentials
+    SENDER_EMAIL: ${self:custom.stageVariables.SENDER_EMAIL}
+    COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+    REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+            - s3:GetObject  # for accessing S3
+            - s3:ListBucket # for listing objects in S3
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+
+          Resource:
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
+            - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+            
+
+functions:
+
+  process_chunk_for_embedding:
+    runtime: python3.10
+    layers: 
+      - arn:aws:lambda:us-east-1:514391678313:layer:pgvector:2
+    handler: embedding.lambda_handler
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 900
+    events:
+     - s3:
+         bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
+         event: s3:ObjectCreated:*
+         existing: true
+    environment:
+      RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
+      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
+      RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+      SES_SECRET_NAME: ${self:provider.environment.SES_SECRET_NAME}
+      SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
+      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
+      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
+      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
+      API_VERSION: ${self:provider.environment.API_VERSION}
+      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files     
+
+  get_embeddings:
+    runtime: python3.10
+    handler: embedding-retrieval.process_input_with_retrieval
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 300
+    events:
+      - http:
+          path: /embedding-retrieval
+          method: post
+          cors: true
+
+  get_dual_embeddings:
+    runtime: python3.10
+    handler: embedding-dual-retrieval.process_input_with_dual_retrieval
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 300
+    events:
+      - http:
+          path: /embedding-dual-retrieval
+          method: post
+          cors: true
+
+  share_src_ids:
+    runtime: python3.10
+    handler: perm_share.share_src_ids
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 300
+    events:
+      - http:
+          path: /share_src_ids
+          method: post
+          cors: true
+
+
+
+resources:
+  Conditions:
+    IsProd:
+      'Fn::Equals':
+        - ${self:provider.stage}
+        - 'prod'
+
+  Resources:
+    RagPostgresDbCluster:
+      DependsOn: RagPostgresDbSecurityGroup
+      DeletionPolicy: Snapshot
+      Type: AWS::RDS::DBCluster
+      Properties:
+        DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+        DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
+        Engine: aurora-postgresql
+        EngineVersion: '15.3' # Specify the compatible engine version for Serverless v2
+        ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
+          MinCapacity: ${self:provider.environment.MIN_ACU}
+          MaxCapacity: ${self:provider.environment.MAX_ACU}
+        EnableHttpEndpoint: true
+        EnableCloudwatchLogsExports:
+          - postgresql
+        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
+        MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
+        VpcSecurityGroupIds:
+          - !Ref RagPostgresDbSecurityGroup
+        DBSubnetGroupName: !Ref RagPostgresDbSubnetGroup
+        BackupRetentionPeriod: 7
+
+    RagPostgresDbInstance1:
+      Type: 'AWS::RDS::DBInstance'
+      Properties:
+        Engine: aurora-postgresql
+        DBInstanceClass: db.serverless
+        DBClusterIdentifier: !Ref RagPostgresDbCluster
+        
+    #Only create the second instance if the stage is prod
+    RagPostgresDbInstance2:
+      Type: 'AWS::RDS::DBInstance'
+      Condition: IsProd
+      Properties:
+        Engine: aurora-postgresql
+        DBInstanceClass: db.serverless
+        DBClusterIdentifier: !Ref RagPostgresDbCluster
+
+      
+
+    RagPostgresDbSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: "Subnet group for RDS Aurora Serverless PostgreSQL Vector Database"
+        SubnetIds:
+          - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+          - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+
+    RagPostgresDbSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: "Security group for RDS Aurora Serverless"
+        VpcId: ${self:provider.environment.VPC_ID}
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 3306
+            ToPort: 3306
+            CidrIp: ${self:provider.environment.VPC_CIDR}
+          - IpProtocol: tcp
+            FromPort: 3306
+            ToPort: 3306
+            CidrIp: '10.2.224.0/20'
+    
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: "Security group for  Lambda Functions"
+        VpcId: ${self:provider.environment.VPC_ID}
+        SecurityGroupEgress:
+          - IpProtocol: -1
+            CidrIp: 0.0.0.0/0  
+                 
+    RagPostgresDbSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${sls:stage}/rag/postgres/db-creds-2
+        Description: "Credentials for Aurora Serverless PostgreSQL Database"
+        GenerateSecretString:
+          PasswordLength: 16
+          ExcludeCharacters: "\"@/\\" 
+
+    ObjectAccessTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: 'object_id'
+            AttributeType: 'S'
+          - AttributeName: 'principle_id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'object_id'
+            KeyType: 'HASH'  # Partition key
+        GlobalSecondaryIndexes:
+          - IndexName: 'PrincipleIdIndex'
+            KeySchema:
+              - AttributeName: 'principle_id'
+                KeyType: 'HASH'  # Partition key for the secondary index
+            Projection:
+              ProjectionType: 'ALL' 
+        
