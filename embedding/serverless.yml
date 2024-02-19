@@ -77,6 +77,7 @@ provider:
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
   iam:
     role:
@@ -101,6 +102,8 @@ provider:
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+            
 
 functions:
 
@@ -121,6 +124,20 @@ functions:
          bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
          event: s3:ObjectCreated:*
          existing: true
+    environment:
+      RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
+      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
+      RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+      SES_SECRET_NAME: ${self:provider.environment.SES_SECRET_NAME}
+      SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
+      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
+      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
+      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
+      API_VERSION: ${self:provider.environment.API_VERSION}
+      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files     
 
   get_embeddings:
     runtime: python3.10
@@ -139,9 +156,6 @@ functions:
           path: /embedding-retrieval
           method: post
           cors: true
-#          authorizer:
-#            name: ${sls:stage}-cognito-authorizer
-#            arn: arn:aws:cognito-idp:us-east-1:514391678313:userpool/${self:provider.environment.COGNITO_USER_POOL_ID}
 
   get_dual_embeddings:
     runtime: python3.10
@@ -161,9 +175,9 @@ functions:
           method: post
           cors: true
 
-  embeddings:
+  share_src_ids:
     runtime: python3.10
-    handler: embedding.lambda_handler
+    handler: perm_share.share_src_ids
     layers:
       - Ref: PythonRequirementsLambdaLayer
     vpc: 
@@ -175,24 +189,11 @@ functions:
     timeout: 300
     events:
       - http:
-          path: /embedding
+          path: /share_src_ids
           method: post
           cors: true
 
-    environment:
-      RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
-      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
-      RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
-      RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
-      RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-      SES_SECRET_NAME: ${self:provider.environment.SES_SECRET_NAME}
-      SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
-      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
-      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
-      KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
-      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
-      API_VERSION: ${self:provider.environment.API_VERSION}
-      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
+
 
 resources:
   Conditions:
@@ -281,4 +282,27 @@ resources:
         Description: "Credentials for Aurora Serverless PostgreSQL Database"
         GenerateSecretString:
           PasswordLength: 16
-          ExcludeCharacters: "\"@/\\"  
+          ExcludeCharacters: "\"@/\\" 
+
+    ObjectAccessTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.OBJECT_ACCESS_DYNAMO_TABLE}
+        AttributeDefinitions:
+          - AttributeName: 'object_id'
+            AttributeType: 'S'
+          - AttributeName: 'object_type'
+            AttributeType: 'S'
+          - AttributeName: 'principle_type'
+            AttributeType: 'S'
+          - AttributeName: 'principle_id'
+            AttributeType: 'S'
+          - AttributeName: 'permission_level'
+            AttributeType: 'S'
+          - AttributeName: 'policy'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'object_id'
+            KeyType: 'HASH'  # Partition key
+        
