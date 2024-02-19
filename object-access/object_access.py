@@ -46,7 +46,7 @@ def insert_into_object_access(src_ids, principal_type, shared_email, permission_
             
 
             insert_query = """
-            INSERT INTO object_access (object_id, object_type, principle_type, principal_id, permission_level)
+            INSERT INTO object_access (object_id, object_type, principle_type, principle_id, permission_level)
             VALUES (%s, %s, %s, %s, %s);
             """
 
@@ -66,56 +66,52 @@ def insert_into_object_access(src_ids, principal_type, shared_email, permission_
         # Commit the transaction
         conn.commit()
 
+import boto3
+import logging
+
 def classify_src_ids_by_access(raw_src_ids, current_user):
     accessible_src_ids = []
     access_denied_src_ids = []
 
     # Define the permission levels that grant access
-    permission_levels = 'owner'  # Use a list for permission_levels
+    permission_levels = 'owner'  # Use a list for permission_levels if multiple levels grant access
     
-    # Establish a connection to the PostgreSQL database
-    with psycopg2.connect(
-        host=pg_host,
-        database=pg_database,
-        user=pg_user,
-        password=pg_password,
-        port=3306
-    ) as conn:
-        with conn.cursor() as cur:
+    # Create a DynamoDB client
+    dynamodb = boto3.resource('dynamodb', region_name='your-region')  # Replace 'your-region' with your DynamoDB region
+    table = dynamodb.Table('tablename')  # Replace 'tablename' with your DynamoDB table name
 
-            # Prepare a query to get all accessible src_ids for the user
-            access_query = """
-            SELECT object_id FROM object_access
-            WHERE
-                principal_id = %s AND
-                object_id = ANY(%s) AND
-                permission_level = %s;
-            """
+    try:
+        # Query the DynamoDB table using the GSI on principle_id
+        response = table.query(
+            IndexName='PrincipleIdIndex',  # Replace with your actual GSI name if different
+            KeyConditionExpression='principle_id = :principle_id AND permission_level = :permission_level',
+            ExpressionAttributeValues={
+                ':principle_id': current_user,
+                ':permission_level': permission_levels
+            }
+        )
 
-            try:
-                # Execute the query with the user_email and list of src_ids
-                cur.execute(access_query, (current_user, raw_src_ids, permission_levels))
-                results = cur.fetchall()  # Fetch all results of the query
+        # Create a set of accessible src_ids from the query results
+        result_set = {item['object_id'] for item in response['Items'] if item['object_id'] in raw_src_ids}
 
-                # Create a set of accessible src_ids from the query results
-                result_set = {row[0] for row in results}
+        # Classify each src_id based on whether it's in the result_set
+        for src_id in raw_src_ids:
+            if src_id in result_set:
+                accessible_src_ids.append(src_id)
+            else:
+                access_denied_src_ids.append(src_id)
 
-                # Classify each src_id based on whether it's in the result_set
-                for src_id in raw_src_ids:
-                    if src_id in result_set:
-                        accessible_src_ids.append(src_id)
-                    else:
-                        access_denied_src_ids.append(src_id)
+    except Exception as e:
+        logging.error(f"An error occurred while classifying src_ids by access: {e}")
+        # Depending on the use case, you may want to handle the error differently
+        # Here we're considering all src_ids as denied if there's an error
+        access_denied_src_ids.extend(raw_src_ids)
 
-            except Exception as e:
-                logging.error(f"An error occurred while classifying src_ids by access: {e}")
-                # Depending on the use case, you may want to handle the error differently
-                # Here we're considering all src_ids as denied if there's an error
-                access_denied_src_ids.extend(raw_src_ids)
     print(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
 
-@validated("share_src_ids")
+
+@validated("objectAccess")
 def share_src_ids (event, context, current_user, name, data):
     data = data['data']
     raw_src_ids = data['dataSources']
