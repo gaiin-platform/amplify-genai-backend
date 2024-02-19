@@ -2,7 +2,12 @@ import {getDefaultLLM} from "../../common/llm.js";
 import {ModelID, Models} from "../../models/models.js";
 import {ConsoleWritableStream} from "../../local/consoleWriteableStream.js";
 import {newStatus} from "../../common/status.js";
-import {sendDeltaToStream, sendStatusEventToStream, StatusOutputStream} from "../../common/streams.js";
+import {
+    sendDeltaToStream,
+    sendStateEventToStream,
+    sendStatusEventToStream,
+    StatusOutputStream
+} from "../../common/streams.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
 import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";

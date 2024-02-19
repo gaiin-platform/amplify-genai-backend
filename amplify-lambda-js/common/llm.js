@@ -5,7 +5,7 @@ import {
     sendResultToStream,
     findResult,
     sendToStream,
-    sendStatusEventToStream, sendOutOfOrderModeEventToStream
+    sendStatusEventToStream, sendOutOfOrderModeEventToStream, sendStateEventToStream
 } from "./streams.js";
 import {chat} from "../azure/openai.js";
 import {transform} from "./chat/events/openaifn.js";
@@ -116,6 +116,12 @@ export class LLM {
     sendStatus(status) {
         if (this.responseStream) {
             sendStatusEventToStream(this.responseStream, status);
+        }
+    }
+
+    sendStateEventToStream(state) {
+        if (this.responseStream) {
+            sendStateEventToStream(this.responseStream, state);
         }
     }
 

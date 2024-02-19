@@ -27,7 +27,7 @@ const defaultAssistant = {
 
 export const defaultAssistants = [
     defaultAssistant,
-    //documentAssistant,
+    documentAssistant,
     //reportWriterAssistant,
     csvAssistant,
     //documentSearchAssistant
@@ -160,7 +160,10 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     // Hack to make AWS lambda send the status update and not buffer
     let availableAssistants = getAvailableAssistantsForDataSources(model, dataSources, assistants);
 
-    if(availableAssistants.some((a) => a.name === currentAssistant)){
+    if(availableAssistants.some((a) => a.name === currentAssistant) &&
+        (!dataSources || dataSources.length === 0)){
+        // Future, we can automatically default to the last used assistant to speed things
+        // up unless some predetermined condition is met.
         availableAssistants = [assistants.find((a) => a.name === currentAssistant)]
     }
 
@@ -174,6 +177,8 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     const selectedAssistant = assistants.find((a) => a.name === selectedAssistantName);
     selected = selectedAssistant || defaultAssistant;
+
+    llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
 
     status.inProgress = false;
     llm.sendStatus(status);
