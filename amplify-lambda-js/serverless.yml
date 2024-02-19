@@ -39,6 +39,7 @@ provider:
     USAGE_ENDPOINT: ${self:custom.stageVariables.USAGE_ENDPOINT}
     CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
+    HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
 
   iam:
     role:
@@ -56,6 +57,7 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
         - Effect: Allow
           Action:
             - dynamodb:DeleteItem

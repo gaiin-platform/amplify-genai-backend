@@ -7,6 +7,7 @@ import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 import {sendStateEventToStream} from "./common/streams.js";
+import {translateUserDataSourcesToHashDataSources} from "./datasource/datasources.js";
 
 const logger = getLogger("router");
 
@@ -73,7 +74,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
             //if (params.body.dataSources) {
             logger.debug("Checking access on data sources");
-            const dataSources = [...params.body.dataSources];
+            let dataSources = [...params.body.dataSources];
             let body = {...params.body};
 
             logger.info("Request options.", options);
@@ -88,6 +89,9 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                         body: {error: "Unauthorized data source access."}
                     });
                 }
+
+                dataSources = await translateUserDataSourcesToHashDataSources(dataSources);
+
             } catch (e) {
                 logger.error("Error checking access on data sources: " + e);
                 returnResponse(responseStream, {

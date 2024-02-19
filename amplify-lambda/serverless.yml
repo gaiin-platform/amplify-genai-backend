@@ -38,6 +38,7 @@ provider:
     MARKET_ITEMS_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-items
     THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
+    HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
@@ -102,6 +103,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -689,6 +692,20 @@ resources:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.FILES_DYNAMO_TABLE}
+
+    HashFilesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.HASH_FILES_DYNAMO_TABLE}
+
 
     AccountingChargesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

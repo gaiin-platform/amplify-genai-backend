@@ -1,15 +1,22 @@
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import {S3Client, GetObjectCommand} from '@aws-sdk/client-s3';
+import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
+import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
 
 const logger = getLogger("datasources");
 
 const client = new S3Client();
+const dynamodbClient = new DynamoDBClient();
+
+const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
 export const getFileText = async (key) => {
 
-    const textKey = key.trim()+".content.json";
+    const textKey = key.endsWith(".content.json") ?
+        key :
+        key.trim() + ".content.json";
     const bucket = process.env.S3_FILE_TEXT_BUCKET_NAME;
-    logger.debug("Fetching file from S3",{bucket:bucket, key:textKey});
+    logger.debug("Fetching file from S3", {bucket: bucket, key: textKey});
 
     const command = new GetObjectCommand({
         Bucket: bucket,
@@ -22,7 +29,7 @@ export const getFileText = async (key) => {
         const data = JSON.parse(str);
         return data;
     } catch (error) {
-        logger.error(error, {bucket:bucket, key:textKey});
+        logger.error(error, {bucket: bucket, key: textKey});
         return null;
     }
 }
@@ -57,18 +64,22 @@ export const extractKey = (url) => {
 const getChunkAggregator = (maxTokens, options) => {
 
     let maxItemsPerChunk = Number.MAX_VALUE;
-    if(options && options.chunking && options.chunking.maxItemsPerChunk) {
+    if (options && options.chunking && options.chunking.maxItemsPerChunk) {
         maxItemsPerChunk = options.chunking.maxItemsPerChunk;
     }
 
-    return (dataSource, {currentChunk="", currentTokenCount=0, chunks=[], itemCount=0},
+    return (dataSource, {currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0},
             formattedSourceName,
             formattedContent,
             contentTokenCount) => {
         if ((currentTokenCount + contentTokenCount > maxTokens) || (itemCount + 1 > maxItemsPerChunk)) {
             // If the current chunk is too big, push it to the chunks array and start a new one
-            if(currentChunk.length > 0) {
-                chunks.push({id: dataSource.id + "?chunk="+chunks.length, context: formattedSourceName + currentChunk, tokens: currentTokenCount});
+            if (currentChunk.length > 0) {
+                chunks.push({
+                    id: dataSource.id + "?chunk=" + chunks.length,
+                    context: formattedSourceName + currentChunk,
+                    tokens: currentTokenCount
+                });
                 itemCount = 1;
             }
 
@@ -88,16 +99,16 @@ const getChunkAggregator = (maxTokens, options) => {
 export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxTokens, options) => {
     logger.debug("Chunking/Formatting data from: " + dataSource.id);
 
-    if(content && content.content && content.content.length > 0) {
+    if (content && content.content && content.content.length > 0) {
         const firstLocation = content.content[0].location ? content.content[0].location : null;
 
         let contentFormatter;
         if (firstLocation && firstLocation.slide) {
             logger.debug("Formatting data from: " + dataSource.id + " as slides");
-            contentFormatter = c => 'File: '+content.name+' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + content.name + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.page) {
             logger.debug("Formatting data from: " + dataSource.id + " as pages");
-            contentFormatter = c => 'File: '+content.name+' Page: ' + c.location.page + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + content.name + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.row_number) {
             logger.debug("Formatting data from: " + dataSource.id + " as rows");
             contentFormatter = c => c.content;
@@ -111,8 +122,8 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         let currentTokenCount = 0;
         let state = {chunks, currentChunk, currentTokenCount};
 
-        const aggregator = getChunkAggregator(maxTokens,options);
-        const formattedSourceName = "Source:"+content.name+" Type:"+dataSource.type+"\n-------------\n";
+        const aggregator = getChunkAggregator(maxTokens, options);
+        const formattedSourceName = "Source:" + content.name + " Type:" + dataSource.type + "\n-------------\n";
 
         for (const part of content.content) {
             const formattedContent = contentFormatter(part);
@@ -122,45 +133,90 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
 
         // Add the last chunk if it has content
         if (state.currentChunk) {
-            chunks.push({ id: dataSource.id+"?chunk="+chunks.length, context: formattedSourceName + state.currentChunk, tokens: state.currentTokenCount });
+            chunks.push({
+                id: dataSource.id + "?chunk=" + chunks.length,
+                context: formattedSourceName + state.currentChunk,
+                tokens: state.currentTokenCount
+            });
         }
 
         return chunks;
 
     } else {
-        return formatAndChunkDataSource(tokenCounter, dataSource, {content:[{content:content, location:{}}]}, maxTokens);
+        return formatAndChunkDataSource(tokenCounter, dataSource, {
+            content: [{
+                content: content,
+                location: {}
+            }]
+        }, maxTokens);
     }
 }
 
+export const translateUserDataSourcesToHashDataSources = async (dataSources) => {
+    const translated = await Promise.all(dataSources.map( async (ds) => {
+
+        let key = ds.id;
+
+        try {
+            if (key.startsWith("s3://")) {
+
+                key = extractKey(key);
+
+                const command = new GetItemCommand({
+                    TableName: hashFilesTableName, // Replace with your table name
+                    Key: {
+                        id: {S: key}
+                    }
+                });
+
+                // Send the command to DynamoDB and wait for the response
+                const {Item} = await dynamodbClient.send(command);
+
+                if (Item) {
+                    // Convert the returned item from DynamoDB's format to a regular JavaScript object
+                    const item = unmarshall(Item);
+                    return {...ds, id: "s3://" + item.textLocationKey};
+                } else {
+                    return ds; // No item found with the given ID
+                }
+            } else {
+                return ds;
+            }
+        } catch (e) {
+            return ds;
+        }
+    }));
+
+    return translated.filter((ds) => ds != null);
+}
 
 export const getContent = async (dataSource) => {
     const sourceType = extractProtocol(dataSource.id);
 
-    logger.debug("Fetching data from: "+dataSource.id+" ("+sourceType+")");
+    logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
     if (sourceType === 's3://') {
 
         logger.debug("Fetching data from S3");
         const result = await getFileText(dataSource.id.slice(sourceType.length));
-        logger.debug("Fetched data from S3: " +(result != null));
+        logger.debug("Fetched data from S3: " + (result != null));
 
-        if(result == null) {
+        if (result == null) {
             throw new Error("Could not fetch data from S3");
         }
 
         return result;
-    }
-    else if(sourceType === 'obj://') {
+    } else if (sourceType === 'obj://') {
         logger.debug("Fetching data from object");
 
         const sourceKey = extractKey(dataSource.id);
 
         const contents = Object.entries(dataSource.content)
-            .filter(([k,v]) => !k.startsWith("__tokens_"))
-            .map(([k,v])=>{
+            .filter(([k, v]) => !k.startsWith("__tokens_"))
+            .map(([k, v]) => {
                 return {
                     "content": v,
-                    "tokens": dataSource.content["__tokens_"+k] || 1000,
+                    "tokens": dataSource.content["__tokens_" + k] || 1000,
                     "location": {
                         "key": sourceKey
                     },
@@ -175,8 +231,7 @@ export const getContent = async (dataSource) => {
             }
 
         return content;
-    }
-    else {
+    } else {
         return [dataSource];
     }
 }
@@ -186,7 +241,7 @@ export const getContexts = async (tokenCounter, dataSource, maxTokens, options) 
 
     logger.debug("Get contexts with options", options);
 
-    logger.debug("Fetching data from: "+dataSource.id+" ("+sourceType+")");
+    logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
     const result = await getContent(dataSource);
