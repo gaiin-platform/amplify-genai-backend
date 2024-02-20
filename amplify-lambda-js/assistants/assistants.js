@@ -27,7 +27,7 @@ const defaultAssistant = {
 
 export const defaultAssistants = [
     defaultAssistant,
-    documentAssistant,
+    //documentAssistant,
     //reportWriterAssistant,
     csvAssistant,
     //documentSearchAssistant

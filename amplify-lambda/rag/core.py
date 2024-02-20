@@ -1,3 +1,4 @@
+import hashlib
 import os
 import mimetypes
 import boto3
@@ -12,7 +13,7 @@ from rag.handlers.pdf import PDFHandler
 from rag.handlers.powerpoint import PPTXHandler
 from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
-from rag.util import get_text_content_location, get_text_metadata_location
+from rag.util import get_text_content_location, get_text_metadata_location, get_text_hash_content_location
 
 s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
@@ -238,7 +239,21 @@ def extract_text_from_s3_file(bucket, key, file_extension):
         # Download the file from S3
         s3_object = s3.get_object(Bucket=bucket, Key=key)
         file_content = s3_object["Body"].read()
+
         return extract_text_from_file(file_extension, file_content)
+
+    except Exception as e:
+        print(f"Error getting object {key} from bucket {bucket}: {str(e)}")
+        return None
+
+
+def get_file_from_s3(bucket, key):
+    try:
+        # Download the file from S3
+        s3_object = s3.get_object(Bucket=bucket, Key=key)
+        file_content = s3_object["Body"].read()
+
+        return file_content
 
     except Exception as e:
         print(f"Error getting object {key} from bucket {bucket}: {str(e)}")
@@ -265,6 +280,7 @@ def process_document_for_rag(event, context):
 
     dynamodb = boto3.resource('dynamodb')
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    hash_files_table = dynamodb.Table(os.environ['HASH_FILES_DYNAMO_TABLE'])
 
     for record in event['Records']:
         try:
@@ -312,25 +328,80 @@ def process_document_for_rag(event, context):
                     print(f"Using file extension of {file_extension} based on mime type priority (if present and guessable)")
 
                     # Extract text from the file in S3
-                    text = extract_text_from_s3_file(bucket, key, file_extension)
-                    total_tokens = sum(d.get('tokens', 0) for d in text)
-                    total_items = len(text)
+                    file_content = get_file_from_s3(bucket, key)
+                    dochash = hashlib.sha256(file_content).hexdigest()
 
-                    if total_items > 0:
-                        location_properties = list(text[0].get('location', {}).keys())
+                    dochash_resposne = hash_files_table.get_item(
+                        Key={
+                            'id': dochash
+                        }
+                    )
 
-                    text = {
-                        'name': name,
-                        'totalItems': total_items,
-                        'locationProperties': location_properties,
-                        'content': text,
+                    # Create a pointer from the user's key to the actual
+                    # location of the document by hash
+                    [file_text_content_bucket_name, text_content_key] = \
+                        get_text_hash_content_location(bucket, dochash)
+
+                    user_key_to_hash_entry = {
+                        'id': key,
+                        'hash': dochash,
+                        'textLocationBucket': file_text_content_bucket_name,
+                        'textLocationKey': text_content_key,
                         'createdAt': creation_time,
-                        'totalTokens': total_tokens,
-                        'tags': tags,
-                        'props': props,
                     }
+                    hash_files_table.put_item(Item=user_key_to_hash_entry)
 
-                    print(f"Extracted text from {key}")
+
+                    text = None
+                    if dochash_resposne.get('Item') is not None:
+                        print(f"Document {key} already processed")
+                        text_bucket = dochash_resposne.get('Item').get('textLocationBucket')
+                        text_key = dochash_resposne.get('Item').get('textLocationKey')
+                        print(f"Getting text from {text_bucket}/{text_key}")
+                        text = json.loads(get_file_from_s3(text_bucket, text_key))
+                        print(f"Got text from {text_bucket}/{text_key}")
+                        total_tokens = text.get('totalTokens', 0)
+                        total_items = text.get('totalItems', 0)
+                        location_properties = text.get('locationProperties', [])
+                        tags = text.get('tags', [])
+                        props = text.get('props', [])
+                    else:
+                        text = extract_text_from_file(file_extension, file_content)
+                        print(f"Extracted text from {key}")
+                        total_tokens = sum(d.get('tokens', 0) for d in text)
+                        total_items = len(text)
+
+                        if total_items > 0:
+                            location_properties = list(text[0].get('location', {}).keys())
+
+                        text = {
+                            'name': name,
+                            'totalItems': total_items,
+                            'locationProperties': location_properties,
+                            'content': text,
+                            'createdAt': creation_time,
+                            'totalTokens': total_tokens,
+                            'tags': tags,
+                            'props': props,
+                        }
+                        if text is not None:
+
+                            print(f"Uploading text to {file_text_content_bucket_name}/{text_content_key}")
+                            # Put the text into a file and upload to S3 bucket
+                            # use a random uuid for the key
+                            s3.put_object(Bucket=file_text_content_bucket_name,
+                                          Key=text_content_key,
+                                          Body=json.dumps(text))
+                            print(f"Uploaded text to {file_text_content_bucket_name}/{text_content_key}")
+
+                            hash_file_data = {
+                                'id': dochash,
+                                'textLocationBucket': file_text_content_bucket_name,
+                                'textLocationKey': text_content_key,
+                                'createdAt': creation_time,
+                            }
+                            hash_files_table.put_item(Item=hash_file_data)
+
                 except Exception as e:
                     print(f"Error processing document: {str(e)}")
 
@@ -338,14 +409,9 @@ def process_document_for_rag(event, context):
             # If text extraction was successful, delete the message from the queue
             if text is not None:
 
-                [file_text_content_bucket_name, text_content_key] = \
-                    get_text_content_location(bucket, key)
 
-                print(f"Uploading text to {file_text_content_bucket_name}/{text_content_key}")
-                # Put the text into a file and upload to S3 bucket
-                # use a random uuid for the key
-                s3.put_object(Bucket=file_text_content_bucket_name, Key=text_content_key, Body=json.dumps(text))
-                print(f"Uploaded text to {file_text_content_bucket_name}/{text_content_key}")
+                #[_, text_content_key] = get_text_content_location(bucket, dochash)
+                [_, text_content_key] = get_text_content_location(bucket, key)
 
                 text_metadata = {
                     'name': name,
