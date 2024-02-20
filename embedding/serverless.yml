@@ -77,6 +77,7 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
+    EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
    
 
   iam:
@@ -119,42 +120,42 @@ functions:
             Ref: EmbeddingChunksIndexQueue
 
   process_chunk_for_embedding:
-    runtime: python3.10
-    layers: 
-      - arn:aws:lambda:us-east-1:514391678313:layer:pgvector:2
-    handler: embedding.lambda_handler
-    vpc: 
-      securityGroupIds:
-        - !Ref LambdaSecurityGroup
-      subnetIds:
-        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
-        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-    timeout: 900
-    events:
-      - sqs:
+      runtime: python3.10
+      layers: 
+        - arn:aws:lambda:us-east-1:514391678313:layer:pgvector:2
+      handler: embedding.lambda_handler
+      vpc: 
+        securityGroupIds:
+          - !Ref LambdaSecurityGroup
+        subnetIds:
+          - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+          - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+      timeout: 900
+      events:
+        - sqs:
             arn:
               Fn::GetAtt:
                 - EmbeddingChunksIndexQueue
                 - Arn
-       http:
-          path: /embedding
-          method: post
-          cors: true
+          http:
+            path: /embedding
+            method: post
+            cors: true
 
-    environment:
-      RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
-      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
-      RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
-      RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
-      RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-      SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
-      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
-      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
-      KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
-      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
-      API_VERSION: ${self:provider.environment.API_VERSION}
-      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files  
-      RAG_PROCESS_DOCUMENT_QUEUE_URL: Ref: EmbeddingChunksIndexQueue   
+      environment:
+        RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
+        MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
+        RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
+        RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
+        RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+        SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
+        ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
+        EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
+        KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
+        QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
+        API_VERSION: ${self:provider.environment.API_VERSION}
+        USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files  
+        RAG_PROCESS_DOCUMENT_QUEUE_URL: !Ref EmbeddingChunksIndexQueue   
 
   get_embeddings:
     runtime: python3.10
@@ -298,13 +299,13 @@ resources:
           Type: "AWS::SQS::Queue"
           Properties:
             VisibilityTimeout: 300
-            QueueName: ${self:provider.environment.SQS_EMBEDDING_CHUNKS_INDEX_QUEUE}           
+            QueueName: ${self:provider.environment.EMBEDDING_CHUNKS_INDEX_QUEUE}           
     
     queue_document_for_rag:
         handler: embedding.queue_document_for_embedding
         events:
           - s3:
-              bucket: ${self:provider.environment.}
+              bucket: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
               event: s3:ObjectCreated:*
               existing: true
         environment:
