@@ -11,8 +11,9 @@ import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 from botocore.exceptions import ClientError
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
-import urllib.
+import urllib
 sqs = boto3.client('sqs')
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -24,23 +25,11 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
-embedding_process_chunk_queue_url = os.environ['EMBEDDING_PROCESS_CHUNK_QUEUE_URL']
+
 
 pg_password = get_credentials(rag_pg_password)
 
-def queue_document_for_embedding(event, context):
-    queue_url = os.environ['rag_process_document_queue_url']
 
-    print(f"Received event: {event}")
-    print(f"{event}")
-    for record in event['Records']:
-        # Send the S3 object data as a message to the SQS queue
-        message_body = json.dumps(record)
-        print(f"Sending message to queue: {message_body}")
-        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
-        print(f"Message sent to queue: {message_body}")
-
-    return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
 
 def trim_src(src):
     # Split the keyname by '.json'

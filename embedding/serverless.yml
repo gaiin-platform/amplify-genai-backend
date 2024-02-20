@@ -94,6 +94,7 @@ provider:
             - dynamodb:PutItem
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
+            - sqs:SendMessage
 
           Resource:
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
@@ -104,20 +105,25 @@ provider:
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
+            - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
             
 
 functions:
 
-  queue_document_for_rag:
-      handler: embedding.queue_document_for_embedding
+  queue_document_for_embedding:
+      runtime: python3.10
+      handler: embedding-sqs.queue_document_for_embedding
+      layers:
+        - Ref: PythonRequirementsLambdaLayer
       events:
         - s3:
             bucket: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
             event: s3:ObjectCreated:*
             existing: true
       environment:
-          RAG_PROCESS_DOCUMENT_QUEUE_URL:
+          EMBEDDING_PROCESS_CHUNK_QUEUE_URL:
             Ref: EmbeddingChunksIndexQueue
+         
 
   process_chunk_for_embedding:
       runtime: python3.10
@@ -298,17 +304,8 @@ resources:
     EmbeddingChunksIndexQueue:
           Type: "AWS::SQS::Queue"
           Properties:
-            VisibilityTimeout: 300
+            VisibilityTimeout: 900
             QueueName: ${self:provider.environment.EMBEDDING_CHUNKS_INDEX_QUEUE}           
     
-    queue_document_for_rag:
-        handler: embedding.queue_document_for_embedding
-        events:
-          - s3:
-              bucket: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
-              event: s3:ObjectCreated:*
-              existing: true
-        environment:
-            RAG_PROCESS_DOCUMENT_QUEUE_URL:
-              Ref: EmbeddingChunksIndexQueue
+
         
