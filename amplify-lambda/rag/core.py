@@ -28,6 +28,7 @@ def is_likely_text(file_content):
 
     return is_text, encoding
 
+
 def decode_text(file_content, encoding):
     # Decode the file content using the detected encoding
     try:
@@ -50,9 +51,10 @@ def get_handler_and_split_params(key):
     elif key.endswith('.csv'):
         return CSVHandler(), {'min_chunk_size': 512}
     elif key.endswith('.html'):
-        return None #HTMLHandler(), {}
+        return None  # HTMLHandler(), {}
     else:
         return TextHandler(), {}
+
 
 def get_text_extraction_handler(key):
     if key.endswith('.pdf'):
@@ -110,9 +112,7 @@ def extract_text_from_file(key, file_content):
                 return []
 
 
-
 def split_text(sent_tokenize, content):
-
     if content.get('canSplit'):
         text = re.sub(r'\s+', ' ', content['content'].strip())
         # Sentences will not need whitespace normalization.
@@ -122,11 +122,19 @@ def split_text(sent_tokenize, content):
     else:
         return [content]
 
-def chunk_content(text_content, split_params):
+
+def save_chunks(chunks_bucket, key, split_count, chunks):
+    print(f"Saving chunks {len(chunks)} to {chunks_bucket}/{key}-{split_count}.chunks.json")
+    chunks_key = f"{key}-{split_count}.chunks.json"
+    s3.put_object(Bucket=chunks_bucket,
+              Key=chunks_key,
+              Body=json.dumps({'chunks': chunks, 'src': key}))
+    print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+
+def chunk_content(key, text_content, split_params):
     import nltk
     # nltk.download('punkt')
     from nltk.tokenize import sent_tokenize
-
 
     nltk.data.path.append("/tmp")
     nltk.download("punkt", download_dir="/tmp")
@@ -145,6 +153,10 @@ def chunk_content(text_content, split_params):
     locations = []
     indexes = []
 
+    chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
+    split_increment = 10
+    split_count = 0
+
     for content_part in flattened_list:
         sentence = content_part['content']
         location = content_part['location']
@@ -160,6 +172,11 @@ def chunk_content(text_content, split_params):
                            'locations': locations,
                            'indexes': indexes,
                            'char_index': char_index})
+
+            if len(chunks) == split_increment:
+                split_count += 1
+                save_chunks(chunks_bucket, key, split_count, chunks)
+                chunks = []
 
             locations = []
             indexes = []
@@ -188,7 +205,11 @@ def chunk_content(text_content, split_params):
                        'indexes': indexes,
                        'char_index': char_index})
 
-    return chunks
+    if len(chunks) > 0:
+        split_count += 1
+        save_chunks(chunks_bucket, key, split_count, chunks)
+
+    return split_count * split_increment
 
 
 def chunk_s3_file_content(bucket, key):
@@ -198,14 +219,13 @@ def chunk_s3_file_content(bucket, key):
         file_content = json.loads(s3_object["Body"].read())
 
         # Extract text from the file in S3
-        chunks = chunk_content(file_content, {})
+        chunks = chunk_content(key, file_content, {})
 
         return chunks
 
     except Exception as e:
         print(f"Error getting object {key} from bucket {bucket}: {str(e)}")
         return None
-
 
 
 def scan_directory_and_save_text(directory_path):
@@ -233,7 +253,6 @@ def scan_directory_and_save_text(directory_path):
             json.dump(data, f, indent=2)
 
 
-
 def extract_text_from_s3_file(bucket, key, file_extension):
     try:
         # Download the file from S3
@@ -258,6 +277,7 @@ def get_file_from_s3(bucket, key):
     except Exception as e:
         print(f"Error getting object {key} from bucket {bucket}: {str(e)}")
         return None
+
 
 def queue_document_for_rag(event, context):
     queue_url = os.environ['rag_process_document_queue_url']
@@ -321,11 +341,13 @@ def process_document_for_rag(event, context):
                     knowledge_base = item['knowledgeBase']
                     name = item['name']
 
-                    print(f"Processing document chunks for {name} of type {type} with tags {tags} and data {props} and knowledge base {knowledge_base}")
+                    print(
+                        f"Processing document chunks for {name} of type {type} with tags {tags} and data {props} and knowledge base {knowledge_base}")
 
                     file_extension = get_file_extension(name, type)
 
-                    print(f"Using file extension of {file_extension} based on mime type priority (if present and guessable)")
+                    print(
+                        f"Using file extension of {file_extension} based on mime type priority (if present and guessable)")
 
                     # Extract text from the file in S3
                     file_content = get_file_from_s3(bucket, key)
@@ -350,7 +372,6 @@ def process_document_for_rag(event, context):
                         'createdAt': creation_time,
                     }
                     hash_files_table.put_item(Item=user_key_to_hash_entry)
-
 
                     text = None
                     if dochash_resposne.get('Item') is not None:
@@ -385,7 +406,6 @@ def process_document_for_rag(event, context):
                             'props': props,
                         }
                         if text is not None:
-
                             print(f"Uploading text to {file_text_content_bucket_name}/{text_content_key}")
                             # Put the text into a file and upload to S3 bucket
                             # use a random uuid for the key
@@ -405,12 +425,10 @@ def process_document_for_rag(event, context):
                 except Exception as e:
                     print(f"Error processing document: {str(e)}")
 
-
             # If text extraction was successful, delete the message from the queue
             if text is not None:
 
-
-                #[_, text_content_key] = get_text_content_location(bucket, dochash)
+                # [_, text_content_key] = get_text_content_location(bucket, dochash)
                 [_, text_content_key] = get_text_content_location(bucket, key)
 
                 text_metadata = {
@@ -497,13 +515,13 @@ def chunk_document_for_rag(event, context):
 
             chunks = chunk_s3_file_content(bucket, key)
 
-            chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
-            chunks_key = key + '.chunks.json'
-
-            s3.put_object(Bucket=chunks_bucket,
-                          Key=chunks_key,
-                          Body=json.dumps({'chunks': chunks, 'src': key}))
-            print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+            # chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
+            # chunks_key = key + '.chunks.json'
+            #
+            # s3.put_object(Bucket=chunks_bucket,
+            #               Key=chunks_key,
+            #               Body=json.dumps({'chunks': chunks, 'src': key}))
+            # print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
 
             receipt_handle = record['receiptHandle']
             print(f"Deleting message {receipt_handle} from queue")
@@ -519,9 +537,7 @@ def chunk_document_for_rag(event, context):
         except Exception as e:
             print(f"Error processing SQS message: {str(e)}")
 
-
     return {
         'statusCode': 200,
         'body': json.dumps('SQS Text Extraction Complete!')
     }
-
