@@ -11,7 +11,8 @@ import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 from botocore.exceptions import ClientError
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
-import urllib.parse
+import urllib.
+sqs = boto3.client('sqs')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -23,8 +24,23 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+embedding_process_chunk_queue_url = os.environ['EMBEDDING_PROCESS_CHUNK_QUEUE_URL']
 
 pg_password = get_credentials(rag_pg_password)
+
+def queue_document_for_embedding(event, context):
+    queue_url = os.environ['rag_process_document_queue_url']
+
+    print(f"Received event: {event}")
+    print(f"{event}")
+    for record in event['Records']:
+        # Send the S3 object data as a message to the SQS queue
+        message_body = json.dumps(record)
+        print(f"Sending message to queue: {message_body}")
+        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
+        print(f"Message sent to queue: {message_body}")
+
+    return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
 
 def trim_src(src):
     # Split the keyname by '.json'
@@ -34,9 +50,6 @@ def trim_src(src):
     return trimmed_src
 
 
-import boto3
-from botocore.exceptions import ClientError
-import logging
 
 def update_dynamodb_status(table, object_id, chunk_index, total_chunks, status):
 
@@ -134,63 +147,83 @@ db_connection = None
 def lambda_handler(event, context):
     logging.basicConfig(level=logging.INFO)
     
-    # Extract bucket name and file key from the S3 event
-    bucket_name = event['Records'][0]['s3']['bucket']['name']
-    url_encoded_key = event['Records'][0]['s3']['object']['key']
-    
-        
-    #Print the bucket name and key for debugging purposes
-    print(f"url_key={url_encoded_key}")
-    
-    #url decode the key
-    object_key = urllib.parse.unquote(url_encoded_key)
-    
-    #Print the bucket name and key for debugging purposes
-    print(f"bucket = {bucket_name} and key = {object_key}")
+    for record in event['Records']:
+        # Extract bucket name and file key from the S3 event
+        #bucket_name = event['Records'][0]['s3']['bucket']['name']
+        #url_encoded_key = event['Records'][0]['s3']['object']['key']
+        print(f"Processing message: {record}")
+        # Assuming the message body is a JSON string, parse it
+        s3_info = json.loads(record['body'])
+        print(f"Message body: {s3_info}")
+        s3_info = s3_info["s3"]
 
-    
-    # Create an S3 client
-    s3_client = boto3.client('s3')
+        # Get the bucket and object key from the event
+        print(f"Getting text from {s3_info['object']['key']}")
+        bucket_name = s3_info['bucket']['name']
+        url_encoded_key = s3_info['object']['key']
 
-    db_connection = None
-    
-    try:
-        # Get the object from the S3 bucket
-        response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-        
-        # Read the content of the object
-        data = json.loads(response['Body'].read().decode('utf-8'))
-        
-        # Get or establish a database connection
-        db_connection = get_db_connection()
-        
-        # Call the embed_chunks function with the JSON data
-        success, src = embed_chunks(data, embedding_progress_table, db_connection)
-        
-        # If the extraction process was successful, send a completion email
-        if success:
-            print(f"Embedding process completed successfully for {src}.")
-           
-        else:
-            print(f"An error occurred during the embedding process for {src}.")
+        #Print the bucket name and key for debugging purposes
+        print(f"url_key={url_encoded_key}")
 
-            db_connection.close()
-        
-        return {
-            'statusCode': 200,
-            'body': json.dumps('Embedding process completed successfully.')
-        }
-    except Exception as e:
-        logging.exception("An error occurred during the lambda_handler execution.")
-        return {
-            'statusCode': 500,
-            'body': json.dumps('An error occurred during the embedding process.')
-        }
-    finally:
-        # Ensure the database connection is closed
-        if db_connection is not None:
-            db_connection.close()
-        logging.info("Database connection closed.")    
+        #url decode the key
+        object_key = urllib.parse.unquote(url_encoded_key)
+
+        #Print the bucket name and key for debugging purposes
+        print(f"bucket = {bucket_name} and key = {object_key}")
+
+
+        # Create an S3 client
+        s3_client = boto3.client('s3')
+
+        db_connection = None
+
+        try:
+            # Get the object from the S3 bucket
+            response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+
+            # Read the content of the object
+            data = json.loads(response['Body'].read().decode('utf-8'))
+
+            # Get or establish a database connection
+            db_connection = get_db_connection()
+
+            # Call the embed_chunks function with the JSON data
+            success, src = embed_chunks(data, embedding_progress_table, db_connection)
+
+            # If the extraction process was successful, send a completion email
+            if success:
+                print(f"Embedding process completed successfully for {src}.")
+
+                receipt_handle = record['receiptHandle']
+                print(f"Deleting message {receipt_handle} from queue")
+                
+                # Delete received message from queue
+                sqs.delete_message(
+                    QueueUrl=embedding_process_chunk_queue_url,
+                    ReceiptHandle=receipt_handle
+                )
+                print(f"Deleted message {record['messageId']} from queue")
+
+            else:
+                print(f"An error occurred during the embedding process for {src}.")
+
+                db_connection.close()
+
+            return {
+                'statusCode': 200,
+                'body': json.dumps('Embedding process completed successfully.')
+            }
+        except Exception as e:
+            logging.exception(f"Error processing SQS message: {str(e)}")
+            return {
+                'statusCode': 500,
+                'body': json.dumps('Error processing SQS message.')
+            }
+        finally:
+            # Ensure the database connection is closed
+            if db_connection is not None:
+                db_connection.close()
+            logging.info("Database connection closed.")    
 
 
 def embed_chunks(data, embedding_progress_table, db_connection):

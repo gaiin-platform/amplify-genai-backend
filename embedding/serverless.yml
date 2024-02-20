@@ -1,6 +1,5 @@
 service: vu-amplify-embedding
 
-
 frameworkVersion: '3'
 
 package:
@@ -108,6 +107,17 @@ provider:
 
 functions:
 
+  queue_document_for_rag:
+      handler: embedding.queue_document_for_embedding
+      events:
+        - s3:
+            bucket: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
+            event: s3:ObjectCreated:*
+            existing: true
+      environment:
+          RAG_PROCESS_DOCUMENT_QUEUE_URL:
+            Ref: EmbeddingChunksIndexQueue
+
   process_chunk_for_embedding:
     runtime: python3.10
     layers: 
@@ -121,10 +131,11 @@ functions:
         - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 900
     events:
-     - s3:
-         bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
-         event: s3:ObjectCreated:*
-         existing: true
+      - sqs:
+            arn:
+              Fn::GetAtt:
+                - EmbeddingChunksIndexQueue
+                - Arn
        http:
           path: /embedding
           method: post
@@ -142,7 +153,8 @@ functions:
       KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
       QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
       API_VERSION: ${self:provider.environment.API_VERSION}
-      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files     
+      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files  
+      RAG_PROCESS_DOCUMENT_QUEUE_URL: Ref: EmbeddingChunksIndexQueue   
 
   get_embeddings:
     runtime: python3.10
@@ -282,4 +294,20 @@ resources:
               - AttributeName: 'object_id'
                 KeyType: 'HASH'  # Partition key
 
+    EmbeddingChunksIndexQueue:
+          Type: "AWS::SQS::Queue"
+          Properties:
+            VisibilityTimeout: 300
+            QueueName: ${self:provider.environment.SQS_EMBEDDING_CHUNKS_INDEX_QUEUE}           
+    
+    queue_document_for_rag:
+        handler: embedding.queue_document_for_embedding
+        events:
+          - s3:
+              bucket: ${self:provider.environment.}
+              event: s3:ObjectCreated:*
+              existing: true
+        environment:
+            RAG_PROCESS_DOCUMENT_QUEUE_URL:
+              Ref: EmbeddingChunksIndexQueue
         
