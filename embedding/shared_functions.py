@@ -9,7 +9,7 @@ from common.credentials import get_credentials, get_json_credetials, get_endpoin
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-endpoints_arn = os.environ['ENDPOINTS_ARN']
+endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version    = os.environ['API_VERSION']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
