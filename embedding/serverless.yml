@@ -77,6 +77,8 @@ provider:
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
+    EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
+   
 
   iam:
     role:
@@ -101,6 +103,8 @@ provider:
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
+            
 
 functions:
 
@@ -121,6 +125,24 @@ functions:
          bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
          event: s3:ObjectCreated:*
          existing: true
+       http:
+          path: /embedding
+          method: post
+          cors: true
+
+    environment:
+      RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
+      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
+      RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+      SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
+      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
+      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
+      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
+      API_VERSION: ${self:provider.environment.API_VERSION}
+      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files     
 
   get_embeddings:
     runtime: python3.10
@@ -139,9 +161,6 @@ functions:
           path: /embedding-retrieval
           method: post
           cors: true
-#          authorizer:
-#            name: ${sls:stage}-cognito-authorizer
-#            arn: arn:aws:cognito-idp:us-east-1:514391678313:userpool/${self:provider.environment.COGNITO_USER_POOL_ID}
 
   get_dual_embeddings:
     runtime: python3.10
@@ -161,38 +180,6 @@ functions:
           method: post
           cors: true
 
-  embeddings:
-    runtime: python3.10
-    handler: embedding.lambda_handler
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    vpc: 
-      securityGroupIds:
-        - !Ref LambdaSecurityGroup
-      subnetIds:
-        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
-        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-    timeout: 300
-    events:
-      - http:
-          path: /embedding
-          method: post
-          cors: true
-
-    environment:
-      RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
-      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
-      RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
-      RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
-      RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-      SES_SECRET_NAME: ${self:provider.environment.SES_SECRET_NAME}
-      SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
-      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
-      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
-      KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
-      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
-      API_VERSION: ${self:provider.environment.API_VERSION}
-      USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
 
 resources:
   Conditions:
@@ -281,4 +268,18 @@ resources:
         Description: "Credentials for Aurora Serverless PostgreSQL Database"
         GenerateSecretString:
           PasswordLength: 16
-          ExcludeCharacters: "\"@/\\"  
+          ExcludeCharacters: "\"@/\\" 
+
+    EmbeddingProgressTable:
+          Type: 'AWS::DynamoDB::Table'
+          Properties:
+            BillingMode: PAY_PER_REQUEST
+            TableName: ${self:provider.environment.EMBEDDING_PROGRESS_TABLE}
+            AttributeDefinitions:
+              - AttributeName: 'object_id'
+                AttributeType: 'S'
+            KeySchema:
+              - AttributeName: 'object_id'
+                KeyType: 'HASH'  # Partition key
+
+        

@@ -19,7 +19,7 @@ api_version = os.environ['API_VERSION']
 
 pg_password = get_credentials(rag_pg_password)
 
-def get_top_similar_qas(query_embedding, current_user, src_ids=None, limit=5):
+def get_top_similar_qas(query_embedding, src_ids=None, limit=5):
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
@@ -40,7 +40,7 @@ def get_top_similar_qas(query_embedding, current_user, src_ids=None, limit=5):
             embedding_literal = "[" + ",".join(map(str, query_embedding)) + "]"
 
             # Prepare SQL query and parameters based on whether src_ids are provided
-            query_params = [current_user]
+            query_params = []
             src_clause = ""
 
             if src_ids:
@@ -56,7 +56,7 @@ def get_top_similar_qas(query_embedding, current_user, src_ids=None, limit=5):
             sql_query = f"""
                 SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id, ((qa_vector_embedding <#> '{embedding_literal}') * -1) AS distance
                 FROM embeddings 
-                WHERE owner_email = '{current_user}' --and ((qa_vector_embedding <#> '{embedding_literal}') * -1) > .69
+                WHERE owner_email = ((qa_vector_embedding <#> '{embedding_literal}') * -1) > .69
                 AND src = ANY('{src_ids_array}')
                 ORDER BY distance DESC  -- Order by distance for ordering  
                 LIMIT {limit}  -- Use a placeholder for the limit
@@ -68,7 +68,7 @@ def get_top_similar_qas(query_embedding, current_user, src_ids=None, limit=5):
     return top_docs
 
 
-def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
+def get_top_similar_docs(query_embedding, src_ids=None, limit=5):
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
@@ -89,7 +89,7 @@ def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
             embedding_literal = "[" + ",".join(map(str, query_embedding)) + "]"
 
             # Prepare SQL query and parameters based on whether src_ids are provided
-            query_params = [current_user]
+            query_params = []
             src_clause = ""
 
             if src_ids:
@@ -105,7 +105,7 @@ def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
             sql_query = f"""
                 SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id, ((vector_embedding <#> '{embedding_literal}') * -1) AS distance
                 FROM embeddings 
-                WHERE owner_email = '{current_user}' --and ((vector_embedding <#> '{embedding_literal}') * -1) > .69
+                WHERE ((vector_embedding <#> '{embedding_literal}') * -1) > .69
                 AND src = ANY('{src_ids_array}')
                 ORDER BY distance DESC  -- Order by distance for ordering  
                 LIMIT {limit}  -- Use a placeholder for the limit
@@ -117,7 +117,7 @@ def get_top_similar_docs(query_embedding, current_user, src_ids=None, limit=5):
    
     return top_docs
 
-def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5):
+def get_top_similar_ft_docs(input_keywords, src_ids=None, limit=5):
     with psycopg2.connect(
         host=pg_host,
         database=pg_database,
@@ -128,7 +128,7 @@ def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5)
         with conn.cursor() as cur:
             # Prepare SQL query and parameters based on whether src_ids are provided
             
-            query_params = [input_keywords, current_user]
+            query_params = [input_keywords]
             
             query_params.append(input_keywords)
             
@@ -147,7 +147,7 @@ def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5)
                     ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace('{input_keywords}',' ','|'))) AS text_rank
                     
                 FROM embeddings 
-                WHERE owner_email = '{current_user}' --and ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace('{input_keywords}',' ','|'))) > .6
+                WHERE ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace('{input_keywords}',' ','|'))) > .6
                 AND to_tsvector('english', content) @@ to_tsquery('english', replace('{input_keywords}',' ','|'))
                 AND src = ANY('{src_ids_array}')
                 ORDER BY text_rank DESC  -- Order by text rank for ordering
@@ -159,7 +159,7 @@ def get_top_similar_ft_docs(input_keywords, current_user, src_ids=None, limit=5)
             top_ft_docs = cur.fetchall()
         return top_ft_docs
     
-
+#Port to Dyanmo
 def classify_src_ids_by_access(raw_src_ids, current_user):
     accessible_src_ids = []
     access_denied_src_ids = []
