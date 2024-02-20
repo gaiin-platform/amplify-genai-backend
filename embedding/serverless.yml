@@ -77,7 +77,8 @@ provider:
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
-    OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+    EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
+   
 
   iam:
     role:
@@ -102,7 +103,7 @@ provider:
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
-            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
             
 
 functions:
@@ -124,13 +125,17 @@ functions:
          bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
          event: s3:ObjectCreated:*
          existing: true
+       http:
+          path: /embedding
+          method: post
+          cors: true
+
     environment:
       RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
       MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
       RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-      SES_SECRET_NAME: ${self:provider.environment.SES_SECRET_NAME}
       SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
       ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
       EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
@@ -174,25 +179,6 @@ functions:
           path: /embedding-dual-retrieval
           method: post
           cors: true
-
-  share_src_ids:
-    runtime: python3.10
-    handler: perm_share.share_src_ids
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    vpc: 
-      securityGroupIds:
-        - !Ref LambdaSecurityGroup
-      subnetIds:
-        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
-        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-    timeout: 300
-    events:
-      - http:
-          path: /share_src_ids
-          method: post
-          cors: true
-
 
 
 resources:
@@ -284,25 +270,16 @@ resources:
           PasswordLength: 16
           ExcludeCharacters: "\"@/\\" 
 
-    ObjectAccessTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        TableName: ${self:provider.environment.OBJECT_ACCESS_DYNAMO_TABLE}
-        AttributeDefinitions:
-          - AttributeName: 'object_id'
-            AttributeType: 'S'
-          - AttributeName: 'object_type'
-            AttributeType: 'S'
-          - AttributeName: 'principle_type'
-            AttributeType: 'S'
-          - AttributeName: 'principle_id'
-            AttributeType: 'S'
-          - AttributeName: 'permission_level'
-            AttributeType: 'S'
-          - AttributeName: 'policy'
-            AttributeType: 'S'
-        KeySchema:
-          - AttributeName: 'object_id'
-            KeyType: 'HASH'  # Partition key
+    EmbeddingProgressTable:
+          Type: 'AWS::DynamoDB::Table'
+          Properties:
+            BillingMode: PAY_PER_REQUEST
+            TableName: ${self:provider.environment.EMBEDDING_PROGRESS_TABLE}
+            AttributeDefinitions:
+              - AttributeName: 'object_id'
+                AttributeType: 'S'
+            KeySchema:
+              - AttributeName: 'object_id'
+                KeyType: 'HASH'  # Partition key
+
         
