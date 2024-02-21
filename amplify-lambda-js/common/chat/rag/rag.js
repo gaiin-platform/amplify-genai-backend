@@ -130,7 +130,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
 
         const keyLookup = {};
         dataSources.forEach(ds => {
-            const key = extractKey(ds.id) + ".content.json";
+            const key = extractKey(ds.id) //+ ".content.json";
             keyLookup[key] = ds;
         });
 

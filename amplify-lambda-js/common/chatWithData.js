@@ -1,5 +1,5 @@
 import { Writable } from 'stream';
-import {extractKey, getContexts} from "../datasource/datasources.js";
+import {extractKey, getContexts, translateUserDataSourcesToHashDataSources} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
@@ -106,15 +106,20 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // 2. Do we even need the documents farther back in the conversation to answer the question?
     // 3. Is the document done processing wtih RAG, if not, run against the whole document.
 
-    const msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
+    let msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
+
+    const convoDataSources = await translateUserDataSourcesToHashDataSources(
+        chatRequestOrig.messages.slice(0,-1)
+            .filter( m => {
+                return m.data && m.data.dataSources
+            }).flatMap(m => m.data.dataSources)
+    );
 
     const ragDataSources = [
         ...(params.options.ragOnly? dataSources : []),
         ...(params.options.ragOnly? msgDataSources : []),
-        ...chatRequestOrig.messages.slice(0,-1)
-        .filter( m => {
-            return m.data && m.data.dataSources
-        }).flatMap(m => m.data.dataSources)];
+        ...convoDataSources
+        ];
 
     // This is helpful later to convert a key to a data source
     // file name and type
