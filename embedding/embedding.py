@@ -25,6 +25,7 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+embedding_process_chunk_queue_url = os.environ['EMBEDDING_PROCESS_CHUNK_QUEUE_URL'] 
 
 
 pg_password = get_credentials(rag_pg_password)
