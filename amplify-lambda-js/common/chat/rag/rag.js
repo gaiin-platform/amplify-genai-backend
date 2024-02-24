@@ -6,6 +6,7 @@ import {LLM} from "../../llm.js";
 import {ModelID, Models} from "../../../models/models.js";
 import Bottleneck from "bottleneck";
 import {sendDeltaToStream} from "../../streams.js";
+import {trace} from "../../trace.js";
 
 const logger = getLogger("rag");
 
@@ -16,7 +17,7 @@ const limiter = new Bottleneck({
 
 const ragEndpoint = process.env.RAG_ENDPOINT;
 
-async function getRagResults(token, search, ragDataSourceKeys, count) {
+async function getRagResults(params, token, search, ragDataSourceKeys, count) {
 
     const ragRequest = {
         data: {
@@ -26,6 +27,8 @@ async function getRagResults(token, search, ragDataSourceKeys, count) {
         },
     }
 
+    trace(params.requestId, ["rag", "request"], ragRequest);
+
     const response = await axios.post(ragEndpoint, ragRequest, {
         headers: {
             'Authorization': `Bearer ${token}`
@@ -34,39 +37,6 @@ async function getRagResults(token, search, ragDataSourceKeys, count) {
     return response;
 }
 
-/**
- *
- * json!({
- *   "$schema": "http://json-schema.org/draft-07/schema#",
- *   "type": "object",
- *   "properties": {
- *     "ideas": {
- *       "type": "array",
- *       "items": {
- *         "type": "object",
- *         "properties": {
- *           "descriptionOfSpecificHelpfulInformation": {
- *             "type": "string"
- *           }
- *         },
- *         "required": ["descriptionOfSpecificHelpfulInformation"],
- *         "additionalProperties": false
- *       }
- *     }
- *   },
- *   "required": ["ideas"],
- *   "additionalProperties": false
- * }) Please provide 10 very detailed two-sentence descriptions of specific types of information that would help me perform the following task for the user:
- * Task:
- * ----------------
- * {{Task}}
- *
- *
- * @param params
- * @param chatBody
- * @param dataSources
- * @returns {Promise<{sources: *[], messages: *[]}|{sources: *, messages: [{role: string, content: string},...*]}>}
- */
 
 export const getContextMessages = async (chatFn, params, chatBody, dataSources) => {
     const ragLLMParams = setModel(
@@ -177,7 +147,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 limiter.schedule(async () => {
                     try {
                         const searchString = idea.descriptionOfSpecificHelpfulInformation;
-                        const response = await getRagResults(token, searchString, ragDataSourceKeys, resultsPerIdea);
+                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, resultsPerIdea);
                         const sources = response.data.result.map((item) => {
                             const [content, key, locations, indexes, charIndex, user, tokenCount,  ragId, score] = item;
                             const ds = keyLookup[key];
@@ -248,6 +218,8 @@ ${content}
 `
                 }
             })];
+
+        trace(params.requestId, ["rag", "result"], {sources: uniqueSources});
 
         return {messages, sources:uniqueSources};
     } catch (e) {

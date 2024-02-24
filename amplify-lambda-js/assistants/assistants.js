@@ -153,7 +153,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         return (m.data && m.data.state && m.data.state.currentAssistant) ? m.data.state.currentAssistant : null;
     }).reverse().find((a) => a !== null);
 
-    const status = newStatus({inProgress: true, message: "Choosing an assistant to help"});
+    const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
     llm.sendStatus(status);
     llm.forceFlush();
 
