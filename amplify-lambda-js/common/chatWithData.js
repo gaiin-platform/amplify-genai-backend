@@ -14,6 +14,7 @@ import {getContextMessages} from "./chat/rag/rag.js";
 import {ModelID, Models} from "../models/models.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
+import {trace} from "./trace.js";
 
 const logger = getLogger("chatWithData");
 
@@ -131,6 +132,15 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         dataSourceDetailsLookup[ds.id] = ds;
     });
 
+
+    trace(params.requestId, ["chat","params"],
+        {
+            dataSources,
+            ragDataSources,
+            params: {
+                options: params.options
+            }
+        });
 
     const ragStatus = newStatus({
         inProgress: true,

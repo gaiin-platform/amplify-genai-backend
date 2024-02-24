@@ -6,12 +6,13 @@ import {getLogger} from "./common/logging.js";
 import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
-import {sendStateEventToStream} from "./common/streams.js";
+import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {translateUserDataSourcesToHashDataSources} from "./datasource/datasources.js";
+import {saveTrace, trace} from "./common/trace.js";
 
 const logger = getLogger("router");
 
-
+const doTrace = process.env.TRACING_ENABLED;
 
 function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
@@ -100,6 +101,10 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 });
             }
 
+            if(doTrace) {
+                responseStream = new TraceStream({}, responseStream);
+            }
+
             const modelId = (options.model && options.model.id) || "gpt-4-1106-Preview";
             const model = Models[modelId];
 
@@ -146,6 +151,11 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 responseStream);
 
             await deleteRequestState(params.user, requestId);
+
+            if(doTrace) {
+                trace(requestId, ["response"], {stream: responseStream.trace})
+                await saveTrace(params.user, requestId);
+            }
 
             if (response) {
                 logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");

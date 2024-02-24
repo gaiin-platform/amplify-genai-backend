@@ -40,6 +40,8 @@ provider:
     CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
+    TRACE_BUCKET_NAME: vu-amplify-${sls:stage}-chat-traces
+    TRACING_ENABLED: false
 
   iam:
     role:
@@ -48,6 +50,7 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
             - s3:GetObject
+            - s3:PutObject
             - s3:ListBucket
             - dynamodb:GetItem
             - dynamodb:PutItem
@@ -55,6 +58,7 @@ provider:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
             - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
@@ -94,3 +98,7 @@ resources:
             AttributeName: requestId
             KeyType: RANGE
         TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}
+    ChatTracesBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.TRACE_BUCKET_NAME}

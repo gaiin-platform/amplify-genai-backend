@@ -2,6 +2,84 @@ import {Writable} from "stream";
 import {TextDecoder} from "util";
 import {newStatus} from "./status.js";
 
+export class TraceStream extends Writable {
+    constructor(options, targetStream) {
+        super(options);
+        // Initialize a TextDecoder to decode UTF-8 text by default
+        this.decoder = new TextDecoder('utf-8');
+        this.trace = "";
+        this.targetStream = targetStream;
+    }
+
+    handleChunk(textChunk) {
+        try {
+            if (textChunk.trim().length > 0) {
+                const json = textChunk.slice(6);
+                try {
+
+                    const delta = JSON.parse(json);
+
+                    if(delta.s === "meta" && delta.st) {
+                        // We do this to remove the hacky flushes to make
+                        // AWS Lambda streaming work
+                        if(delta.message && delta.message.trim().length > 0 ||
+                           delta.summary && delta.summary.trim().length > 0) {
+                            this.trace += textChunk + "\n\n";
+                        }
+                    }
+                    else {
+                        this.trace += textChunk + "\n\n";
+                    }
+                } catch (e) {
+                    this.trace += textChunk + "\n\n";
+                }
+            }
+        }
+        catch (e) {
+            console.log(e);
+        }
+    }
+
+    _write(chunk, encoding, callback) {
+        // Convert the chunk (which must be a Buffer) to a string
+        const textChunks = this.decoder.decode(chunk, {stream: true});
+
+        for (const textChunk of textChunks.split('\n')) {
+            this.handleChunk(textChunk);
+        }
+
+        // Indicate that the chunk has been processed successfully
+        this.targetStream.write(chunk);
+
+        callback();
+    }
+
+    _final(callback) {
+        // Flush any remaining text from the TextDecoder, but since
+        // we've been streaming, there shouldn't be anything left to flush unless the stream ended unexpectedly.
+        const remaining = this.decoder.decode();
+        if (remaining) {
+            this.handleChunk(remaining);
+        }
+
+        this.targetStream.end();
+
+        if (typeof this.targetStream._final === 'function') {
+            this.targetStream._final((error) => {
+                // Handle any errors in the _final method of the targetStream
+                if (error) {
+                    callback(error);
+                } else {
+                    callback();
+                }
+            });
+        } else {
+            callback();
+        }
+    }
+
+}
+
 
 export class StatusOutputStream extends Writable {
     constructor(options, statusStream, status) {
@@ -80,6 +158,7 @@ export class StatusOutputStream extends Writable {
         if (remaining) {
             this.handleChunk(remaining);
         }
+
         callback();
     }
 }

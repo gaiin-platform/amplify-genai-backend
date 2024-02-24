@@ -1,6 +1,7 @@
 
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
+import {trace} from "../common/trace.js";
 
 const logger = getLogger("openai");
 
@@ -54,6 +55,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     const url = config.url;
 
     logger.debug("Calling OpenAI API with url: "+url);
+
+    trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
     function streamAxiosResponseToWritable(url, writableStream) {
         return new Promise((resolve, reject) => {
