@@ -1,137 +1,96 @@
-# set up retriever function that accepts a a query, user, and/or list of keys for where claus
-from openai import AzureOpenAI
-import os
-import json
-import psycopg2
-from pgvector.psycopg2 import register_vector
-from common.credentials import get_credentials, get_endpoint
 from common.validate import validated
 import logging
-
-#Remove me
-import yaml
+import boto3
+import json
+from botocore.exceptions import ClientError
 import os
 
-# Function to convert YAML content to .env format and load it
-def load_yaml_as_env(yaml_path):
-    with open(yaml_path, 'r') as stream:
-        data_loaded = yaml.safe_load(stream)
-
-    # Convert YAML dictionary to .env format (KEY=VALUE)
-    for key, value in data_loaded.items():
-        os.environ[key] = str(value)
-
-yaml_file_path = "C:\\Users\\karnsab\Desktop\\amplify-lambda-mono-repo\\var\local-var.yml"
-load_yaml_as_env(yaml_file_path)
-#Remove me
-
-pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
-pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
-pg_database = os.environ['RAG_POSTGRES_DB_NAME']
-rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
-pg_password = get_credentials(rag_pg_password)
-
-def insert_into_object_access(src_ids, principal_type, shared_email, permission_level):
-    with psycopg2.connect(
-        host=pg_host,
-        database=pg_database,
-        user=pg_user,
-        password=pg_password,
-        port=3306
-    ) as conn:
-        # Register pgvector extension
-        register_vector(conn)
-        with conn.cursor() as cur:
-            object_type = "embedding"
-            
-
-            insert_query = """
-            INSERT INTO object_access (object_id, object_type, principle_type, principle_id, permission_level)
-            VALUES (%s, %s, %s, %s, %s);
-            """
-
-            for src_id in src_ids:
-                query_params = (src_id, object_type, principal_type, shared_email, permission_level)
-                try:
-                    # Execute the query with the correct parameters for each src_id
-                    cur.execute(insert_query, query_params)
-                    logging.info(f"Data inserted into the object_access table for src_id: {src_id}")
-                    print(f"Data inserted into the object_access table for src_id: {src_id}")
-                except psycopg2.Error as e:
-                    # Log the error and re-raise the exception
-                    logging.error(f"Failed to insert data into the object_access table for src_id: {src_id}: {e}")
-                    print(f"Failed to insert data into the object_access table for src_id: {src_id}: {e}")
-                    raise  # Re-raise the exception to be handled by the caller
-
-        # Commit the transaction
-        conn.commit()
-
-import boto3
-import logging
-
-def classify_src_ids_by_access(raw_src_ids, current_user):
-    accessible_src_ids = []
-    access_denied_src_ids = []
-
-    # Define the permission levels that grant access
-    permission_levels = 'owner'  # Use a list for permission_levels if multiple levels grant access
-    
-    # Create a DynamoDB client
-    dynamodb = boto3.resource('dynamodb', region_name='your-region')  # Replace 'your-region' with your DynamoDB region
-    table = dynamodb.Table('tablename')  # Replace 'tablename' with your DynamoDB table name
-
-    try:
-        # Query the DynamoDB table using the GSI on principle_id
-        response = table.query(
-            IndexName='PrincipleIdIndex',  # Replace with your actual GSI name if different
-            KeyConditionExpression='principle_id = :principle_id AND permission_level = :permission_level',
-            ExpressionAttributeValues={
-                ':principle_id': current_user,
-                ':permission_level': permission_levels
-            }
-        )
-
-        # Create a set of accessible src_ids from the query results
-        result_set = {item['object_id'] for item in response['Items'] if item['object_id'] in raw_src_ids}
-
-        # Classify each src_id based on whether it's in the result_set
-        for src_id in raw_src_ids:
-            if src_id in result_set:
-                accessible_src_ids.append(src_id)
-            else:
-                access_denied_src_ids.append(src_id)
-
-    except Exception as e:
-        logging.error(f"An error occurred while classifying src_ids by access: {e}")
-        # Depending on the use case, you may want to handle the error differently
-        # Here we're considering all src_ids as denied if there's an error
-        access_denied_src_ids.extend(raw_src_ids)
-
-    print(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")
-    return accessible_src_ids, access_denied_src_ids
+# Initialize a DynamoDB client
+dynamodb = boto3.resource('dynamodb')
 
 
-@validated("objectAccess")
-def share_src_ids (event, context, current_user, name, data):
+@validated("update_object_permissions")
+def update_object_permissions(event, context, current_user, name, data):
+    table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
-    raw_src_ids = data['dataSources']
-    shared_email = data['sharedEmail']
-    principal_type = data['principalType']
-    permission_level = data['permissionLevel']
+    
+    try:
+        data_sources = data['dataSources']
+        email_list = data['emailList']
+        provided_permission_level = data['permissionLevel']  # Permission level provided for other users
+        policy = data['policy']  # No need to use get() since policy is always present
+        principal_type = data.get('principalType')
+        object_type = data.get('objectType')
+        
+        # Get the DynamoDB table
+        table = dynamodb.Table(table_name)
+        
+        for object_id in data_sources:
+            # Check if any permissions already exist for the object_id
+            query_response = table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('object_id').eq(object_id)
+            )
+            items = query_response.get('Items')
 
-    # Classify the src_ids by access
-    accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
+            # If there are no permissions, create the initial item with the current_user as the owner
+            if not items:
+                table.put_item(Item={
+                    'object_id': object_id,
+                    'principal_id': current_user,
+                    'principal_type': principal_type,
+                    'object_type': object_type,
+                    'permission_level': 'owner',  # The current_user becomes the owner
+                    'policy': policy
+                })
 
-    # Insert the accessible src_ids into the object_access table
-    insert_into_object_access(accessible_src_ids, principal_type, shared_email, permission_level)
+            # Check if the current_user has 'owner' or 'write' permissions for the object_id
+            owner_key = {
+                'object_id': object_id,
+                'principal_id': current_user
+            }
+            owner_response = table.get_item(Key=owner_key)
+            owner_item = owner_response.get('Item')
 
-    # Return the accessible and access_denied src_ids
-    return {
-        "statusCode": 200,
-        "body": {
-            "sharedSrcIds": accessible_src_ids,
-            "accessDeniedSrcIds": access_denied_src_ids
+            if owner_item and owner_item.get('permission_level') in ['owner', 'write']:
+                # If current_user is the owner or has write permission, proceed with updates
+                for principal_id in email_list:
+                    # Create or update the permission level for each principal_id
+                    principal_key = {
+                        'object_id': object_id,
+                        'principal_id': principal_id
+                    }
+                    # Use the provided permission level for other users
+                    update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
+                    expression_attribute_values = {
+                        ':principal_type': principal_type,
+                        ':object_type': object_type,
+                        ':permission_level': provided_permission_level,  # Use the provided permission level
+                        ':policy': policy
+                    }
+                    table.update_item(
+                        Key=principal_key,
+                        UpdateExpression=update_expression,
+                        ExpressionAttributeValues=expression_attribute_values
+                    )
+            else:
+                # The current_user does not have 'owner' or 'write' permissions
+                return {
+                    'statusCode': 403,
+                    'body': json.dumps(f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
+                }
+    except ClientError as e:
+        return {
+            'statusCode': e.response['ResponseMetadata']['HTTPStatusCode'],
+            'body': json.dumps(f"Error accessing/updating DynamoDB: {e.response['Error']['Message']}")
         }
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f"Error processing request: {str(e)}")
+        }
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Permissions updated successfully.')
     }
 
-  
