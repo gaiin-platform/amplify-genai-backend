@@ -127,9 +127,10 @@ def save_chunks(chunks_bucket, key, split_count, chunks):
     print(f"Saving chunks {len(chunks)} to {chunks_bucket}/{key}-{split_count}.chunks.json")
     chunks_key = f"{key}-{split_count}.chunks.json"
     s3.put_object(Bucket=chunks_bucket,
-              Key=chunks_key,
-              Body=json.dumps({'chunks': chunks, 'src': key}))
+                  Key=chunks_key,
+                  Body=json.dumps({'chunks': chunks, 'src': key}))
     print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+
 
 def chunk_content(key, text_content, split_params):
     import nltk
@@ -294,6 +295,75 @@ def queue_document_for_rag(event, context):
     return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
 
 
+def update_object_permissions(current_user, data):
+    dynamodb = boto3.resource('dynamodb')
+    table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+
+
+    try:
+        data_sources = data['dataSources']
+        email_list = data['emailList']
+        provided_permission_level = data['permissionLevel']  # Permission level provided for other users
+        policy = data['policy']  # No need to use get() since policy is always present
+        principal_type = data.get('principalType')
+        object_type = data.get('objectType')
+
+        print(f"Updating permission on {data_sources} for {email_list} with {provided_permission_level} and {policy}")
+
+
+        # Get the DynamoDB table
+        table = dynamodb.Table(table_name)
+
+        for object_id in data_sources:
+            # Check if any permissions already exist for the object_id
+            query_response = table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('object_id').eq(object_id)
+            )
+            items = query_response.get('Items')
+
+            # If there are no permissions, create the initial item with the current_user as the owner
+            if not items:
+                table.put_item(Item={
+                    'object_id': object_id,
+                    'principal_id': current_user,
+                    'principal_type': principal_type,
+                    'object_type': object_type,
+                    'permission_level': 'read',  # The current_user becomes the owner
+                    'policy': policy
+                })
+                print(f"Created initial item for {object_id} with {current_user} as owner")
+
+            else:
+                # If current_user is the owner or has write permission, proceed with updates
+                for principal_id in email_list:
+                    # Create or update the permission level for each principal_id
+                    principal_key = {
+                        'object_id': object_id,
+                        'principal_id': principal_id
+                    }
+                    # Use the provided permission level for other users
+                    update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
+                    expression_attribute_values = {
+                        ':principal_type': principal_type,
+                        ':object_type': object_type,
+                        ':permission_level': provided_permission_level,  # Use the provided permission level
+                        ':policy': policy
+                    }
+                    table.update_item(
+                        Key=principal_key,
+                        UpdateExpression=update_expression,
+                        ExpressionAttributeValues=expression_attribute_values
+                    )
+                    print(f"Updated item for {object_id} with {principal_id} to {provided_permission_level}")
+
+    except Exception as e:
+        print(f"Failed to update permissions: {str(e)}")
+        return False
+
+    print(f"Updated permissions for {data_sources} for {email_list} with {provided_permission_level} and {policy}")
+    return True
+
+
 def process_document_for_rag(event, context):
     print(f"Received event: {event}")
     queue_url = os.environ['rag_process_document_queue_url']
@@ -372,6 +442,23 @@ def process_document_for_rag(event, context):
                         'createdAt': creation_time,
                     }
                     hash_files_table.put_item(Item=user_key_to_hash_entry)
+
+                    user = key.split('/')[0]
+                    permissions_update = {
+                        'dataSources': [text_content_key],
+                        'emailList': [user],
+                        'permissionLevel': 'write',
+                        'policy': '',
+                        'principalType': 'user',
+                        'objectType': 'fileEmbedding'
+                    }
+                    update_object_permissions(user, permissions_update)
+                    # data_sources = data['dataSources']
+                    # email_list = data['emailList']
+                    # provided_permission_level = data['permissionLevel']  # Permission level provided for other users
+                    # policy = data['policy']  # No need to use get() since policy is always present
+                    # principal_type = data.get('principalType')
+                    # object_type = data.get('objectType')
 
                     text = None
                     if dochash_resposne.get('Item') is not None:
@@ -486,6 +573,31 @@ def queue_document_for_rag_chunking(event, context):
     return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
 
 
+def update_embedding_status(object_id, chunk_index, total_chunks, status):
+    try:
+        progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+        print(f"Updating chunk count status for embedding {progress_table}/{object_id} "
+              f"{chunk_index}/{total_chunks} {status}")
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(progress_table)
+        table.put_item(
+            Item={
+                'object_id': object_id,
+                'timestamp': datetime.now().isoformat(),
+                'data': {
+                    'chunkIndex': chunk_index,
+                    'totalChunks': total_chunks or 0,
+                    'status': status
+                }
+            }
+        )
+        print("Created chunk count status for embedding.")
+
+    except Exception as e:
+        print("Failed to create or update item in DynamoDB table.")
+        print(e)
+
+
 def chunk_document_for_rag(event, context):
     print(f"Received event: {event}")
     queue_url = os.environ['rag_chunk_document_queue_url']
@@ -515,13 +627,7 @@ def chunk_document_for_rag(event, context):
 
             chunks = chunk_s3_file_content(bucket, key)
 
-            # chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
-            # chunks_key = key + '.chunks.json'
-            #
-            # s3.put_object(Bucket=chunks_bucket,
-            #               Key=chunks_key,
-            #               Body=json.dumps({'chunks': chunks, 'src': key}))
-            # print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+            update_embedding_status(key, 0, chunks, "starting")
 
             receipt_handle = record['receiptHandle']
             print(f"Deleting message {receipt_handle} from queue")
@@ -541,3 +647,4 @@ def chunk_document_for_rag(event, context):
         'statusCode': 200,
         'body': json.dumps('SQS Text Extraction Complete!')
     }
+
