@@ -10,6 +10,19 @@ const dynamodbClient = new DynamoDBClient();
 
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
+export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = true) => {
+    if(chatBody && chatBody.messages) {
+        const base = (includeCurrentMessage ? chatBody.messages : chatBody.messages.slice(0, -1))
+
+        return base
+            .filter(m => {
+                return m.data && m.data.dataSources
+            }).flatMap(m => m.data.dataSources)
+    }
+
+    return [];
+}
+
 export const getFileText = async (key) => {
 
     const textKey = key.endsWith(".content.json") ?

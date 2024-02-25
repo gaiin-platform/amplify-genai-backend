@@ -1,5 +1,5 @@
 import {chat} from "./azure/openai.js";
-import {canReadDatasource} from "./common/permissions.js";
+import {canReadDatasource, canReadDataSources} from "./common/permissions.js";
 import {Models} from "./models/models.js";
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {getLogger} from "./common/logging.js";
@@ -7,7 +7,11 @@ import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
-import {translateUserDataSourcesToHashDataSources} from "./datasource/datasources.js";
+import {
+    extractKey,
+    getDataSourcesInConversation,
+    translateUserDataSourcesToHashDataSources
+} from "./datasource/datasources.js";
 import {saveTrace, trace} from "./common/trace.js";
 
 const logger = getLogger("router");
@@ -84,14 +88,36 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             //delete body.options;
 
             try {
-                if (dataSources.some((ds) => !canReadDatasource(params.user, ds.id))) {
-                    returnResponse(responseStream, {
-                        statusCode: 401,
-                        body: {error: "Unauthorized data source access."}
-                    });
-                }
+                // if (dataSources.some((ds) => !canReadDatasource(params.user, ds.id))) {
+                //     returnResponse(responseStream, {
+                //         statusCode: 401,
+                //         body: {error: "Unauthorized data source access."}
+                //     });
+                // }
+
 
                 dataSources = await translateUserDataSourcesToHashDataSources(dataSources);
+                const convoDataSources = await translateUserDataSourcesToHashDataSources(
+                    getDataSourcesInConversation(body, true)
+                );
+
+                const allDataSources = [
+                    ...dataSources,
+                    ...convoDataSources
+                ]
+
+                const nonUserSources = allDataSources.filter(ds =>
+                    !extractKey(ds.id).startsWith(params.user+"/")
+                );
+
+                if(nonUserSources && nonUserSources.length > 0) {
+                    if (!await canReadDataSources(params.accessToken, nonUserSources)) {
+                        returnResponse(responseStream, {
+                            statusCode: 401,
+                            body: {error: "Unauthorized data source access."}
+                        });
+                    }
+                }
 
             } catch (e) {
                 logger.error("Error checking access on data sources: " + e);

@@ -41,6 +41,7 @@ provider:
     REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     TRACE_BUCKET_NAME: vu-amplify-${sls:stage}-chat-traces
+    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     TRACING_ENABLED: false
 
   iam:

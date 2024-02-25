@@ -1,5 +1,10 @@
 import { Writable } from 'stream';
-import {extractKey, getContexts, translateUserDataSourcesToHashDataSources} from "../datasource/datasources.js";
+import {
+    extractKey,
+    getContexts,
+    getDataSourcesInConversation,
+    translateUserDataSourcesToHashDataSources
+} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
@@ -110,10 +115,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     let msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
-        chatRequestOrig.messages.slice(0,-1)
-            .filter( m => {
-                return m.data && m.data.dataSources
-            }).flatMap(m => m.data.dataSources)
+        getDataSourcesInConversation(chatRequestOrig, false)
     );
 
     const ragDataSources = [
