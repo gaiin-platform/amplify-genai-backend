@@ -2,6 +2,8 @@
 def can_update_permissions(user, data):
   return True
 
+def can_get_permissions(user, data):
+  return True
 
 def get_permission_checker(user, type, op, data):
   print("Checking permissions for user: {} and type: {} and op: {}".format(user, type, op))
@@ -19,5 +21,8 @@ permissions_by_state_type = {
   },
   "/utilities/update_object_permissions": {
     "update_object_permissions": can_update_permissions
-  }
+  },
+  "/utilities/can_access_objects": {
+    "can_access_objects": can_get_permissions
+  },
 }

@@ -67,10 +67,27 @@ update_object_permissions = {
     "required": ["dataSources", "emailList", "permissionLevel"]
 }
 
+check_object_permissions = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "dataSources": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "string"
+            }
+        }
+    },
+    "required": ["dataSources"]
+}
+
 validators = {
     
     "/utilities/update_object_permissions": {
         "update_object_permissions": update_object_permissions
+    },
+    "/utilities/can_access_objects": {
+        "can_access_objects": check_object_permissions
     }
 }
 

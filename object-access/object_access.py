@@ -9,11 +9,82 @@ import os
 dynamodb = boto3.resource('dynamodb')
 
 
+def is_sufficient_privilege(object_id, permission_level, policy, requested_access_type):
+    if permission_level == 'owner':
+        return True
+    elif permission_level == 'write':
+        return requested_access_type in ['read', 'write']
+    elif permission_level == 'read':
+        return requested_access_type == 'read'
+    elif permission_level == 'none':
+        return False
+    elif policy == 'public':
+        return requested_access_type == 'read'
+    else:
+        return False
+
+
+@validated("can_access_objects")
+def can_access_objects(event, context, current_user, name, data):
+    table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+    table = dynamodb.Table(table_name)
+
+    data = data['data']
+
+    try:
+        data_sources = data['dataSources']
+
+        for object_id, access_type in data_sources.items():
+            # Check if any permissions already exist for the object_id
+            query_response = table.get_item(
+                Key={
+                    'object_id': object_id,
+                    'principal_id': current_user
+                }
+            )
+            item = query_response.get('Item')
+
+            # If there are no permissions, create the initial item with the current_user as the owner
+            if not item:
+                return {
+                    'statusCode': 403,
+                    'body': json.dumps({
+                        'message': f"User does not have access to objectId.",
+                        'objectId': object_id,
+                        'accessType': access_type
+                    })
+                }
+
+            permission_level = item.get('permission_level')
+            policy = item.get('policy')
+            if not is_sufficient_privilege(object_id, permission_level, policy, access_type):
+                return {
+                    'statusCode': 403,
+                    'body': json.dumps({
+                        'message': f"User does not have access to objectId.",
+                        'objectId': object_id,
+                        'accessType': access_type
+                    })
+                }
+
+    except ClientError as e:
+        print(f"Error accessing DynamoDB for can_access_objects: {e.response['Error']['Message']}")
+        return {
+            'statusCode': 500,
+            'body': "Internal error determining access. Please try again later."
+        }
+
+    return {
+        'statusCode': 200,
+        'body': 'User has access to the object(s).'
+    }
+
+
 @validated("update_object_permissions")
 def update_object_permissions(event, context, current_user, name, data):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
-    
+
     try:
         data_sources = data['dataSources']
         email_list = data['emailList']
@@ -21,10 +92,10 @@ def update_object_permissions(event, context, current_user, name, data):
         policy = data['policy']  # No need to use get() since policy is always present
         principal_type = data.get('principalType')
         object_type = data.get('objectType')
-        
+
         # Get the DynamoDB table
         table = dynamodb.Table(table_name)
-        
+
         for object_id in data_sources:
             # Check if any permissions already exist for the object_id
             query_response = table.query(
@@ -76,7 +147,8 @@ def update_object_permissions(event, context, current_user, name, data):
                 # The current_user does not have 'owner' or 'write' permissions
                 return {
                     'statusCode': 403,
-                    'body': json.dumps(f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
+                    'body': json.dumps(
+                        f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
                 }
     except ClientError as e:
         return {
@@ -93,4 +165,3 @@ def update_object_permissions(event, context, current_user, name, data):
         'statusCode': 200,
         'body': json.dumps('Permissions updated successfully.')
     }
-
