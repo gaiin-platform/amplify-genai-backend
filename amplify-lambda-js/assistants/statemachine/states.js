@@ -13,6 +13,7 @@ import yaml from 'js-yaml';
 import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
 import {getUser} from "../../common/params.js";
+import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -259,7 +260,26 @@ export const invokeAction = (fn, keys, outputKey) => {
 
     return {
         execute: async (llm, context, dataSources) => {
-            const args = keys.map(k => context.data[k]);
+            const args = keys.map(k => {
+                if(k === "context"){
+                    return context;
+                }
+                else if(k === "dataSources"){
+                    return dataSources;
+                }
+                else if(k === "conversationDataSources"){
+                    return context.conversationDataSources;
+                }
+                else if(k === "history"){
+                    return context.history;
+                }
+                else if(k === "options"){
+                    return context.options;
+                }
+                else {
+                    return context.data[k]
+                }
+            });
             const result = await fn(...args);
             if (result && !outputKey) {
                 context.data = {...context.data, ...result};
@@ -624,15 +644,21 @@ export class PromptAction {
         if(this.config.dataSources !== undefined){
             dataSources = this.config.dataSources;
         }
+        else if((!dataSources || dataSources.length === 0) && context.dataSources.length > 0){
+            dataSources = context.dataSources;
+        }
 
-        let newMessages = (this.prompt != null) ?
-            [...context.history, {role: "user", content:fillInTemplate(this.prompt, context.data)}] :
+
+        const promptText = (this.prompt != null)? fillInTemplate(this.prompt, context.data) : null;
+
+        let newMessages = (promptText != null) ?
+            [...context.history, {role: "user", content:promptText}] :
             [...context.history.slice(0,-1)];
 
         const result = await llm.promptForString(
             {messages: newMessages},
             dataSources,
-            this.prompt || context.history.slice(-1)[0].content,
+            promptText || context.history.slice(-1)[0].content,
             (this.streamResults) ? llm.responseStream : null,
             this.retries
         );
@@ -862,15 +888,21 @@ export class StateBasedAssistant {
         const user = getUser(params).split("@")[0];
         const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
 
+        const convoDataSources = await translateUserDataSourcesToHashDataSources(
+            getDataSourcesInConversation(body, true)
+        );
+
         const context = {
             data: {
                 dataSources: dataSources.map((ds,i) => {
                     return {id:i, type:ds.type, name:ds.name, metadata:ds.metadata};
                 }),
+                conversationDataSources: convoDataSources,
                 userName: niceUserName,
                 userEmail: getUser(params),
             },
             dataSources,
+            conversationDataSources: convoDataSources,
             status: {},
             responseStream,
             params,

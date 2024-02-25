@@ -41,8 +41,8 @@ const States = {
     chooseDocs: new AssistantState("chooseDocs",
         "Looking at the documents...",
         new PromptForDataAction(
-            "Documents:\n{{yaml dataSources}}\n" +
-            "Which document needs to be read to perform the task?" +
+            "Documents:\n{{yaml conversationDataSources}}\n" +
+            "Which document from the list above needs be read to perform the task?" +
             "",
             {
                 "thought": "explain your reasoning",
@@ -57,9 +57,17 @@ const States = {
         "I am going to read the provided documents and respond.",
         chainActions([
             updateStatus("answer", {summary: "I am reading the document(s).", inProgress: true}),
+            invokeAction((context, conversationDataSources, documentName)=> {
+                const document = conversationDataSources.find((d) => d.name === documentName);
+                if(document){
+                    context.dataSources = [document];
+                }
+                return "";
+            }, ["context","conversationDataSources","documentName"], "documentData"),
             outputToResponse(
                 new PromptAction(
-                    null, // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
+                    null,
+                    // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
                     "response", 3, true, {skipRag: true, ragOnly: false})
             ),
             updateStatus("answer", {summary: "I am reading the document(s).", inProgress: false}),
@@ -73,7 +81,7 @@ const States = {
 const current = States.assess;
 
 // We add transitions to the state machine to define the state machine.
-States.assess.addTransition(States.answerWithSearch.name, "Answer by searching for specific information");
+//States.assess.addTransition(States.answerWithSearch.name, "Answer by searching for specific information");
 States.assess.addTransition(States.chooseDocs.name, "Answer by reading the entire document(s)");
 States.chooseDocs.addTransition(States.answerWithReadingEntireDocument.name, "Answer by reading the entire document(s)");
 States.answerWithSearch.addTransition(States.done.name, "Done");
