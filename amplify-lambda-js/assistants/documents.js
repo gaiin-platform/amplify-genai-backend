@@ -60,7 +60,7 @@ const States = {
             invokeAction((context, conversationDataSources, documentName)=> {
                 const document = conversationDataSources.find((d) => d.name === documentName);
                 if(document){
-                    context.dataSources = [document];
+                    context.activeDataSources = [document];
                 }
                 return "";
             }, ["context","conversationDataSources","documentName"], "documentData"),

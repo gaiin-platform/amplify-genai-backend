@@ -585,6 +585,13 @@ export class PromptForDataAction {
 
         let promptText = fillInTemplate(this.prompt, context.data);
 
+        if(this.config.dataSources !== undefined){
+            dataSources = this.config.dataSources;
+        }
+        else if((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0){
+            dataSources = context.activeDataSources;
+        }
+
         const result = await llm.promptForData(
             {messages: [...context.history, {role: "user", content: promptText}]},
             dataSources,
@@ -644,8 +651,8 @@ export class PromptAction {
         if(this.config.dataSources !== undefined){
             dataSources = this.config.dataSources;
         }
-        else if((!dataSources || dataSources.length === 0) && context.dataSources.length > 0){
-            dataSources = context.dataSources;
+        else if((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0){
+            dataSources = context.activeDataSources;
         }
 
 
@@ -900,8 +907,10 @@ export class StateBasedAssistant {
                 conversationDataSources: convoDataSources,
                 userName: niceUserName,
                 userEmail: getUser(params),
+                activeDataSources:[]
             },
             dataSources,
+            activeDataSources:[],
             conversationDataSources: convoDataSources,
             status: {},
             responseStream,
