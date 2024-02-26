@@ -290,16 +290,18 @@ You ALWAYS output a \`\`\`data code block.
 
     async promptForString(body, dataSources = [], prompt, targetStream = this.responseStream, retries = 3) {
 
+        const messages = prompt ? [
+            ...(body.messages || []),
+            {
+                role: "user",
+                content: prompt
+            }
+        ] : body.messages;
+
         const updatedChatBody = {
             ...this.defaultBody,
             ...body,
-            messages: [
-                ...(body.messages|| []),
-                {
-                    role: "user",
-                    content: prompt
-                }
-            ],
+            messages,
             options: {
                 ...(this.params.options || {}),
                 ...(body.options || {}),

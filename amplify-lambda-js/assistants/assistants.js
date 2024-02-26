@@ -2,7 +2,6 @@ import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
-import {documentSearchAssistant} from "./statemachine/states.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 

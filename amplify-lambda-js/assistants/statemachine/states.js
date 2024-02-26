@@ -38,10 +38,10 @@ const formatRagInformationSource = (source) => {
 const diffMaps = (map1, map2) => {
     const diff = {};
 
-    if(!map2){
+    if (!map2) {
         return {};
     }
-    if(!map1){
+    if (!map1) {
         return map2;
     }
 
@@ -61,7 +61,7 @@ const formatInformationSources = (sources) => {
 }
 
 const formatContextInformationItem = (source) => {
-    if(!source){
+    if (!source) {
         return "";
     }
 
@@ -165,18 +165,18 @@ export const outputToResponse = (action, prefix = "", suffix = "") => {
             const responseLLM = llm.clone();
             responseLLM.responseStream = context.responseStream;
 
-            if(prefix) {
+            if (prefix) {
                 const start = fillInTemplate(prefix, context.data);
-                if(start) {
+                if (start) {
                     sendDeltaToStream(context.responseStream, "assistant", start);
                 }
             }
 
-            await action.execute(responseLLM, context, dataSources);
+            await  invokeAction(action, responseLLM, context, dataSources);
 
-            if(suffix) {
+            if (suffix) {
                 const end = fillInTemplate(suffix, context.data);
-                if(end) {
+                if (end) {
                     sendDeltaToStream(context.responseStream, "assistant", suffix);
                 }
             }
@@ -204,7 +204,7 @@ export const outputToStatus = (status, action) => {
                 status);
 
             try {
-                await action.execute(statusLLM, context, dataSources);
+                await invokeAction(action, statusLLM, context, dataSources);
             } finally {
                 status.inProgress = false;
                 statusLLM.responseStream = context.responseStream;
@@ -236,6 +236,25 @@ export const updateStatus = (id, status) => {
     }
 }
 
+export const prependHistory = (messages) => {
+    return {
+        execute: (llm, context, dataSources) => {
+            messages = getMessagesArray(messages);
+            messages = fillInTemplateMessages(messages, context.data);
+            context.history = [...messages,...context.history];
+        }
+    };
+}
+
+export const appendHistory = (messages) => {
+    return {
+        execute: (llm, context, dataSources) => {
+            messages = getMessagesArray(messages);
+            messages = fillInTemplateMessages(messages, context.data);
+            context.history = [...context.history, ...messages];
+        }
+    };
+}
 
 export const outputAction = (template, src = "assistant") => {
     return {
@@ -247,7 +266,7 @@ export const outputAction = (template, src = "assistant") => {
 }
 
 
-export const invokeAction = (fn, keys, outputKey) => {
+export const invokeFn = (fn, keys, outputKey) => {
 
     // Make sure that the keys are defined and an array
     if (!keys || !Array.isArray(keys)) {
@@ -261,22 +280,17 @@ export const invokeAction = (fn, keys, outputKey) => {
     return {
         execute: async (llm, context, dataSources) => {
             const args = keys.map(k => {
-                if(k === "context"){
+                if (k === "context") {
                     return context;
-                }
-                else if(k === "dataSources"){
+                } else if (k === "dataSources") {
                     return dataSources;
-                }
-                else if(k === "conversationDataSources"){
+                } else if (k === "conversationDataSources") {
                     return context.conversationDataSources;
-                }
-                else if(k === "history"){
+                } else if (k === "history") {
                     return context.history;
-                }
-                else if(k === "options"){
+                } else if (k === "options") {
                     return context.options;
-                }
-                else {
+                } else {
                     return context.data[k]
                 }
             });
@@ -310,13 +324,13 @@ export const mapKeysAction = (action, keyPrefix, outputKey = null, extractKey = 
 
             for (let i = 0; i < args.length; i++) {
 
-                if(await isAssistantKilled(context)){
+                if (await isAssistantKilled(context)) {
                     return;
                 }
 
                 const arg = args[i];
                 let newContext = {...context, data: {...context.data, arg, i}};
-                await action.execute(llm, newContext, dataSources);
+                await invokeAction(action, llm, newContext, dataSources);
 
                 if (extractKey) {
                     newContext.data = newContext.data[extractKey];
@@ -357,7 +371,7 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
             const args = keys.map(k => context.data[k]);
 
             const newContext = {...context, data: {...context.data, arg: args}};
-            await action.execute(llm, newContext, dataSources);
+            await invokeAction(action, llm, newContext, dataSources);
 
             if (extractKey) {
                 newContext.data = newContext.data[extractKey];
@@ -372,24 +386,37 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
     };
 }
 
-export const ragAction = (config={addToHistory:true, addToContext:true}) => {
+export const ragAction = (config = {
+        query: null,
+        ragDataSources: null,
+        addToHistory: true,
+        addToContext: true,
+        outputKey: "ragResults"
+    }) => {
     return {
         execute: async (llm, context, dataSources) => {
 
-            const dataSourcesInConversation = [...dataSources, ...context.history
-                .filter( m => {
-                    return m.data && m.data.dataSources
-                }).flatMap(m => m.data.dataSources)];
+            let ragDataSources = getParam(config,
+                "ragDataSources",
+                dataSources ||
+                context.activeDataSources ||
+                context.conversationDataSources ||
+                context.dataSources || []);
 
-            const dataSourceDetailsLookup = {};
-            dataSourcesInConversation.forEach(ds => {
-                dataSourceDetailsLookup[ds.id] = ds;
-            });
+            if(ragDataSources.length > 0 && typeof ragDataSources[0] === "string"){
+                ragDataSources = ragDataSources.map(
+                    ds => {return {id: ds}}
+                );
+            }
 
-            const selectedDataSources = context.dataSources;
+            ragDataSources = ragDataSources.map(
+                ds => {return {...ds,
+                    id: fillInTemplate(ds.id, context.data),
+                    name: fillInTemplate(ds.name, context.data)}}
+            );
 
             const messages = (config.query) ?
-                [{role:"user", content:fillInTemplate(config.query, context.data)}] :
+                [{role: "user", content: fillInTemplate(config.query, context.data)}] :
                 context.history;
 
             const ragLLM = llm.clone();
@@ -407,30 +434,39 @@ export const ragAction = (config={addToHistory:true, addToContext:true}) => {
                 ragLLM,
                 ragLLM.params,
                 {...ragLLM.defaultBody, messages: context.history},
-                selectedDataSources)
+                ragDataSources)
 
-            if(config.addToHistory || config.addToHistory === undefined){
+            if (getParam(config, "addToHistory", true)) {
                 context.history = [
-                    ...context.history.slice(0,-1),
+                    ...context.history.slice(0, -1),
                     ...result.messages,
                     ...context.history.slice(-1)
                 ];
             }
-            if(config.addToContext || config.addToContext === undefined){
-                context.data = {...context.data, possiblyRelevantInformation: result.sources};
+
+            if (getParam(config, "addToContext", true)) {
+                const outputKey = getParam(config, "outputKey", "ragResults");
+                context.data = {...context.data, [outputKey]: result.sources};
             }
         }
     };
 }
 
+
 export const chainActions = (actions) => {
     return {
         execute: async (llm, context, dataSources) => {
             for (const action of actions) {
-                await action.execute(llm, context, dataSources);
+                await invokeAction(action, llm, context, dataSources);
             }
         }
     };
+}
+
+export const invokeAction = async (action, llm, context, dataSources) => {
+    return (action.execute ?
+        action.execute(llm, context, dataSources) :
+        action(llm, context, dataSources));
 }
 
 export const outputContext = (template) => {
@@ -447,32 +483,33 @@ export const parallelActions = (actions) => {
         execute: async (llm, context, dataSources) => {
             const results = [];
             for (const action of actions) {
-                results.push(action.execute(llm, context, dataSources));
+                results.push(invokeAction(action, llm, context, dataSources));
             }
             await Promise.all(results);
         }
     };
 }
 
-function renderMarkdownOutline(data, depth = 0, omit=["arg","i"]) {
+function renderMarkdownOutline(data, depth = 0, omit = ["arg", "i"]) {
     const indent = '  '.repeat(depth);
     const bullet = depth > 0 ? '*' : ''; // Use bullets only for nested items
 
     if (Array.isArray(data)) {
         // Handling arrays
-        return "\n"+data.map((item, index) => {
+        return "\n" + data.map((item, index) => {
             const content = renderMarkdownOutline(item, depth + 1);
             return `${indent} ${index + 1}. ${content}\n`; // Enumerate with 1., 2., etc.
         }).join("");
     } else if (typeof data === 'object' && data !== null) {
         // Handling objects
-        return "\n"+ Object.entries(data).map(([key, value]) => {
-            if(!omit.includes(key)) {
+        return "\n" + Object.entries(data).map(([key, value]) => {
+            if (!omit.includes(key)) {
                 const content = renderMarkdownOutline(value, depth + 1);
                 return `${indent}${bullet} **${key}**: ${content}\n`; // Make key bold
             } else {
                 return "";
-            };
+            }
+            ;
         }).join("");
     } else {
         // Handling primitives (strings, numbers, etc.)
@@ -511,12 +548,12 @@ function fillInTemplate(templateStr, contextData) {
             return yaml.dump(contextData);
         });
 
-        Handlebars.registerHelper("contextOutline",function (conf) {
+        Handlebars.registerHelper("contextOutline", function (conf) {
             let obj = this;
 
-            if(conf.hash.pattern){
-                obj = matchKeys(obj, conf.hash.pattern || ".*").map((key,value)=>{
-                    return {key:key, value:value};
+            if (conf.hash.pattern) {
+                obj = matchKeys(obj, conf.hash.pattern || ".*").map((key, value) => {
+                    return {key: key, value: value};
                 });
             }
 
@@ -524,26 +561,28 @@ function fillInTemplate(templateStr, contextData) {
             return outline;
         })
 
-        Handlebars.registerHelper("contextOutlineWith",function (obj, options) {
+        Handlebars.registerHelper("contextOutlineWith", function (obj, options) {
             const pattern = options.hash.pattern;
             let withObj = obj;
 
-            if(pattern){
-                withObj = matchKeys(obj, pattern || ".*").map((key,value)=>{
-                    return {key:key, value:value};
+            if (pattern) {
+                withObj = matchKeys(obj, pattern || ".*").map((key, value) => {
+                    return {key: key, value: value};
                 });
             }
 
             return renderMarkdownOutline(withObj);
         })
 
-        Handlebars.registerHelper("contextList", function(context, options) {
+        Handlebars.registerHelper("contextList", function (context, options) {
             const pattern = options.hash.pattern;
             const newContext = matchKeys(context, pattern || ".*").map(
-                e => {return {key:e[0], value:e[1]}}
+                e => {
+                    return {key: e[0], value: e[1]}
+                }
             );
 
-            return options.fn({contextItems:newContext});
+            return options.fn({contextItems: newContext});
         });
 
         Handlebars.registerHelper('contextWith', function (obj, options) {
@@ -565,10 +604,16 @@ function fillInTemplate(templateStr, contextData) {
     return result;
 }
 
+export const fillInTemplateMessages = (messages, contextData) => {
+    return messages.map(m => {
+        return {role: m.role, content: fillInTemplate(m.content, contextData)};
+    });
+}
+
 export class PromptForDataAction {
 
     constructor(prompt, stateKeys, stateChecker, retries = 3,
-                config={skipRag: true, ragOnly: false, includeThoughts:false, streamResult:true}) {
+                config = {skipRag: true, ragOnly: false, includeThoughts: false, streamResult: true}) {
         this.prompt = prompt;
         this.stateKeys = stateKeys;
         this.stateChecker = stateChecker || ((result) => Object.keys(stateKeys).every(k => result[k]))
@@ -585,10 +630,9 @@ export class PromptForDataAction {
 
         let promptText = fillInTemplate(this.prompt, context.data);
 
-        if(this.config.dataSources !== undefined){
+        if (this.config.dataSources !== undefined) {
             dataSources = this.config.dataSources;
-        }
-        else if((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0){
+        } else if ((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0) {
             dataSources = context.activeDataSources;
         }
 
@@ -610,7 +654,7 @@ export class PromptForDataAction {
 }
 
 const getParam = (config, key, defaultValue) => {
-    if(config[key] === undefined){
+    if (config[key] === undefined) {
         return defaultValue;
     }
     return config[key] || defaultValue;
@@ -632,14 +676,43 @@ const configureLLM = (config, llm) => {
     }
 }
 
+export const getMessagesArray = (messages) => {
+    if(messages === null){
+        return [];
+    }
+    else if(typeof messages === "string"){
+        return [{role: "user", content: messages}];
+    }
+    else if(Array.isArray(messages)){
+        if(messages.length > 0 && typeof messages[0] === "string"){
+            return messages.map(m => {return {role: "user", content: m}});
+        }
+        else{
+            return [...messages];
+        }
+    }
+
+    return [];
+}
+
 export class PromptAction {
 
-    constructor(prompt, outputKey = "response", retries = 3, streamResults = true,
-                config={skipRag: true, ragOnly: false}) {
-        this.prompt = prompt;
+    constructor(messages,
+                outputKey = "response",
+                config =
+                    {
+                        appendMessages: true,
+                        skipRag: true,
+                        ragOnly: false,
+                        retries: 3,
+                        streamResults: true
+                    }) {
+
+        this.messages = getMessagesArray(messages);
         this.outputKey = outputKey || "response";
-        this.streamResults = streamResults;
-        this.retries = retries;
+        this.streamResults = getParam(config, "streamResults", true);
+        this.retries = getParam(config, "retries", 3);
+        this.appendMessages = getParam(config, "appendMessages", true);
         this.config = config;
     }
 
@@ -648,24 +721,22 @@ export class PromptAction {
         const llm = ollm.clone();
         configureLLM(this.config, llm);
 
-        if(this.config.dataSources !== undefined){
+        if (this.config.dataSources !== undefined) {
             dataSources = this.config.dataSources;
-        }
-        else if((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0){
+        } else if ((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0) {
             dataSources = context.activeDataSources;
         }
 
+        const updatedMessages = fillInTemplateMessages(this.messages, context.data);
 
-        const promptText = (this.prompt != null)? fillInTemplate(this.prompt, context.data) : null;
-
-        let newMessages = (promptText != null) ?
-            [...context.history, {role: "user", content:promptText}] :
-            [...context.history.slice(0,-1)];
+        let newMessages = this.appendMessages ?
+            [...context.history, ...updatedMessages] :
+            [...updatedMessages];
 
         const result = await llm.promptForString(
             {messages: newMessages},
             dataSources,
-            promptText || context.history.slice(-1)[0].content,
+            null,
             (this.streamResults) ? llm.responseStream : null,
             this.retries
         );
@@ -684,7 +755,7 @@ export class AssistantState {
 
     constructor(name, description, entryAction = null, endState = false,
                 config = {
-                    failOnError:false,
+                    failOnError: false,
                     omitDocuments: false,
                     extraInstructions: {preInstructions: "", postInstructions: ""},
                     stream: {target: STATUS_STREAM, passThrough: true}
@@ -737,14 +808,14 @@ export class AssistantState {
     async invokeEntryAction(llm, context, dataSources) {
         const actionLLM = llm.clone();
 
-        if(this.omitDocuments){
+        if (this.omitDocuments) {
             actionLLM.params = {
                 ...actionLLM.params,
-                options:{...actionLLM.params.options, skipRag:true, ragOnly:true}
+                options: {...actionLLM.params.options, skipRag: true, ragOnly: true}
             };
         }
 
-        const status = newStatus({sticky:true, inProgress: true, summary: this.description, message: "", icon: "bolt"})
+        const status = newStatus({inProgress: true, summary: this.description, message: "", icon: "bolt"})
 
         if (this.stream.target === STATUS_STREAM) {
             actionLLM.responseStream = new StatusOutputStream({},
@@ -758,12 +829,12 @@ export class AssistantState {
 
         if (this.entryAction) {
             try {
-                await this.entryAction.execute(actionLLM, context, dataSources);
+                await invokeAction(this.entryAction, actionLLM, context, dataSources);
             } catch (e) {
                 console.error("Error invoking entry action in state: " + this.name);
                 console.error(e);
 
-                if(this.failOnError){
+                if (this.failOnError) {
                     throw e;
                 }
             }
@@ -778,7 +849,7 @@ export class AssistantState {
     }
 
     async enter(llm, context, dataSources) {
-        if(await isAssistantKilled(context)){
+        if (await isAssistantKilled(context)) {
             return null;
         }
 
@@ -790,7 +861,7 @@ export class AssistantState {
             return this.transitions[0].to;
         }
 
-        if(await isAssistantKilled(context)){
+        if (await isAssistantKilled(context)) {
             return null;
         }
 
@@ -816,18 +887,18 @@ export class DoneState extends AssistantState {
 
 export const isAssistantKilled = async (context) => {
     try {
-        if(context.assistantKilled){
+        if (context.assistantKilled) {
             return true;
         }
 
         const user = getUser(context.params);
         const body = context.body;
         const killed = await isKilled(user, context.responseStream, body);
-        if(killed){
+        if (killed) {
             context.assistantKilled = true;
         }
         return killed;
-    } catch (e){
+    } catch (e) {
         return true;
     }
 }
@@ -852,7 +923,7 @@ export class AssistantStateMachine {
 
         while (!this.currentState.endState && transitionsLeft > 0) {
 
-            if(await isAssistantKilled(context)){
+            if (await isAssistantKilled(context)) {
                 return;
             }
 
@@ -901,16 +972,16 @@ export class StateBasedAssistant {
 
         const context = {
             data: {
-                dataSources: dataSources.map((ds,i) => {
-                    return {id:i, type:ds.type, name:ds.name, metadata:ds.metadata};
+                dataSources: dataSources.map((ds, i) => {
+                    return {id: i, type: ds.type, name: ds.name, metadata: ds.metadata};
                 }),
                 conversationDataSources: convoDataSources,
                 userName: niceUserName,
                 userEmail: getUser(params),
-                activeDataSources:[]
+                activeDataSources: []
             },
             dataSources,
-            activeDataSources:[],
+            activeDataSources: [],
             conversationDataSources: convoDataSources,
             status: {},
             responseStream,
@@ -928,124 +999,3 @@ export class StateBasedAssistant {
         responseStream.end();
     }
 }
-
-const States = {
-    initial: new HintState("initial",
-        "Initial State",
-        "Should we try to read the entire document or is the question specific enough that we can " +
-        "do a targeted search? " +
-        "If the question or task is general, such as 'what are all the policies', you will need to read the document. " +
-        "If the question or task is specific, such as 'what are the AI policies', you can try a targeted search. " +
-        "If you aren't sure, just read the document.",
-    ),
-    targetedSearch: new AssistantState("targetedSearch",
-        "Targeted Search",
-        new PromptAction("Create a 2-3 detailed questions to look for answers for in the document to help accomplish the task.",
-            {
-                "question1": "a specific question",
-                "question2": "another specific question",
-                "question3": "another specific question"
-            },
-            (result) => {
-                return result.question1;
-            }
-        )),
-    read: new AssistantState("read",
-        "Targeted Search",
-        new PromptAction("What page in the document should we read next? If you aren't sure, just output '1'",
-            {
-                "page": "a number specifying the page"
-            }
-        )),
-    plan: new AssistantState("plan",
-        "PLan State",
-        new PromptAction("Create a 5-10 step plan to accomplish the task requested by the user",
-            {"plan": "a step by step plan"}
-        )),
-    gather: new AssistantState("gather",
-        "Information Gathering",
-        new PromptAction("Create a 5-10 step plan to accomplish the task requested by the user",
-            {"plan": "a step by step plan"}
-        )),
-    done: new DoneState(),
-};
-
-
-const current = States.initial;
-
-States.initial.addTransition(States.targetedSearch.name, "Targeted Search");
-States.initial.addTransition(States.read.name, "Read Document");
-States.targetedSearch.addTransition(States.done.name, "Done");
-States.read.addTransition(States.done.name, "Done");
-
-export const documentSearchAssistant = new StateBasedAssistant(
-    "Document Search Assistant",
-    "Document Search Assistant",
-    "Document Search Assistant",
-    (m) => {
-        return true
-    },
-    (m) => {
-        return true
-    },
-    States,
-    current
-);
-
-
-//
-// const context = {
-//     data:[],
-//     history:[
-//         {role:"user", content:"What should a student do if they miss the initial registration deadline?"}
-//     ],
-// };
-//
-// const llm = await getDefaultLLM(Models[ModelID.GPT_3_5_AZ]);
-//
-// const stream = new ConsoleWritableStream(true);
-// llm.responseStream = stream;
-// llm.enablePassThrough();
-//
-// const stateMachine = new AssistantStateMachine(
-//
-//     "Document Search Assistant",
-//     "Document Search Assistant",
-//     States,
-//     current);
-//
-// await stateMachine.on(llm, context, []);
-
-// Example Usage:
-//
-// export const States = {
-//     initial: new AssistantState("initial", "Initial State", "Initial State", null, null),
-//     search: new AssistantState("search", "Search State", "Search State", null, null),
-//     readEntireDocument: new AssistantState("readEntireDocument", "Read Entire Document State", "Read Entire Document State", null, null),
-//     analyze: new AssistantState("analyze", "Analyze State", "Analyze State", null, null),
-//     plan: new AssistantState("plan", "Plan State", "Plan State", null, null),
-//     execute: new AssistantState("execute", "Execute State", "Execute State", null, null),
-//     complete: new AssistantState("complete", "Complete State", "Complete State", null, null),
-//     error: new AssistantState("error", "Error State", "Error State", null, null),
-//     end: new AssistantState("end", "End State", "End State", null, null),
-// };
-//
-// States.initial.addTransition(States.search.name, "Search for information");
-// States.initial.addTransition(States.readEntireDocument.name, "Read entire document");
-// States.initial.addTransition(States.analyze.name, "Analyze the task or question");
-// States.initial.addTransition(States.plan.name, "Build a plan");
-// States.search.addTransition(States.analyze.name, "Analyze the task or question");
-// States.search.addTransition(States.plan.name, "Build a plan");
-//
-// const current = States.initial;
-// const context = {sources:[], task:"Find all of the policies"};
-// const llm = await getDefaultLLM(Models[ModelID.GPT_3_5_AZ]);
-//
-// const stateMachine = new AssistantStateMachine(
-//     llm,
-//     "Document Search Assistant",
-//     "Document Search Assistant",
-//     States,
-//     current);
-//
-// stateMachine.on(context, []);
