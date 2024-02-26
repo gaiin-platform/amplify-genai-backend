@@ -3,10 +3,10 @@ import json
 import os
 sqs = boto3.client('sqs')
 
-embedding_process_chunk_queue_url = os.environ['EMBEDDING_PROCESS_CHUNK_QUEUE_URL']
+embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE']
 
 def queue_document_for_embedding(event, context):
-    queue_url = embedding_process_chunk_queue_url
+    queue_url = embedding_chunks_index_queue
     print(f"Queue URL: {queue_url}")
 
     print(f"Received event: {event}")

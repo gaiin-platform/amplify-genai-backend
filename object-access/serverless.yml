@@ -20,6 +20,10 @@ custom:
     dockerizePip: non-linux
     layer: true
 
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
