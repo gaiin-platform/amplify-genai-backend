@@ -14,6 +14,7 @@ import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/r
 import {isKilled} from "../../requests/requestState.js";
 import {getUser} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
+import {query} from "express";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -124,21 +125,15 @@ You ALWAYS output a \`\`\`next code block.
 
 const buildStatePrompt = (context, state, dataSources) => {
     const prompt = `
-${state.extraInstructions.postInstructions || ""}
-    
-Documents:
-${formatDataSources(dataSources)}
+${state.extraInstructions.preInstructions || ""}
 
 Your next state options are:
 ${formatTransitions(state.transitions)}
 
-Your current information is:
-${formatContextInformation(Object.entries(context.data))}
-
 Task:
 ${context.task}
 
-${state.extraInstructions.preInstructions || ""}
+${state.extraInstructions.postInstructions || ""}
 
 \`\`\`next
 `;
@@ -389,7 +384,9 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
 export const ragAction = (config = {
         query: null,
         ragDataSources: null,
-        addToHistory: true,
+        addQueryToHistory: true,
+        addResultsToHistory: true,
+        defaultResult: "No information found.",
         addToContext: true,
         outputKey: "ragResults"
     }) => {
@@ -398,10 +395,19 @@ export const ragAction = (config = {
 
             let ragDataSources = getParam(config,
                 "ragDataSources",
-                dataSources ||
-                context.activeDataSources ||
-                context.conversationDataSources ||
-                context.dataSources || []);
+                context.activeDataSources || []);
+
+            if(!ragDataSources || ragDataSources.length < 1){
+                if(context.conversationDataSources && context.conversationDataSources.length > 0){
+                    ragDataSources = context.conversationDataSources;
+                }
+                else if(context.dataSources && context.dataSources.length > 0){
+                    ragDataSources = context.dataSources;
+                }
+                else {
+                    ragDataSources = dataSources;
+                }
+            }
 
             if(ragDataSources.length > 0 && typeof ragDataSources[0] === "string"){
                 ragDataSources = ragDataSources.map(
@@ -415,8 +421,10 @@ export const ragAction = (config = {
                     name: fillInTemplate(ds.name, context.data)}}
             );
 
-            const messages = (config.query) ?
-                [{role: "user", content: fillInTemplate(config.query, context.data)}] :
+            const filledInQuery = config.query ? fillInTemplate(config.query, context.data) : null;
+
+            const messages = filledInQuery ?
+                [{role: "user", content: filledInQuery }] :
                 context.history;
 
             const ragLLM = llm.clone();
@@ -436,7 +444,21 @@ export const ragAction = (config = {
                 {...ragLLM.defaultBody, messages: context.history},
                 ragDataSources)
 
-            if (getParam(config, "addToHistory", true)) {
+            if(getParam(config, "addQueryToHistory", true) && filledInQuery){
+                context.history = [
+                    ...context.history.slice(0, -1),
+                    {role: "user", content: filledInQuery},
+                    ...context.history.slice(-1)
+                ];
+            }
+
+            if(!result.sources || result.sources.length === 0){
+                let defaultResult = getParam(config, "defaultResult", "No information found.");
+                defaultResult = fillInTemplate(defaultResult, context.data);
+                result.messages = [{role: "user", content: defaultResult}];
+            }
+
+            if (getParam(config, "addResultsToHistory", true)) {
                 context.history = [
                     ...context.history.slice(0, -1),
                     ...result.messages,
@@ -540,6 +562,10 @@ function fillInTemplate(templateStr, contextData) {
 
     let result = templateStr;
     try {
+        Handlebars.registerHelper('statusSummary', function (context) {
+            return context.slice(0,30)+"...";
+        });
+
         Handlebars.registerHelper('json', function (context) {
             return JSON.stringify(contextData);
         });
@@ -657,7 +683,7 @@ const getParam = (config, key, defaultValue) => {
     if (config[key] === undefined) {
         return defaultValue;
     }
-    return config[key] || defaultValue;
+    return config[key];
 }
 
 const configureLLM = (config, llm) => {
@@ -755,12 +781,14 @@ export class AssistantState {
 
     constructor(name, description, entryAction = null, endState = false,
                 config = {
+                    useFullHistory: true,
                     failOnError: false,
                     omitDocuments: false,
                     extraInstructions: {preInstructions: "", postInstructions: ""},
                     stream: {target: STATUS_STREAM, passThrough: true}
                 }) {
         this.name = name;
+        this.useFullHistory = getParam(config, "useFullHistory", true);
         this.description = description;
         this.entryAction = entryAction;
         this.extraInstructions = config.extraInstructions || {};
@@ -778,7 +806,9 @@ export class AssistantState {
     }
 
     buildPrompt(context, dataSources) {
+
         return [
+            ...(this.useFullHistory ? context.history : []),
             {role: "system", content: buildSystemPrompt(this)},
             {role: "user", content: buildStatePrompt(context, this, dataSources)},
         ]
@@ -873,8 +903,8 @@ export class AssistantState {
 }
 
 export class HintState extends AssistantState {
-    constructor(name, description, hint, endState = false) {
-        super(name, description, null, endState, {extraInstructions: {postInstructions: hint}});
+    constructor(name, description, hint, endState = false, config=null) {
+        super(name, description, null, endState, {...config, extraInstructions: {postInstructions: hint}});
     }
 }
 
@@ -980,6 +1010,7 @@ export class StateBasedAssistant {
                 userEmail: getUser(params),
                 activeDataSources: []
             },
+            task: body.messages.slice(-1)[0].content,
             dataSources,
             activeDataSources: [],
             conversationDataSources: convoDataSources,

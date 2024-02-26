@@ -13,12 +13,57 @@ const States = {
     // A HintState just adds additional instructions for the LLM when choosing the next
     // state to execute. There is a default prompt that is used to select the next state and
     // this just appends to that prompt.
+    init: new AssistantState("init",
+        "Working on your request...",
+        updateStatus("init", {summary: "Working on your request...", inProgress: true})
+    ),
     assess: new HintState("assess",
         "Analyzing your task...",
         "The first time a user asks you to perform a task with a document, " +
         "you should always start with a search. If the user didn't like the results of a " +
         "search and wants a more thorough read of the document, you can read the entireDocument." +
-        ""
+        "",
+        false,
+        {useFullHistory:false}
+    ),
+    queryCreation: new AssistantState("queryCreation",
+        "Determining additional information that is needed...",
+        new PromptForDataAction(
+            "Imagine we have a FAQ at our disposal to accomplish this task. What" +
+            " question should we look for in the FAQ based on the current information that we have" +
+            " and what we still need in order to perform the task>",
+            // These keys will be added to context.data and available for the next
+            // state in the state machine.
+            {
+                "thought": "explain your reasoning",
+                "question": "<fill in>",
+            },
+            // This function checks that we got all of the keys we need to proceed.
+            // Otherwise, we will automatically prompt again up to the maximum number of
+            // tries, which can be configured as a config param.
+            (data) => {
+                return data.question;
+            })
+    ),
+    search: new AssistantState("search",
+        "I am collecting information...",
+        chainActions([
+            updateStatus("search",
+                {summary: "Searching: {{statusSummary question}}",
+                    message: "Searching: {{question}}",
+                    inProgress: true}),
+            ragAction(
+                {
+                    "query": "{{question}}",
+                }
+            ),
+            updateStatus("search", {summary: "Searching: {{statusSummary question}}", inProgress: false}),
+        ]),
+    ),
+    enoughInformation: new HintState("enoughInformation",
+        "Checking the information I have so far...",
+        "Do we have enough information to complete the task yet? If not, you" +
+        " should go back to the search state. If so, you should go to the answerWithSearch state."
     ),
     answerWithSearch: new AssistantState("answerWithSearch",
         "I am going to search for relevant information and respond.",
@@ -29,8 +74,14 @@ const States = {
             // the LLM will not show the user the intermediate outputs.
             outputToResponse(
                 new PromptAction(
-                    null, // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
-                    "response", 3, true, {skipRag: false, ragOnly: true})
+                    [                        {
+                        role: "system",
+                        content: "In your answer, quote the relevant sentences one at a time and explain each, " +
+                            "unless told otherwise. If there is a page number, paragraph number, etc., list it " +
+                            " like [page 2] after the sentence."
+                    }], // This will cause no new messages to be added and the assistant to respond to the conversation as a whole
+                    "response", 3, true,
+                    {skipRag: false, ragOnly: true, appendMessages: true})
             ),
             updateStatus("answer", {summary: "I am searching for relevant information.", inProgress: false})
         ])
@@ -107,10 +158,14 @@ const States = {
 };
 
 // We start in the outline state.
-const current = States.assess;
+const current = States.init;
 
 // We add transitions to the state machine to define the state machine.
-//States.assess.addTransition(States.answerWithSearch.name, "Answer by searching for specific information");
+States.init.addTransition(States.assess.name, "Start");
+States.assess.addTransition(States.queryCreation.name, "Answer by searching for specific information");
+States.queryCreation.addTransition(States.search.name, "Search for the information");
+States.search.addTransition(States.queryCreation.name, "Find more information");
+States.search.addTransition(States.answerWithSearch.name, "Answer the question");
 States.assess.addTransition(States.chooseDocs.name, "Answer by reading the entire document(s)");
 States.chooseDocs.addTransition(States.answerWithReadingEntireDocument.name, "Answer by reading the entire document(s)");
 States.answerWithSearch.addTransition(States.done.name, "Done");
