@@ -14,7 +14,6 @@ import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/r
 import {isKilled} from "../../requests/requestState.js";
 import {getUser} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
-import {query} from "express";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
