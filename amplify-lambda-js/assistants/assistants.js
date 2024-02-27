@@ -4,7 +4,7 @@ import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
-
+import {mapReduceAssistant} from "./mapReduceAssistant.js";
 const logger = getLogger("assistants");
 
 
@@ -20,7 +20,21 @@ const defaultAssistant = {
     description: "Default assistant that can handle arbitrary requests with any data type but may " +
         "not be as good as a specialized assistant.",
     handler: async (llm, params, body, dataSources, responseStream) => {
-        return llm.prompt(body, dataSources);
+
+        const model = (body.options && body.options.model) ?
+            body.options.model :
+            (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
+
+        const limit = 0.75 * (model.tokenLimit - (body.max_tokens || 1000));
+        const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
+        const aboveLimit = requiredTokens >= limit;
+
+        if(dataSources.length > 1 || aboveLimit){
+            return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
+        }
+        else {
+            return llm.prompt(body, dataSources);
+        }
     }
 };
 
@@ -129,6 +143,13 @@ ${body.messages.slice(-1)[0].content}
     }, 3);
 
     return result.bestAssistant || defaultAssistant.name;
+}
+
+const getTokenCount = (dataSource) => {
+    if(dataSource.metadata && dataSource.metadata.totalTokens){
+        return dataSource.metadata.totalTokens;
+    }
+    return 1000;
 }
 
 export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {

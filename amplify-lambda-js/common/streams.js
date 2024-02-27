@@ -172,6 +172,7 @@ export class StreamResultCollector extends Writable {
         this.result = {};
         this.transformers = [];
         this.outputStreams = [];
+        this.statusStreams = [];
     }
 
     addOutputStream(outputStream){
@@ -182,6 +183,10 @@ export class StreamResultCollector extends Writable {
         this.transformers.push(transformer);
     }
 
+    addStatusStream(statusStream){
+        this.statusStreams.push(statusStream);
+    }
+
     handleChunk(textChunk) {
         if (textChunk.trim().length > 0) {
 
@@ -190,9 +195,17 @@ export class StreamResultCollector extends Writable {
 
                 const delta = JSON.parse(json);
 
+                // If set, we send the status to the output streams directly as well
+                if(delta && delta.s === "meta" && delta.st && this.statusStreams.length > 0){
+                    for(const sst of this.statusStreams) {
+                        sst.write(textChunk + "\n\n");
+                    }
+                }
+
                 if (delta && delta.s && delta.s === "meta" && delta.d) {
                     this.meta = delta.d;
-                } else if (delta && delta.d) {
+                }
+                else if (delta && delta.d) {
                     if (this.meta.sources) {
                         delta.s = this.meta.sources[delta.s];
                     }

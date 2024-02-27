@@ -7,6 +7,7 @@ import {isKilled} from "../../../requests/requestState.js";
 import {getLogger} from "../../logging.js";
 import {sendStatusEventToStream} from "../../streams.js";
 import {getUser} from "../../params.js";
+import {addContextMessage, createContextMessage} from "./common.js";
 
 const logger = getLogger("sequentialChat");
 
@@ -59,19 +60,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
         // Add the context as the next to last message in the
         // message list. This will provide the context for the user's
         // prompt.
-        if(context.context && context.context.length > 0) {
-            messages = [
-                ...messages.slice(0, -1),
-                {
-                    "role": "user", "content":
-                        `Using the following information:
------------------------------
-${context.context}
-`
-                },
-                ...messages.slice(-1)
-            ]
-        }
+        messages = addContextMessage(messages, context);
 
         const requestWithData = {
             ...chatRequest,

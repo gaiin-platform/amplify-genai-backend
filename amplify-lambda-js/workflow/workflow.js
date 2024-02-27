@@ -1,7 +1,15 @@
 import {chatWithDataStateless} from "../common/chatWithData.js";
 
 import {getLogger} from "../common/logging.js";
-import {StreamResultCollector, sendResultToStream, sendStatusEventToStream, findResultKey, endStream} from "../common/streams.js";
+import {
+    StreamResultCollector,
+    sendResultToStream,
+    sendStatusEventToStream,
+    findResultKey,
+    endStream,
+    forceFlush, StatusOutputStream
+} from "../common/streams.js";
+import {newStatus} from "../common/status.js";
 
 
 const logger = getLogger("workflow");
@@ -86,6 +94,11 @@ export const workflowSchema = {
 
 
 function buildChatBody(step, body) {
+
+    if(step.prompt && step.prompt === "__use_body__") {
+        return {...body};
+    }
+
     const customInstructions = step.customInstructions ? step.customInstructions : [];
 
     const history = body.messages ? body.messages : [];
@@ -115,7 +128,7 @@ const doPrompt = async ({
     const updatedBody = buildChatBody(step, body);
 
     return chatWithDataStateless(
-        params,
+        {...params, options:{...params.options, skipRag:true}},
         chatFn,
         updatedBody,
         dataSources,
@@ -123,6 +136,7 @@ const doPrompt = async ({
 }
 
 const doMap = async ({
+                         statusUpdater,
                          step,
                          dataSources,
                          body,
@@ -134,7 +148,7 @@ const doMap = async ({
     const updatedBody = buildChatBody(step, body);
 
     return chatWithDataStateless(
-        params,
+        {...params, options:{...params.options, skipRag:true}},
         chatFn,
         updatedBody,
         dataSources,
@@ -154,8 +168,19 @@ const doReduce = async ({
 
     const resultStream = new StreamResultCollector();
 
+    if(responseStream.statusStreams) {
+        for (const sst of responseStream.statusStreams) {
+            resultStream.addStatusStream(sst);
+        }
+    }
+    if(responseStream.outputStreams){
+        for (const os of responseStream.outputStreams) {
+            resultStream.addOutputStream(os);
+        }
+    }
+
     const response = await chatWithDataStateless(
-        params,
+        {...params, options:{...params.options, skipRag:true}},
         chatFn,
         updatedBody,
         dataSources,
@@ -195,6 +220,7 @@ const doReduce = async ({
 
 
 const getExecutor = (step) => {
+    // Check if the prompt key is present
     if (step.prompt) {
         return doPrompt;
     } else if (step.map) {
@@ -235,7 +261,8 @@ export const executeWorkflow = async (
         chatFn,
         dataSources,
         responseStream,
-        params
+        params,
+        initialState
     }) => {
 
     logger.debug("Starting workflow...");
@@ -247,7 +274,9 @@ export const executeWorkflow = async (
         };
     }
 
-    const outputs = {};
+    const outputs = {...(initialState || {})};
+
+    const status = newStatus({summary: "", inProgress:true});
 
     for (const [index, step] of workflow.steps.entries()) {
 
@@ -257,14 +286,28 @@ export const executeWorkflow = async (
 
         logger.debug("Building results collector...");
         const resultStream = new StreamResultCollector();
+        resultStream.addStatusStream(responseStream);
+
+        const workStatus = newStatus({summary: "Details...", message:"", inProgress:true});
+        resultStream.addOutputStream(new StatusOutputStream({}, responseStream, workStatus));
 
         if(step.statusMessage){
-            sendStatusEventToStream(responseStream, step.statusMessage);
+            status.summary = step.statusMessage;
+            sendStatusEventToStream(responseStream, status);
+            forceFlush(responseStream);
         }
+
+        const statusUpdater = (summary, message) => {
+            status.summary = summary;
+            status.message = message;
+            sendStatusEventToStream(responseStream, status);
+            forceFlush(responseStream);
+        };
 
         const resolvedDataSources = resolveDataSources(step, outputs, dataSources);
 
         const response = await executor({
+            statusUpdater,
             step,
             params,
             chatFn,
@@ -272,6 +315,10 @@ export const executeWorkflow = async (
             dataSources: resolvedDataSources,
             responseStream: resultStream
         });
+
+        workStatus.inProgress = false;
+        sendStatusEventToStream(responseStream, workStatus);
+        forceFlush(responseStream);
 
         logger.debug("Binding output of step to ", step.outputTo);
         logger.debug("Result", resultStream.result);

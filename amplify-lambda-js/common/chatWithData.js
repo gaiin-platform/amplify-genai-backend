@@ -46,7 +46,8 @@ class CustomWritable extends Writable {
     }
 }
 
-const chooseController = ({chatFn, chatRequest, dataSources}) => {
+const chooseController = ({chatFn, chatRequest, dataSources, contexts}) => {
+
     return sequentialChat;
     //return parallelChat;
 }
@@ -330,7 +331,8 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         metaData,
         responseStream,
         tokenReporting,
-        eventTransformer
+        eventTransformer,
+        params,
     };
 
     // Should no longer be needed, keeping for now
