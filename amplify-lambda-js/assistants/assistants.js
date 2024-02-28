@@ -32,7 +32,7 @@ const defaultAssistant = {
         const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
         const aboveLimit = requiredTokens >= limit;
 
-        if(dataSources.length > 1 || aboveLimit){
+        if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
         }
         else {
