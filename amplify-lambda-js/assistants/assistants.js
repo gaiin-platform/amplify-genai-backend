@@ -5,6 +5,9 @@ import {getLogger} from "../common/logging.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 import {mapReduceAssistant} from "./mapReduceAssistant.js";
+import {sendDeltaToStream} from "../common/streams.js";
+import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
+import { v4 as uuidv4 } from 'uuid';
 const logger = getLogger("assistants");
 
 
@@ -38,8 +41,58 @@ const defaultAssistant = {
     }
 };
 
+const batchAssistant = {
+    name: "batch",
+    displayName: "Batch Assistant",
+    handlesDataSources: (ds) => {
+        return true;
+    },
+    handlesModel: (model) => {
+        return true;
+    },
+    description: "This assistant is used to queue messages for assistants and isn't normally used.",
+    handler: async (llm, params, body, dataSources, responseStream) => {
+        try{
+
+            // Date in MM-DD-YYYY format
+            const date = new Date().toISOString().replace(/:/g, "-").split("T")[0];
+
+            // Time in HH-MM-SS format
+            const time = new Date().toISOString().replace(/:/g, "-").split("T")[1].split(".")[0];
+
+            const updatedBody = {
+                ...body,
+                messages: [
+                    ...body.messages.slice(0,-1),
+                    {
+                        "role": "user",
+                        "content": body.messages.slice(-1)[0].content.split(":")[1].trim()
+                    }
+                ]
+            }
+
+            const task = createChatTask(
+                params.account.accessToken,
+                params.account.user,
+                `${params.account.user}/tasks/${date}/chat-${time}-${uuidv4()}.json`,
+                updatedBody,
+                params.options
+            )
+            await sendAssistantTaskToQueue(task);
+            sendDeltaToStream(responseStream, "answer","Message queued.");
+        }
+        catch(e){
+            logger.error("Error sending assistant task to queue", e);
+            sendDeltaToStream(responseStream, "answer", "Error sending assistant task to queue");
+        }
+
+        responseStream.end();
+    }
+};
+
 export const defaultAssistants = [
     defaultAssistant,
+    //batchAssistant,
     //documentAssistant,
     //reportWriterAssistant,
     csvAssistant,

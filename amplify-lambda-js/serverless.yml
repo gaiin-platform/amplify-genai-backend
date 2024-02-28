@@ -41,7 +41,9 @@ provider:
     REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     TRACE_BUCKET_NAME: vu-amplify-${sls:stage}-chat-traces
+    ASSISTANT_TASK_RESULTS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-results
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
+    ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
     TRACING_ENABLED: false
 
   iam:
@@ -55,11 +57,15 @@ provider:
             - s3:ListBucket
             - dynamodb:GetItem
             - dynamodb:PutItem
+            - sqs:SendMessage
+            - sqs:DeleteMessage
           Resource:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
             - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
+            - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.ASSISTANT_QUEUE_NAME}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
@@ -77,6 +83,24 @@ functions:
     url:
       cors: true
       invokeMode: RESPONSE_STREAM
+    environment:
+        assistant_task_queue_url:
+          Ref: AssistantTaskQueue
+
+  assistant_queue:
+    handler: assistantQueueRouter.handler
+    memorySize: 1024
+    timeout: 900
+    events:
+        - sqs:
+            arn:
+              Fn::GetAtt:
+                - AssistantTaskQueue
+                - Arn
+    environment:
+        assistant_task_queue_url:
+          Ref: AssistantTaskQueue
+
 
 resources:
   Resources:
@@ -103,3 +127,12 @@ resources:
          Type: AWS::S3::Bucket
          Properties:
            BucketName: ${self:provider.environment.TRACE_BUCKET_NAME}
+    AssistantTaskQueue:
+          Type: "AWS::SQS::Queue"
+          Properties:
+            VisibilityTimeout: 900
+            QueueName: ${self:provider.environment.ASSISTANT_QUEUE_NAME}
+    AssistantTaskResultsBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}
