@@ -1,4 +1,15 @@
 import { CognitoJwtVerifier } from "aws-jwt-verify";
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Since __dirname is not available in ES module scope, you have to construct the path differently.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Now, use the constructed path to point to your .env.local file
+config({ path: join(__dirname, '../../.env.local') });
+
 
 // Read environment variables
 const userPoolId = process.env.COGNITO_USER_POOL_ID;
