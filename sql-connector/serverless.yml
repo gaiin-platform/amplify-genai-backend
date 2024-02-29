@@ -44,6 +44,13 @@ provider:
   deploymentBucket:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256
+  
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+
   environment:
     #from stageVariables file
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
@@ -57,12 +64,19 @@ provider:
     API_ID: ${self:custom.stageVariables.API_ID}
     SES_SECRET_ARN: ${self:custom.stageVariables.SES_SECRET_ARN}
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
+    SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
+    REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    MYSQL_DB_HOST: ${self:custom.stageVariables.MYSQL_DB_HOST}
+    MYSQL_DB_PASSWORD: ${self:custom.stageVariables.MYSQL_DB_PASSWORD}
+    DB_MODE: ${self:custom.stageVariables.DB_MODE}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     
     #from resources built in this file
+    MYSQL_DB_NAME: AmplifyMySQL_${sls:stage}
+    MYSQL_DB_USERNAME: mysqladmin_${sls:stage}
     MY_SQL_DB_CLUSTER: ${sls:stage}-mysql-cluster
-    MY_SQL_DB_NAME: AmplifyMySQL_${sls:stage}
-    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-postgres-db-secret
-    MY_SQL_DB_USERNAME: mysqladmin_${sls:stage}
+    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-postgres-db-secret    
     MY_SQL_WRITE_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint
     MY_SQL_READ_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterReadEndpoint
     
@@ -81,11 +95,12 @@ provider:
             - rds-data:CommitTransaction
             - rds-data:RollbackTransaction
           Resource:
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
             - !GetAtt MySQLDbCluster.DBClusterArn
             - !Ref MySQLDbSecret
 functions:
   execute_sql_query:
-    timeout: 600
+    timeout: 30
     handler: assistants.handler.execute_sql_query
     events:
       - http:
@@ -116,7 +131,7 @@ resources:
       DeletionPolicy: Snapshot
       Type: AWS::RDS::DBCluster
       Properties:
-        DatabaseName: ${self:provider.environment.MY_SQL_DB_NAME}
+        DatabaseName: ${self:provider.environment.MYSQL_DB_NAME}
         DBClusterIdentifier: ${self:provider.environment.MY_SQL_DB_CLUSTER}
         Engine: aurora-mysql # Change the engine to Aurora MySQL
         EngineVersion: '8.0.mysql_aurora.3.04.1' # Specify a compatible engine version for Aurora MySQL
@@ -128,7 +143,7 @@ resources:
           - error
           - general
           - slowquery
-        MasterUsername: ${self:provider.environment.MY_SQL_DB_USERNAME}
+        MasterUsername: ${self:provider.environment.MYSQL_DB_USERNAME}
         MasterUserPassword: !Sub '{{resolve:secretsmanager:${MySQLDbSecret}:SecretString::}}'
         VpcSecurityGroupIds:
           - !Ref MySQLDbSecurityGroup
