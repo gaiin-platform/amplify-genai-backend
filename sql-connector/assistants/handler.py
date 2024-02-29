@@ -2,7 +2,6 @@ from common.validate import validated
 import os
 import logging
 from openai import AzureOpenAI
-import boto3
 
 import assistants.db.mysql_db as mysql_db
 import assistants.db.local_db as local_db
@@ -13,25 +12,6 @@ from common.secrets import get_endpoint
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
-"""
-Make sure that the following environment variables are set:
-DB_MODE= local or mysql
-DEFAULT_MODEL="gpt-35-turbo"
-LLM_ENDPOINTS_SECRETS_NAME= the name of the AWS secrets manager secret with a list of endpoints / keys
-
-# If using the mysql database, set the following environment variables:
-MYSQL_DB_HOST=
-MYSQL_DB_USERNAME=
-MYSQL_DB_NAME=
-MYSQL_DB_PASSWORD=
-
-# If using the local database, set the following environment variables:
-LOCAL_DB_DIRECTORY=
-"""
-
-# Set the DB_MODE environment variable to "local" or "mysql" to choose the database mode
-db_mode = os.environ.get("DB_MODE", "local")
 
 
 # @validate will check the incoming JWT, determine the current user, and
@@ -64,6 +44,8 @@ def get_connection():
 
     :return: A connection to the database.
     """
+    db_mode = os.environ.get("DB_MODE")
+
     if db_mode == "local":
         return local_db.get_connection()
     elif db_mode == "mysql":
@@ -171,7 +153,6 @@ def generate_sql_query(model, user_prompt, schema_info, current_user):
         # Check if model is not None or use the os.environ.get("DEFAULT_MODEL", "gpt-3.5-turbo")
         model = model if model else os.environ.get("DEFAULT_MODEL", "gpt-35-turbo")
         print(f"Using model: {model}")
-        # llm = get_chat_llm(model)
 
         # Braces cause the input to the LLM to return an error, remove braces from schema_info
         clean_schema_info = (
@@ -227,20 +208,6 @@ def clean_sql_query(sql_query):
     # Final cleaned SQL query
     return sql_query.strip()
 
-"""
-def get_secret_value(secret_name):
-    # Create a Secrets Manager client
-    client = boto3.client("secretsmanager")
-
-    try:
-        # Retrieve the secret value
-        response = client.get_secret_value(SecretId=secret_name)
-        secret_value = response["SecretString"]
-        return secret_value
-
-    except Exception as e:
-        raise ValueError(f"Failed to retrieve secret '{secret_name}': {str(e)}")
-"""
 
 def get_openai_client():
     secrets_name_arn = os.environ.get("LLM_ENDPOINTS_SECRETS_NAME_ARN")

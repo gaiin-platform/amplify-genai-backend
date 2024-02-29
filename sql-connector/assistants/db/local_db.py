@@ -15,7 +15,7 @@ def init_connection():
     global shared_conn
     if shared_conn is None:
         shared_conn = sqlite3.connect(":memory:", check_same_thread=False)
-        directory = os.getenv('LOCAL_DB_DIRECTORY')
+        directory = os.getenv("LOCAL_DB_DIRECTORY")
         load_db(shared_conn, directory)
 
     return shared_conn
@@ -83,7 +83,7 @@ def load_db(conn, directory):
     """
     Load all CSV files in a directory into an in-memory SQLite database.
     """
-    csv_files = [file for file in os.listdir(directory) if file.endswith('.csv')]
+    csv_files = [file for file in os.listdir(directory) if file.endswith(".csv")]
 
     with lock:  # Use the lock to prevent concurrent access to the connection
 
@@ -91,7 +91,7 @@ def load_db(conn, directory):
             table_name = os.path.splitext(file)[0]
             file_path = os.path.join(directory, file)
             df = pd.read_csv(file_path)
-            df.to_sql(table_name, conn, if_exists='replace', index=False)
+            df.to_sql(table_name, conn, if_exists="replace", index=False)
 
         conn.commit()
 

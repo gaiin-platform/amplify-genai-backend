@@ -1,17 +1,8 @@
 import logging
 import mysql.connector
 from mysql.connector import Error
-from dotenv import load_dotenv
 import os
-
-# TODO check if .env exists so that this doesn't have to be removed/added for local testing
-# load_dotenv()  # Load environment variables from .env file
-# Set the values below in a local .env file in the root of the project for local testing
-load_dotenv(".env.local")
-mysql_host = os.environ["MYSQL_DB_HOST"]
-mysql_user = os.environ["MYSQL_DB_USERNAME"]
-mysql_database = os.environ["MYSQL_DB_NAME"]
-mysql_password = os.environ["MYSQL_DB_PASSWORD"]
+from common.secrets import get_secret_value
 
 
 # The DatabaseConnection class is a context manager for handling MySQL database connections.
@@ -89,11 +80,15 @@ class DatabaseConnection:
             logging.error(f"Error executing query: {sql_query}, Error: {e}")
             raise
 
-def get_connection():
-    return DatabaseConnection(
-        mysql_host, mysql_database, mysql_user, mysql_password
-    )
 
+def get_connection():
+    mysql_host = os.environ.get("MY_SQL_READ_ENDPOINT")
+    mysql_database = os.environ.get("MYSQL_DB_NAME")
+    mysql_user = os.environ.get("MYSQL_DB_USERNAME")
+    mysql_password_secret_name = os.environ.get("MYSQL_DB_SECRETS_NAME")
+    mysql_password = get_secret_value(mysql_password_secret_name)
+
+    return DatabaseConnection(mysql_host, mysql_database, mysql_user, mysql_password)
 
 
 __all__ = ["get_connection"]
