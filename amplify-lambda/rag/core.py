@@ -158,10 +158,10 @@ def chunk_content(key, text_content, split_params):
     split_increment = 10
     split_count = 0
 
+    index = 0
     for content_part in flattened_list:
         sentence = content_part['content']
         location = content_part['location']
-        index = content_part['index']
         sentence_length = len(sentence)
 
         # Check if adding this sentence would exceed the chunk size.
@@ -189,6 +189,7 @@ def chunk_content(key, text_content, split_params):
         else:
             locations.append(location)
             indexes.append(index)
+            index = index + 1
             # If this is the first sentence, don't add a space at the start.
             if current_chunk:
                 current_chunk.append(sentence)
@@ -217,7 +218,11 @@ def chunk_s3_file_content(bucket, key):
     try:
         # Download the file from S3
         s3_object = s3.get_object(Bucket=bucket, Key=key)
-        file_content = json.loads(s3_object["Body"].read())
+        data = s3_object["Body"].read()
+        print(f"Fetched text from {bucket}/{key}")
+
+        file_content = json.loads(data)
+        print(f"Loaded json from {bucket}/{key}")
 
         # Extract text from the file in S3
         chunks = chunk_content(key, file_content, {})
