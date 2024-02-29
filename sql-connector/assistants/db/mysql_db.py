@@ -82,7 +82,7 @@ class DatabaseConnection:
 
 
 def get_connection():
-    mysql_host = os.environ.get("MY_SQL_READ_ENDPOINT")
+    mysql_host = os.environ.get("MYSQL_READ_ENDPOINT")
     mysql_database = os.environ.get("MYSQL_DB_NAME")
     mysql_user = os.environ.get("MYSQL_DB_USERNAME")
     mysql_password_secret_name = os.environ.get("MYSQL_DB_SECRETS_NAME")

@@ -73,9 +73,9 @@ provider:
     MYSQL_DB_NAME: AmplifyMySQL_${sls:stage}
     MYSQL_DB_SECRETS_NAME: ${self:custom.stageVariables.MYSQL_DB_SECRETS_NAME}
     DB_MODE: ${self:custom.stageVariables.DB_MODE}
-    MY_SQL_WRITE_ENDPOINT: !GetAtt MySQLDbCluster.Endpoint.Address
+    MYSQL_WRITE_ENDPOINT: !GetAtt MySQLDbCluster.Endpoint.Address
     # ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint
-    MY_SQL_READ_ENDPOINT: !GetAtt MySQLDbCluster.ReadEndpoint.Address
+    MYSQL_READ_ENDPOINT: !GetAtt MySQLDbCluster.ReadEndpoint.Address
     # ${self:service}-${self:provider.stage}-MySQLDbClusterReadEndpoint
     
 
