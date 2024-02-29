@@ -9,6 +9,7 @@ import os
 
 load_dotenv()
 
+
 def get_credentials(secret_name):
     # Create a Secrets Manager client
     session = boto3.session.Session()
@@ -65,12 +66,12 @@ def get_endpoint(model_name, endpoint_arn):
 
 
 def get_secret_value(secret_name):
-    aws_region = os.environ.get('AWS_REGION')
-    client = boto3.client('secretsmanager', region_name=aws_region)
+    aws_region = os.environ.get("AWS_REGION")
+    client = boto3.client("secretsmanager", region_name=aws_region)
 
     try:
         response = client.get_secret_value(SecretId=secret_name)
-        secret_value = response['SecretString']
+        secret_value = response["SecretString"]
         return secret_value
 
     except Exception as e:

@@ -1,5 +1,3 @@
-
-
 service: vu-amplify-sql-connector
 
 frameworkVersion: '3'
@@ -67,18 +65,18 @@ provider:
     SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-    MYSQL_DB_HOST: ${self:custom.stageVariables.MYSQL_DB_HOST}
-    MYSQL_DB_PASSWORD: ${self:custom.stageVariables.MYSQL_DB_PASSWORD}
-    DB_MODE: ${self:custom.stageVariables.DB_MODE}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     
-    #from resources built in this file
-    MYSQL_DB_NAME: AmplifyMySQL_${sls:stage}
+    # MYSQL_DB VARS
+    # MYSQL_DB_HOST: ${self:custom.stageVariables.MYSQL_DB_HOST}
     MYSQL_DB_USERNAME: mysqladmin_${sls:stage}
-    MY_SQL_DB_CLUSTER: ${sls:stage}-mysql-cluster
-    MY_SQL_DB_SECRET: ${self:service}-${sls:stage}-mysql-postgres-db-secret    
-    MY_SQL_WRITE_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint
-    MY_SQL_READ_ENDPOINT: ${self:service}-${self:provider.stage}-MySQLDbClusterReadEndpoint
+    MYSQL_DB_NAME: AmplifyMySQL_${sls:stage}
+    MYSQL_DB_SECRETS_NAME: ${self:custom.stageVariables.MYSQL_DB_SECRETS_NAME}
+    DB_MODE: ${self:custom.stageVariables.DB_MODE}
+    MYSQL_WRITE_ENDPOINT: !GetAtt MySQLDbCluster.Endpoint.Address
+    # ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint
+    MYSQL_READ_ENDPOINT: !GetAtt MySQLDbCluster.ReadEndpoint.Address
+    # ${self:service}-${self:provider.stage}-MySQLDbClusterReadEndpoint
     
 
 
@@ -115,7 +113,18 @@ functions:
       subnetIds:
         - ${self:provider.environment.PRIVATE_SUBNET_ONE}
         - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-           
+
+  create_db_query:
+    timeout: 30
+    handler: assistants.create_db.create_db_query
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}           
 resources:
   Resources:
     LambdaSecurityGroup:
@@ -132,7 +141,7 @@ resources:
       Type: AWS::RDS::DBCluster
       Properties:
         DatabaseName: ${self:provider.environment.MYSQL_DB_NAME}
-        DBClusterIdentifier: ${self:provider.environment.MY_SQL_DB_CLUSTER}
+        DBClusterIdentifier: ${self:service}-${self:provider.stage}-db-cluster
         Engine: aurora-mysql # Change the engine to Aurora MySQL
         EngineVersion: '8.0.mysql_aurora.3.04.1' # Specify a compatible engine version for Aurora MySQL
         ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
