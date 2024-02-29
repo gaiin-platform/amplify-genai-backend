@@ -1,7 +1,5 @@
-import csv
 import sqlite3
 import threading
-from io import StringIO
 import pandas as pd
 import os
 from dotenv import load_dotenv
