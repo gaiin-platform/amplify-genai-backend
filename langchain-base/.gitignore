@@ -1,5 +1,9 @@
 # Distribution / packaging
+.env.local
+.env.*.local
 .Python
+node_modules/
+.idea/
 env/
 build/
 develop-eggs/

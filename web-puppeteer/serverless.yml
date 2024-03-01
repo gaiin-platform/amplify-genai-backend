@@ -1,0 +1,74 @@
+service: web-puppeteer
+frameworkVersion: '3'
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-iam-roles-per-function
+
+custom:
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+  
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}
+
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+
+  stages:
+    - dev
+    - staging
+    - prod
+
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
+
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+
+functions:
+  executePuppeteer:
+    handler: index.handler
+    memorySize: 2048 # Puppeteer can be resource-intensive
+    timeout: 30
+    environment:
+      HEADLESS: true
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      COGNITO_CLIENT_ID: ${self:custom.stageVariables.COGNITO_CLIENT_ID}
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    events:
+      - http:
+          path: puppeteer/scrape_url
+          method: post
+          cors: true
+    
+    iamRoleStatements:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:custom.stageVariables.SECRETS_ARN_NAME}'

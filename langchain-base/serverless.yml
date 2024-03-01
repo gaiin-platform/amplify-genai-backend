@@ -1,0 +1,67 @@
+service: amplify-agents
+frameworkVersion: '3'
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+  stages:
+    - dev
+    - staging
+    - prod
+  environments:
+    dev:
+      LLM_ENDPOINTS_SECRETS_NAME: "openai-endpoints"
+      LLM_ENDPOINTS_SECRETS_NAME_ARN: "openai-endpoints-2O6UlC"
+      OAUTH_AUDIENCE: "https://lambda.vanderbilt.ai"
+      OAUTH_ISSUER_BASE_URL: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_aeCY16Uey"
+    staging:
+      LLM_ENDPOINTS_SECRETS_NAME: "openai-endpoints"
+      LLM_ENDPOINTS_SECRETS_NAME_ARN: "openai-endpoints-2O6UlC"
+      OAUTH_AUDIENCE: "https://lambda.vanderbilt.ai"
+      OAUTH_ISSUER_BASE_URL: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_aeCY16Uey"
+    prod:
+      LLM_ENDPOINTS_SECRETS_NAME: "openai-endpoints"
+      LLM_ENDPOINTS_SECRETS_NAME_ARN: "openai-endpoints-2O6UlC"
+      OAUTH_AUDIENCE: "https://lambda.vanderbilt.ai"
+      OAUTH_ISSUER_BASE_URL: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_nJhUidTKk"
+
+provider:
+  name: aws
+  runtime: python3.10
+  versionFunctions: false
+  environment:
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.environments.${opt:stage, self:custom.defaultStage}.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.environments.${opt:stage, self:custom.defaultStage}.LLM_ENDPOINTS_SECRETS_NAME}
+    OAUTH_AUDIENCE: ${self:custom.environments.${opt:stage, self:custom.defaultStage}.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.environments.${opt:stage, self:custom.defaultStage}.OAUTH_ISSUER_BASE_URL}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource:
+            - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
+
+functions:
+  hello:
+    handler: assistants.assistants.hello
+    timeout: 600
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - httpApi:
+          path: /
+          method: get
