@@ -5,6 +5,8 @@ import boto3
 import json
 import uuid
 
+from botocore.exceptions import ClientError
+
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
 from common.object_permissions import can_read_data_sources
 from openaiazure.assistant_api import create_new_openai_assistant
@@ -132,7 +134,7 @@ def create_new_assistant(
         }
         print(json.dumps(new_item, indent=4))
         # Put the new item into the DynamoDB table
-        assistants_table.put_item(Item=new_item)
+        assistants_table.put_item(Item=hash_item)
 
 
     # Return success response
@@ -142,45 +144,3 @@ def create_new_assistant(
         'data': {'assistantId': user_id_key}
     }
 
-
-def delete_assistant_by_id(assistant_id, user_id):
-    dynamodb = boto3.resource('dynamodb')
-    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
-
-    # Check if the assistant belongs to the user
-    try:
-        response = assistants_table.get_item(Key={'id': assistant_id})
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-        return {'success': False, 'message': 'Assistant not found'}
-
-    if 'Item' not in response:
-        return {'success': False, 'message': 'Assistant not found'}
-
-    item = response['Item']
-
-    # Auth check: verify ownership
-    if item['user'] != user_id:
-        return {'success': False, 'message': 'Not authorized to delete this assistant'}
-
-    # Retrieve the OpenAI assistant ID
-    openai_assistant_id = item['data']['openai']['assistantId']  # Or use your `get` utility function
-
-    # Delete the assistant from OpenAI
-    client = get_openai_client()
-    try:
-        assistant_deletion_result = client.beta.assistants.delete(assistant_id=openai_assistant_id)
-    except Exception as e:
-        return {'success': False, 'message': f'Failed to delete OpenAI assistant: {e}'}
-
-    if not assistant_deletion_result.deleted:
-        return {'success': False, 'message': 'Failed to delete OpenAI assistant'}
-
-    # Delete the assistant record in DynamoDB
-    try:
-        assistants_table.delete_item(Key={'id': assistant_id})
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-        return {'success': False, 'message': 'Failed to delete assistant record from database'}
-
-    return {'success': True, 'message': 'Assistant deleted successfully'}
