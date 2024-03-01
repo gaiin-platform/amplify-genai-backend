@@ -1,19 +1,21 @@
 # serverless-compose.yml
 services:
-  vu-amplify-embedding:
-    path: ./embedding
- 
-  sql-connector:
-    path: ./sql-connector
-  
-  langchain-base:
-    path: ./langchain-base
-
-  langchain-sql:
-    path: ./langchain-sql
 
   amplify-lambda:
     path: ./amplify-lambda 
   
   amplify-lambda-js:
     path: ./amplify-lambda-js
+
+  vu-amplify-embedding:
+    path: ./embedding
+
+  vu-amplify-object-access:
+    path: ./object-access
+
+  sql-connector:
+    path: ./sql-connector
+
+  amplify-utilities:
+    path: ./utilities
+

@@ -202,13 +202,13 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
 
     # Rest of your function ...
     embeddings = generate_embeddings(content)
-    response = generate_keywords(content)
-    if response["statusCode"] == 200:
-        input_keywords = response["body"]["keywords"]
-    else:
-        # If there was an error, you can handle it accordingly.
-        error = response["body"]["error"]
-        print(f"Error occurred: {error}") 
+   #response = generate_keywords(content)
+   # if response["statusCode"] == 200:
+   #     input_keywords = response["body"]["keywords"]
+   # else:
+   #     # If there was an error, you can handle it accordingly.
+   #     error = response["body"]["error"]
+   #     print(f"Error occurred: {error}") 
 
 
 
@@ -217,8 +217,8 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     #print(f"Here are the related docs {related_docs}")
     related_qas = get_top_similar_qas(embeddings, src_ids, limit)
     related_docs.extend(related_qas)
-    related_ft_docs = get_top_similar_ft_docs(input_keywords, src_ids, limit)
-    related_docs.extend(related_ft_docs)
+    #related_ft_docs = get_top_similar_ft_docs(input_keywords, src_ids, limit)
+    #related_docs.extend(related_ft_docs)
     #related_docs.extend(src_ids_message)
 
     # Return the related documents as a HTTP response
