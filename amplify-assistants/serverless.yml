@@ -38,6 +38,7 @@ provider:
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
+    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
 
   iam:
     role:
@@ -67,7 +68,7 @@ provider:
 functions:
 
   create_assistant:
-    handler: openaiazure/assistant.create_assistant
+    handler: service/core.create_assistant
     timeout: 30
     events:
       - http:

@@ -31,7 +31,7 @@ def get_openai_client():
     return None
 
 
-def file_keys_to_file_ids(user_id, file_keys):
+def file_keys_to_file_ids(file_keys):
     bucket_name = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
     client = get_openai_client()
 
@@ -454,7 +454,7 @@ def add_message_to_openai_thread(client, user_id, thread_id, openai_thread_id, m
         role=role,
         content=content,
         metadata={**{'id': message_id}, **data},
-        file_ids=file_keys_to_file_ids(user_id, file_keys)
+        file_ids=file_keys_to_file_ids(file_keys)
     )
 
     # Return the result
@@ -506,7 +506,7 @@ def add_message_to_thread(user_id, thread_id, message_id, content, role, file_ke
         role=role,
         content=content,
         metadata={**{'id': message_id}, **data},
-        file_ids=file_keys_to_file_ids(user_id, file_keys)
+        file_ids=file_keys_to_file_ids(file_keys)
     )
 
     # Return the result
@@ -588,6 +588,32 @@ def create_new_thread(user_id):
     }
 
 
+def create_new_openai_assistant(
+        assistant_name,
+        instructions,
+        file_keys,
+        model_id,
+        tools
+):
+
+    # Create a new assistant using the OpenAI Client
+    client = get_openai_client()
+    assistant = client.beta.assistants.create(
+        name=assistant_name,
+        instructions=instructions,
+        tools=tools,
+        model=model_id,
+        file_ids=file_keys_to_file_ids(file_keys)
+    )
+
+    # Return success response
+    return {
+        'success': True,
+        'message': 'Assistant created successfully',
+        'data': {'assistantId': assistant.id, 'provider': 'openai'}
+    }
+
+
 def create_new_assistant(
         user_id,
         assistant_name,
@@ -613,7 +639,7 @@ def create_new_assistant(
         instructions=instructions,
         tools=tools,
         model="gpt-4-1106-preview",
-        file_ids=file_keys_to_file_ids(user_id, file_keys)
+        file_ids=file_keys_to_file_ids(file_keys)
     )
 
     id_key = f'{user_id}/ast/{str(uuid.uuid4())}'
