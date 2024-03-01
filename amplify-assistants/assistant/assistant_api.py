@@ -142,25 +142,33 @@ def chat_with_assistant(current_user, assistant_id, messages, file_keys):
     if not result['success']:
         return {'success': False, 'error': 'Failed to sync messages to thread.'}
 
-    print(f"Running assistant {openai_assistant_id} on thread {openai_thread_id}")
-    run = client.beta.threads.runs.create(
-        thread_id=openai_thread_id,
-        assistant_id=openai_assistant_id
-    )
-    print(f"Run created: {run}")
-
-    tries = 28
-    while tries > 0:
-        print(f"Checking for the result of the run {run.id}")
-        status = client.beta.threads.runs.retrieve(
+    try:
+        print(f"Running assistant {openai_assistant_id} on thread {openai_thread_id}")
+        run = client.beta.threads.runs.create(
             thread_id=openai_thread_id,
-            run_id=run.id
+            assistant_id=openai_assistant_id
         )
-        print(f"Status {status.status}")
-        if status.status == 'completed':
-            break
+        print(f"Run created: {run}")
 
-        time.sleep(1)
+        tries = 28
+        while tries > 0:
+            print(f"Checking for the result of the run {run.id}")
+            try:
+                status = client.beta.threads.runs.retrieve(
+                    thread_id=openai_thread_id,
+                    run_id=run.id
+                )
+
+                print(f"Status {status.status}")
+                if status.status == 'completed':
+                    break
+            except Exception as e:
+                print(e)
+
+            time.sleep(1)
+    except Exception as e:
+        print(e)
+        return {'success': False, 'error': 'Failed to run the assistant on the thread.'}
 
     print(f"Fetching the messages from {openai_thread_id}")
     messages = client.beta.threads.messages.list(thread_id=openai_thread_id)
