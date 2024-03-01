@@ -67,7 +67,7 @@ provider:
 functions:
 
   create_assistant:
-    handler: assistant/assistant.create_assistant
+    handler: openaiazure/assistant.create_assistant
     timeout: 30
     events:
       - http:
@@ -76,7 +76,7 @@ functions:
           cors: true
 
   delete_assistant:
-    handler: assistant/assistant.delete_assistant
+    handler: openaiazure/assistant.delete_assistant
     events:
       - http:
           path: assistant/delete
@@ -84,7 +84,7 @@ functions:
           cors: true
 
   add_message_assistant_thread:
-    handler: assistant/assistant.add_message_assistant_thread
+    handler: openaiazure/assistant.add_message_assistant_thread
     timeout: 30
     events:
       - http:
@@ -93,7 +93,7 @@ functions:
           cors: true
 
   get_messages_assistant_thread:
-    handler: assistant/assistant.get_messages_assistant_thread
+    handler: openaiazure/assistant.get_messages_assistant_thread
     events:
       - http:
           path: assistant/thread/message/list
@@ -103,7 +103,7 @@ functions:
   # This endpoint is mainly for local testing but doesn't have
   # a long enough timeout for use when running in AWS behind API Gateway
   chat_assistant:
-    handler: assistant/assistant.chat_with_assistant
+    handler: openaiazure/assistant.chat_with_assistant
     timeout: 30
 
     events:
@@ -113,13 +113,13 @@ functions:
           cors: true
 
   chat_assistant_url:
-    handler: assistant/assistant.chat_with_assistant
+    handler: openaiazure/assistant.chat_with_assistant
     timeout: 900
     url:
       cors: true
 
   run_assistant_thread:
-    handler: assistant/assistant.run_assistant_thread
+    handler: openaiazure/assistant.run_assistant_thread
     events:
       - http:
           path: assistant/thread/run
@@ -127,7 +127,7 @@ functions:
           cors: true
 
   run_status_assistant_thread:
-    handler: assistant/assistant.get_run_status_assistant_thread
+    handler: openaiazure/assistant.get_run_status_assistant_thread
     events:
       - http:
           path: assistant/thread/run/status
@@ -135,7 +135,7 @@ functions:
           cors: true
 
   list_assistants:
-    handler: assistant/assistant.list_assistants
+    handler: openaiazure/assistant.list_assistants
     events:
       - http:
           path: assistant/list
@@ -143,7 +143,7 @@ functions:
           cors: true
 
   create_assistant_thread:
-    handler: assistant/assistant.create_assistant_thread
+    handler: openaiazure/assistant.create_assistant_thread
     events:
       - http:
           path: assistant/thread/create
@@ -151,7 +151,7 @@ functions:
           cors: true
 
   delete_assistant_thread:
-    handler: assistant/assistant.delete_assistant_thread
+    handler: openaiazure/assistant.delete_assistant_thread
     events:
       - http:
           path: assistant/thread/delete
