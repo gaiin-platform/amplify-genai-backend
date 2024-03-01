@@ -1,8 +1,17 @@
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
-const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' });
+// Since __dirname is not available in ES module scope, you have to construct the path differently.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Now, use the constructed path to point to your .env.local file
+config({ path: join(__dirname, '../../.env.local') });
 
 
+const secretsManagerClient = new SecretsManagerClient({ region: 'us-east-1' }); 
 
 export const getSecret = async (secretName) => {
 
@@ -10,7 +19,8 @@ export const getSecret = async (secretName) => {
 
     try {
         // Send the command to Secrets Manager service
-        const data = await secretsManagerClient.send(command);
+        const data = await secretsManagerClient.send(command); // fails here 
+
         let secret;
         if ('SecretString' in data) {
             secret = data.SecretString;
@@ -18,6 +28,7 @@ export const getSecret = async (secretName) => {
             // For binary secrets, data.SecretBinary is set instead of data.SecretString
             const buff = Buffer.from(data.SecretBinary, 'base64');
             secret = buff.toString('ascii');
+            
         }
         return secret;
     } catch (error) {

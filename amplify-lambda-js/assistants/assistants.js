@@ -25,10 +25,10 @@ const defaultAssistant = {
     handler: async (llm, params, body, dataSources, responseStream) => {
 
         const model = (body.options && body.options.model) ?
-            body.options.model :
+            Models[body.options.model.id]:
             (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
 
-        const limit = 0.75 * (model.tokenLimit - (body.max_tokens || 1000));
+        const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
         const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
         const aboveLimit = requiredTokens >= limit;
 

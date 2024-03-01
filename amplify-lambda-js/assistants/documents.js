@@ -4,7 +4,7 @@ import {
     HintState, invokeAction, llmAction, mapKeysAction, outputAction, outputContext, outputToResponse, outputToStatus,
     PromptAction, PromptForDataAction, ragAction,
     reduceKeysAction,
-    StateBasedAssistant, updateStatus
+    StateBasedAssistant, updateStatus, USER_INPUT_STATE, UserInputState
 } from "./statemachine/states.js";
 
 
@@ -153,6 +153,12 @@ const States = {
             updateStatus("answer", {summary: "I am reading the document(s).", inProgress: false}),
         ])
     ),
+    clarifyTask: new UserInputState("clarifyTask",
+     "Clarifying your request...",
+      "Ask follow up questions to clarify the request and make sure that you can perform it correctly.",
+        "If we have enough information, we can move to assessing the task."
+    ),
+
     // This is the end state.
     done: new DoneState(),
 };
@@ -162,6 +168,8 @@ const current = States.init;
 
 // We add transitions to the state machine to define the state machine.
 States.init.addTransition(States.assess.name, "Start");
+States.init.addTransition(USER_INPUT_STATE, "If we need some more inf");
+States.init.addTransition(States.assess.name, "If we have enough information to perform the task, go here");
 States.assess.addTransition(States.queryCreation.name, "Answer by searching for specific information");
 States.queryCreation.addTransition(States.search.name, "Search for the information");
 States.search.addTransition(States.queryCreation.name, "Find more information");

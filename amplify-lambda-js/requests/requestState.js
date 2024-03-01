@@ -1,6 +1,19 @@
 import {DynamoDBClient, GetItemCommand, PutItemCommand, DeleteItemCommand} from "@aws-sdk/client-dynamodb";
 import {getLogger} from "../common/logging.js";
 
+
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Since __dirname is not available in ES module scope, you have to construct the path differently.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Now, use the constructed path to point to your .env.local file
+config({ path: join(__dirname, '../../.env.local') });
+
+
 const requestsTable = process.env.REQUEST_STATE_DYNAMO_TABLE;
 
 const logger = getLogger("requestState");

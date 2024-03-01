@@ -1,16 +1,12 @@
 import { Writable } from 'stream';
-import {
-    extractKey,
-    getContexts,
-    getDataSourcesInConversation,
-    translateUserDataSourcesToHashDataSources
-} from "../datasource/datasources.js";
+import {extractKey, getContexts, translateUserDataSourcesToHashDataSources} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
+import {anthropicTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
@@ -19,7 +15,6 @@ import {getContextMessages} from "./chat/rag/rag.js";
 import {ModelID, Models} from "../models/models.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
-import {trace} from "./trace.js";
 
 const logger = getLogger("chatWithData");
 
@@ -46,8 +41,7 @@ class CustomWritable extends Writable {
     }
 }
 
-const chooseController = ({chatFn, chatRequest, dataSources, contexts}) => {
-
+const chooseController = ({chatFn, chatRequest, dataSources}) => {
     return sequentialChat;
     //return parallelChat;
 }
@@ -116,7 +110,10 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     let msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
-        getDataSourcesInConversation(chatRequestOrig, false)
+        chatRequestOrig.messages.slice(0,-1)
+            .filter( m => {
+                return m.data && m.data.dataSources
+            }).flatMap(m => m.data.dataSources)
     );
 
     const ragDataSources = [
@@ -135,15 +132,6 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         dataSourceDetailsLookup[ds.id] = ds;
     });
 
-
-    trace(params.requestId, ["chat","params"],
-        {
-            dataSources,
-            ragDataSources,
-            params: {
-                options: params.options
-            }
-        });
 
     const ragStatus = newStatus({
         inProgress: true,
@@ -260,7 +248,13 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             logger.debug(`Recording incremental output token count: ${increment}`);
             recordUsage(account, requestId, model, 0, increment, {});
         }
-        const result = openAiTransform(event);
+
+        let result;
+        if (model.id.includes("gpt")) {
+            result = openAiTransform(event);  
+        } else if (model.id.includes("claude")) {
+            result = anthropicTransform(event);
+        }
 
         if(!result){
             outputTokenCount--;
@@ -315,8 +309,6 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
     const contextTokens = contexts.reduce((acc, context) => acc + context.tokens, 0);
 
-    tokenCounter.free();
-
     // Create the source metadata that maps contexts to shorter ids to
     // to be more efficient.
     const metaData = getSourceMetadata({contexts});
@@ -331,8 +323,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         metaData,
         responseStream,
         tokenReporting,
-        eventTransformer,
-        params,
+        eventTransformer
     };
 
     // Should no longer be needed, keeping for now
@@ -340,7 +331,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     //     responseStream.setContentType('text/event-stream');
     // }
 
-    const inputTokenCount = msgTokens + contextTokens;
+    const inputTokenCount = msgTokens + contextTokens; //(Number.isNaN(contextTokens) ? 0 : contextTokens);
 
     // Since we have multiple contexts, we can potentially execute them in parallel.
     // This code provides future support for that, but currently we execute them in

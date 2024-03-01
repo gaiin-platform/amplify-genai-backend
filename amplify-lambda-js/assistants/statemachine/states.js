@@ -166,7 +166,7 @@ export const outputToResponse = (action, prefix = "", suffix = "") => {
                 }
             }
 
-            await  invokeAction(action, responseLLM, context, dataSources);
+            await invokeAction(action, responseLLM, context, dataSources);
 
             if (suffix) {
                 const end = fillInTemplate(suffix, context.data);
@@ -235,7 +235,7 @@ export const prependHistory = (messages) => {
         execute: (llm, context, dataSources) => {
             messages = getMessagesArray(messages);
             messages = fillInTemplateMessages(messages, context.data);
-            context.history = [...messages,...context.history];
+            context.history = [...messages, ...context.history];
         }
     };
 }
@@ -381,14 +381,14 @@ export const reduceKeysAction = (action, keyPrefix, outputKey, extractKey = null
 }
 
 export const ragAction = (config = {
-        query: null,
-        ragDataSources: null,
-        addQueryToHistory: true,
-        addResultsToHistory: true,
-        defaultResult: "No information found.",
-        addToContext: true,
-        outputKey: "ragResults"
-    }) => {
+    query: null,
+    ragDataSources: null,
+    addQueryToHistory: true,
+    addResultsToHistory: true,
+    defaultResult: "No information found.",
+    addToContext: true,
+    outputKey: "ragResults"
+}) => {
     return {
         execute: async (llm, context, dataSources) => {
 
@@ -396,34 +396,38 @@ export const ragAction = (config = {
                 "ragDataSources",
                 context.activeDataSources || []);
 
-            if(!ragDataSources || ragDataSources.length < 1){
-                if(context.conversationDataSources && context.conversationDataSources.length > 0){
+            if (!ragDataSources || ragDataSources.length < 1) {
+                if (context.conversationDataSources && context.conversationDataSources.length > 0) {
                     ragDataSources = context.conversationDataSources;
-                }
-                else if(context.dataSources && context.dataSources.length > 0){
+                } else if (context.dataSources && context.dataSources.length > 0) {
                     ragDataSources = context.dataSources;
-                }
-                else {
+                } else {
                     ragDataSources = dataSources;
                 }
             }
 
-            if(ragDataSources.length > 0 && typeof ragDataSources[0] === "string"){
+            if (ragDataSources.length > 0 && typeof ragDataSources[0] === "string") {
                 ragDataSources = ragDataSources.map(
-                    ds => {return {id: ds}}
+                    ds => {
+                        return {id: ds}
+                    }
                 );
             }
 
             ragDataSources = ragDataSources.map(
-                ds => {return {...ds,
-                    id: fillInTemplate(ds.id, context.data),
-                    name: fillInTemplate(ds.name, context.data)}}
+                ds => {
+                    return {
+                        ...ds,
+                        id: fillInTemplate(ds.id, context.data),
+                        name: fillInTemplate(ds.name, context.data)
+                    }
+                }
             );
 
             const filledInQuery = config.query ? fillInTemplate(config.query, context.data) : null;
 
             const messages = filledInQuery ?
-                [{role: "user", content: filledInQuery }] :
+                [{role: "user", content: filledInQuery}] :
                 context.history;
 
             const ragLLM = llm.clone();
@@ -443,7 +447,7 @@ export const ragAction = (config = {
                 {...ragLLM.defaultBody, messages: context.history},
                 ragDataSources)
 
-            if(getParam(config, "addQueryToHistory", true) && filledInQuery){
+            if (getParam(config, "addQueryToHistory", true) && filledInQuery) {
                 context.history = [
                     ...context.history.slice(0, -1),
                     {role: "user", content: filledInQuery},
@@ -451,7 +455,7 @@ export const ragAction = (config = {
                 ];
             }
 
-            if(!result.sources || result.sources.length === 0){
+            if (!result.sources || result.sources.length === 0) {
                 let defaultResult = getParam(config, "defaultResult", "No information found.");
                 defaultResult = fillInTemplate(defaultResult, context.data);
                 result.messages = [{role: "user", content: defaultResult}];
@@ -562,7 +566,7 @@ function fillInTemplate(templateStr, contextData) {
     let result = templateStr;
     try {
         Handlebars.registerHelper('statusSummary', function (context) {
-            return context.slice(0,30)+"...";
+            return context.slice(0, 30) + "...";
         });
 
         Handlebars.registerHelper('json', function (context) {
@@ -702,17 +706,16 @@ const configureLLM = (config, llm) => {
 }
 
 export const getMessagesArray = (messages) => {
-    if(messages === null){
+    if (messages === null) {
         return [];
-    }
-    else if(typeof messages === "string"){
+    } else if (typeof messages === "string") {
         return [{role: "user", content: messages}];
-    }
-    else if(Array.isArray(messages)){
-        if(messages.length > 0 && typeof messages[0] === "string"){
-            return messages.map(m => {return {role: "user", content: m}});
-        }
-        else{
+    } else if (Array.isArray(messages)) {
+        if (messages.length > 0 && typeof messages[0] === "string") {
+            return messages.map(m => {
+                return {role: "user", content: m}
+            });
+        } else {
             return [...messages];
         }
     }
@@ -902,8 +905,35 @@ export class AssistantState {
 }
 
 export class HintState extends AssistantState {
-    constructor(name, description, hint, endState = false, config=null) {
+    constructor(name, description, hint, endState = false, config = null) {
         super(name, description, null, endState, {...config, extraInstructions: {postInstructions: hint}});
+    }
+}
+
+export class UserInputState extends AssistantState {
+    constructor(name,
+                description,
+                promptMessages,
+                transitionHint,
+                endState = false,
+                config = null) {
+        super(
+            name,
+            description,
+            [
+                outputToResponse(
+                    new PromptAction(promptMessages, "user_input", {
+                        appendMessages: true,
+                        streamResults: true,
+                        skipRag: true,
+                        ragOnly: true
+                    }),
+                )
+            ],
+            endState,
+            {...config, extraInstructions: {postInstructions: transitionHint}});
+
+        this.addTransition(USER_INPUT_STATE, "If you need additional information from the user.");
     }
 }
 
@@ -932,6 +962,8 @@ export const isAssistantKilled = async (context) => {
     }
 }
 
+export const USER_INPUT_STATE = "user_input";
+
 export class AssistantStateMachine {
 
     constructor(name, description, statesByName, currentState, config = {}) {
@@ -958,6 +990,29 @@ export class AssistantStateMachine {
 
             transitionsLeft -= 1;
             const nextName = await this.currentState.enter(llm, context, dataSources);
+
+            if (nextName === USER_INPUT_STATE) {
+                // The user input state is a "special" state that has an implicit transition back to the
+                // state that called it.
+                // The user replies and we restart from the state that asked for user input. The
+                // state that asked for user input determines how many times we ask for user input.
+
+                sendStateEventToStream(
+                    context.responseStream, {
+                        assistantStateMachine: {
+                            currentState: this.currentState.name,
+                            context: {
+                                data: context.data,
+                                task: context.task,
+                                dataSources: context.dataSources,
+                                activeDataSources: context.activeDataSources
+                            }
+                        }
+                    });
+
+                return;
+            }
+
             this.currentState = this.statesByName[nextName];
 
             if (this.currentState === undefined) {

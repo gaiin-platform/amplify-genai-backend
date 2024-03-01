@@ -10,6 +10,7 @@ import {
     forceFlush, StatusOutputStream
 } from "../common/streams.js";
 import {newStatus} from "../common/status.js";
+import {isKilled} from "../requests/requestState.js";
 
 
 const logger = getLogger("workflow");
@@ -127,6 +128,10 @@ const doPrompt = async ({
 
     const updatedBody = buildChatBody(step, body);
 
+    if(await isKilled(params.account.user, responseStream, body)){
+        return;
+    }
+
     return chatWithDataStateless(
         {...params, options:{...params.options, skipRag:true}},
         chatFn,
@@ -146,6 +151,10 @@ const doMap = async ({
                      }) => {
 
     const updatedBody = buildChatBody(step, body);
+
+    if(await isKilled(params.account.user, responseStream, body)){
+        return;
+    }
 
     return chatWithDataStateless(
         {...params, options:{...params.options, skipRag:true}},
@@ -179,6 +188,10 @@ const doReduce = async ({
         }
     }
 
+    if(await isKilled(params.account.user, responseStream, body)){
+        return;
+    }
+
     const response = await chatWithDataStateless(
         {...params, options:{...params.options, skipRag:true}},
         chatFn,
@@ -197,6 +210,10 @@ const doReduce = async ({
                 updatedStep,
                 {"__lastResult": result},
                 []);
+
+            if(await isKilled(params.account.user, responseStream, body)){
+                return;
+            }
 
             await doReduce({
                 step:updatedStep,
@@ -280,6 +297,11 @@ export const executeWorkflow = async (
 
     for (const [index, step] of workflow.steps.entries()) {
 
+        if(await isKilled(params.account.user, responseStream, body)){
+            responseStream.end();
+            return;
+        }
+
         logger.debug("Executing workflow step", {index, step});
 
         const executor = getExecutor(step);
@@ -319,6 +341,11 @@ export const executeWorkflow = async (
         workStatus.inProgress = false;
         sendStatusEventToStream(responseStream, workStatus);
         forceFlush(responseStream);
+
+        if(await isKilled(params.account.user, responseStream, body)){
+            responseStream.end();
+            return;
+        }
 
         logger.debug("Binding output of step to ", step.outputTo);
         logger.debug("Result", resultStream.result);
