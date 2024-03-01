@@ -1,6 +1,19 @@
 import {DynamoDBClient, GetItemCommand, PutItemCommand, DeleteItemCommand} from "@aws-sdk/client-dynamodb";
 import {getLogger} from "../common/logging.js";
 
+
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Since __dirname is not available in ES module scope, you have to construct the path differently.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Now, use the constructed path to point to your .env.local file
+config({ path: join(__dirname, '../../.env.local') });
+
+
 const requestsTable = process.env.REQUEST_STATE_DYNAMO_TABLE;
 
 const logger = getLogger("requestState");
@@ -114,47 +127,13 @@ export const updateKillswitch = async (user, requestId, killswitch) => {
     return true;
 }
 
-class SimpleCache {
-    constructor(maxSize) {
-        this.maxSize = maxSize;
-        this.cache = {};
-        this.keys = [];
-    }
-
-    get(key) {
-        return this.cache[key];
-    }
-
-    put(key, value) {
-        if (this.keys.length >= this.maxSize) {
-            const oldestKey = this.keys.shift();
-            delete this.cache[oldestKey];
-        }
-
-        this.cache[key] = value;
-        this.keys.push(key);
-    }
-}
-
-const killedCache = new SimpleCache(10);
-
 export const isKilled = async (user, responseStream, chatRequest) => {
-
     if (chatRequest && chatRequest.options) {
         const requestId = chatRequest.options.requestId;
-
         if (requestId) {
-
-            const key = user + "__" + requestId;
-            if(killedCache.get(key)) {
-                logger.info("Killswitch triggered, exiting.");
-                return true;
-            }
-
             const doExit = await shouldKill(user, requestId);
             if (doExit) {
                 try {
-                    killedCache.put(key, true);
                     await deleteRequestState(user, requestId);
                 } catch (e) {
                     logger.error("Error deleting request state: " + e);

@@ -5,7 +5,9 @@ plugins:
   - serverless-offline
 
 custom:
-
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
 
   stages:
@@ -53,22 +55,21 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
             - s3:GetObject
-            - s3:PutObject
             - s3:ListBucket
             - dynamodb:GetItem
             - dynamodb:PutItem
-            - sqs:SendMessage
-            - sqs:DeleteMessage
+            - bedrock:InvokeModelWithResponseStream
+            - bedrock:InvokeModel
           Resource:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
             - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
-            - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.ASSISTANT_QUEUE_NAME}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1:2:100k'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
+
         - Effect: Allow
           Action:
             - dynamodb:DeleteItem
@@ -83,24 +84,6 @@ functions:
     url:
       cors: true
       invokeMode: RESPONSE_STREAM
-    environment:
-        assistant_task_queue_url:
-          Ref: AssistantTaskQueue
-
-  assistant_queue:
-    handler: assistantQueueRouter.handler
-    memorySize: 1024
-    timeout: 900
-    events:
-        - sqs:
-            arn:
-              Fn::GetAtt:
-                - AssistantTaskQueue
-                - Arn
-    environment:
-        assistant_task_queue_url:
-          Ref: AssistantTaskQueue
-
 
 resources:
   Resources:
@@ -123,16 +106,3 @@ resources:
             AttributeName: requestId
             KeyType: RANGE
         TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}
-    ChatTracesBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.TRACE_BUCKET_NAME}
-    AssistantTaskQueue:
-          Type: "AWS::SQS::Queue"
-          Properties:
-            VisibilityTimeout: 900
-            QueueName: ${self:provider.environment.ASSISTANT_QUEUE_NAME}
-    AssistantTaskResultsBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}
