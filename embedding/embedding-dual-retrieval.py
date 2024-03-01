@@ -8,6 +8,8 @@ from common.credentials import get_credentials, get_endpoint
 from common.validate import validated
 from shared_functions import generate_keywords, generate_embeddings
 import logging
+import boto3
+from boto3.dynamodb.conditions import Key
 
 
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
@@ -17,6 +19,8 @@ rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
 api_version = os.environ['API_VERSION']
+object_access_table = os.environ['OBJECT_ACCESS_TABLE']
+
 
 pg_password = get_credentials(rag_pg_password)
 
@@ -146,54 +150,41 @@ def get_top_similar_ft_docs(input_keywords, src_ids, limit=5):
             top_ft_docs = cur.fetchall()
         return top_ft_docs
     
-#Port to Dyanmo
+
+
 def classify_src_ids_by_access(raw_src_ids, current_user):
     accessible_src_ids = []
     access_denied_src_ids = []
 
     # Define the permission levels that grant access
-    permission_levels = ['read', 'write', 'owner']  # Use a list for permission_levels
-    
-    # Establish a connection to the PostgreSQL database
-    with psycopg2.connect(
-        host=pg_host,
-        database=pg_database,
-        user=pg_user,
-        password=pg_password,
-        port=3306
-    ) as conn:
-        with conn.cursor() as cur:
+    permission_levels = ['read', 'write', 'owner']
 
-            # Prepare a query to get all accessible src_ids for the user
-            access_query = """
-            SELECT object_id FROM object_access
-            WHERE
-                principal_id = %s AND
-                object_id = ANY(%s) AND
-                permission_level = ANY(%s);
-            """
+    # Initialize a DynamoDB resource using boto3
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(object_access_table)
 
-            try:
-                # Execute the query with the user_email and list of src_ids
-                cur.execute(access_query, (current_user, raw_src_ids, permission_levels))
-                results = cur.fetchall()  # Fetch all results of the query
+    try:
+        # Iterate over each src_id and perform a query
+        for src_id in raw_src_ids:
+            response = table.query(
+                KeyConditionExpression=Key('object_id').eq(src_id) & Key('principal_id').eq(current_user)
+            )
 
-                # Create a set of accessible src_ids from the query results
-                result_set = {row[0] for row in results}
+            # Check if the response has any items with the required permission levels
+            items_with_access = [item for item in response.get('Items', []) if item['permission_level'] in permission_levels]
 
-                # Classify each src_id based on whether it's in the result_set
-                for src_id in raw_src_ids:
-                    if src_id in result_set:
-                        accessible_src_ids.append(src_id)
-                    else:
-                        access_denied_src_ids.append(src_id)
+            # Classify the src_id based on whether it has accessible items
+            if items_with_access:
+                accessible_src_ids.append(src_id)
+            else:
+                access_denied_src_ids.append(src_id)
 
-            except Exception as e:
-                logging.error(f"An error occurred while classifying src_ids by access: {e}")
-                # Depending on the use case, you may want to handle the error differently
-                # Here we're considering all src_ids as denied if there's an error
-                access_denied_src_ids.extend(raw_src_ids)
-
+    except Exception as e:
+        logging.error(f"An error occurred while classifying src_ids by access: {e}")
+        # Depending on the use case, you may want to handle the error differently
+        # Here we're considering all src_ids as denied if there's an error
+        access_denied_src_ids.extend(raw_src_ids)
+    print(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
 
  
@@ -201,12 +192,12 @@ def classify_src_ids_by_access(raw_src_ids, current_user):
 def process_input_with_dual_retrieval(event, context, current_user, name, data):
     data = data['data']
     content = data['userInput']
-    #raw_src_ids = data['dataSources']
-    src_ids = data['dataSources']
+    raw_src_ids = data['dataSources']
+    #src_ids = data['dataSources']
     limit = data['limit']
 
-    #accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
-    #src_ids = accessible_src_ids
+    accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
+    src_ids = accessible_src_ids
     #src_ids_message = f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}"
 
     # Rest of your function ...
@@ -223,7 +214,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
 
     # Step 1: Get documents related to the user input from the database
     related_docs = get_top_similar_docs(embeddings, src_ids, limit)
-    print(f"Here are the related docs {related_docs}")
+    #print(f"Here are the related docs {related_docs}")
     related_qas = get_top_similar_qas(embeddings, src_ids, limit)
     related_docs.extend(related_qas)
     related_ft_docs = get_top_similar_ft_docs(input_keywords, src_ids, limit)
