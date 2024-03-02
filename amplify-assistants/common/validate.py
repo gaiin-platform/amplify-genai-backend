@@ -88,6 +88,18 @@ create_assistant_schema = {
     "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
 }
 
+share_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "assistantKey": {"type": "string"},
+        "recipientUsers": {"type": "array", "items": {"type": "string"}},
+        "accessType": {"type": "string"},
+        "policy": {"type": "string", "default": ""}
+    },
+    "required": ["assistantKey", "recipientUsers", "accessType"],
+    "additionalProperties": False
+}
+
 add_message_schema = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
@@ -199,6 +211,9 @@ The permission is related to a request path and to a specific operation.
 validators = {
     "/assistant/create": {
         "create": create_assistant_schema
+    },
+    "/assistant/share": {
+        "share_assistant": share_assistant_schema
     },
     "/assistant/thread/create": {
         "create": {}
