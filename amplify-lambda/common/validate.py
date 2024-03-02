@@ -156,6 +156,28 @@ file_upload_schema = {
     "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
 }
 
+file_query_schema = {
+    "type": "object",
+    "properties": {
+        "startDate": {
+            "type": "string",
+            "format": "date-time",
+            "default": "2021-01-01T00:00:00Z"
+        },
+        "pageSize": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1
+        },
+        "pageKey": {
+            "type": "object",
+            "additionalProperties": True
+        }
+    },
+    "required": [],
+    "additionalProperties": False
+}
+
 run_thread_schema = {
     "type": "object",
     "properties": {
@@ -422,6 +444,9 @@ validators = {
     },
     "/assistant/files/download": {
         "download": key_request_schema
+    },
+    "/assistant/files/query": {
+        "query": file_query_schema
     },
     "/assistant/create": {
         "create": create_assistant_schema

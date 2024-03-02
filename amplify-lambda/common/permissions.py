@@ -45,6 +45,9 @@ permissions_by_state_type = {
   "/assistant/files/upload": {
     "upload": can_upload
   },
+  "/assistant/files/query": {
+    "query": can_upload
+  },
   "/assistant/files/download": {
     "download": can_upload
   },
