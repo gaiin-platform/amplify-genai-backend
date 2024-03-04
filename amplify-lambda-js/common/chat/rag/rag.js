@@ -27,6 +27,8 @@ async function getRagResults(params, token, search, ragDataSourceKeys, count) {
         },
     }
 
+    logger.debug("RAG request", {data:{...ragRequest, userInput: "REDACTED"}});
+
     trace(params.requestId, ["rag", "request"], ragRequest);
 
     const response = await axios.post(ragEndpoint, ragRequest, {
@@ -34,6 +36,9 @@ async function getRagResults(params, token, search, ragDataSourceKeys, count) {
             'Authorization': `Bearer ${token}`
         }
     });
+
+    logger.debug("RAG response status", response.status);
+
     return response;
 }
 
