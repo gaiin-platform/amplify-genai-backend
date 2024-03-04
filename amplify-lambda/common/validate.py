@@ -169,7 +169,18 @@ file_query_schema = {
             "default": 10
         },
         "pageKey": {
-            "type": ["string", "null"]
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
         },
         "namePrefix": {
             "type": ["string", "null"]

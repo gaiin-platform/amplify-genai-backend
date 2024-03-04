@@ -371,7 +371,8 @@ def query_user_files_by_created_at(
     if exclusive_start_key:
         exclusive_start_key = {
             'createdBy': {'S': user},  # Assuming 'createdBy' is the partition key
-            'id': {'S': exclusive_start_key}  # Assuming 'createdAt' is the sort key
+            'createdAt': {'S': exclusive_start_key.get('createdAt', None)},  # Assuming 'createdAt' is the sort key
+            'id': {'S': exclusive_start_key.get('id', None)}  # Assuming 'createdAt' is the sort key
         }
         query_params['ExclusiveStartKey'] = exclusive_start_key
         print(f"Using exclusive_start_key: {exclusive_start_key}")
