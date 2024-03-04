@@ -32,6 +32,10 @@ const defaultAssistant = {
         const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
         const aboveLimit = requiredTokens >= limit;
 
+        logger.debug(`Model: ${model.id}, tokenLimit: ${model.tokenLimit}`)
+        logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
+        logger.debug(`Required tokens: ${requiredTokens}, limit: ${limit}, aboveLimit: ${aboveLimit}`);
+
         if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
         }
