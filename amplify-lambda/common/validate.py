@@ -166,15 +166,36 @@ file_query_schema = {
         },
         "pageSize": {
             "type": "integer",
-            "default": 10,
-            "minimum": 1
+            "default": 10
         },
         "pageKey": {
-            "type": "object",
-            "additionalProperties": True
+            "type": ["string", "null"]
+        },
+        "namePrefix": {
+            "type": ["string", "null"]
+        },
+        "createdAtPrefix": {
+            "type": ["string", "null"]
+        },
+        "typePrefix": {
+            "type": ["string", "null"]
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        },
+        "pageIndex": {
+            "type": "integer",
+            "default": 0
+        },
+        "forwardScan": {
+            "type": "boolean",
+            "default": True
         }
     },
-    "required": [],
     "additionalProperties": False
 }
 
