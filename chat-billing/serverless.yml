@@ -1,0 +1,84 @@
+service: chat-billing-service
+
+frameworkVersion: '3'
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-deployment-bucket
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)}     
+
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: python3.9
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
+  
+  environment:
+    REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetRecords
+            - dynamodb:GetShardIterator
+            - dynamodb:DescribeStream
+            - dynamodb:ListStreams
+          
+          Resource:
+            - arn:aws:dynamodb:us-east-1:*:table/${sls:stage}-chat-usage/stream/*
+
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource:
+            - arn:aws:logs:us-east-1:*:log-group:/aws/lambda/${self:service}-${sls:stage}-*:*
+
+functions:
+  chatBillingHandler:
+    handler: handler.lambda_handler
+    memorySize: 1024
+    timeout: 900
+    events:
+      - stream:
+          type: dynamodb
+          arn: ${self:custom.stageVariables.STREAM_ARN}
+          batchSize: 100
+          startingPosition: LATEST
+
