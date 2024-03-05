@@ -10,7 +10,11 @@ from shared_functions import generate_keywords, generate_embeddings
 import logging
 import boto3
 from boto3.dynamodb.conditions import Key
+import logging
 
+# Configure Logging 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('embedding_dual_retrieval')
 
 pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
@@ -23,6 +27,8 @@ object_access_table = os.environ['OBJECT_ACCESS_TABLE']
 
 
 pg_password = get_credentials(rag_pg_password)
+
+
 
 def get_top_similar_qas(query_embedding, src_ids, limit=5):
     with psycopg2.connect(
@@ -59,16 +65,20 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
 
             # Create SQL query string with a placeholder for the optional src_clause and a limit
             sql_query = f"""
-                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id, ((qa_vector_embedding <#> %s::vector) * -1) AS distance
+                SELECT content, src, locations, orig_indexes, char_index, token_count, id, ((qa_vector_embedding <#> %s::vector) * -1) AS distance
                 FROM embeddings 
                 WHERE src = ANY(%s)  -- Use the ARRAY constructor for src_ids
                 ORDER BY distance DESC  -- Order by distance for ordering  
                 LIMIT %s  -- Use a placeholder for the limit
             """
-            #print(f"Here is the qa sql query {sql_query}")
-            cur.execute(sql_query, query_params)
-            top_docs = cur.fetchall()
-        
+            logger.info(f"Executing QA SQL query: {sql_query}")
+            try:
+                cur.execute(sql_query, query_params)
+                top_docs = cur.fetchall()
+                logger.info(f"Top QA docs retrieved: {top_docs}")
+            except Exception as e:
+                logger.error(f"An error occurred while fetching top similar QAs: {e}", exc_info=True)
+                raise
     return top_docs
 
 
@@ -98,16 +108,20 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
 
             # Create SQL query string with placeholders for parameters
             sql_query = """
-                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id, ((vector_embedding <#> %s::vector) * -1) AS distance
+                SELECT content, src, locations, orig_indexes, char_index, token_count, id, ((vector_embedding <#> %s::vector) * -1) AS distance
                 FROM embeddings 
                 WHERE src = ANY(%s)  -- Use the ARRAY constructor for src_ids
                 ORDER BY distance DESC  -- Order by distance for ordering  
                 LIMIT %s  -- Use a placeholder for the limit
             """
-            #print(f"Here is the top match sql query {sql_query}")
-            cur.execute(sql_query, query_params)  # Pass the query parameters to the execute method
-            top_docs = cur.fetchall()
-        
+            logger.info(f"Executing Top Similar SQL query: {sql_query}")
+            try:
+                cur.execute(sql_query, query_params)
+                top_docs = cur.fetchall()
+                logger.info(f"Top similar docs retrieved: {top_docs}")
+            except Exception as e:
+                logger.error(f"An error occurred while fetching top similar docs: {e}", exc_info=True)
+                raise
     return top_docs
 
 def get_top_similar_ft_docs(input_keywords, src_ids, limit=5):
@@ -134,7 +148,7 @@ def get_top_similar_ft_docs(input_keywords, src_ids, limit=5):
             #print(f"Here are the query params {query_params}")
             # Create SQL query string with a placeholder for the optional src_clause and a limit
             sql_query = f"""
-                SELECT content, src, locations, orig_indexes, char_index, owner_email, token_count, id,
+                SELECT content, src, locations, orig_indexes, char_index, token_count, id,
                     ts_rank_cd(to_tsvector('english', content), to_tsquery('english', replace(%s,' ','|'))) AS text_rank
                     
                 FROM embeddings 
@@ -144,11 +158,15 @@ def get_top_similar_ft_docs(input_keywords, src_ids, limit=5):
                 ORDER BY text_rank DESC  -- Order by text rank for ordering
                 LIMIT %s  -- Use a placeholder for the limit
             """
-            #print(f"Here is the ft sql query {sql_query}")
-            # Execute the query with the correct number of parameters
-            cur.execute(sql_query, query_params)
-            top_ft_docs = cur.fetchall()
-        return top_ft_docs
+            logger.info(f"Executing FT query: {sql_query}")
+            try:
+                cur.execute(sql_query, query_params)
+                top_docs = cur.fetchall()
+                logger.info(f"Top FT docs retrieved: {top_docs}")
+            except Exception as e:
+                logger.error(f"An error occurred while fetching FT similar docs: {e}", exc_info=True)
+                raise
+    return top_docs
     
 
 
@@ -178,6 +196,7 @@ def classify_src_ids_by_access(raw_src_ids, current_user):
                 accessible_src_ids.append(src_id)
             else:
                 access_denied_src_ids.append(src_id)
+        logger.info(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")        
 
     except Exception as e:
         logging.error(f"An error occurred while classifying src_ids by access: {e}")
@@ -193,34 +212,25 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     data = data['data']
     content = data['userInput']
     raw_src_ids = data['dataSources']
-    #src_ids = data['dataSources']
     limit = data['limit']
 
     accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
     src_ids = accessible_src_ids
-    #src_ids_message = f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}"
 
-    # Rest of your function ...
     embeddings = generate_embeddings(content)
-   #response = generate_keywords(content)
-   # if response["statusCode"] == 200:
-   #     input_keywords = response["body"]["keywords"]
-   # else:
-   #     # If there was an error, you can handle it accordingly.
-   #     error = response["body"]["error"]
-   #     print(f"Error occurred: {error}") 
 
 
 
     # Step 1: Get documents related to the user input from the database
     related_docs = get_top_similar_docs(embeddings, src_ids, limit)
+    
     #print(f"Here are the related docs {related_docs}")
     related_qas = get_top_similar_qas(embeddings, src_ids, limit)
     related_docs.extend(related_qas)
     #related_ft_docs = get_top_similar_ft_docs(input_keywords, src_ids, limit)
     #related_docs.extend(related_ft_docs)
     #related_docs.extend(src_ids_message)
-
+    print(f"Here are the related docs {related_docs}")
     # Return the related documents as a HTTP response
     return {"result":related_docs}
     
