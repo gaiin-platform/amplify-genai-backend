@@ -81,6 +81,22 @@ check_object_permissions = {
     "required": ["dataSources"]
 }
 
+create_cognito_group = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "groupName": {
+            "type": "string",
+            "description": "The name of the group to create."
+            },
+        "groupDescription": {
+            "type": "string",
+            "description": "The description of the group to create."
+        }
+    },
+    "required": ["groupName", "groupDescription"]
+}
+
 validators = {
     
     "/utilities/update_object_permissions": {
@@ -88,6 +104,9 @@ validators = {
     },
     "/utilities/can_access_objects": {
         "can_access_objects": check_object_permissions
+    },
+    "/utilities/create_cognito_group": {
+    "create_cognito_grou": create_cognito_group
     }
 }
 
@@ -142,6 +161,8 @@ def validated(op, validate_body=True):
                 current_user = get_email(claims['username'])
 
                 print(f"User: {current_user}")
+                username = claims['username']
+                cognito_groups = claims.get('cognito:groups', [])  
 
                 # current_user = claims['user']['name']
 
@@ -149,7 +170,9 @@ def validated(op, validate_body=True):
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
-                result = f(event, context, current_user, name, data)
+                result = f(event, context, current_user, name, data, username, cognito_groups)
+                #result['username'] = username  # Add 'username' to the result
+                #result['cognito_groups'] = cognito_groups  # Add 'cognito_groups' to the result
 
                 return {
                     "statusCode": 200,
