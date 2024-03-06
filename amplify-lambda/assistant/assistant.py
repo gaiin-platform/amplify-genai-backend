@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
-from boto3.dynamodb.types import TypeDeserializer
+from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from common.validate import validated
 import os
 from . import assistant_api as assistants
@@ -265,25 +265,19 @@ def get_presigned_url(event, context, current_user, name, data):
         return {'success': False}
 
 
-# @validated(op="query")
-# def query_user_files(event, context, current_user, name, data):
-#     # Extract the query parameters from the event
-#     query_params = data['data']
-#
-#     # Extract the pagination parameters
-#     start_date = query_params.get('startDate', '2021-01-01T00:00:00Z')
-#     page_size = query_params.get('pageSize', 10)
-#     exclusive_start_key = query_params.get('pageKey')
-#
-#     # Query the user's files from the DynamoDB table
-#     result = query_user_files_by_created_at(current_user, start_date, page_size, exclusive_start_key)
-#
-#     # Return the result
-#     return result
 @validated(op="query")
 def query_user_files(event, context, current_user, name, data):
     # Extract the query parameters from the event
     query_params = data['data']
+
+    # Map the provided sort key to the corresponding index name
+    sort_index = query_params.get('sortIndex', 'createdAt')
+    sort_index_lookup = {
+        'createdAt': 'createdByAndAt',
+        'name': 'createdByAndName',
+        'type': 'createdByAndType'
+    }
+    index_name = sort_index_lookup.get(sort_index, 'createdByAndAt')
 
     # Extract the pagination and filtering parameters
     start_date = query_params.get('startDate', '2021-01-01T00:00:00Z')
@@ -296,7 +290,33 @@ def query_user_files(event, context, current_user, name, data):
     page_index = query_params.get('pageIndex', 0)
     forward_scan = query_params.get('forwardScan', False)
 
-    # print all of the params
+    # Determine the sort key and begins_with attribute based on sort_index
+    sort_key_name = 'createdAt' if sort_index == 'createdAt' else sort_index
+
+    sort_key_value_start = None
+    # Initialize a list to hold any begins_with filters
+    begins_with_filters = []
+
+    # Determine the begins_with filters based on provided prefixes and the sort index
+    if name_prefix:
+        if sort_index == "name":
+            sort_key_value_start = name_prefix
+        else:
+            begins_with_filters.append({'attribute': 'name', 'value': name_prefix})
+
+    if created_at_prefix:
+        if sort_index == "createdAt":
+            sort_key_value_start = created_at_prefix
+        else:
+            begins_with_filters.append({'attribute': 'createdAt', 'value': created_at_prefix})
+
+    if type_prefix:
+        if sort_index == "type":
+            sort_key_value_start = type_prefix
+        else:
+            begins_with_filters.append({'attribute': 'type', 'value': type_prefix})
+
+    # Print all of the params (for debugging purposes)
     print(f"Querying user files with the following parameters: "
           f"start_date={start_date}, "
           f"page_size={page_size}, "
@@ -306,24 +326,104 @@ def query_user_files(event, context, current_user, name, data):
           f"type_prefix={type_prefix}, "
           f"tag_filter_list={tag_filter_list}, "
           f"page_index={page_index}"
-          f"forward_scan={forward_scan}")
+          f"forward_scan={forward_scan}"
+          f"sort_index={index_name}")
 
-    # Use 'query_user_files_by_created_at' as the updated function with new parameters
-    result = query_user_files_by_created_at(
-        user=current_user,
-        created_at_start=start_date,
-        name_prefix=name_prefix,
-        created_at_prefix=created_at_prefix,
-        type_prefix=type_prefix,
-        tag_filter_list=tag_filter_list,
-        page_index=page_index,
-        page_size=page_size,
+    # Use 'query_table_index' as the refactored function with new parameters
+    result = query_table_index(
+        table_name=os.environ['FILES_DYNAMO_TABLE'],
+        index_name=index_name,
+        partition_key_name='createdBy',
+        sort_key_name=sort_key_name,
+        partition_key_value=current_user,
+        sort_key_value_start=sort_key_value_start,
+        begins_with_filters=begins_with_filters,
         exclusive_start_key=exclusive_start_key,
+        page_size=page_size,
         forward_scan=forward_scan
     )
 
-    # Return the result
+    # Extract and process results from 'result' as necessary before returning
+    # This may include handling pagination, converting 'Items' to a more readable format, etc.
+
+    # Return the processed result
     return result
+
+
+def query_table_index(table_name, index_name, partition_key_name, sort_key_name, partition_key_value,
+                      sort_key_value_start=None, begins_with_filters=None, exclusive_start_key=None, page_size=10,
+                      forward_scan=False):
+    dynamodb = boto3.client('dynamodb')
+
+    # Initialize the key condition expression for the partition key
+    key_condition_expression = f"{partition_key_name} = :partition_key_value"
+    expression_attribute_values = {':partition_key_value': {'S': partition_key_value}}
+    expression_attribute_names = {}
+
+    if sort_key_value_start is not None:
+        # Placeholder for sort key to handle reserved words
+        sort_key_placeholder = f"#{sort_key_name}"
+        expression_attribute_names[sort_key_placeholder] = sort_key_name
+        key_condition_expression += f" AND {sort_key_placeholder} >= :sort_key_value_start"
+        expression_attribute_values[':sort_key_value_start'] = {'S': sort_key_value_start}
+
+    # Prepare the query parameters
+    query_params = {
+        'TableName': table_name,
+        'IndexName': index_name,
+        'KeyConditionExpression': key_condition_expression,
+        'ExpressionAttributeValues': expression_attribute_values,
+        'ScanIndexForward': forward_scan
+    }
+
+    # Add filter expression if begins_with_filters are provided
+    filter_expressions = []
+    if begins_with_filters:
+        for begins_with in begins_with_filters:
+            attr_name = begins_with['attribute']
+            attr_value_start = begins_with['value']
+
+            # Create placeholders for attribute names and values
+            attr_name_placeholder = f"#{attr_name}"
+            attr_value_placeholder = f":begins_with_value_{attr_name}"
+
+            # Add the attribute name and value placeholders to the respective dictionaries
+            expression_attribute_names[attr_name_placeholder] = attr_name
+            expression_attribute_values[attr_value_placeholder] = {'S': attr_value_start}
+
+            # Append the begins_with condition to the filter expression list
+            filter_expressions.append(f"begins_with({attr_name_placeholder}, {attr_value_placeholder})")
+
+    # Join all filter expressions with AND (if any)
+    if filter_expressions:
+        query_params['FilterExpression'] = " AND ".join(filter_expressions)
+        query_params['ExpressionAttributeNames'] = expression_attribute_names
+
+    # Limit the query if there's no begins_with filter provided
+    if not filter_expressions:
+        query_params['Limit'] = page_size
+
+    # Use exclusive_start_key if provided
+    if exclusive_start_key:
+        serializer = TypeSerializer()
+        exclusive_start_key = {k: serializer.serialize(v) for k, v in exclusive_start_key.items()}
+        query_params['ExclusiveStartKey'] = exclusive_start_key
+
+    # Query the DynamoDB table or index
+    response = dynamodb.query(**query_params)
+
+    items = [unmarshal_dynamodb_item(item) for item in response.get('Items', [])]
+    last_evaluated_key = response.get('LastEvaluatedKey')
+    if last_evaluated_key:
+        last_evaluated_key = unmarshal_dynamodb_item(last_evaluated_key)
+
+    return {
+        'success': True,
+        'data': {
+            'items': items,
+            'pageKey': last_evaluated_key
+        }
+    }
 
 
 def unmarshal_dynamodb_item(item):
@@ -333,114 +433,114 @@ def unmarshal_dynamodb_item(item):
     return python_data
 
 
-def query_user_files_by_created_at(
-        user,
-        created_at_start,
-        name_prefix=None,
-        created_at_prefix=None,
-        type_prefix=None,
-        tag_filter_list=None,
-        page_index=0,
-        page_size=10,
-        exclusive_start_key=None,
-        forward_scan=False
-):
-    # Initialize a boto3 DynamoDB client
-    dynamodb = boto3.client('dynamodb')
-
-    # Compute the offset for pagination
-    offset = page_size * page_index
-
-    # Prepare the base query parameters
-    query_params = {
-        'TableName': os.environ['FILES_DYNAMO_TABLE'],
-        'IndexName': 'createdByAndAt',
-        'KeyConditionExpression': 'createdBy = :created_by AND createdAt >= :created_at_start',
-        'ExpressionAttributeValues': {
-            ':created_by': {'S': user},
-            ':created_at_start': {'S': created_at_start}
-        },
-        'ScanIndexForward': forward_scan
-    }
-
-    if not name_prefix and not created_at_prefix and not type_prefix and not tag_filter_list:
-        # If no filters are provided, use the basic query parameters
-        query_params['Limit'] = page_size
-
-    # Add exclusive_start_key to the query parameters if provided
-    if exclusive_start_key:
-        exclusive_start_key = {
-            'createdBy': {'S': user},  # Assuming 'createdBy' is the partition key
-            'createdAt': {'S': exclusive_start_key.get('createdAt', None)},  # Assuming 'createdAt' is the sort key
-            'id': {'S': exclusive_start_key.get('id', None)}  # Assuming 'createdAt' is the sort key
-        }
-        query_params['ExclusiveStartKey'] = exclusive_start_key
-        print(f"Using exclusive_start_key: {exclusive_start_key}")
-
-    # Initialize placeholder dictionary and filter expression components
-    expression_attribute_names = {}
-    filter_expressions = []
-
-    # Apply name prefix filter if provided
-    if name_prefix:
-        filter_expressions.append("begins_with(#name, :name_prefix)")
-        query_params['ExpressionAttributeValues'][':name_prefix'] = {'S': name_prefix}
-        expression_attribute_names['#name'] = 'name'
-
-    # Apply created_at prefix filter if provided
-    if created_at_prefix:
-        filter_expressions.append("begins_with(#createdAt, :created_at_prefix)")
-        query_params['ExpressionAttributeValues'][':created_at_prefix'] = {'S': created_at_prefix}
-        expression_attribute_names['#createdAt'] = 'createdAt'
-
-    # Apply type prefix filter if provided
-    if type_prefix:
-        filter_expressions.append("begins_with(#type, :type_prefix)")
-        query_params['ExpressionAttributeValues'][':type_prefix'] = {'S': type_prefix}
-        expression_attribute_names['#type'] = 'type'
-
-    # Apply tag filter list if provided
-    if tag_filter_list:
-        tags_filters = " OR ".join(f"contains(#tags, :tag{index})" for index, tag in enumerate(tag_filter_list))
-        filter_expressions.append(f"({tags_filters})")
-        for index, tag in enumerate(tag_filter_list):
-            query_params['ExpressionAttributeValues'][f":tag{index}"] = {'S': tag}
-        expression_attribute_names['#tags'] = 'tags'
-
-    # Only add expression attribute names to query_params if it's not empty
-    if expression_attribute_names:
-        query_params['ExpressionAttributeNames'] = expression_attribute_names
-
-    # Join all filter expressions with 'AND' and add to query_params if any filters exist
-    if filter_expressions:
-        query_params['FilterExpression'] = " AND ".join(filter_expressions)
-
-    # Query the DynamoDB GSI
-    response = dynamodb.query(**query_params)
-
-    # Extract the items and trim down to the page size
-    items = response.get('Items', [])
-    plain_items = [unmarshal_dynamodb_item(item) for item in items]
-    # Only return the items for the requested page, discard the rest (used for estimate)
-    page_items = plain_items[offset:offset + page_size]
-
-    # Estimate the total number of items
-    total_estimate = len(page_items) + offset
-
-    # Pagination information
-    last_evaluated_key = response.get('LastEvaluatedKey')
-    if last_evaluated_key:
-        last_evaluated_key = unmarshal_dynamodb_item(last_evaluated_key)
-
-    # Return the results
-    return {
-        'success': True,
-        'data': {
-            'items': page_items,
-            'pageKey': last_evaluated_key,
-            'totalEstimate': total_estimate
-        }
-    }
+# def query_user_files_by_created_at(
+#         user,
+#         created_at_start,
+#         name_prefix=None,
+#         created_at_prefix=None,
+#         type_prefix=None,
+#         tag_filter_list=None,
+#         page_index=0,
+#         page_size=10,
+#         exclusive_start_key=None,
+#         forward_scan=False
+# ):
+#     # Initialize a boto3 DynamoDB client
+#     dynamodb = boto3.client('dynamodb')
+#
+#     # Compute the offset for pagination
+#     offset = page_size * page_index
+#
+#     # Prepare the base query parameters
+#     query_params = {
+#         'TableName': os.environ['FILES_DYNAMO_TABLE'],
+#         'IndexName': 'createdByAndAt',
+#         'KeyConditionExpression': 'createdBy = :created_by AND createdAt >= :created_at_start',
+#         'ExpressionAttributeValues': {
+#             ':created_by': {'S': user},
+#             ':created_at_start': {'S': created_at_start}
+#         },
+#         'ScanIndexForward': forward_scan
+#     }
+#
+#     if not name_prefix and not created_at_prefix and not type_prefix and not tag_filter_list:
+#         # If no filters are provided, use the basic query parameters
+#         query_params['Limit'] = page_size
+#
+#     # Add exclusive_start_key to the query parameters if provided
+#     if exclusive_start_key:
+#         exclusive_start_key = {
+#             'createdBy': {'S': user},  # Assuming 'createdBy' is the partition key
+#             'createdAt': {'S': exclusive_start_key.get('createdAt', None)},  # Assuming 'createdAt' is the sort key
+#             'id': {'S': exclusive_start_key.get('id', None)}  # Assuming 'createdAt' is the sort key
+#         }
+#         query_params['ExclusiveStartKey'] = exclusive_start_key
+#         print(f"Using exclusive_start_key: {exclusive_start_key}")
+#
+#     # Initialize placeholder dictionary and filter expression components
+#     expression_attribute_names = {}
+#     filter_expressions = []
+#
+#     # Apply name prefix filter if provided
+#     if name_prefix:
+#         filter_expressions.append("begins_with(#name, :name_prefix)")
+#         query_params['ExpressionAttributeValues'][':name_prefix'] = {'S': name_prefix}
+#         expression_attribute_names['#name'] = 'name'
+#
+#     # Apply created_at prefix filter if provided
+#     if created_at_prefix:
+#         filter_expressions.append("begins_with(#createdAt, :created_at_prefix)")
+#         query_params['ExpressionAttributeValues'][':created_at_prefix'] = {'S': created_at_prefix}
+#         expression_attribute_names['#createdAt'] = 'createdAt'
+#
+#     # Apply type prefix filter if provided
+#     if type_prefix:
+#         filter_expressions.append("begins_with(#type, :type_prefix)")
+#         query_params['ExpressionAttributeValues'][':type_prefix'] = {'S': type_prefix}
+#         expression_attribute_names['#type'] = 'type'
+#
+#     # Apply tag filter list if provided
+#     if tag_filter_list:
+#         tags_filters = " OR ".join(f"contains(#tags, :tag{index})" for index, tag in enumerate(tag_filter_list))
+#         filter_expressions.append(f"({tags_filters})")
+#         for index, tag in enumerate(tag_filter_list):
+#             query_params['ExpressionAttributeValues'][f":tag{index}"] = {'S': tag}
+#         expression_attribute_names['#tags'] = 'tags'
+#
+#     # Only add expression attribute names to query_params if it's not empty
+#     if expression_attribute_names:
+#         query_params['ExpressionAttributeNames'] = expression_attribute_names
+#
+#     # Join all filter expressions with 'AND' and add to query_params if any filters exist
+#     if filter_expressions:
+#         query_params['FilterExpression'] = " AND ".join(filter_expressions)
+#
+#     # Query the DynamoDB GSI
+#     response = dynamodb.query(**query_params)
+#
+#     # Extract the items and trim down to the page size
+#     items = response.get('Items', [])
+#     plain_items = [unmarshal_dynamodb_item(item) for item in items]
+#     # Only return the items for the requested page, discard the rest (used for estimate)
+#     page_items = plain_items[offset:offset + page_size]
+#
+#     # Estimate the total number of items
+#     total_estimate = len(page_items) + offset
+#
+#     # Pagination information
+#     last_evaluated_key = response.get('LastEvaluatedKey')
+#     if last_evaluated_key:
+#         last_evaluated_key = unmarshal_dynamodb_item(last_evaluated_key)
+#
+#     # Return the results
+#     return {
+#         'success': True,
+#         'data': {
+#             'items': page_items,
+#             'pageKey': last_evaluated_key,
+#             'totalEstimate': total_estimate
+#         }
+#     }
 
 
 def query_user_files_by_created_at2(user, created_at_start, page_size, exclusive_start_key=None):

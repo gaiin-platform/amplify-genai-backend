@@ -707,6 +707,12 @@ resources:
           -
             AttributeName: createdAt
             AttributeType: S
+          -
+            AttributeName: type
+            AttributeType: S
+          -
+            AttributeName: name
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
@@ -730,6 +736,28 @@ resources:
                 KeyType: HASH
               -
                 AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndType
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: type
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndName
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: name
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL

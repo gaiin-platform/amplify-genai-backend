@@ -205,6 +205,10 @@ file_query_schema = {
         "forwardScan": {
             "type": "boolean",
             "default": True
+        },
+        "sortIndex": {
+            "type": "string",
+            "default": "createdAt"
         }
     },
     "additionalProperties": False
