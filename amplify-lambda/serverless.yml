@@ -153,6 +153,14 @@ functions:
           method: post
           cors: true
 
+  set_tags_user_files:
+    handler: assistant/assistant.update_item_tags
+    events:
+      - http:
+          path: assistant/files/set_tags
+          method: post
+          cors: true
+
   query_user_files:
     handler: assistant/assistant.query_user_files
     events:

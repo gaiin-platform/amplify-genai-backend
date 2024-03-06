@@ -149,13 +149,20 @@ def get_presigned_download_url(event, context, current_user, name, data):
         print(f"User doesn't match for file for {current_user}: {response['Item']}")
         return {'success': False, 'message': 'File not found'}
 
+    download_filename = response['Item']['name']
+
+    response_headers = {
+        'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
+    } if download_filename else {}
+
     # If the user matches, generate a presigned URL for downloading the file from S3
     try:
         presigned_url = s3.generate_presigned_url(
             ClientMethod='get_object',
             Params={
                 'Bucket': bucket_name,
-                'Key': key
+                'Key': key,
+                **response_headers
             },
             ExpiresIn=3600  # Expiration time for the presigned URL, in seconds
         )
@@ -265,6 +272,37 @@ def get_presigned_url(event, context, current_user, name, data):
         return {'success': False}
 
 
+@validated(op="set_tags")
+def update_item_tags(event, context, current_user, name, data):
+    table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
+
+    data = data['data']
+    item_id = data['id']
+    tags = data['tags']
+
+    dynamodb = boto3.resource('dynamodb')  # Create a DynamoDB resource using boto3
+    table = dynamodb.Table(table_name)  # Select the table
+
+    try:
+        response = table.get_item(Key={'id': item_id})
+        item = response.get('Item')
+
+        if item and item.get('createdBy') == current_user:
+            update_response = table.update_item(
+                Key={'id': item_id},
+                UpdateExpression="SET tags = :tags",
+                ExpressionAttributeValues={
+                    ':tags': tags
+                }
+            )
+            return {"success": True, "message": "Tags updated"}
+        else:
+            return {"success": False, "message": "File not found"}
+
+    except ClientError as e:
+        return {"success": False, "message": e.response['Error']['Message']}
+
+
 @validated(op="query")
 def query_user_files(event, context, current_user, name, data):
     # Extract the query parameters from the event
@@ -286,7 +324,7 @@ def query_user_files(event, context, current_user, name, data):
     name_prefix = query_params.get('namePrefix')
     created_at_prefix = query_params.get('createdAtPrefix')
     type_prefix = query_params.get('typePrefix')
-    tag_filter_list = query_params.get('tags', [])
+    tag_search = query_params.get('tags', None)
     page_index = query_params.get('pageIndex', 0)
     forward_scan = query_params.get('forwardScan', False)
 
@@ -302,19 +340,23 @@ def query_user_files(event, context, current_user, name, data):
         if sort_index == "name":
             sort_key_value_start = name_prefix
         else:
-            begins_with_filters.append({'attribute': 'name', 'value': name_prefix})
+            begins_with_filters.append({'attribute': 'name', 'value': name_prefix, 'expression': 'contains'})
 
     if created_at_prefix:
         if sort_index == "createdAt":
             sort_key_value_start = created_at_prefix
         else:
-            begins_with_filters.append({'attribute': 'createdAt', 'value': created_at_prefix})
+            begins_with_filters.append(
+                {'attribute': 'createdAt', 'value': created_at_prefix, 'expression': 'begins_with'})
 
     if type_prefix:
         if sort_index == "type":
             sort_key_value_start = type_prefix
         else:
-            begins_with_filters.append({'attribute': 'type', 'value': type_prefix})
+            begins_with_filters.append({'attribute': 'type', 'value': type_prefix, 'expression': 'begins_with'})
+
+    if tag_search:
+        begins_with_filters.append({'attribute': 'tags', 'value': tag_search, 'expression': 'contains'})
 
     # Print all of the params (for debugging purposes)
     print(f"Querying user files with the following parameters: "
@@ -324,7 +366,7 @@ def query_user_files(event, context, current_user, name, data):
           f"name_prefix={name_prefix}, "
           f"created_at_prefix={created_at_prefix}, "
           f"type_prefix={type_prefix}, "
-          f"tag_filter_list={tag_filter_list}, "
+          f"tag_search={tag_search}, "
           f"page_index={page_index}"
           f"forward_scan={forward_scan}"
           f"sort_index={index_name}")
@@ -337,7 +379,7 @@ def query_user_files(event, context, current_user, name, data):
         sort_key_name=sort_key_name,
         partition_key_value=current_user,
         sort_key_value_start=sort_key_value_start,
-        begins_with_filters=begins_with_filters,
+        filters=begins_with_filters,
         exclusive_start_key=exclusive_start_key,
         page_size=page_size,
         forward_scan=forward_scan
@@ -351,8 +393,25 @@ def query_user_files(event, context, current_user, name, data):
 
 
 def query_table_index(table_name, index_name, partition_key_name, sort_key_name, partition_key_value,
-                      sort_key_value_start=None, begins_with_filters=None, exclusive_start_key=None, page_size=10,
+                      sort_key_value_start=None, filters=None, exclusive_start_key=None, page_size=10,
                       forward_scan=False):
+    """
+    Do not allow the client to directly provide the table_name, index_name, partition_key_name,
+    or any of the attribute value names in the filters. This is not a safe function to directly
+    expose, just like you wouldn't expose the raw query interface of Dynamo.
+
+    :param table_name:
+    :param index_name:
+    :param partition_key_name:
+    :param sort_key_name:
+    :param partition_key_value:
+    :param sort_key_value_start:
+    :param filters:
+    :param exclusive_start_key:
+    :param page_size:
+    :param forward_scan:
+    :return:
+    """
     dynamodb = boto3.client('dynamodb')
 
     # Initialize the key condition expression for the partition key
@@ -378,26 +437,40 @@ def query_table_index(table_name, index_name, partition_key_name, sort_key_name,
 
     # Add filter expression if begins_with_filters are provided
     filter_expressions = []
-    if begins_with_filters:
-        for begins_with in begins_with_filters:
-            attr_name = begins_with['attribute']
-            attr_value_start = begins_with['value']
 
-            # Create placeholders for attribute names and values
+    if filters:
+        for filter_def in filters:
+            attr_name = filter_def['attribute']
+            attr_values = filter_def['value']
+            attr_op = filter_def['expression']
+
+            # If attr_values is a single value, make it a list to standardize processing
+            if not isinstance(attr_values, list):
+                attr_values = [attr_values]
+
+            # Create placeholders for attribute names
             attr_name_placeholder = f"#{attr_name}"
-            attr_value_placeholder = f":begins_with_value_{attr_name}"
-
-            # Add the attribute name and value placeholders to the respective dictionaries
             expression_attribute_names[attr_name_placeholder] = attr_name
-            expression_attribute_values[attr_value_placeholder] = {'S': attr_value_start}
 
-            # Append the begins_with condition to the filter expression list
-            filter_expressions.append(f"begins_with({attr_name_placeholder}, {attr_value_placeholder})")
+            # Create a separate contains condition for each value in the list
+            for i, val in enumerate(attr_values):
+                # Create placeholders for attribute values
+                attr_value_placeholder = f":{attr_op}_value_{attr_name}_{i}"
+
+                # Set the expression attribute values, conservatively assuming the values are strings
+                expression_attribute_values[attr_value_placeholder] = {'S': str(val)}
+
+                # Depending on the operation, add the correct filter expression
+                if attr_op == 'begins_with' and len(attr_values) == 1:  # 'begins_with' can't be used with lists
+                    filter_expressions.append(f"begins_with({attr_name_placeholder}, {attr_value_placeholder})")
+                elif attr_op == 'contains':  # Check each value in the provided list
+                    filter_expressions.append(f"contains({attr_name_placeholder}, {attr_value_placeholder})")
 
     # Join all filter expressions with AND (if any)
     if filter_expressions:
         query_params['FilterExpression'] = " AND ".join(filter_expressions)
         query_params['ExpressionAttributeNames'] = expression_attribute_names
+        query_params['ExpressionAttributeValues'] = expression_attribute_values
 
     # Limit the query if there's no begins_with filter provided
     if not filter_expressions:
@@ -408,6 +481,8 @@ def query_table_index(table_name, index_name, partition_key_name, sort_key_name,
         serializer = TypeSerializer()
         exclusive_start_key = {k: serializer.serialize(v) for k, v in exclusive_start_key.items()}
         query_params['ExclusiveStartKey'] = exclusive_start_key
+
+    print(f"Query: {query_params}")
 
     # Query the DynamoDB table or index
     response = dynamodb.query(**query_params)
@@ -431,116 +506,6 @@ def unmarshal_dynamodb_item(item):
     # Unmarshal a DynamoDB item into a normal Python dictionary
     python_data = {k: deserializer.deserialize(v) for k, v in item.items()}
     return python_data
-
-
-# def query_user_files_by_created_at(
-#         user,
-#         created_at_start,
-#         name_prefix=None,
-#         created_at_prefix=None,
-#         type_prefix=None,
-#         tag_filter_list=None,
-#         page_index=0,
-#         page_size=10,
-#         exclusive_start_key=None,
-#         forward_scan=False
-# ):
-#     # Initialize a boto3 DynamoDB client
-#     dynamodb = boto3.client('dynamodb')
-#
-#     # Compute the offset for pagination
-#     offset = page_size * page_index
-#
-#     # Prepare the base query parameters
-#     query_params = {
-#         'TableName': os.environ['FILES_DYNAMO_TABLE'],
-#         'IndexName': 'createdByAndAt',
-#         'KeyConditionExpression': 'createdBy = :created_by AND createdAt >= :created_at_start',
-#         'ExpressionAttributeValues': {
-#             ':created_by': {'S': user},
-#             ':created_at_start': {'S': created_at_start}
-#         },
-#         'ScanIndexForward': forward_scan
-#     }
-#
-#     if not name_prefix and not created_at_prefix and not type_prefix and not tag_filter_list:
-#         # If no filters are provided, use the basic query parameters
-#         query_params['Limit'] = page_size
-#
-#     # Add exclusive_start_key to the query parameters if provided
-#     if exclusive_start_key:
-#         exclusive_start_key = {
-#             'createdBy': {'S': user},  # Assuming 'createdBy' is the partition key
-#             'createdAt': {'S': exclusive_start_key.get('createdAt', None)},  # Assuming 'createdAt' is the sort key
-#             'id': {'S': exclusive_start_key.get('id', None)}  # Assuming 'createdAt' is the sort key
-#         }
-#         query_params['ExclusiveStartKey'] = exclusive_start_key
-#         print(f"Using exclusive_start_key: {exclusive_start_key}")
-#
-#     # Initialize placeholder dictionary and filter expression components
-#     expression_attribute_names = {}
-#     filter_expressions = []
-#
-#     # Apply name prefix filter if provided
-#     if name_prefix:
-#         filter_expressions.append("begins_with(#name, :name_prefix)")
-#         query_params['ExpressionAttributeValues'][':name_prefix'] = {'S': name_prefix}
-#         expression_attribute_names['#name'] = 'name'
-#
-#     # Apply created_at prefix filter if provided
-#     if created_at_prefix:
-#         filter_expressions.append("begins_with(#createdAt, :created_at_prefix)")
-#         query_params['ExpressionAttributeValues'][':created_at_prefix'] = {'S': created_at_prefix}
-#         expression_attribute_names['#createdAt'] = 'createdAt'
-#
-#     # Apply type prefix filter if provided
-#     if type_prefix:
-#         filter_expressions.append("begins_with(#type, :type_prefix)")
-#         query_params['ExpressionAttributeValues'][':type_prefix'] = {'S': type_prefix}
-#         expression_attribute_names['#type'] = 'type'
-#
-#     # Apply tag filter list if provided
-#     if tag_filter_list:
-#         tags_filters = " OR ".join(f"contains(#tags, :tag{index})" for index, tag in enumerate(tag_filter_list))
-#         filter_expressions.append(f"({tags_filters})")
-#         for index, tag in enumerate(tag_filter_list):
-#             query_params['ExpressionAttributeValues'][f":tag{index}"] = {'S': tag}
-#         expression_attribute_names['#tags'] = 'tags'
-#
-#     # Only add expression attribute names to query_params if it's not empty
-#     if expression_attribute_names:
-#         query_params['ExpressionAttributeNames'] = expression_attribute_names
-#
-#     # Join all filter expressions with 'AND' and add to query_params if any filters exist
-#     if filter_expressions:
-#         query_params['FilterExpression'] = " AND ".join(filter_expressions)
-#
-#     # Query the DynamoDB GSI
-#     response = dynamodb.query(**query_params)
-#
-#     # Extract the items and trim down to the page size
-#     items = response.get('Items', [])
-#     plain_items = [unmarshal_dynamodb_item(item) for item in items]
-#     # Only return the items for the requested page, discard the rest (used for estimate)
-#     page_items = plain_items[offset:offset + page_size]
-#
-#     # Estimate the total number of items
-#     total_estimate = len(page_items) + offset
-#
-#     # Pagination information
-#     last_evaluated_key = response.get('LastEvaluatedKey')
-#     if last_evaluated_key:
-#         last_evaluated_key = unmarshal_dynamodb_item(last_evaluated_key)
-#
-#     # Return the results
-#     return {
-#         'success': True,
-#         'data': {
-#             'items': page_items,
-#             'pageKey': last_evaluated_key,
-#             'totalEstimate': total_estimate
-#         }
-#     }
 
 
 def query_user_files_by_created_at2(user, created_at_start, page_size, exclusive_start_key=None):

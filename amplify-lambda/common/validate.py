@@ -156,6 +156,24 @@ file_upload_schema = {
     "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
 }
 
+
+file_set_tags_schema = {
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        }
+    },
+    "additionalProperties": False
+}
+
 file_query_schema = {
     "type": "object",
     "properties": {
@@ -480,6 +498,9 @@ validators = {
     },
     "/assistant/files/download": {
         "download": key_request_schema
+    },
+    "/assistant/files/set_tags": {
+        "set_tags": file_set_tags_schema
     },
     "/assistant/files/query": {
         "query": file_query_schema
