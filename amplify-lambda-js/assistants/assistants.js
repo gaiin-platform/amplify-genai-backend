@@ -28,6 +28,8 @@ const defaultAssistant = {
             Models[body.options.model.id]:
             (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
 
+        logger.debug("Using model: ", model);
+
         const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
         const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
         const aboveLimit = requiredTokens >= limit;
