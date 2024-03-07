@@ -4,42 +4,67 @@ import {getLogger} from "../common/logging.js";
 
 const logger = getLogger("anthropic");
 
-export const chatBedrock = async (chatBody, writable) => {
+export const chatAnthropic = async (chatBody, writable) => {
 
     let body = {...chatBody};
     const options = {...body.options}; //
     delete body.options; //
 
+    const enhancedPrompt = `${options.prompt} Remember no diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me.`
+
     try {
         // Ensure credentials are in ~/.aws/credentials
-        const client = new AnthropicBedrock({awsRegion: 'us-east-1'});
-         
-        logger.debug("Format Messages array to string");
-        const humanPrompt = body.messages.slice(1).map(message => {
-                const role = message.role === 'user' ? "\n\nHuman: " : "\n\nAssistant: ";
-                return `${role} ${message.content}`;
-            });
-
-        // my attempt to encourage the model to behave like Messages would.
-
+        const client = new AnthropicBedrock({awsRegion: 'us-west-2'}); // default to 1 if omitted
+        
         logger.debug("Initiating call to Anthropic Bedrock");
 
         // AnthropicBedrock.HUMAN_PROMPT and AnthropicBedrock.AI_PROMPT are undefined
 
-        const stream = await client.completions.create({
-        prompt: `\n\nHuman: ${options.prompt} Remember no diagrams unless asked,no markdown within the response text, and no reiterating this rule to me. ${humanPrompt} \n\nAssistant:`,
-        model: options.model.id,
-        stream: true,
-        max_tokens_to_sample: options.model.tokenLimit,
-        temperature: options.temperature
-        });
+        const selectedModel = options.model.id;
+        
+        let stream;
+        if (selectedModel.includes("sonnet")) {
+            
+            logger.debug("Formatting Messages array as needed");
+            body.messages[0] = {role : "user", content : enhancedPrompt};
+            body.messages.splice(1, 0, {role:"assistant", content: "Understood!"});
 
-        logger.debug("Awaiting stream data");
+            //Claude 3
+            stream = await client.messages.create({
+                model: selectedModel,
+                max_tokens: options.model.tokenLimit,
+                messages: body.messages, 
+                stream: true, 
+                temperature: options.temperature,
+            });
+        
 
-        for await (const completion of stream) {
-             //completion.completion
-            sendDeltaToStream(writable, "assistant", completion); 
+        } else { 
+            // Claude Models 2.1 and instant 1.2
+            logger.debug("Format Messages array to string");
+            const humanPrompt = body.messages.slice(1).map(message => {
+                    const role = message.role === 'user' ? "\n\nHuman: " : "\n\nAssistant: ";
+                    return `${role} ${message.content}`;
+                    });
+
+            stream = await client.completions.create({
+                prompt: `\n\nHuman: ${enhancedPrompt} ${humanPrompt} \n\nAssistant:`,
+                model: selectedModel,
+                stream: true,
+                max_tokens_to_sample: options.model.tokenLimit,
+                temperature: options.temperature
+                });
         }
+
+            logger.debug("Awaiting stream data");
+            for await (const completion of stream) {
+                sendDeltaToStream(writable, "answer", completion);  
+            }    
+            
+        
+            
+        
+        
 
         //end writable stream
         writable.end();
@@ -53,12 +78,13 @@ export const chatBedrock = async (chatBody, writable) => {
             reject(error);
         });
         
-
+        
     } catch (error) {
         logger.error('Error invoking Bedrock Anthropic: ', error);
 
 
     }
+
 }
 
 
