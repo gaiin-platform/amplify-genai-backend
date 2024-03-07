@@ -7,7 +7,8 @@ import boto3
 import logging
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version    = os.environ['API_VERSION']
@@ -40,9 +41,9 @@ def preprocess_text(text):
 
 
 def generate_embeddings(content):
-    print(f"Getting Embedding Endpoints")
+    logger.info("Getting Embedding Endpoints")
     endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
-    print(f"Endpoint: {endpoint}")
+    logger.info(f"Endpoint: {endpoint}")
 
     client = AzureOpenAI(
     api_key = api_key,
@@ -50,19 +51,18 @@ def generate_embeddings(content):
     api_version = api_version
     )
     try:
-        #print(f"Getting embeddings for: {content}")
         response = client.embeddings.create(input=content, model=embedding_model_name)
+        logger.info(f"Embedding: {response.data[0].embedding}")
         return response.data[0].embedding
     except Exception as e:
-        print(f"An error occurred: {e}")
-        # Optionally, re-raise the exception if you want it to propagate
+        logger.error(f"An error occurred: {e}", exc_info=True)
         raise
 
 
 def generate_keywords(content):
-    print(f"Getting Keywords Endpoints")
+    logger.info("Getting Keywords Endpoints")
     endpoint, api_key = get_endpoint(keyword_model_name, endpoints_arn)
-    print(f"Endpoint: {endpoint}")
+    logger.info(f"Endpoint: {endpoint}")
 
     client = AzureOpenAI(
     api_key = api_key,
@@ -80,28 +80,27 @@ def generate_keywords(content):
       
         raw_keywords = response.choices[0].message.content.strip()
         keywords = clean_text(raw_keywords)
-        #print(f"Keywords: {keywords}")
+        logger.info(f"Keywords: {keywords}")
         return {
             "statusCode": 200,
             "body": {
                 "keywords": keywords
             }
         }
-
-
     except Exception as e:
-        # Handle other errors
+        logger.error(f"An error occurred: {str(e)}", exc_info=True)
         return {
             "statusCode": 500,
             "body": {
                 "error": f"An error occurred: {str(e)}"
             }
         }
+    
 def generate_questions(content):
 
-    print(f"Getting QA Endpoints")
+    logger.info("Getting QA Endpoints")
     endpoint, api_key = get_endpoint(qa_model_name, endpoints_arn)
-    print(f"Endpoint: {endpoint}")
+    logger.info(f"Endpoint: {endpoint}")
 
     client = AzureOpenAI(
     api_key = api_key,
@@ -117,7 +116,7 @@ def generate_questions(content):
             temperature=.7
         )
         questions = response.choices[0].message.content.strip()
-        #print(f"Questions: {questions}")
+        logger.info(f"Questions: {questions}")
 
         return {
             "statusCode": 200,
@@ -125,16 +124,15 @@ def generate_questions(content):
                 "questions": questions
             }
         }
-
-
     except Exception as e:
-        print(f"An error occurred: {e}")
-        # Handle other errors
+        logger.error(f"An error occurred: {e}", exc_info=True)
         return {
             "statusCode": 500,
             "body": {
                 "error": f"An error occurred: {str(e)}"
             }
         }
+
+
 
 
