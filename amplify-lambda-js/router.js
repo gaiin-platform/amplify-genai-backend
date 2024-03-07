@@ -1,16 +1,22 @@
 import {chat} from "./azure/openai.js";
 import {chatAnthropic} from "./bedrock/anthropic.js";
 import {chatMistral} from "./bedrock/mistral.js";
-import {canReadDatasource} from "./common/permissions.js";
+import {canReadDatasource, canReadDataSources} from "./common/permissions.js";
 import {Models} from "./models/models.js";
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {getLogger} from "./common/logging.js";
 import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
-import {sendStateEventToStream} from "./common/streams.js";
-import {translateUserDataSourcesToHashDataSources} from "./datasource/datasources.js";
+import {sendStateEventToStream, TraceStream} from "./common/streams.js";
+import {
+    extractKey,
+    getDataSourcesInConversation,
+    translateUserDataSourcesToHashDataSources
+} from "./datasource/datasources.js";
+import {saveTrace, trace} from "./common/trace.js";
 
+const doTrace = process.env.TRACING_ENABLED;
 const logger = getLogger("router");
 
 function getRequestId(params) {
@@ -106,20 +112,47 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             //delete body.options;
 
             try {
-                if (dataSources.some((ds) => !canReadDatasource(params.user, ds.id))) {
-                    returnResponse(responseStream, {
-                        statusCode: 401,
-                        body: {error: "Unauthorized data source access."}
-                    });
-                }
 
                 dataSources = await translateUserDataSourcesToHashDataSources(dataSources);
+
+                const convoDataSources = await translateUserDataSourcesToHashDataSources(
+                    getDataSourcesInConversation(body, true)
+                );
+
+                const allDataSources = [
+                    ...dataSources,
+                    ...convoDataSources
+                ]
+
+                const nonUserSources = allDataSources.filter(ds =>
+                    !extractKey(ds.id).startsWith(params.user+"/")
+                );
+
+                if(nonUserSources && nonUserSources.length > 0) {
+                    if (!await canReadDataSources(params.accessToken, nonUserSources)) {
+                        returnResponse(responseStream, {
+                            statusCode: 401,
+                            body: {error: "Unauthorized data source access."}
+                        });
+                    }
+                }
 
             } catch (e) {
                 logger.error("Error checking access on data sources: " + e);
                 returnResponse(responseStream, {
                     statusCode: 401,
                     body: {error: "Unauthorized data source access."}
+                });
+            }
+
+            if(doTrace) {
+                responseStream = new TraceStream({}, responseStream);
+            }
+
+            if (!model) {
+                returnResponse(responseStream, {
+                    statusCode: 400,
+                    body: {error: "Invalid model."}
                 });
             }
 
@@ -159,6 +192,11 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 responseStream);
 
             await deleteRequestState(params.user, requestId);
+
+            if(doTrace) {
+                trace(requestId, ["response"], {stream: responseStream.trace})
+                await saveTrace(params.user, requestId);
+            }
 
             if (response) {
                 logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");

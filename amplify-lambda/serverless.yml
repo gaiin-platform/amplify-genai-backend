@@ -153,6 +153,22 @@ functions:
           method: post
           cors: true
 
+  set_tags_user_files:
+    handler: assistant/assistant.update_item_tags
+    events:
+      - http:
+          path: assistant/files/set_tags
+          method: post
+          cors: true
+
+  query_user_files:
+    handler: assistant/assistant.query_user_files
+    events:
+      - http:
+          path: assistant/files/query
+          method: post
+          cors: true
+
   create_assistant:
     handler: assistant/assistant.create_assistant
     timeout: 30
@@ -693,9 +709,66 @@ resources:
           -
             AttributeName: id
             AttributeType: S
+          -
+            AttributeName: createdBy
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+          -
+            AttributeName: type
+            AttributeType: S
+          -
+            AttributeName: name
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: createdBy
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndAt
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndType
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: type
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndName
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: name
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.FILES_DYNAMO_TABLE}
 
     HashFilesDynamoDbTable:

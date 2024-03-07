@@ -156,6 +156,82 @@ file_upload_schema = {
     "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
 }
 
+
+file_set_tags_schema = {
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        }
+    },
+    "additionalProperties": False
+}
+
+file_query_schema = {
+    "type": "object",
+    "properties": {
+        "startDate": {
+            "type": "string",
+            "format": "date-time",
+            "default": "2021-01-01T00:00:00Z"
+        },
+        "pageSize": {
+            "type": "integer",
+            "default": 10
+        },
+        "pageKey": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "namePrefix": {
+            "type": ["string", "null"]
+        },
+        "createdAtPrefix": {
+            "type": ["string", "null"]
+        },
+        "typePrefix": {
+            "type": ["string", "null"]
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        },
+        "pageIndex": {
+            "type": "integer",
+            "default": 0
+        },
+        "forwardScan": {
+            "type": "boolean",
+            "default": True
+        },
+        "sortIndex": {
+            "type": "string",
+            "default": "createdAt"
+        }
+    },
+    "additionalProperties": False
+}
+
 run_thread_schema = {
     "type": "object",
     "properties": {
@@ -422,6 +498,12 @@ validators = {
     },
     "/assistant/files/download": {
         "download": key_request_schema
+    },
+    "/assistant/files/set_tags": {
+        "set_tags": file_set_tags_schema
+    },
+    "/assistant/files/query": {
+        "query": file_query_schema
     },
     "/assistant/create": {
         "create": create_assistant_schema

@@ -127,13 +127,47 @@ export const updateKillswitch = async (user, requestId, killswitch) => {
     return true;
 }
 
+class SimpleCache {
+    constructor(maxSize) {
+        this.maxSize = maxSize;
+        this.cache = {};
+        this.keys = [];
+    }
+
+    get(key) {
+        return this.cache[key];
+    }
+
+    put(key, value) {
+        if (this.keys.length >= this.maxSize) {
+            const oldestKey = this.keys.shift();
+            delete this.cache[oldestKey];
+        }
+
+        this.cache[key] = value;
+        this.keys.push(key);
+    }
+}
+
+const killedCache = new SimpleCache(10);
+
 export const isKilled = async (user, responseStream, chatRequest) => {
+
     if (chatRequest && chatRequest.options) {
         const requestId = chatRequest.options.requestId;
+
         if (requestId) {
+
+            const key = user + "__" + requestId;
+            if(killedCache.get(key)) {
+                logger.info("Killswitch triggered, exiting.");
+                return true;
+            }
+
             const doExit = await shouldKill(user, requestId);
             if (doExit) {
                 try {
+                    killedCache.put(key, true);
                     await deleteRequestState(user, requestId);
                 } catch (e) {
                     logger.error("Error deleting request state: " + e);
