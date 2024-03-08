@@ -5,6 +5,7 @@ import json
 from botocore.exceptions import ClientError
 import os
 
+
 # Initialize a DynamoDB client
 dynamodb = boto3.resource('dynamodb')
 
@@ -25,7 +26,7 @@ def is_sufficient_privilege(object_id, permission_level, policy, requested_acces
 
 
 @validated("can_access_objects")
-def can_access_objects(event, context, current_user, name, data):
+def can_access_objects(event, context, current_user, name, data, username, cognito_groups):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
 
@@ -81,7 +82,7 @@ def can_access_objects(event, context, current_user, name, data):
 
 
 @validated("update_object_permissions")
-def update_object_permissions(event, context, current_user, name, data):
+def update_object_permissions(event, context, current_user, name, data, username, cognito_groups):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
 
@@ -165,3 +166,45 @@ def update_object_permissions(event, context, current_user, name, data):
         'statusCode': 200,
         'body': json.dumps('Permissions updated successfully.')
     }
+
+@validated("create_cognito_group")
+def create_cognito_group(event, context, current_user, name, data, username, cognito_groups):
+    """
+    Create a Cognito user group in the specified user pool and add the current user to it.
+
+    :param event: AWS Lambda event object.
+    :param context: AWS Lambda context object.
+    :param current_user: The username or sub of the current user.
+    :param name: The name of the user pool (not used in this function).
+    :param data: The data containing the groupName and description.
+    :return: The response from the create_group call or None if an error occurred.
+    """
+    data = data['data']
+    user_pool_id = os.environ['COGNITO_USER_POOL_ID'] 
+    group_name = data['groupName']
+    description = data['groupDescription']
+    
+    # Initialize a Cognito Identity Provider client
+    cognito_idp = boto3.client('cognito-idp')
+
+    try:
+        # Create the group
+        response = cognito_idp.create_group(
+            GroupName=group_name,
+            UserPoolId=user_pool_id,
+            Description=description
+        )
+        print(f"Group '{group_name}' created successfully.")
+
+        # Add the current user to the group
+        cognito_idp.admin_add_user_to_group(
+            UserPoolId=user_pool_id,
+            Username=username,
+            GroupName=group_name
+        )
+        print(f"User '{current_user}' added to group '{group_name}' successfully.")
+
+        return response
+    except ClientError as e:
+        print(f"An error occurred: {e}")
+        return None

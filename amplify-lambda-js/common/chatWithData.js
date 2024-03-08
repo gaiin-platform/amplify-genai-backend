@@ -6,7 +6,7 @@ import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
-import {anthropicTransform} from "./chat/events/bedrock.js";
+import {claudeTransform, claudeSonnetTransform, mistralTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
@@ -249,11 +249,24 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             recordUsage(account, requestId, model, 0, increment, {});
         }
 
+        const selectedModel = model.id;
         let result;
-        if (model.id.includes("gpt")) {
+        if (selectedModel.includes("gpt")) {
             result = openAiTransform(event);  
-        } else if (model.id.includes("claude")) {
-            result = anthropicTransform(event);
+            
+        } else if (selectedModel.includes("anthropic")) {
+            if (selectedModel.includes("sonnet")){
+                result = claudeSonnetTransform(event);
+            } else {
+                logger.debug("***EVENT: ", event);
+               // claude 2.1 and instant 1.2
+                result = claudeTransform(event); 
+                logger.debug("***RESULT: ", result);
+
+            }  
+
+        } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
+            result = mistralTransform(event);
         }
 
         if(!result){

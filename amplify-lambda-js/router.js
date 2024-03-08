@@ -1,5 +1,6 @@
 import {chat} from "./azure/openai.js";
-import {chatBedrock} from "./bedrock/anthropic.js";
+import {chatAnthropic} from "./bedrock/anthropic.js";
+import {chatMistral} from "./bedrock/mistral.js";
 import {canReadDatasource, canReadDataSources} from "./common/permissions.js";
 import {Models} from "./models/models.js";
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
@@ -70,8 +71,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
             let options = params.body.options ? {...params.body.options} : {};
             
-            // moved from below to check options.model is valid 
-            const modelId = (options.model && options.model.id) || "gpt-4-1106-Preview";
+            const modelId = (options.model && options.model.id);//|| "gpt-4-1106-Preview";
             const model = Models[modelId];
 
 
@@ -87,8 +87,12 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             const chatFn = async (body, writable, context) => {
                 if (model.id.includes("gpt")) {
                     return await chat(getLLMConfig, body, writable, context);
-                } else if (model.id.includes("claude")) {
-                    return await chatBedrock(body, writable, context);
+
+                } else if (model.id.includes("anthropic")) { //claude models
+                    return await chatAnthropic(body, writable, context);
+
+                } else if (model.id.includes("mistral")) { // mistral 7b and mixtral 7x8b
+                    return await chatMistral(body, writable, context);
                 }
             }
 
