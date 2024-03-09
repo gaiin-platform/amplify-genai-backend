@@ -517,7 +517,7 @@ def process_document_for_rag(event, context):
                                 Key={
                                     'id': key
                                 },
-                                UpdateExpression='SET totalTokens = :tokenVal, totalItems = :itemVal, hash = :hashVal',
+                                UpdateExpression='SET totalTokens = :tokenVal, totalItems = :itemVal, dochash = :hashVal',
                                 ExpressionAttributeValues={
                                     ':tokenVal': total_tokens,
                                     ':itemVal': total_items,

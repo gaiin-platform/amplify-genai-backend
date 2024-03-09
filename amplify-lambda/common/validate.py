@@ -209,6 +209,13 @@ file_query_schema = {
         "typePrefix": {
             "type": ["string", "null"]
         },
+        "types": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        },
         "tags": {
             "type": "array",
             "items": {

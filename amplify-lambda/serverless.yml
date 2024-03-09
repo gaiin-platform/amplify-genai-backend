@@ -163,6 +163,7 @@ functions:
 
   query_user_files:
     handler: assistant/assistant.query_user_files
+    timeout: 30
     events:
       - http:
           path: assistant/files/query
