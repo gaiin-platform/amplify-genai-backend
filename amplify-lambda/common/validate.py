@@ -156,7 +156,6 @@ file_upload_schema = {
     "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
 }
 
-
 file_set_tags_schema = {
     "type": "object",
     "properties": {
@@ -170,6 +169,23 @@ file_set_tags_schema = {
             },
             "default": []
         }
+    },
+    "additionalProperties": False
+}
+
+user_list_tags_schema = {
+    "type": "object",
+    "properties": {
+    },
+    "additionalProperties": False
+}
+
+user_delete_tag_schema = {
+    "type": "object",
+    "properties": {
+        "tag": {
+            "type": "string"
+        },
     },
     "additionalProperties": False
 }
@@ -315,10 +331,10 @@ task_and_category_request_schema = {
 add_charge = {
     "type": "object",
     "properties": {
-        "accountId": { "type": "string" },
-        "charge": { "type": "number" },
-        "description": { "type": "string" },
-        "details": { "type": "object" },
+        "accountId": {"type": "string"},
+        "charge": {"type": "number"},
+        "description": {"type": "string"},
+        "details": {"type": "object"},
     },
     "required": ["accountId", "charge", "description", "details"]
 }
@@ -508,6 +524,12 @@ validators = {
     },
     "/assistant/files/set_tags": {
         "set_tags": file_set_tags_schema
+    },
+    "/assistant/tags/delete": {
+        "delete": user_delete_tag_schema
+    },
+    "/assistant/tags/list": {
+        "list": user_list_tags_schema
     },
     "/assistant/files/query": {
         "query": file_query_schema

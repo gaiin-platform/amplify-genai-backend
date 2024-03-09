@@ -38,6 +38,7 @@ provider:
     MARKET_ITEMS_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-items
     THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
+    USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
@@ -105,6 +106,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
@@ -150,6 +153,22 @@ functions:
     events:
       - http:
           path: assistant/files/download
+          method: post
+          cors: true
+
+  list_tags_user:
+    handler: assistant/assistant.list_tags_for_user
+    events:
+      - http:
+          path: assistant/tags/list
+          method: post
+          cors: true
+
+  delete_tag_user:
+    handler: assistant/assistant.delete_tag_from_user
+    events:
+      - http:
+          path: assistant/tags/delete
           method: post
           cors: true
 
@@ -771,6 +790,20 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.FILES_DYNAMO_TABLE}
+
+    UserTagsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+        TableName: ${self:provider.environment.USER_TAGS_DYNAMO_TABLE}
+
 
     HashFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
