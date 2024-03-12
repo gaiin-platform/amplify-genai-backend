@@ -22,6 +22,7 @@ provider:
   versionFunctions: false
   environment:
     AZURE_OPENAI_RESOURCE_NAME: openai
+    DATASOURCES_QUERY_ENDPOINT: ${self:custom.stageVariables.DATASOURCES_QUERY_ENDPOINT}
     RAG_ENDPOINT: ${self:custom.stageVariables.RAG_ENDPOINT}
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
     LLM_ENDPOINTS_SECRETS_NAME: openai-endpoints

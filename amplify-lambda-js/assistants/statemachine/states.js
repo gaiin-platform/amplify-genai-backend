@@ -1051,6 +1051,8 @@ export class StateBasedAssistant {
         const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
 
         const convoDataSources = await translateUserDataSourcesToHashDataSources(
+            params,
+            body,
             getDataSourcesInConversation(body, true)
         );
 

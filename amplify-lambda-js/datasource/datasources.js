@@ -2,16 +2,18 @@ import {S3Client, GetObjectCommand} from '@aws-sdk/client-s3';
 import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
+import {canReadDataSources} from "../common/permissions.js";
 
 const logger = getLogger("datasources");
 
 const client = new S3Client();
 const dynamodbClient = new DynamoDBClient();
 
+const dataSourcesQueryEndpoint = process.env.DATASOURCES_QUERY_ENDPOINT;
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
 export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = true) => {
-    if(chatBody && chatBody.messages) {
+    if (chatBody && chatBody.messages) {
         const base = (includeCurrentMessage ? chatBody.messages : chatBody.messages.slice(0, -1))
 
         return base
@@ -45,6 +47,89 @@ export const getFileText = async (key) => {
         logger.error(error, {bucket: bucket, key: textKey});
         return null;
     }
+}
+
+export const getDataSourcesByTag = async (params, body, tag) => {
+    const bodyData = {
+        "data": {
+            "tags": [tag]
+        }
+    };
+
+    try {
+
+        const response = await fetch(dataSourcesQueryEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${params.accessToken}`
+            },
+            body: JSON.stringify(bodyData)
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data.items) {
+                return data.data.items.map((item) => {
+                    const fullId = (item.id.indexOf("://") > -1) ? item.id : "s3://" + item.id;
+
+                    return {
+                        id: fullId,
+                        type: item.type,
+                        metadata: {}
+                    }
+                });
+            }
+        }
+    } catch (e) {
+        logger.error("Unable to fetch data sources by tag", {tag: tag});
+        logger.error(e);
+    }
+
+    return [];
+}
+
+export const resolveDataSourceAliases = async (params, body, dataSources) => {
+
+    if(!dataSources){
+        return [];
+    }
+
+    const results = dataSources.map(async (ds) => {
+        if (ds.id && ds.id.startsWith("tag://")) {
+            return await getDataSourcesByTag(params, body, ds.id.slice(6).trim());
+        } else {
+            return [ds];
+        }
+    });
+
+    const flattened = (await Promise.all(results)).flatMap((item) => item);
+    return flattened;
+}
+
+export const resolveDataSources = async (params, body, dataSources) => {
+    dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
+
+    const convoDataSources = await translateUserDataSourcesToHashDataSources(
+        params, body, getDataSourcesInConversation(body, true)
+    );
+
+    let allDataSources = [
+        ...dataSources,
+        ...convoDataSources.filter(ds => !dataSources.find(d => d.id === ds.id))
+    ]
+
+    const nonUserSources = allDataSources.filter(ds =>
+        !extractKey(ds.id).startsWith(params.user + "/")
+    );
+
+    if (nonUserSources && nonUserSources.length > 0) {
+        if (!await canReadDataSources(params.accessToken, nonUserSources)) {
+            throw new Error("Unauthorized data source access.");
+        }
+    }
+
+    return allDataSources;
 }
 
 export const extractProtocol = (url) => {
@@ -165,8 +250,11 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
     }
 }
 
-export const translateUserDataSourcesToHashDataSources = async (dataSources) => {
-    const translated = await Promise.all(dataSources.map( async (ds) => {
+export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
+
+    dataSources = await resolveDataSourceAliases(params, body, dataSources);
+
+    const translated = await Promise.all(dataSources.map(async (ds) => {
 
         let key = ds.id;
 
