@@ -10,7 +10,7 @@ export const chatAnthropic = async (chatBody, writable) => {
     const options = {...body.options}; //
     delete body.options; //
 
-    const enhancedPrompt = `${options.prompt} Remember no diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me.`
+    const systemPrompt = `${options.prompt} Remember NO diagrams unless asked, NO markdown WITHIN/THROUGHOUT the response text, and NO reiterating this rule to me.`
 
     try {
         // Ensure credentials are in ~/.aws/credentials
@@ -21,49 +21,20 @@ export const chatAnthropic = async (chatBody, writable) => {
         // AnthropicBedrock.HUMAN_PROMPT and AnthropicBedrock.AI_PROMPT are undefined
 
         const selectedModel = options.model.id;
-        
-        let stream;
-        if (selectedModel.includes("sonnet")) {
-            
-            logger.debug("Formatting Messages array as needed");
-            body.messages[0] = {role : "user", content : enhancedPrompt};
-            body.messages.splice(1, 0, {role:"assistant", content: "Understood!"});
 
-            //Claude 3
-            stream = await client.messages.create({
-                model: selectedModel,
-                max_tokens: options.model.tokenLimit,
-                messages: body.messages, 
-                stream: true, 
-                temperature: options.temperature,
-            });
-        
-
-        } else { 
-            // Claude Models 2.1 and instant 1.2
-            logger.debug("Format Messages array to string");
-            const humanPrompt = body.messages.slice(1).map(message => {
-                    const role = message.role === 'user' ? "\n\nHuman: " : "\n\nAssistant: ";
-                    return `${role} ${message.content}`;
-                    });
-
-            stream = await client.completions.create({
-                prompt: `\n\nHuman: ${enhancedPrompt} ${humanPrompt} \n\nAssistant:`,
-                model: selectedModel,
-                stream: true,
-                max_tokens_to_sample: options.model.tokenLimit,
-                temperature: options.temperature
+        const stream = await client.messages.create({
+                    model: selectedModel,
+                    system: systemPrompt, 
+                    max_tokens: options.model.tokenLimit,
+                    messages: body.messages.slice(1), 
+                    stream: true, 
+                    temperature: options.temperature,
                 });
-        }
-
+        
             logger.debug("Awaiting stream data");
             for await (const completion of stream) {
                 sendDeltaToStream(writable, "answer", completion);  
             }    
-            
-        
-            
-        
         
 
         //end writable stream
