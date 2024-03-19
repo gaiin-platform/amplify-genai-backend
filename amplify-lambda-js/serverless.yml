@@ -1,0 +1,108 @@
+service: vu-amplify-js
+frameworkVersion: '3'
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+
+  stages:
+    - dev
+    - staging
+    - prod
+
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  environment:
+    AZURE_OPENAI_RESOURCE_NAME: openai
+    RAG_ENDPOINT: ${self:custom.stageVariables.RAG_ENDPOINT}
+    RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
+    LLM_ENDPOINTS_SECRETS_NAME: openai-endpoints
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
+    S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
+    S3_FILE_TEXT_BUCKET_NAME: vu-amplify-${sls:stage}-file-text
+    COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+    COGNITO_CLIENT_ID: ${self:custom.stageVariables.COGNITO_CLIENT_ID}
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    SECRETS_NAME: ${self:custom.stageVariables.SECRETS_NAME}
+    SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
+    OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
+    USAGE_ENDPOINT: ${self:custom.stageVariables.USAGE_ENDPOINT}
+    CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
+    REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
+    HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
+    TRACE_BUCKET_NAME: vu-amplify-${sls:stage}-chat-traces
+    ASSISTANT_TASK_RESULTS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-results
+    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
+    ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
+    TRACING_ENABLED: false
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+            - s3:GetObject
+            - s3:ListBucket
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - bedrock:InvokeModelWithResponseStream
+            - bedrock:InvokeModel
+          Resource:
+            - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
+            - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
+            - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1:2:100k'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
+
+        - Effect: Allow
+          Action:
+            - dynamodb:DeleteItem
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+
+functions:
+  chat:
+    handler: index.handler
+    memorySize: 1024
+    timeout: 900
+    url:
+      cors: true
+      invokeMode: RESPONSE_STREAM
+
+resources:
+  Resources:
+    RequestStateDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: requestId
+            AttributeType: S
+          -
+            AttributeName: user
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: user
+            KeyType: HASH
+          -
+            AttributeName: requestId
+            KeyType: RANGE
+        TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}

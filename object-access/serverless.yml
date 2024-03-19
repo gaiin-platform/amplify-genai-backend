@@ -1,0 +1,185 @@
+service: vu-amplify-object-access
+
+
+frameworkVersion: '3'
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-deployment-bucket
+  - serverless-iam-roles-per-function
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: python3.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
+
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+            
+functions:
+
+  share_src_ids:
+    runtime: python3.10
+    handler: .share_src_ids
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+
+    timeout: 300
+    events:
+      - http:
+          path: /utilities/object_access
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+
+    iamRoleStatements:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+
+            Resource:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+
+  update_ojbect_perms:
+    runtime: python3.10
+    handler: object_access.update_object_permissions
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - http:
+          path: /utilities/update_object_permissions
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+
+    iamRoleStatements:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+
+            Resource:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+
+
+  can_access_objects:
+    runtime: python3.10
+    handler: object_access.can_access_objects
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /utilities/can_access_objects
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+
+    iamRoleStatements:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+            Resource:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+
+
+
+resources:
+  Conditions:
+    IsProd:
+      'Fn::Equals':
+        - ${self:provider.stage}
+        - 'prod'
+  
+  Resources:
+    ObjectAccessTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-object-access
+        AttributeDefinitions:
+          - AttributeName: 'object_id'
+            AttributeType: 'S'
+          - AttributeName: 'principal_id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'object_id'
+            KeyType: 'HASH'  # Partition key
+          - AttributeName: 'principal_id'
+            KeyType: 'RANGE'  # Sort key
+        GlobalSecondaryIndexes:
+          - IndexName: 'PrincipalIdIndex'
+            KeySchema:
+              - AttributeName: 'principal_id'
+                KeyType: 'HASH'  # Partition key for the secondary index
+            Projection:
+              ProjectionType: 'ALL'
+          

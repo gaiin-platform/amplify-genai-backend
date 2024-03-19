@@ -1,0 +1,21 @@
+# serverless-compose.yml
+services:
+
+  amplify-lambda:
+    path: ./amplify-lambda 
+  
+  amplify-lambda-js:
+    path: ./amplify-lambda-js
+
+  vu-amplify-embedding:
+    path: ./embedding
+
+  vu-amplify-object-access:
+    path: ./object-access
+
+  sql-connector:
+    path: ./sql-connector
+
+  amplify-utilities:
+    path: ./utilities
+
