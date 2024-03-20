@@ -3,6 +3,7 @@ import {DynamoDBClient, GetItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
+import {lru} from "tiny-lru";
 
 const logger = getLogger("datasources");
 
@@ -12,6 +13,15 @@ const dynamodbClient = new DynamoDBClient();
 const dataSourcesQueryEndpoint = process.env.DATASOURCES_QUERY_ENDPOINT;
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
+const dataSourcesWithTagCache = lru(500, 30000, false);
+const hashDataSourcesCache = lru(500, 0, false);
+
+/**
+ * Get all data sources that are referenced by messages in the conversation.
+ * @param chatBody
+ * @param includeCurrentMessage
+ * @returns {*[]|*}
+ */
 export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = true) => {
     if (chatBody && chatBody.messages) {
         const base = (includeCurrentMessage ? chatBody.messages : chatBody.messages.slice(0, -1))
@@ -25,6 +35,11 @@ export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = t
     return [];
 }
 
+/**
+ * Fetches the text content of a an S3 data source.
+ * @param key
+ * @returns {Promise<null|any>}
+ */
 export const getFileText = async (key) => {
 
     const textKey = key.endsWith(".content.json") ?
@@ -49,37 +64,145 @@ export const getFileText = async (key) => {
     }
 }
 
+/**
+ * This function looks at the data sources in the chat request and all of the data sources in the conversation
+ * and then determines which data sources should be inserted in their entirety into the chat request and which
+ * should be used for RAG only.
+ *
+ * Here is how this is done:
+ * 1. By default, all data sources included in the chat request are inserted into the chat request, unless
+ *    "ragOnly" is set to true at the chat request level
+ * 2. All data sources referenced in messages in the conversation are included for RAG unless "skipRag" is set
+ *    to true at the chat request level
+ * 3. Any data sources that are "tag:xyz?ragOnly=true" are included for RAG only after resolving the tag to
+ *    a concrete set of data sources, otherwise, they are inserted in the conversation.
+ *
+ * @param params
+ * @param chatRequestOrig
+ * @param dataSources
+ * @returns {Promise<{ragDataSources: *[], dataSources: *[]}>}
+ */
+export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
+
+    if(params.options.skipRag && params.options.ragOnly){
+        return {
+            ragDataSources: [],
+            dataSources: []
+        };
+    }
+
+    const msgDataSources =
+        await translateUserDataSourcesToHashDataSources(
+            params,
+            chatRequestOrig,
+            chatRequestOrig.messages.slice(-1)[0].data?.dataSources || []
+        );
+
+    const convoDataSources = await translateUserDataSourcesToHashDataSources(
+        params,
+        chatRequestOrig,
+        chatRequestOrig.messages.slice(0,-1)
+            .filter( m => {
+                return m.data && m.data.dataSources
+            }).flatMap(m => m.data.dataSources)
+    );
+
+    dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);
+
+    const getRagOnly = sources => sources.filter(ds =>
+        params.options.ragOnly || (ds.metadata && ds.metadata.ragOnly));
+
+    const getInsertOnly = sources => sources.filter(ds =>
+        !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
+
+    const ragDataSources = [
+        ...(getRagOnly(dataSources)),
+        ...(getRagOnly(msgDataSources)),
+        ...convoDataSources
+    ];
+
+    dataSources = [
+        ...(getInsertOnly(dataSources)),
+        ...(getInsertOnly(msgDataSources))
+    ];
+
+    return {
+        ragDataSources,
+        dataSources
+    };
+}
+
+export const getTagName = (tag) => {
+    return tag.indexOf("?") > 0 ? tag.split("?")[0] : tag;
+}
+
+export const getTagMetadata = (tag) => {
+    const metadata = tag.indexOf("?") > 0 ?
+        tag.split("?")[1].split(/[;&]/).reduce((obj, pair) => (pair = pair.split('='), obj[pair[0]] = pair[1] ? JSON.parse(pair[1]) : true, obj), {})
+        : {};
+    return metadata;
+}
+
+/**
+ * Fetches all data sources that are tagged with a specific tag from the data sources query endpoint.
+ * @param params
+ * @param body
+ * @param tag
+ * @returns {Promise<*[]|any>}
+ */
 export const getDataSourcesByTag = async (params, body, tag) => {
+
+    // Hash key
+    const tagName = getTagName(tag);
+    const cacheKey = (params.user || params.account.user) + "__" + tagName;
+
+    const cached = dataSourcesWithTagCache.get(cacheKey);
+    if(cached){
+        return cached;
+    }
+
     const bodyData = {
         "data": {
-            "tags": [tag]
+            "tags": [tagName]
         }
     };
 
     try {
 
+        // Parse the query string into an object
+        const metadata = getTagMetadata(tag);
+
         const response = await fetch(dataSourcesQueryEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${params.accessToken}`
+                'Authorization': `Bearer ${params.accessToken || params.account.accessToken}`
             },
             body: JSON.stringify(bodyData)
         });
 
         if (response.ok) {
+
             const data = await response.json();
             if (data.success && data.data.items) {
-                return data.data.items.map((item) => {
+                const result = data.data.items.map((item) => {
                     const fullId = (item.id.indexOf("://") > -1) ? item.id : "s3://" + item.id;
 
                     return {
                         id: fullId,
                         type: item.type,
-                        metadata: {}
+                        metadata
                     }
                 });
+                dataSourcesWithTagCache.set(cacheKey, result);
+                return result;
             }
+        }
+        else {
+            logger.error("Unable to fetch data sources by tag", {tag: tag});
+            // Extract the error message
+            const errorMessage = await response.text();
+            logger.error(errorMessage);
         }
     } catch (e) {
         logger.error("Unable to fetch data sources by tag", {tag: tag});
@@ -89,6 +212,15 @@ export const getDataSourcesByTag = async (params, body, tag) => {
     return [];
 }
 
+/**
+ * Looks through the data sources for "tag:xyz" and translates them into the actual data sources by
+ * querying for the list of data sources that are tagged with "xyz".
+ *
+ * @param params
+ * @param body
+ * @param dataSources
+ * @returns {Promise<unknown extends (object & {then(onfulfilled: infer F): any}) ? (F extends ((value: infer V, ...args: any) => any) ? Awaited<V> : never) : unknown[]|*[]>}
+ */
 export const resolveDataSourceAliases = async (params, body, dataSources) => {
 
     if(!dataSources){
@@ -107,6 +239,20 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
     return flattened;
 }
 
+/**
+ * Resolves the data sources in the chat request and the conversation to the actual data sources
+ * that will be used in the chat request.
+ *
+ * This involves the following steps:
+ *
+ * 1. Resolving any tags
+ * 2. Translating any user data sources into the global hash data sources
+ *
+ * @param params
+ * @param body
+ * @param dataSources
+ * @returns {Promise<(Awaited<any>|Awaited<unknown>)[]>}
+ */
 export const resolveDataSources = async (params, body, dataSources) => {
     dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
 
@@ -158,7 +304,14 @@ export const extractKey = (url) => {
     return url.slice(proto.length);
 }
 
-
+/**
+ * The chunk aggregator function is used to aggregate content into chunks of a maximum size or
+ * total number of chunks. This is a helper for the formatAndChunkDataSource function.
+ *
+ * @param maxTokens
+ * @param options
+ * @returns {function(*, {currentChunk?: *, currentTokenCount?: *, chunks?: *, itemCount?: *}, *, *, *): {currentTokenCount: *, chunks: *[], currentChunk: *, itemCount: number|*}}
+ */
 const getChunkAggregator = (maxTokens, options) => {
 
     let maxItemsPerChunk = Number.MAX_VALUE;
@@ -194,6 +347,20 @@ const getChunkAggregator = (maxTokens, options) => {
 
 }
 
+/**
+ * Formats and chunks the data source content into chunks of a maxTokens or total number of chunks as
+ * specified in the options.
+ *
+ * The result of this function is an array of chunks, each of which has a context and a token count
+ * and will fit into the given token limit for the model.
+ *
+ * @param tokenCounter
+ * @param dataSource
+ * @param content
+ * @param maxTokens
+ * @param options
+ * @returns {*[]|*}
+ */
 export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxTokens, options) => {
     logger.debug("Chunking/Formatting data from: " + dataSource.id);
 
@@ -250,6 +417,20 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
     }
 }
 
+/**
+ * All files are hashed on upload. The hash of each file is stored in the db and used to
+ * determine if a duplicate file is being uploaded. If the file is a duplicate, the system
+ * will skip indexing it for RAG and use its original index instead.
+ *
+ * This function translates from the "user data source" keys for files to the actual "hash data source"
+ * keys of the shared copies of files. The result of this function will be data sources that have
+ * any user-based "ids" replaced with the global hash ids for the actual global copy of the file.
+ *
+ * @param params
+ * @param body
+ * @param dataSources
+ * @returns {Promise<Awaited<unknown>[]>}
+ */
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
 
     dataSources = await resolveDataSourceAliases(params, body, dataSources);
@@ -262,6 +443,12 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
             if (key.startsWith("s3://")) {
 
                 key = extractKey(key);
+
+                // Check the hash keys cache
+                const cached = hashDataSourcesCache.get(key);
+                if (cached) {
+                    return cached;
+                }
 
                 const command = new GetItemCommand({
                     TableName: hashFilesTableName, // Replace with your table name
@@ -276,8 +463,11 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                 if (Item) {
                     // Convert the returned item from DynamoDB's format to a regular JavaScript object
                     const item = unmarshall(Item);
-                    return {...ds, id: "s3://" + item.textLocationKey};
+                    const result = {...ds, id: "s3://" + item.textLocationKey};
+                    hashDataSourcesCache.set(key, result);
+                    return result;
                 } else {
+                    hashDataSourcesCache.set(key, ds);
                     return ds; // No item found with the given ID
                 }
             } else {
@@ -291,6 +481,12 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
     return translated.filter((ds) => ds != null);
 }
 
+/**
+ * Resolves the content of each data source and returns the content text.
+ *
+ * @param dataSource
+ * @returns {Promise<{name, content: {canSplit: boolean, tokens, location: {key: *}, content: *}[]}|*[]|*>}
+ */
 export const getContent = async (dataSource) => {
     const sourceType = extractProtocol(dataSource.id);
 
@@ -337,6 +533,16 @@ export const getContent = async (dataSource) => {
     }
 }
 
+/**
+ * Given a chat request and max tokens, go and fetch all of the data sources specified, chunk them,
+ * and create the "contexts" that will be prompted against.
+ *
+ * @param tokenCounter
+ * @param dataSource
+ * @param maxTokens
+ * @param options
+ * @returns {Promise<*[]|*>}
+ */
 export const getContexts = async (tokenCounter, dataSource, maxTokens, options) => {
     const sourceType = extractProtocol(dataSource.id);
 

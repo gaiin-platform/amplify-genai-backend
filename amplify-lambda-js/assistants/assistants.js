@@ -8,6 +8,7 @@ import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
+import {getDataSourcesByUse} from "../datasource/datasources.js";
 const logger = getLogger("assistants");
 
 
@@ -22,13 +23,15 @@ const defaultAssistant = {
     },
     description: "Default assistant that can handle arbitrary requests with any data type but may " +
         "not be as good as a specialized assistant.",
-    handler: async (llm, params, body, dataSources, responseStream) => {
+    handler: async (llm, params, body, ds, responseStream) => {
 
         const model = (body.options && body.options.model) ?
             Models[body.options.model.id]:
             (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
 
         logger.debug("Using model: ", model);
+
+        const {dataSources} = await getDataSourcesByUse(params, body, ds);
 
         const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
         const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
@@ -205,8 +208,11 @@ ${body.messages.slice(-1)[0].content}
 }
 
 const getTokenCount = (dataSource) => {
-    if(dataSource.metadata && dataSource.metadata.totalTokens){
+    if(dataSource.metadata && dataSource.metadata.totalTokens && !dataSource.metadata.ragOnly){
         return dataSource.metadata.totalTokens;
+    }
+    else if(dataSource.metadata && dataSource.metadata.ragOnly){
+        return 0;
     }
     return 1000;
 }

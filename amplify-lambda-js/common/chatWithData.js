@@ -1,5 +1,5 @@
 import { Writable } from 'stream';
-import {extractKey, getContexts, translateUserDataSourcesToHashDataSources} from "../datasource/datasources.js";
+import {getContexts, getDataSourcesByUse} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
@@ -107,22 +107,13 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // 2. Do we even need the documents farther back in the conversation to answer the question?
     // 3. Is the document done processing wtih RAG, if not, run against the whole document.
 
-    let msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
-
-    const convoDataSources = await translateUserDataSourcesToHashDataSources(
-        params,
-        chatRequestOrig,
-        chatRequestOrig.messages.slice(0,-1)
-            .filter( m => {
-                return m.data && m.data.dataSources
-            }).flatMap(m => m.data.dataSources)
-    );
-
-    const ragDataSources = [
-        ...(params.options.ragOnly? dataSources : []),
-        ...(params.options.ragOnly? msgDataSources : []),
-        ...convoDataSources
-        ];
+    const allSources = await getDataSourcesByUse(params, chatRequestOrig, dataSources);
+    // These data sources are the ones that will be completely inserted into the
+    // conversation
+    dataSources = allSources.dataSources;
+    // These data sources will be searched with RAG for relevant information to
+    // insert into the conversation
+    let ragDataSources = allSources.ragDataSources;
 
     // This is helpful later to convert a key to a data source
     // file name and type
@@ -138,7 +129,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     const ragStatus = newStatus({
         inProgress: true,
         sticky: false,
-        message: "I am searching for relevant information.",
+        message: "I am searching for relevant information...",
         icon: "aperture",
     });
     if(ragDataSources.length > 0 && !params.options.skipRag){
