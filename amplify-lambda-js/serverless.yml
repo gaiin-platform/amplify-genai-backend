@@ -20,6 +20,14 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  stackTags:
+    "vu:environment": ${sls:stage}
+    "vu:applicationName": "amplify"
+    "vu:owner": "amplify@vanderbilt.edu"
+  tags:
+    "vu:environment": ${sls:stage}
+    "vu:applicationName": "amplify"
+    "vu:owner": "amplify@vanderbilt.edu"
   environment:
     AZURE_OPENAI_RESOURCE_NAME: openai
     DATASOURCES_QUERY_ENDPOINT: ${self:custom.stageVariables.DATASOURCES_QUERY_ENDPOINT}
