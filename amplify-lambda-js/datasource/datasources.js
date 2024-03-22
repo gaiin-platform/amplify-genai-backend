@@ -115,16 +115,24 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const getInsertOnly = sources => sources.filter(ds =>
         !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
 
-    const ragDataSources = [
+    const nonUniqueRagDataSources = [
         ...(getRagOnly(dataSources)),
         ...(getRagOnly(msgDataSources)),
         ...convoDataSources
     ];
 
-    dataSources = [
+    const ragDataSources = Object.values(nonUniqueRagDataSources.reduce(
+        (acc, ds) => (acc[ds.id] = ds, acc), {})
+    );
+
+    const allDataSources = [
         ...(getInsertOnly(dataSources)),
         ...(getInsertOnly(msgDataSources))
     ];
+
+    dataSources = Object.values(allDataSources.reduce(
+        (acc, ds) => (acc[ds.id] = ds, acc), {})
+    );
 
     return {
         ragDataSources,
