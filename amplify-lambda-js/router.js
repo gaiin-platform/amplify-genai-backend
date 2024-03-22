@@ -115,30 +115,6 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
                 dataSources = await resolveDataSources(params, body, dataSources);
 
-                // dataSources = await translateUserDataSourcesToHashDataSources(dataSources);
-                //
-                // const convoDataSources = await translateUserDataSourcesToHashDataSources(
-                //     getDataSourcesInConversation(body, true)
-                // );
-                //
-                // const allDataSources = [
-                //     ...dataSources,
-                //     ...convoDataSources
-                // ]
-                //
-                // const nonUserSources = allDataSources.filter(ds =>
-                //     !extractKey(ds.id).startsWith(params.user+"/")
-                // );
-                //
-                // if(nonUserSources && nonUserSources.length > 0) {
-                //     if (!await canReadDataSources(params.accessToken, nonUserSources)) {
-                //         returnResponse(responseStream, {
-                //             statusCode: 401,
-                //             body: {error: "Unauthorized data source access."}
-                //         });
-                //     }
-                // }
-
             } catch (e) {
                 logger.error("Unauthorized access on data sources: " + e);
                 return returnResponse(responseStream, {

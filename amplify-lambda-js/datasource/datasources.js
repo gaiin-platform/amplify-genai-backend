@@ -283,7 +283,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
         }
     }
 
-    return allDataSources;
+    return dataSources;
 }
 
 export const extractProtocol = (url) => {
