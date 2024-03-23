@@ -77,6 +77,15 @@ functions:
           method: post
           cors: true
 
+  list_assistants:
+    handler: service/core.list_assistants
+    timeout: 30
+    events:
+      - http:
+          path: assistant/list
+          method: post
+          cors: true
+
   share_assistant:
     handler: service/core.share_assistant
     timeout: 30
@@ -145,13 +154,6 @@ functions:
           method: post
           cors: true
 
-  list_assistants:
-    handler: openaiazure/assistant.list_assistants
-    events:
-      - http:
-          path: assistant/list
-          method: post
-          cors: true
 
   create_assistant_thread:
     handler: openaiazure/assistant.create_assistant_thread

@@ -23,6 +23,9 @@ permissions_by_state_type = {
     "/assistant/create": {
         "create": can_create_assistant
     },
+    "/assistant/list": {
+        "list": can_create_assistant
+    },
     "/assistant/share": {
         "share_assistant": can_create_assistant
     },
