@@ -8,6 +8,7 @@ export const ModelID = {
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
+    CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
     MIXTRAL_8X7B: 'mistral.mixtral-8x7b-instruct-v0:1'
 
@@ -62,6 +63,12 @@ export const Models = {
      name: 'Claude-3-Sonnet (bedrock)',
      tokenLimit: 200000,
      visible: false,
+    },
+    [ModelID.CLAUDE_3_HAIKU]: {
+        id: ModelID.CLAUDE_3_HAIKU,
+        name: 'Claude-3-Haiku (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
     },
     [ModelID.MISTRAL_7B]: {
         id: ModelID.MISTRAL_7B,

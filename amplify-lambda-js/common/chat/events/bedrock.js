@@ -1,16 +1,6 @@
 
-// for claude 2.1 and claude Instant 1.2
-export const claudeTransform = (event) => { 
-    if(event && event.d && event.d.completion) {
-        return {d: event.d.completion}
-    }
-    else {
-        return null;
-    }
-}
-
-// for Claude 3 Sonnet 
-export const claudeSonnetTransform = (event) => {
+// for all Claude models 
+export const claudeTransform = (event) => {
     if(event && event.d && event.d.delta && event.d.delta.text) {
         return {d: event.d.delta.text}
     }
