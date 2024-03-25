@@ -1,3 +1,5 @@
+import os
+
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
 
@@ -9,7 +11,7 @@ def extract_key(source):
 
 def translate_user_data_sources_to_hash_data_sources(data_sources):
     dynamodb_client = boto3.client('dynamodb')
-    hash_files_table_name = "YourTableNameHere"  # Replace with your actual table name
+    hash_files_table_name = os.environ['HASH_FILES_DYNAMO_TABLE']
     type_deserializer = TypeDeserializer()
 
     translated_data_sources = []

@@ -4,15 +4,27 @@ import time
 import boto3
 import json
 import uuid
-
+import random
+import string
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
-from common.object_permissions import update_object_permissions, can_access_objects
+from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
 from openaiazure.assistant_api import create_new_openai_assistant
 
 from common.validate import validated
+
+
+SYSTEM_TAG = "amplify:system"
+ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
+ASSISTANT_TAG = "amplify:assistant"
+
+RESERVED_TAGS = [
+    SYSTEM_TAG,
+    ASSISTANT_BUILDER_TAG,
+    ASSISTANT_TAG
+]
 
 
 def get_assistant_builder_assistant():
@@ -42,13 +54,13 @@ At the end of every message you output, you will update the assistant in a speci
     id = "ast/assistant-builder"
     name = "Assistant Creator"
     datasources = []
-    tags = ["assistant-builder"]
+    tags = [ASSISTANT_BUILDER_TAG, SYSTEM_TAG]
     created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
     updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
     tools = []
     data = {
         "provider": "amplify",
-        "conversationTags": ["assistant-builder"],
+        "conversationTags": [ASSISTANT_BUILDER_TAG],
     }
 
     return {
@@ -66,7 +78,8 @@ At the end of every message you output, you will update the assistant in a speci
         'updatedAt': updated_at,
         'dataSources': datasources,
         'data': data,
-        'tools': tools
+        'tools': tools,
+        'user': 'amplify'
     }
 
 
@@ -86,10 +99,25 @@ def list_assistants(event, context, current_user, name, data):
         dict: A dictionary containing the list of assistants.
     """
     assistants = list_user_assistants(current_user)
+    assistants.append(get_assistant_builder_assistant())
+
+
+    assistant_ids = [assistant['id'] for assistant in assistants]
+    access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read','write'])
+
+    # Make sure each assistant has a data field and initialize it if it doesn't
+    for assistant in assistants:
+        if 'data' not in assistant:
+            assistant['data'] = {}
+
+    # for each assistant, add to its data the access rights
+    for assistant in assistants:
+        assistant['data']['access'] = access_rights.get(assistant['id'], 'none')
+
     return {
         'success': True,
         'message': 'Assistants retrieved successfully',
-        'data': [*assistants, get_assistant_builder_assistant()]
+        'data': assistants
     }
 
 
@@ -125,7 +153,12 @@ def create_assistant(event, context, current_user, name, data):
     extracted_data = data['data']
     assistant_name = extracted_data['name']
     description = extracted_data['description']
+    assistant_public_id = extracted_data.get('assistantId', None)
     tags = extracted_data.get('tags', [])
+
+    # delete any tag that starts with amplify: or is in the reserved tags
+    tags = [tag for tag in tags if not tag.startswith("amplify:") and tag not in RESERVED_TAGS]
+
     instructions = extracted_data['instructions']
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
@@ -142,14 +175,15 @@ def create_assistant(event, context, current_user, name, data):
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_new_assistant(
         access_token=data['access_token'],
-        user_id=current_user,
+        user_that_owns_the_assistant=current_user,
         assistant_name=assistant_name,
         description=description,
         instructions=instructions,
         tags=tags,
         data_sources=data_sources,
         tools=tools,
-        provider=provider
+        provider=provider,
+        assistant_public_id=assistant_public_id
     )
 
 
@@ -202,21 +236,22 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
 
 def create_new_assistant(
         access_token,
-        user_id,
+        user_that_owns_the_assistant,
         assistant_name,
         description,
         instructions,
         tags,
         data_sources,
         tools,
-        provider
+        provider,
+        assistant_public_id=None
 ):
     """
     Creates a new assistant in the DynamoDB table and sets the appropriate permissions.
 
     Args:
         access_token (str): The access token of the user (required for updating permissions to give the user access).
-        user_id (str): The ID of the user creating the assistant.
+        user_that_owns_the_assistant (str): The ID of the user creating the assistant.
         assistant_name (str): The name of the assistant.
         description (str): The description of the assistant.
         instructions (str): The instructions for the assistant.
@@ -224,6 +259,7 @@ def create_new_assistant(
         data_sources (list): A list of data sources used by the assistant.
         tools (list): A list of tools used by the assistant.
         provider (str): The provider of the assistant (e.g., 'amplify', 'openai').
+        assistant_public_id (str): The public ID of the assistant (optional).
 
     Returns:
         dict: A dictionary containing the success status, message, and data (assistant ID and version).
@@ -255,31 +291,43 @@ def create_new_assistant(
                              tools)
 
     # Check if the assistant already exists in the DynamoDB table
-    response = assistants_table.query(
-        IndexName='UserNameIndex',
-        KeyConditionExpression=Key('user').eq(user_id) & Key('name').eq(assistant_name),
-    )
+    if assistant_public_id:
+        response = assistants_table.query(
+            IndexName='AssistantIdIndex',
+            KeyConditionExpression=Key('assistantId').eq(assistant_public_id),
+            Limit=1,
+            ScanIndexForward=False
+        )
+        if response['Count'] == 0:
+            return {'success': False, 'message': 'Assistant not found'}
+    else:
+        response = assistants_table.query(
+            IndexName='UserNameIndex',
+            KeyConditionExpression=Key('user').eq(user_that_owns_the_assistant) & Key('name').eq(assistant_name),
+        )
 
     if response['Count'] > 0:
         # The assistant already exists, so we need to create a new version
         existing_assistant = max(response['Items'], key=lambda x: x.get('version', 1))
-        assistant_id = existing_assistant['id']
-        assistant_name = existing_assistant['name']
+        assistant_db_id = existing_assistant['id']
+        assistant_public_id = existing_assistant['assistantId']
+        assistant_name = assistant_name
         assistant_version = existing_assistant['version']  # Default to version 1 if not present
-        print(f"Assistant already exists with ID: {assistant_id} and version: {assistant_version}")
+        print(f"Assistant already exists with ID: {assistant_db_id} and version: {assistant_version}")
 
         # Increment the version number
         new_version = assistant_version + 1
 
         # Create a new user-specific ID with the same UUID component and incremented version
-        uuid_part = assistant_id.split('/')[2]
-        user_id_key = f'ast/{full_sha256}/{uuid_part}/{new_version}'
+        uuid_part = assistant_db_id.split('/')[2]
+        assistant_database_id = f'ast/{full_sha256}/{uuid_part}/{new_version}'
         hash_id_key = f'ast/{full_sha256}/{new_version}'
 
         # Create the new item for the DynamoDB table
         new_item = {
-            'id': user_id_key,
-            'user': user_id,
+            'id': assistant_database_id,
+            'assistantId': assistant_public_id,
+            'user': user_that_owns_the_assistant,
             'dataSourcesHash': datasources_sha256,
             'instructionsHash': instructions_sha256,
             'coreHash': core_sha256,
@@ -297,53 +345,36 @@ def create_new_assistant(
         # print(json.dumps(new_item, indent=4))
         assistants_table.put_item(Item=new_item)
 
-        # Create a new hash-based item for the DynamoDB table
-        hash_item = {
-            'id': hash_id_key,
-            'dataSourcesHash': datasources_sha256,
-            'instructionsHash': instructions_sha256,
-            'coreHash': core_sha256,
-            'hash': full_sha256,
-            'name': assistant_name,
-            'description': description,
-            'instructions': instructions,
-            'tags': tags,
-            'createdAt': timestamp,
-            'updatedAt': timestamp,
-            'dataSources': data_sources,
-            'data': data,
-            'version': new_version
-        }
-        # print(json.dumps(new_item, indent=4))
-        assistants_table.put_item(Item=hash_item)
-
         # Update the permissions for the new assistant
         if not update_object_permissions(
                 access_token,
-                [user_id],
-                [hash_id_key, user_id_key],
+                [user_that_owns_the_assistant],
+                [assistant_public_id, assistant_database_id],
                 'assistant',
                 'user',
                 'owner'):
-            print(f"Error updating permissions for assistant {user_id_key}")
+            print(f"Error updating permissions for assistant {assistant_database_id}")
         else:
-            print(f"Successfully updated permissions for assistant {user_id_key}")
+            print(f"Successfully updated permissions for assistant {assistant_database_id}")
 
         # Return success response
         return {
             'success': True,
             'message': 'Assistant created successfully',
-            'data': {'assistantId': user_id_key, 'version': new_version}
+            'data': {'assistantId': assistant_database_id, 'version': new_version}
         }
     else:
         # The assistant does not exist, so we can create a new one
-        user_id_key = f'ast/{full_sha256}/{str(uuid.uuid4())}/1'
-        hash_id_key = f'ast/{full_sha256}/1'
+        assistant_database_id = f'ast/{full_sha256}/{str(uuid.uuid4())}/1'
+
+        # Create an assistantId
+        assistant_public_id = f'astp/{str(uuid.uuid4())}'
 
         # Create the new item for the DynamoDB table
         new_item = {
-            'id': user_id_key,
-            'user': user_id,
+            'id': assistant_database_id,
+            'assistantId': assistant_public_id,
+            'user': user_that_owns_the_assistant,
             'dataSourcesHash': datasources_sha256,
             'instructionsHash': instructions_sha256,
             'coreHash': core_sha256,
@@ -361,43 +392,23 @@ def create_new_assistant(
         # print(json.dumps(new_item, indent=4))
         assistants_table.put_item(Item=new_item)
 
-        # Create a new hash-based item for the DynamoDB table
-        hash_item = {
-            'id': hash_id_key,
-            'dataSourcesHash': datasources_sha256,
-            'instructionsHash': instructions_sha256,
-            'coreHash': core_sha256,
-            'hash': full_sha256,
-            'name': assistant_name,
-            'description': description,
-            'instructions': instructions,
-            'tags': tags,
-            'createdAt': timestamp,
-            'updatedAt': timestamp,
-            'dataSources': data_sources,
-            'data': data,
-            'version': 1
-        }
-        # print(json.dumps(new_item, indent=4))
-        assistants_table.put_item(Item=hash_item)
-
         # Update the permissions for the new assistant
         if not update_object_permissions(
                 access_token,
-                [user_id],
-                [hash_id_key, user_id_key],
+                [user_that_owns_the_assistant],
+                [assistant_public_id, assistant_database_id],
                 'assistant',
                 'user',
                 'owner'):
-            print(f"Error updating permissions for assistant {user_id_key}")
+            print(f"Error updating permissions for assistant {assistant_database_id}")
         else:
-            print(f"Successfully updated permissions for assistant {user_id_key}")
+            print(f"Successfully updated permissions for assistant {assistant_database_id}")
 
         # Return success response
         return {
             'success': True,
             'message': 'Assistant created successfully',
-            'data': {'assistantId': user_id_key}
+            'data': {'assistantId': assistant_public_id}
         }
 
 
