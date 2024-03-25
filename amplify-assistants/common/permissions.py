@@ -26,10 +26,13 @@ permissions_by_state_type = {
     "/assistant/list": {
         "list": can_create_assistant
     },
+    "/assistant/delete": {
+        "delete": can_create_assistant
+    },
     "/assistant/share": {
         "share_assistant": can_create_assistant
     },
-    "/assistant/delete": {
+    "/openai/assistant/delete": {
         "delete": can_create_assistant
     },
     "/assistant/thread/create": {

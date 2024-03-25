@@ -104,10 +104,18 @@ functions:
           cors: true
 
   delete_assistant:
-    handler: openaiazure/assistant.delete_assistant
+    handler: service/core.delete_assistant
     events:
       - http:
           path: assistant/delete
+          method: post
+          cors: true
+
+  delete_assistant_open_ai:
+    handler: openaiazure/assistant.delete_assistant
+    events:
+      - http:
+          path: openai/assistant/delete
           method: post
           cors: true
 

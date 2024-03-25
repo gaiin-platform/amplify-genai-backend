@@ -36,6 +36,17 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
+delete_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
+        },
+    },
+    "required": ["assistantId"]
+}
+
 create_assistant_schema = {
     "type": "object",
     "properties": {
@@ -215,6 +226,9 @@ The permission is related to a request path and to a specific operation.
 validators = {
     "/assistant/create": {
         "create": create_assistant_schema
+    },
+    "/assistant/delete": {
+        "delete": delete_assistant_schema
     },
     "/assistant/share": {
         "share_assistant": share_assistant_schema
