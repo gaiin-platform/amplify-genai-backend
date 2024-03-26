@@ -531,6 +531,10 @@ def create_or_update_assistant(
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
 
+        print(f"Indexing assistant {new_item['id']} for RAG")
+        save_assistant_for_rag(new_item)
+        print(f"Added RAG entry for {new_item['id']}")
+
         # Return success response
         return {
             'success': True,
@@ -563,11 +567,15 @@ def create_or_update_assistant(
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
 
+        print(f"Indexing assistant {new_item['id']} for RAG")
+        save_assistant_for_rag(new_item)
+        print(f"Added RAG entry for {new_item['id']}")
+
         # Return success response
         return {
             'success': True,
             'message': 'Assistant created successfully',
-            'data': {'assistantId': new_item['id'], 'version': new_item['version']}
+            'data': {'assistantId': new_item['assistantId'], 'version': new_item['version']}
         }
 
 
@@ -588,3 +596,81 @@ def get_assistant_hashes(assistant_name, description, instructions, data_sources
     core_details['description'] = description
     full_sha256 = hashlib.sha256(json.dumps(core_details, sort_keys=True).encode()).hexdigest()
     return core_sha256, datasources_sha256, full_sha256, instructions_sha256
+
+
+def generate_assistant_chunks_metadata(assistant):
+    output = {
+        "chunks": [
+            {
+                "content": f"{assistant['description']}",
+                "locations": [
+                    {
+                        "assistantId": assistant['assistantId'],
+                        "version": assistant['version'],
+                        "updatedAt": assistant['updatedAt'],
+                        "createdAt": assistant['createdAt'],
+                        "tags": assistant['tags']
+                    }
+                ],
+                "indexes": [0],
+                "char_index": 0
+            },
+            {
+                "content": f"{assistant['name']}: {assistant['description']}. {', '.join(assistant['tags'])}",
+                "locations": [
+                    {
+                        "assistantId": assistant['assistantId'],
+                        "version": assistant['version'],
+                        "updatedAt": assistant['updatedAt'],
+                        "createdAt": assistant['createdAt'],
+                        "tags": assistant['tags']
+                    }
+                ],
+                "indexes": [0],
+                "char_index": 0
+            },
+            {
+                "content": assistant['instructions'],
+                "locations": [
+                    {
+                        "assistantId": assistant['assistantId'],
+                        "version": assistant['version'],
+                        "updatedAt": assistant['updatedAt'],
+                        "createdAt": assistant['createdAt'],
+                        "tags": assistant['tags']
+                    }
+                ],
+                "indexes": [0],
+                "char_index": 0
+            },
+            {
+                "content": f"{assistant['name']}: {assistant['instructions']}. {', '.join(assistant['tags'])}",
+                "locations": [
+                    {
+                        "assistantId": assistant['assistantId'],
+                        "version": assistant['version'],
+                        "updatedAt": assistant['updatedAt'],
+                        "createdAt": assistant['createdAt'],
+                        "tags": assistant['tags']
+                    }
+                ],
+                "indexes": [0],
+                "char_index": 0
+            }
+        ],
+        "src": assistant['id']
+    }
+    return output
+
+
+def save_assistant_for_rag(assistant):
+    key = assistant['id']
+    assistant_chunks = generate_assistant_chunks_metadata(assistant)
+    chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
+    s3 = boto3.client('s3')
+    print(f"Saving assistant description to {key}-assistant.chunks.json")
+    chunks_key = f"assistants/{key}-assistant.chunks.json"
+    s3.put_object(Bucket=chunks_bucket,
+                  Key=chunks_key,
+                  Body=json.dumps(assistant_chunks))
+    print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
