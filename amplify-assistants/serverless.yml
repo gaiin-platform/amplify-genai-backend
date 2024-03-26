@@ -37,6 +37,7 @@ provider:
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
@@ -64,6 +65,8 @@ provider:
             - "${self:provider.environment.OPENAI_API_KEY_ARN}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
@@ -251,6 +254,52 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}
+
+    AssistantsAliasesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: assistantId
+            AttributeType: S
+          -
+            AttributeName: user
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: user
+            KeyType: HASH
+          -
+            AttributeName: assistantId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          -
+            IndexName: AssistantIdIndex
+            KeySchema:
+              -
+                AttributeName: assistantId
+                KeyType: HASH
+              -
+                AttributeName: user
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: UserIndex
+            KeySchema:
+              -
+                AttributeName: user
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}
 
     AssistantThreadsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

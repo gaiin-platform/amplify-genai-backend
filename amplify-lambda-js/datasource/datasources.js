@@ -98,13 +98,15 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             chatRequestOrig.messages.slice(-1)[0].data?.dataSources || []
         );
 
+    const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0,-1)
+        .filter( m => {
+            return m.data && m.data.dataSources
+        }).flatMap(m => m.data.dataSources);
+
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
         params,
         chatRequestOrig,
-        chatRequestOrig.messages.slice(0,-1)
-            .filter( m => {
-                return m.data && m.data.dataSources
-            }).flatMap(m => m.data.dataSources)
+        referencedDataSourcesInMessages
     );
 
     dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);

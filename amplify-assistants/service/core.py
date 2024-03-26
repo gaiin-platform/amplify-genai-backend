@@ -10,6 +10,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
+from common.encoders import CombinedEncoder
 from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
 from openaiazure.assistant_api import create_new_openai_assistant
 
@@ -531,6 +532,8 @@ def create_or_update_assistant(
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
 
+        update_assistant_latest_alias(assistant_public_id, new_item['id'], new_version)
+
         print(f"Indexing assistant {new_item['id']} for RAG")
         save_assistant_for_rag(new_item)
         print(f"Added RAG entry for {new_item['id']}")
@@ -567,6 +570,8 @@ def create_or_update_assistant(
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
 
+        create_assistant_alias(user_that_owns_the_assistant, new_item['assistantId'], new_item['id'], 1, 'latest')
+
         print(f"Indexing assistant {new_item['id']} for RAG")
         save_assistant_for_rag(new_item)
         print(f"Added RAG entry for {new_item['id']}")
@@ -596,6 +601,70 @@ def get_assistant_hashes(assistant_name, description, instructions, data_sources
     core_details['description'] = description
     full_sha256 = hashlib.sha256(json.dumps(core_details, sort_keys=True).encode()).hexdigest()
     return core_sha256, datasources_sha256, full_sha256, instructions_sha256
+
+
+def alias_key_of_type(assistant_public_id, alias_type):
+    return f"{assistant_public_id}?type={alias_type}"
+
+
+def create_assistant_alias(user, assistant_public_id, database_id, version, alias_type):
+    dynamodb = boto3.resource('dynamodb')
+    alias_table = dynamodb.Table(os.environ['ASSISTANTS_ALIASES_DYNAMODB_TABLE'])
+    timestamp = time.strftime('%Y-%m-%dT%H:%M:%S')
+    new_item = {
+        'assistantId': alias_key_of_type(assistant_public_id, alias_type),
+        'user': user,
+        'createdAt': timestamp,
+        'updatedAt': timestamp,
+        'aliasTo': alias_type,
+        'currentVersion': version,
+        'data': {'id': database_id}
+    }
+    alias_table.put_item(Item=new_item)
+
+
+def update_assistant_latest_alias(assistant_public_id, new_id, version):
+    update_assistant_alias_by_type(assistant_public_id, new_id, version, 'latest')
+
+
+def update_assistant_published_alias(assistant_public_id, new_id, version):
+    update_assistant_alias_by_type(assistant_public_id, new_id, version, 'latest_published')
+
+
+def update_assistant_alias_by_type(assistant_public_id, new_id, version, alias_type):
+    try:
+        dynamodb = boto3.resource('dynamodb')
+        alias_table = dynamodb.Table(os.environ['ASSISTANTS_ALIASES_DYNAMODB_TABLE'])
+
+        alias_key = alias_key_of_type(assistant_public_id, alias_type)
+
+        # Find all current entries for assistantId (hash) across all users (range) where version = "latest"
+        response = alias_table.query(
+            IndexName='AssistantIdIndex',
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('assistantId').eq(alias_key)
+        )
+
+        for item in response['Items']:
+            try:
+                print(f"Updating assistant alias: {item}")
+                timestamp = time.strftime('%Y-%m-%dT%H:%M:%S')
+                updated_item = {
+                    'assistantId': alias_key,
+                    'user': item['user'],
+                    'updatedAt': timestamp,
+                    'createdAt': item['createdAt'],
+                    'currentVersion': version,
+                    'aliasTo': item['aliasTo'],
+                    'data': {
+                        'id': new_id
+                    }
+                }
+                alias_table.put_item(Item=updated_item)
+                print(f"Updated assistant alias: {updated_item}")
+            except ClientError as e:
+                print(f"Error updating assistant alias: {e}")
+    except ClientError as e:
+        print(f"Error updating assistant alias: {e}")
 
 
 def generate_assistant_chunks_metadata(assistant):
@@ -664,13 +733,17 @@ def generate_assistant_chunks_metadata(assistant):
 
 
 def save_assistant_for_rag(assistant):
-    key = assistant['id']
-    assistant_chunks = generate_assistant_chunks_metadata(assistant)
-    chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
-    s3 = boto3.client('s3')
-    print(f"Saving assistant description to {key}-assistant.chunks.json")
-    chunks_key = f"assistants/{key}-assistant.chunks.json"
-    s3.put_object(Bucket=chunks_bucket,
-                  Key=chunks_key,
-                  Body=json.dumps(assistant_chunks))
-    print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+    try:
+        key = assistant['id']
+        assistant_chunks = generate_assistant_chunks_metadata(assistant)
+        chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
+
+        s3 = boto3.client('s3')
+        print(f"Saving assistant description to {key}-assistant.chunks.json")
+        chunks_key = f"assistants/{key}-assistant.chunks.json"
+        s3.put_object(Bucket=chunks_bucket,
+                      Key=chunks_key,
+                      Body=json.dumps(assistant_chunks, cls=CombinedEncoder))
+        print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+    except Exception as e:
+        print(f"Error saving assistant for RAG: {e}")
