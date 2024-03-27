@@ -86,7 +86,7 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                             role: "user",
                             content: "Pay close attention to any provided information. Unless told otherwise, " +
                                 "cite the information you are provided with quotations supporting your analysis " +
-                                "the [location] of the quotation.",
+                                "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
                             data: {dataSources: assistant.dataSources}
                         },
                         {
