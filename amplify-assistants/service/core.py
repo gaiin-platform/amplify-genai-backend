@@ -542,7 +542,9 @@ def create_or_update_assistant(
         return {
             'success': True,
             'message': 'Assistant created successfully',
-            'data': {'assistantId': assistant_public_id, 'version': new_version}
+            'data': {'assistantId': assistant_public_id,
+                     'id': new_item['id'],
+                     'version': new_version}
         }
     else:
         new_item = save_assistant(
@@ -580,7 +582,9 @@ def create_or_update_assistant(
         return {
             'success': True,
             'message': 'Assistant created successfully',
-            'data': {'assistantId': new_item['assistantId'], 'version': new_item['version']}
+            'data': {'assistantId': new_item['assistantId'],
+                     'id': new_item['id'],
+                     'version': new_item['version']}
         }
 
 
