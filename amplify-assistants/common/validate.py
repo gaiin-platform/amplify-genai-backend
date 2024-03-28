@@ -178,14 +178,66 @@ chat_assistant_schema = {
                     },
                     "role": {
                         "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "type": "object",
+                        "additionalProperties": True
+                    },
+                    "codeInterpreterMessageData": {
+                        "type": "object",
+                        "properties": {
+                            "threadId": {"type": "string"},
+                            "role": {"type": "string"},
+                            "textContent": {"type": "string"},
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "oneOf": [
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"const": "image_file"},
+                                                "value": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"}
+                                                    },
+                                                    "required": ["file_key"]
+                                                }
+                                            },
+                                            "required": ["type", "value"]
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"const": "file"},
+                                                "value": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"}
+                                                    },
+                                                    "required": ["file_key"]
+                                                }
+                                            },
+                                            "required": ["type", "value"]
+                                        },
+                                    ]
+                                }
+                            }
+                        },
+                        "required": []
                     }
                 },
-                "required": ["id", "content"]
+                "required": ["id", "content", "role"]
             }
         }
     },
     "required": ["id", "fileKeys", "messages"]
 }
+
 
 run_thread_schema = {
     "type": "object",
@@ -249,6 +301,9 @@ validators = {
         "run_status": id_request_schema
     },
     "/assistant/chat": {
+        "chat": chat_assistant_schema
+    },
+    "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
     "/": {

@@ -12,13 +12,16 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
 
+
 custom:
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
-
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
     
 provider:
   name: aws
@@ -40,6 +43,8 @@ provider:
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
+    ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
+
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
     OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
@@ -63,6 +68,7 @@ provider:
             - s3:ListBucket
           Resource:
             - "${self:provider.environment.OPENAI_API_KEY_ARN}"
+            - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
@@ -159,9 +165,36 @@ functions:
 
   chat_assistant_url:
     handler: openaiazure/assistant.chat_with_assistant
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
     timeout: 900
     url:
       cors: true
+    
+
+
+    # for local testing 
+  chat_code_interpreter_assistant:
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    timeout: 30
+
+    events:
+      - http:
+          path: assistant/chat_with_code_interpreter
+          method: post
+          cors: true
+
+ ################## come back 
+  chat_code_interpreter_assistant_url: 
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 900
+    url: true
+    # urlConfig: 
+    #   cors: true
+    #   urlPath: assistant/chat_with_code_interpreter
+
 
   run_assistant_thread:
     handler: openaiazure/assistant.run_assistant_thread
@@ -179,6 +212,13 @@ functions:
           method: post
           cors: true
 
+  list_assistants:
+    handler: openaiazure/assistant.list_assistants
+    events:
+      - http:
+          path: assistant/list
+          method: post
+          cors: true
 
   create_assistant_thread:
     handler: openaiazure/assistant.create_assistant_thread
@@ -365,3 +405,12 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
+
+    AssistantsFilesBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256

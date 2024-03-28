@@ -519,12 +519,13 @@ def create_or_update_assistant(
     assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
 
     data = {'provider': 'amplify'}
-    if provider == 'openai':
+    if provider == 'openai' or provider == 'azure':
         result = create_new_openai_assistant(
             assistant_name,
             instructions,
             data_sources,
-            tools
+            tools, 
+            provider
         )
         data = result['data']
 
