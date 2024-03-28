@@ -106,12 +106,12 @@ create_assistant_schema = {
 share_assistant_schema = {
     "type": "object",
     "properties": {
-        "assistantKey": {"type": "string"},
+        "assistantId": {"type": "string"},
         "recipientUsers": {"type": "array", "items": {"type": "string"}},
         "accessType": {"type": "string"},
         "policy": {"type": "string", "default": ""}
     },
-    "required": ["assistantKey", "recipientUsers", "accessType"],
+    "required": ["assistantId", "recipientUsers", "accessType"],
     "additionalProperties": False
 }
 

@@ -129,7 +129,7 @@ def delete_assistant(event, context, current_user, name, data):
     try:
         # Check if the user is authorized to delete the assistant
         existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_public_id)
-        if not check_user_can_share_assistant(existing_assistant, current_user):
+        if not check_user_can_delete_assistant(existing_assistant, current_user):
             print(f"User {current_user} is not authorized to delete assistant {assistant_public_id}")
             return {'success': False, 'message': 'You are not authorized to delete this assistant.'}
 
@@ -203,6 +203,37 @@ def list_user_assistants(user_id):
     return assistants
 
 
+def get_assistant(assistant_id):
+    """
+    Retrieves the assistant with the given ID.
+
+    Args:
+        assistant_id (str): The ID of the assistant to retrieve.
+
+    Returns:
+        dict: A dictionary representing the assistant, or None if the assistant is not found.
+    """
+    dynamodb = boto3.resource('dynamodb')
+    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+
+    try:
+        # Fetch the item from the DynamoDB table using the assistant ID
+        response = assistants_table.get_item(
+            Key={
+                'id': assistant_id
+            }
+        )
+
+        # If the item is found, return it
+        if 'Item' in response:
+            return response['Item']
+        else:
+            return None
+    except Exception as e:
+        print(f"Error fetching assistant {assistant_id}: {e}")
+        return None
+
+
 @validated(op="create")
 def create_assistant(event, context, current_user, name, data):
     print(f"Creating assistant with data: {data}")
@@ -247,7 +278,7 @@ def create_assistant(event, context, current_user, name, data):
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
     extracted_data = data['data']
-    assistant_key = extracted_data['assistantKey']
+    assistant_key = extracted_data['assistantId']
     recipient_users = extracted_data['recipientUsers']
     access_type = extracted_data['accessType']
     policy = extracted_data.get('policy', '')
@@ -264,10 +295,9 @@ def share_assistant(event, context, current_user, name, data):
 
 def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, policy=''):
     dynamodb = boto3.resource('dynamodb')
-    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
-    assistant_entry = assistants_table.get_item(Key={'id': assistant_key})
+    assistant_entry = get_assistant(assistant_key)
 
-    if not assistant_entry or 'Item' not in assistant_entry:
+    if not assistant_entry:
         return {'success': False, 'message': 'Assistant not found'}
 
     if not can_access_objects(
@@ -276,18 +306,26 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
             permission_level='owner'):
         return {'success': False, 'message': 'You are not authorized to share this assistant'}
 
+    assistant_public_id = assistant_entry['assistantId']
+
     if not update_object_permissions(
             access_token=access_token,
             shared_with_users=recipient_users,
-            keys=[assistant_key],
+            keys=[assistant_public_id],
             object_type='assistant',
             principal_type='user',
             permission_level=access_type,
             policy=policy):
-        print(f"Error updating permissions for assistant {assistant_key}")
+        print(f"Error updating permissions for assistant {assistant_public_id}")
         return {'success': False, 'message': 'Error updating permissions'}
     else:
-        print(f"Successfully updated permissions for assistant {assistant_key}")
+
+        for user in recipient_users:
+            print(f"Creating alias for user {user} for assistant {assistant_public_id}")
+            create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'], 'latest')
+            print(f"Created alias for user {user} for assistant {assistant_public_id}")
+
+        print(f"Successfully updated permissions for assistant {assistant_public_id}")
         return {'success': True, 'message': 'Permissions updated'}
 
 
