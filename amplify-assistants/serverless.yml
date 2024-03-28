@@ -21,7 +21,6 @@ custom:
     - prod
   pythonRequirements:
     dockerizePip: non-linux
-    layer: true
     
 provider:
   name: aws
@@ -35,6 +34,7 @@ provider:
     # When using the OpenAI API, you need to provide the ARN of the secret that contains the API key
     # The secret should be named OPENAI_API_KEY
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     # Valid values are either "openai" or "azure"
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
@@ -44,6 +44,7 @@ provider:
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
     ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
+    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
 
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
@@ -165,8 +166,6 @@ functions:
 
   chat_assistant_url:
     handler: openaiazure/assistant.chat_with_assistant
-    layers:
-        - Ref: PythonRequirementsLambdaLayer
     timeout: 900
     url:
       cors: true
@@ -187,8 +186,6 @@ functions:
  ################## come back 
   chat_code_interpreter_assistant_url: 
     handler: openaiazure/assistant.chat_with_code_interpreter
-    layers:
-        - Ref: PythonRequirementsLambdaLayer
     timeout: 900
     url: true
     # urlConfig: 
@@ -209,14 +206,6 @@ functions:
     events:
       - http:
           path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  list_assistants:
-    handler: openaiazure/assistant.list_assistants
-    events:
-      - http:
-          path: assistant/list
           method: post
           cors: true
 
