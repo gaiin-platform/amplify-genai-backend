@@ -229,7 +229,7 @@ def list_assistants(event, context, current_user, name, data):
     assistants = list_user_assistants(current_user)
     # Add the system assistants
     assistants.append(get_assistant_builder_assistant())
-    #assistants.append(get_amplify_automation_assistant())
+    # assistants.append(get_amplify_automation_assistant())
 
     assistant_ids = [assistant['id'] for assistant in assistants]
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
@@ -241,7 +241,12 @@ def list_assistants(event, context, current_user, name, data):
 
     # for each assistant, add to its data the access rights
     for assistant in assistants:
-        assistant['data']['access'] = access_rights.get(assistant['id'], 'none')
+        try:
+            if assistant['data'] is None:
+                assistant['data'] = {'access': None}
+            assistant['data']['access'] = access_rights.get(assistant['id'], 'none')
+        except Exception as e:
+            print(f"Error adding access rights to assistant {assistant['id']}: {e}")
 
     return {
         'success': True,
@@ -394,7 +399,8 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
 
         for user in recipient_users:
             print(f"Creating alias for user {user} for assistant {assistant_public_id}")
-            create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'], 'latest')
+            create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
+                                   'latest')
             print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
         print(f"Successfully updated permissions for assistant {assistant_public_id}")
@@ -596,7 +602,7 @@ def create_or_update_assistant(
             assistant_name,
             instructions,
             data_sources,
-            tools, 
+            tools,
             provider
         )
         data = result['data']
