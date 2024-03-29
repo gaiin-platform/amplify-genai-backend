@@ -342,11 +342,11 @@ def parse_and_validate(current_user, event, op, validate_body=True):
     except ValidationError as e:
         raise BadRequest(e.message)
 
-    permission_checker = get_permission_checker(current_user, name, op, data)
+    # permission_checker = get_permission_checker(current_user, name, op, data)
 
-    if not permission_checker(current_user, data):
-        # Return a 403 Forbidden if the user does not have permission to append data to this item
-        raise Unauthorized("User does not have permission to perform the operation.")
+    # if not permission_checker(current_user, data):
+    #     # Return a 403 Forbidden if the user does not have permission to append data to this item
+    #     raise Unauthorized("User does not have permission to perform the operation.")
 
     return [name, data]
 

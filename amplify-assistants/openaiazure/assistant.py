@@ -113,3 +113,6 @@ def delete_assistant(event, context, current_user, name, data):
 
   # Assuming get_openai_client function is defined elsewhere
   return assistants.delete_assistant_by_id(assistant_id, current_user)
+
+
+

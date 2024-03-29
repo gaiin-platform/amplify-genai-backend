@@ -35,6 +35,7 @@ provider:
     # The secret should be named OPENAI_API_KEY
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME}
     # Valid values are either "openai" or "azure"
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
@@ -70,6 +71,7 @@ provider:
           Resource:
             - "${self:provider.environment.OPENAI_API_KEY_ARN}"
             - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
@@ -78,10 +80,12 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
+            - - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+
         - Effect: Allow
           Action:
             - dynamodb:GetItem
-          Resource:
+          Resource: 
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
         - Effect: Allow
@@ -183,14 +187,10 @@ functions:
           method: post
           cors: true
 
- ################## come back 
   chat_code_interpreter_assistant_url: 
     handler: openaiazure/assistant.chat_with_code_interpreter
     timeout: 900
     url: true
-    # urlConfig: 
-    #   cors: true
-    #   urlPath: assistant/chat_with_code_interpreter
 
 
   run_assistant_thread:
