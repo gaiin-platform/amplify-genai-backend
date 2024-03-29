@@ -19,12 +19,82 @@ from common.validate import validated
 SYSTEM_TAG = "amplify:system"
 ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
 ASSISTANT_TAG = "amplify:assistant"
+AMPLIFY_AUTOMATION_TAG = "amplify:automation"
 
 RESERVED_TAGS = [
     SYSTEM_TAG,
     ASSISTANT_BUILDER_TAG,
-    ASSISTANT_TAG
+    ASSISTANT_TAG,
+    AMPLIFY_AUTOMATION_TAG
 ]
+
+
+def get_amplify_automation_assistant():
+    instructions = """
+You will help accomplish tasks be creating descriptions of javascript fetch operations to execute. I will execute the fetch operations for you and give you the results. You write your fetch code in javascript in special markdown blocks as shown:
+
+```auto
+fetch(<SOME URL>, {
+            method: 'POST',
+            headers: {
+                ...
+            },
+            body: JSON.stringify(<Insert JSON>),
+        });
+```
+
+All ```auto blocks must have a single statement wtih a fetch call to fetch(...with some params...). 
+
+The supported URLs to fetch from are:
+
+GET, /chats // returns a list of chat threads 
+GET, /folders // returns a list of folders 
+GET, /models // returns a list of models 
+GET, /prompts // returns a list of prompts 
+GET, /defaultModelId // returns the default model ID 
+GET, /featureFlags // returns a list of feature flags 
+GET, /workspaceMetadata // returns workspace metadata 
+GET, /selectedConversation // returns the currently selected conversation 
+GET, /selectedAssistant // returns the currently selected assistant
+
+Help me accomplish tasks by creating ```auto blocks and then waiting for me to provide the results from the fetch calls. We keep going until the problem is solved.
+
+Always try to output an ```auto block if possible. When the problem is solved, output <<DONE>>
+    """
+
+    description = """
+Consider this assistant your very own genie, granting your data wishes within Amplify with a simple "command." You make a wish - perhaps for viewing a conversation or organizing your folders - and the assistant spells out the magic words for you to say. With minimal effort on your part, your wish is granted, and you're provided with the treasures you seek.    
+    """
+    id = "ast/amplify-automation"
+    name = "Amplify Automator"
+    datasources = []
+    tags = [AMPLIFY_AUTOMATION_TAG, SYSTEM_TAG]
+    created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
+    updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
+    tools = []
+    data = {
+        "provider": "amplify",
+        "conversationTags": [AMPLIFY_AUTOMATION_TAG],
+    }
+
+    return {
+        'id': id,
+        'coreHash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'hash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'instructionsHash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'dataSourcesHash': hashlib.sha256(json.dumps(datasources).encode()).hexdigest(),
+        'version': 1,
+        'name': name,
+        'description': description,
+        'instructions': instructions,
+        'tags': tags,
+        'createdAt': created_at,
+        'updatedAt': updated_at,
+        'dataSources': datasources,
+        'data': data,
+        'tools': tools,
+        'user': 'amplify'
+    }
 
 
 def get_assistant_builder_assistant():
@@ -157,7 +227,9 @@ def list_assistants(event, context, current_user, name, data):
         dict: A dictionary containing the list of assistants.
     """
     assistants = list_user_assistants(current_user)
+    # Add the system assistants
     assistants.append(get_assistant_builder_assistant())
+    #assistants.append(get_amplify_automation_assistant())
 
     assistant_ids = [assistant['id'] for assistant in assistants]
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
