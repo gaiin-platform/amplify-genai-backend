@@ -81,13 +81,14 @@ def file_keys_to_file_ids(file_keys):
     return file_ids
 
 
-def send_image_file_to_s3(content, file_key, content_type = 'binary/octet-stream'):
+def send_image_file_to_s3(file, file_key, content_type = 'binary/octet-stream'):
+    print("Sending files to s3")
     bucket_name = os.environ['ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME']
     
     try:
         print("Transfer file to s3 bucket: ".format(bucket_name))
-
-        file_stream = BytesIO(content)
+        file_stream = BytesIO(file.content)
+        print("File Stream: ", file_stream)
         s3.upload_fileobj(file_stream, bucket_name, file_key, 
                           ExtraArgs={'ACL': 'private','ContentType': content_type})
 
@@ -106,6 +107,7 @@ def send_image_file_to_s3(content, file_key, content_type = 'binary/octet-stream
 
 
 def determine_content_type(file_name):
+    print("Determining file type of: ", file_name)
     extension = file_name.split('.')[-1] 
     if (extension == 'csv'):
         return 'text/csv' 
@@ -146,7 +148,7 @@ def get_active_thread_id_for_chat(client, messages, info):
        return create_new_thread_for_chat(client, messages, info)
     
     updated_last_known_thread = message_catch_up_on_thread(client, new_messages_to_last_known, info)
-    if (not updated_last_known_thread['status']):
+    if (not updated_last_known_thread['success']):
         return updated_last_known_thread
 
     return {'success': True, 
@@ -161,7 +163,7 @@ def check_last_known_thread(client, info):
     try:
         thread_info = client.beta.threads.retrieve(thread_id)
         print(thread_info)
-        if (thread_info.get("id")):
+        if (thread_info.id):
             op_details = {'type': "RETRIEVE_THREAD", 'timestamp':  timestamp}
             record_thread_usage(op_details, info) # record when you activate the thread
             return {'success': True, 'message': 'Successfully retrieved the last known thread and verified it is active.'}
@@ -180,9 +182,10 @@ def get_last_known_thread_id(client, messages, info):
     # traverse backward to see if and when there is some codeiterpreter message data attached to the messages passed in 
     for index in range(len(messages) - 1, -1, -1):
         if 'codeInterpreterMessageData' in messages[index] and messages[index]['codeInterpreterMessageData'] is not None:
+            print("Message with code interpreter message data: ", messages[index]['codeInterpreterMessageData'])
             # theres no way the very last message in the list can have codeInterpreterMessageData according to existing logic
             # the list will always contain the new user prompt, so will always at the bare minimum get messages[-1] if code interpreter has been used at some point
-            thread_key = messages[index].get('codeInterpreterMessageData').get('threadId')
+            thread_key = messages[index]['codeInterpreterMessageData']['threadId']
             thread_info = get_thread(thread_key, info['current_user'])
             if (thread_info['success']):
                 info['thread_key'] = thread_key
@@ -272,22 +275,22 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
     current_file_ids = []
     for msg in sanitized_messages: #there will always be at least the new/most recent prompt message
         current_content += f"\n\n{msg['content']}"
-        current_file_ids.extend(msg['file_ids'])
-        # If current_file_ids has reached 10 items, add current message to messages_to_send
-        if len(current_file_ids) > 10:
-            messages_to_send.append({'content': current_content, 'file_ids': current_file_ids[:10]})
-            current_content = ""
-            current_file_ids = current_file_ids[10:]
+        # current_file_ids.extend(msg['file_ids'])
+        # # If current_file_ids has reached 10 items, add current message to messages_to_send
+        # if len(current_file_ids) > 10:
+        #     messages_to_send.append({'content': current_content, 'file_ids': current_file_ids[:10]})
+        #     current_content = ""
+        #     current_file_ids = current_file_ids[10:]
     # If there are remaining file_ids after iteration, add them to the last message
-    if current_file_ids:
-        messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
+    # if current_file_ids:
+    messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
 
     try:
         print("Adding missing messages to thread.")
         for message in messages_to_send:
             timestamp = int(time.time() * 1000)
             content = message['content']
-            print(f"Adding message {content} with datasources {message['file_ids']}")
+
             messageResponse = client.beta.threads.messages.create(
             thread_id= info['thread_id'],
             role= "user",
@@ -296,7 +299,7 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
             )
             print(f"Result: {messageResponse}")
              
-            op_details = {'type': "ADD_MESSAGE", 'timestamp':  timestamp, 'messageID': messageResponse['id'], #would cause an exception if raises a KeyError
+            op_details = {'type': "ADD_MESSAGE", 'timestamp':  timestamp, 'messageID': messageResponse.id, #would cause an exception if raises a KeyError
                           "inputTokens": count_tokens(content)}
             record_thread_usage(op_details, info) #record every message added 
         return {'success': True, 'message': 'Successfully added missing messages to the thread.'}
@@ -315,15 +318,13 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
     'current_user': current_user
     }
 
-    # thread_id_data = get_active_thread_id_for_chat(client, messages, info)
+    thread_id_data = get_active_thread_id_for_chat(client, messages, info)
     
-    # if (not thread_id_data['success']):
-    #     return thread_id_data
+    if (not thread_id_data['success']):
+        return thread_id_data
     
-    # info = thread_id_data['data']
-
-    info["thread_id"] = 'thread_fteRvioqTvnw7DEHrV1X0Ol7'
-    info["thread_key"] =  'karely.m.rodriguez.galvan@vanderbilt.edu/thr/2cce217c-2ebb-48b4-ac24-cf8eba9a0141'
+    info = thread_id_data['data']
+   
     openai_thread_id = info['thread_id']
 
     try:
@@ -346,6 +347,8 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
                 print(f"Status {status.status}")
                 if status.status == 'completed':
                     break
+                elif (status.status in ["failed", "cancelled", "expired"]):
+                    return {'success': False, 'error': 'Run failed!'} 
             except Exception as e:
                 print(e)
                 run_data = {openai_provider : {
@@ -405,29 +408,34 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
             responseData['data']['textContent'] += item_data.value + '\n'
 
             for annotation in item_data.annotations:
-                if (annotation.get('type') == "file_path"):
-                    created_file_id = annotation['file_path']['file_id']
-                    s3_file_key = f"s3://{current_user}/{message_id}/{created_file_id}"
-                    content = client.files.retrieve(created_file_id)
+                print("Annotation: ", annotation)
+                if (annotation.type == "file_path"):
+                    print("Code Interpreter generated a file!")
+                    created_file_id = annotation.file_path.file_id
+                    file_obj = client.files.retrieve(created_file_id)
+                    file_name = file_obj.filename[file_obj.filename.rfind('/') + 1:]  
+                    s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}-{file_name}"
+                    file_content = client.files.content(file_obj.id)
                     # only csv and pdf are currently supported 
-                    content_type = determine_content_type(annotation['text'])
-                    send_image_file_to_s3(content, s3_file_key, content_type)
+                    content_type = determine_content_type(annotation.text)
+                    print("File content type: ", content_type)
+                    send_image_file_to_s3(file_content, s3_file_key, content_type)
 
-                    #add key to retrieve file from s3 to annotation 
-                    annotation['file'] = s3_file_key
                     content.append({
-                    'type': 'file',
+                    'type': content_type,
                     'value': {
                         'file_key': s3_file_key,
                         }
                     })
 
         elif item.type == 'image_file': 
-            created_file_id = item['image_file']['file_id']
+            print("Code Interpreter generated an image file!")
+
+            created_file_id = item.image_file.file_id
             #send file to s3 ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME 
-            s3_file_key = f"s3://{current_user}/{message_id}/{created_file_id}"
-            content = client.files.content(created_file_id)
-            send_image_file_to_s3(content, s3_file_key, 'image/png')
+            s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}"
+            file_content = client.files.content(created_file_id)
+            send_image_file_to_s3(file_content, s3_file_key, 'image/png')
 
             content.append({
                 'type': 'image_file',
@@ -472,6 +480,8 @@ def record_thread_usage(op_details, info):
                     'user': current_user
                     }
         usage_table.put_item(Item=new_item)
+        print("New Entry: ", usage_table.get_item(Key={'id': entry_key})['Item'])
+
     else:
         response = usage_table.get_item(Key={'id': entry_key})
         
@@ -486,7 +496,7 @@ def record_thread_usage(op_details, info):
             return
 
         details = get(usage_item, 'details')
-        sessions = usage_item.get(sessions, [])
+        sessions = details.get('sessions', [])
         
         if (not sessions): # just incase sessions get deleted on the backend or something 
             details = {
@@ -516,6 +526,7 @@ def record_thread_usage(op_details, info):
             UpdateExpression="set details = :d",
             ExpressionAttributeValues={':d': details}
         )
+        print("Updated Entry: ", usage_table.get_item(Key={'id': entry_key})['Item'])
     print("Successfully recorded thread usage")
 
 
@@ -1083,3 +1094,6 @@ def delete_assistant_by_id(assistant_id, user_id):
         return {'success': False, 'message': 'Failed to delete assistant record from database'}
 
     return {'success': True, 'message': 'Assistant deleted successfully'}
+
+
+

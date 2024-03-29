@@ -435,7 +435,7 @@ def get_most_recent_assistant_version(assistants_table,
 
 
 def save_assistant(assistants_table, assistant_name, description, instructions, data_sources, provider, tools,
-                   user_that_owns_the_assistant, version, tags, assistant_public_id=None):
+                   user_that_owns_the_assistant, version, tags, assistant_public_id=None, data = None):
     """
     Saves the assistant data to the DynamoDB table.
 
@@ -488,7 +488,8 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'createdAt': timestamp,
         'updatedAt': timestamp,
         'dataSources': data_sources,
-        'version': version
+        'version': version,
+        'data': data
     }
 
     assistants_table.put_item(Item=new_item)
@@ -596,17 +597,6 @@ def create_or_update_assistant(
     dynamodb = boto3.resource('dynamodb')
     assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
 
-    data = {'provider': 'amplify'}
-    if provider == 'openai' or provider == 'azure':
-        result = create_new_openai_assistant(
-            assistant_name,
-            instructions,
-            data_sources,
-            tools,
-            provider
-        )
-        data = result['data']
-
     existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_public_id)
 
     if existing_assistant:
@@ -664,6 +654,18 @@ def create_or_update_assistant(
                      'version': new_version}
         }
     else:
+
+        data = None
+        if provider == 'openai' or provider == 'azure':
+            result = create_new_openai_assistant(
+                assistant_name,
+                instructions,
+                data_sources,
+                tools, 
+                provider
+            )
+            data = result['data']
+
         new_item = save_assistant(
             assistants_table,
             assistant_name,
@@ -675,6 +677,8 @@ def create_or_update_assistant(
             user_that_owns_the_assistant,
             1,
             tags,
+            None, 
+            data
         )
 
         # Update the permissions for the new assistant
