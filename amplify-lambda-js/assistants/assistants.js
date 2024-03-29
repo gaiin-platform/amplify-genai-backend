@@ -8,12 +8,14 @@ import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
+import {getDataSourcesByUse} from "../datasource/datasources.js";
+import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
 const logger = getLogger("assistants");
 
 
 const defaultAssistant = {
     name: "default",
-    displayName: "Amplify Assistant",
+    displayName: "Amplify",
     handlesDataSources: (ds) => {
         return true;
     },
@@ -22,13 +24,15 @@ const defaultAssistant = {
     },
     description: "Default assistant that can handle arbitrary requests with any data type but may " +
         "not be as good as a specialized assistant.",
-    handler: async (llm, params, body, dataSources, responseStream) => {
+    handler: async (llm, params, body, ds, responseStream) => {
 
         const model = (body.options && body.options.model) ?
             Models[body.options.model.id]:
             (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
 
         logger.debug("Using model: ", model);
+
+        const {dataSources} = await getDataSourcesByUse(params, body, ds);
 
         const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
         const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
@@ -49,7 +53,7 @@ const defaultAssistant = {
 
 const batchAssistant = {
     name: "batch",
-    displayName: "Batch Assistant",
+    displayName: "Batch",
     handlesDataSources: (ds) => {
         return true;
     },
@@ -205,8 +209,11 @@ ${body.messages.slice(-1)[0].content}
 }
 
 const getTokenCount = (dataSource) => {
-    if(dataSource.metadata && dataSource.metadata.totalTokens){
+    if(dataSource.metadata && dataSource.metadata.totalTokens && !dataSource.metadata.ragOnly){
         return dataSource.metadata.totalTokens;
+    }
+    else if(dataSource.metadata && dataSource.metadata.ragOnly){
+        return 0;
     }
     return 1000;
 }
@@ -222,39 +229,55 @@ export const getAvailableAssistantsForDataSources = (model, dataSources, assista
     });
 }
 
+const isUserDefinedAssistant = (assistantId) => {
+    return assistantId && assistantId !== "default" && assistantId.startsWith("astp/");
+}
+
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
 
     let selected = defaultAssistant;
 
-    // Look for any body.messages.data.state.currentAssistant going in reverse order through the messages
-    // and choose the first one that is found.
-    const currentAssistant = body.messages.map((m) => {
-        return (m.data && m.data.state && m.data.state.currentAssistant) ? m.data.state.currentAssistant : null;
-    }).reverse().find((a) => a !== null);
+    const clientSelectedAssistant = (body.options && body.options.assistantId) ?
+        body.options.assistantId : null;
+
+    let selectedAssistant = null;
+    if(clientSelectedAssistant) {
+        selectedAssistant = await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
+    }
 
     const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
     llm.sendStatus(status);
     llm.forceFlush();
 
-    // Hack to make AWS lambda send the status update and not buffer
-    let availableAssistants = getAvailableAssistantsForDataSources(model, dataSources, assistants);
+    if(selectedAssistant === null) {
+        // Look for any body.messages.data.state.currentAssistant going in reverse order through the messages
+        // and choose the first one that is found.
+        const currentAssistant = body.messages.map((m) => {
+            return (m.data && m.data.state && m.data.state.currentAssistant) ? m.data.state.currentAssistant : null;
+        }).reverse().find((a) => a !== null);
 
-    if(availableAssistants.some((a) => a.name === currentAssistant) &&
-        (!dataSources || dataSources.length === 0)){
-        // Future, we can automatically default to the last used assistant to speed things
-        // up unless some predetermined condition is met.
-        availableAssistants = [assistants.find((a) => a.name === currentAssistant)]
+        // Hack to make AWS lambda send the status update and not buffer
+        let availableAssistants = getAvailableAssistantsForDataSources(model, dataSources, assistants);
+
+        if (availableAssistants.some((a) => a.name === currentAssistant) &&
+            (!dataSources || dataSources.length === 0)) {
+            // Future, we can automatically default to the last used assistant to speed things
+            // up unless some predetermined condition is met.
+            availableAssistants = [assistants.find((a) => a.name === currentAssistant)]
+        }
+
+        const start = new Date().getTime();
+        const selectedAssistantName = (availableAssistants.length > 1) ?
+            await chooseAssistantForRequestWithLLM(llm, body, dataSources,
+                availableAssistants) : availableAssistants[0].name;
+        const timeToChoose = new Date().getTime() - start;
+        logger.info(`Selected assistant ${selectedAssistantName}`);
+        logger.info(`Time to choose assistant: ${timeToChoose}ms`);
+
+        selectedAssistant = assistants.find((a) => a.name === selectedAssistantName);
+
     }
 
-    const start = new Date().getTime();
-    const selectedAssistantName = (availableAssistants.length > 1) ?
-        await chooseAssistantForRequestWithLLM(llm, body, dataSources,
-            availableAssistants) : availableAssistants[0].name;
-    const timeToChoose = new Date().getTime() - start;
-    logger.info(`Selected assistant ${selectedAssistantName}`);
-    logger.info(`Time to choose assistant: ${timeToChoose}ms`);
-
-    const selectedAssistant = assistants.find((a) => a.name === selectedAssistantName);
     selected = selectedAssistant || defaultAssistant;
 
     llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
@@ -265,7 +288,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     llm.sendStatus(newStatus(
         {
             inProgress: false,
-            message: "The \"" + selected.displayName + "\" is responding.",
+            message: "The \"" + selected.displayName + " Assistant\" is responding.",
             icon: "assistant",
             sticky: true
         }));

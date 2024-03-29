@@ -304,7 +304,6 @@ def update_object_permissions(current_user, data):
     dynamodb = boto3.resource('dynamodb')
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
 
-
     try:
         data_sources = data['dataSources']
         email_list = data['emailList']
@@ -314,7 +313,6 @@ def update_object_permissions(current_user, data):
         object_type = data.get('objectType')
 
         print(f"Updating permission on {data_sources} for {email_list} with {provided_permission_level} and {policy}")
-
 
         # Get the DynamoDB table
         table = dynamodb.Table(table_name)
@@ -513,6 +511,22 @@ def process_document_for_rag(event, context):
                                 'createdAt': creation_time,
                             }
                             hash_files_table.put_item(Item=hash_file_data)
+                            print(f"Updated hash files entry for {dochash}")
+
+                            files_table.update_item(
+                                Key={
+                                    'id': key
+                                },
+                                UpdateExpression='SET totalTokens = :tokenVal, totalItems = :itemVal, dochash = :hashVal',
+                                ExpressionAttributeValues={
+                                    ':tokenVal': total_tokens,
+                                    ':itemVal': total_items,
+                                    ':hashVal': dochash
+                                }
+                            )
+                            print(
+                                f"Uploaded user files entry with token and item "
+                                f"count for {key}: {total_tokens} / {total_items}")
 
                 except Exception as e:
                     print(f"Error processing document: {str(e)}")
@@ -652,4 +666,3 @@ def chunk_document_for_rag(event, context):
         'statusCode': 200,
         'body': json.dumps('SQS Text Extraction Complete!')
     }
-

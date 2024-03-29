@@ -1,4 +1,4 @@
-import {getDefaultLLM} from "../../common/llm.js";
+import {getDefaultLLM} from "../../common/llm.js"; //unused
 import {ModelID, Models} from "../../models/models.js";
 import {ConsoleWritableStream} from "../../local/consoleWriteableStream.js";
 import {newStatus} from "../../common/status.js";
@@ -192,6 +192,8 @@ export const outputToStatus = (status, action) => {
             statusLLM.responseStream = context.responseStream;
             statusLLM.sendStatus(status);
             statusLLM.forceFlush();
+            
+
 
             statusLLM.responseStream = new StatusOutputStream({},
                 context.responseStream,
@@ -209,10 +211,22 @@ export const outputToStatus = (status, action) => {
     };
 }
 
-export const updateStatus = (id, status) => {
+export const updateStatus = (id, status, contextDataKey = null) => {
 
     return {
         execute: async (llm, context, dataSources) => {
+            // we can get new saved context data and use it as the summary info
+            if (status.summary === undefined && typeof contextDataKey === "string") {
+                const data = context.data[contextDataKey]
+               // if the data message is too long for a summary then just do it as a message
+                if (data.length > 60) {
+                    status.summary = "View Contents"
+                    status.message = data
+                } else {
+                    status.summary = data
+                }
+            }
+
 
             const statusEvent = (context.status[id]) ? context.status[id] : newStatus(status);
 
@@ -229,6 +243,7 @@ export const updateStatus = (id, status) => {
         }
     }
 }
+
 
 export const prependHistory = (messages) => {
     return {
@@ -703,6 +718,11 @@ const configureLLM = (config, llm) => {
     if (config.options !== undefined) {
         llm.params.options = {...llm.params.options, ...config.options};
     }
+
+    if (config.isEntertainment) { 
+        // use the cheaper model!
+        llm.setModel(Models["anthropic.claude-3-haiku-20240307-v1:0"])
+    }
 }
 
 export const getMessagesArray = (messages) => {
@@ -733,7 +753,8 @@ export class PromptAction {
                         skipRag: true,
                         ragOnly: false,
                         retries: 3,
-                        streamResults: true
+                        streamResults: true,
+                        isEntertainment: false
                     }) {
 
         this.messages = getMessagesArray(messages);
@@ -741,6 +762,7 @@ export class PromptAction {
         this.streamResults = getParam(config, "streamResults", true);
         this.retries = getParam(config, "retries", 3);
         this.appendMessages = getParam(config, "appendMessages", true);
+        this.isEntertainment = getParam(config, "isEntertainment", false); // added so temp switch the model 
         this.config = config;
     }
 
@@ -788,7 +810,8 @@ export class AssistantState {
                     omitDocuments: false,
                     extraInstructions: {preInstructions: "", postInstructions: ""},
                     stream: {target: STATUS_STREAM, passThrough: true}
-                }) {
+                }, 
+                isAsync = false) {
         this.name = name;
         this.useFullHistory = getParam(config, "useFullHistory", true);
         this.description = description;
@@ -797,7 +820,8 @@ export class AssistantState {
         this.transitions = [];
         this.endState = endState;
         this.stream = config.stream || {target: STATUS_STREAM, passThrough: true};
-        this.config = config;
+        this.config = config
+        this.isAsync = isAsync;
 
         // If insertDocuments is not defined, default to true
         this.omitDocuments = config.omitDocuments;
@@ -861,7 +885,12 @@ export class AssistantState {
 
         if (this.entryAction) {
             try {
-                await invokeAction(this.entryAction, actionLLM, context, dataSources);
+                if (this.isAsync) { //so we can have a real async action execute
+                    invokeAction(this.entryAction, actionLLM, context, dataSources);
+                } else {
+                    await invokeAction(this.entryAction, actionLLM, context, dataSources);
+                }
+                
             } catch (e) {
                 console.error("Error invoking entry action in state: " + this.name);
                 console.error(e);
@@ -884,9 +913,11 @@ export class AssistantState {
         if (await isAssistantKilled(context)) {
             return null;
         }
-
-        await this.invokeEntryAction(llm, context, dataSources);
-
+        if (this.isAsync) { //so we can have a real async action execute
+            this.invokeEntryAction(llm, context, dataSources);
+        } else {
+            await this.invokeEntryAction(llm, context, dataSources);
+        }
         if (this.transitions.length === 0) {
             return this.name;
         } else if (this.transitions.length === 1) {

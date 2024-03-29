@@ -36,6 +36,20 @@ def chat_with_assistant(event, context, current_user, name, data):
     file_keys
   )
 
+@validated(op="chat_with_code_interpreter") 
+def chat_with_code_interpreter(event, context, current_user, name, data):
+  print("Chat_with_code_interpreter validated")
+  assistant_id = data['data'].get('id')
+  messages = data['data'].get('messages')
+  file_keys = data['data'].get('fileKeys')
+
+  return assistants.chat_with_code_interpreter(
+    current_user,
+    assistant_id,
+    messages,
+    file_keys
+  )
+
 @validated(op="add_message")
 def add_message_assistant_thread(event, context, current_user, name, data):
   thread_id = data['data'].get('id')
@@ -99,3 +113,6 @@ def delete_assistant(event, context, current_user, name, data):
 
   # Assuming get_openai_client function is defined elsewhere
   return assistants.delete_assistant_by_id(assistant_id, current_user)
+
+
+

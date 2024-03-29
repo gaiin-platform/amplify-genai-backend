@@ -12,13 +12,15 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
 
+
 custom:
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
-
+  pythonRequirements:
+    dockerizePip: non-linux
     
 provider:
   name: aws
@@ -32,14 +34,23 @@ provider:
     # When using the OpenAI API, you need to provide the ARN of the secret that contains the API key
     # The secret should be named OPENAI_API_KEY
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME}
     # Valid values are either "openai" or "azure"
+    HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
+    ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
+    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
+
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
+    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
     OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
+    S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
 
   iam:
     role:
@@ -59,12 +70,29 @@ provider:
             - s3:ListBucket
           Resource:
             - "${self:provider.environment.OPENAI_API_KEY_ARN}"
+            - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
+            - - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+          Resource: 
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+          Resource:
+            - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/assistants/*"
 
 functions:
 
@@ -74,6 +102,15 @@ functions:
     events:
       - http:
           path: assistant/create
+          method: post
+          cors: true
+
+  list_assistants:
+    handler: service/core.list_assistants
+    timeout: 30
+    events:
+      - http:
+          path: assistant/list
           method: post
           cors: true
 
@@ -87,10 +124,18 @@ functions:
           cors: true
 
   delete_assistant:
-    handler: openaiazure/assistant.delete_assistant
+    handler: service/core.delete_assistant
     events:
       - http:
           path: assistant/delete
+          method: post
+          cors: true
+
+  delete_assistant_open_ai:
+    handler: openaiazure/assistant.delete_assistant
+    events:
+      - http:
+          path: openai/assistant/delete
           method: post
           cors: true
 
@@ -128,6 +173,25 @@ functions:
     timeout: 900
     url:
       cors: true
+    
+
+
+    # for local testing 
+  chat_code_interpreter_assistant:
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    timeout: 30
+
+    events:
+      - http:
+          path: assistant/chat_with_code_interpreter
+          method: post
+          cors: true
+
+  chat_code_interpreter_assistant_url: 
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    timeout: 900
+    url: true
+
 
   run_assistant_thread:
     handler: openaiazure/assistant.run_assistant_thread
@@ -142,14 +206,6 @@ functions:
     events:
       - http:
           path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  list_assistants:
-    handler: openaiazure/assistant.list_assistants
-    events:
-      - http:
-          path: assistant/list
           method: post
           cors: true
 
@@ -187,6 +243,12 @@ resources:
           -
             AttributeName: name
             AttributeType: S
+          -
+            AttributeName: assistantId
+            AttributeType: S
+          -
+            AttributeName: version
+            AttributeType: N
         KeySchema:
           -
             AttributeName: id
@@ -211,7 +273,62 @@ resources:
 
             Projection:
               ProjectionType: ALL
+          -
+            IndexName: AssistantIdIndex
+            KeySchema:
+              - AttributeName: assistantId
+                KeyType: HASH
+              - AttributeName: version
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}
+
+    AssistantsAliasesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: assistantId
+            AttributeType: S
+          -
+            AttributeName: user
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: user
+            KeyType: HASH
+          -
+            AttributeName: assistantId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          -
+            IndexName: AssistantIdIndex
+            KeySchema:
+              -
+                AttributeName: assistantId
+                KeyType: HASH
+              -
+                AttributeName: user
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: UserIndex
+            KeySchema:
+              -
+                AttributeName: user
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}
 
     AssistantThreadsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -277,3 +394,12 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
+
+    AssistantsFilesBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256

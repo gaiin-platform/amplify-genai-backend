@@ -81,6 +81,23 @@ check_object_permissions = {
     "required": ["dataSources"]
 }
 
+simulate_access_to_objects = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "objects": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "required": ["objects"]
+}
+
 create_cognito_group = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
@@ -104,6 +121,9 @@ validators = {
     },
     "/utilities/can_access_objects": {
         "can_access_objects": check_object_permissions
+    },
+    "/utilities/simulate_access_to_objects": {
+        "simulate_access_to_objects": simulate_access_to_objects
     },
     "/utilities/create_cognito_group": {
     "create_cognito_grou": create_cognito_group

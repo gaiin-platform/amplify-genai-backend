@@ -272,6 +272,126 @@ def get_presigned_url(event, context, current_user, name, data):
         return {'success': False}
 
 
+@validated(op="list")
+def list_tags_for_user(event, context, current_user, name, data):
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
+
+    try:
+        # Retrieve the item corresponding to the user
+        response = table.get_item(
+            Key={'user': current_user}
+        )
+        # Check if 'Item' key is in the response which indicates a result was returned
+        if 'Item' in response:
+            user_tags = response['Item'].get('tags', [])
+            print(f"Tags for user ID '{current_user}': {user_tags}")
+            return {
+                'success': True,
+                'data': {'tags': user_tags}
+            }
+        else:
+            print(f"No tags found for user ID '{current_user}'.")
+            return {
+                'success': True,
+                'data': {'tags': []}
+            }
+    except ClientError as e:
+        print(f"Error getting tags for user ID '{current_user}': {e.response['Error']['Message']}")
+        return {
+            'success': False,
+            'data': {'tags': []}
+        }
+
+@validated(op="delete")
+def delete_tag_from_user(event, context, current_user, name, data):
+    data = data['data']
+    tag_to_delete = data['tag']
+
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
+
+    try:
+        # Update the item to delete the tag from the set of tags
+        response = table.update_item(
+            Key={'user': current_user},  # Assumes that `current_user` holds the user ID
+            UpdateExpression="DELETE #tags :tag",
+            ExpressionAttributeNames={
+                '#tags': 'tags',  # Assumes 'Tags' is the name of the attribute
+            },
+            ExpressionAttributeValues={
+                ':tag': set([tag_to_delete])  # The tag to delete, must be a set
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        print(f"Tag '{tag_to_delete}' deleted successfully from user ID: {current_user}")
+        return {
+            'success': True,
+            'message': "Tag deleted successfully"
+        }
+
+    except boto3.client('dynamodb').exceptions.ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == "ValidationException" and "provided key element does not match" in e.response['Error'][
+            'Message']:
+            print(f"User ID: {current_user} does not exist or tag does not exist.")
+            return {
+                'success': False,
+                'message': "User ID does not exist or tag does not exist"
+            }
+        else:
+            return {
+                'success': False,
+                'message': e.response['Error']['Message']
+            }
+
+
+def add_tags_to_user(current_user, tags_to_add):
+    """Add a tag to user's list of tags if it doesn't already exist."""
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
+
+    try:
+        response = table.update_item(
+            Key={'user': current_user},
+            UpdateExpression="ADD #tags :tags",
+            ExpressionAttributeNames={
+                '#tags': 'tags',  # Assuming 'Tags' is the name of the attribute
+            },
+            ExpressionAttributeValues={
+                ':tags': set(tags_to_add)  # The tags to add as a set
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        print(f"Tags added successfully to user ID: {current_user}")
+        return {
+            'success': True,
+            'message': "Tags added successfully"
+        }
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == "ValidationException":
+            # If the item doesn't exist, create it with the specified tags
+            response = table.put_item(
+                Item={
+                    'UserID': current_user,
+                    'tags': set(tags_to_add)
+                }
+            )
+            print(f"New user created with tags for user ID: {current_user}")
+            return {
+                'success': True,
+                'message': "Tags added successfully"
+            }
+        else:
+            print(f"Error adding tags to user ID: {current_user}: {e.response['Error']['Message']}")
+            return {
+                'success': False,
+                'message': e.response['Error']['Message']
+            }
+
+
 @validated(op="set_tags")
 def update_item_tags(event, context, current_user, name, data):
     table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
@@ -295,6 +415,13 @@ def update_item_tags(event, context, current_user, name, data):
                     ':tags': tags
                 }
             )
+
+            tags_added = add_tags_to_user(current_user, tags)
+            if tags_added['success']:
+                print(f"Tags updated for user {current_user}")
+            else:
+                print(f"Error adding tags to user: {tags_added['message']}")
+
             return {"success": True, "message": "Tags updated"}
         else:
             return {"success": False, "message": "File not found"}
@@ -305,6 +432,7 @@ def update_item_tags(event, context, current_user, name, data):
 
 @validated(op="query")
 def query_user_files(event, context, current_user, name, data):
+    print(f"Querying user files for {current_user}")
     # Extract the query parameters from the event
     query_params = data['data']
 
@@ -324,6 +452,7 @@ def query_user_files(event, context, current_user, name, data):
     name_prefix = query_params.get('namePrefix')
     created_at_prefix = query_params.get('createdAtPrefix')
     type_prefix = query_params.get('typePrefix')
+    type_filters = query_params.get('types')
     tag_search = query_params.get('tags', None)
     page_index = query_params.get('pageIndex', 0)
     forward_scan = query_params.get('forwardScan', False)
@@ -366,6 +495,7 @@ def query_user_files(event, context, current_user, name, data):
           f"name_prefix={name_prefix}, "
           f"created_at_prefix={created_at_prefix}, "
           f"type_prefix={type_prefix}, "
+          f"type_filters={type_filters}, "
           f"tag_search={tag_search}, "
           f"page_index={page_index}"
           f"forward_scan={forward_scan}"
@@ -380,6 +510,7 @@ def query_user_files(event, context, current_user, name, data):
         partition_key_value=current_user,
         sort_key_value_start=sort_key_value_start,
         filters=begins_with_filters,
+        type_filters=type_filters,
         exclusive_start_key=exclusive_start_key,
         page_size=page_size,
         forward_scan=forward_scan
@@ -393,7 +524,8 @@ def query_user_files(event, context, current_user, name, data):
 
 
 def query_table_index(table_name, index_name, partition_key_name, sort_key_name, partition_key_value,
-                      sort_key_value_start=None, filters=None, exclusive_start_key=None, page_size=10,
+                      sort_key_value_start=None, filters=None, type_filters=None, exclusive_start_key=None,
+                      page_size=10,
                       forward_scan=False):
     """
     Do not allow the client to directly provide the table_name, index_name, partition_key_name,
@@ -438,6 +570,17 @@ def query_table_index(table_name, index_name, partition_key_name, sort_key_name,
     # Add filter expression if begins_with_filters are provided
     filter_expressions = []
 
+    if type_filters is not None:
+        type_filter_expressions = []
+        for index, type_filter in enumerate(type_filters):
+            type_filter_expressions.append(f"#type_f = :type_value_{index}")
+            # Assuming the type values are strings
+            expression_attribute_values[f":type_value_{index}"] = {'S': type_filter}
+
+        expression_attribute_names["#type_f"] = "type"
+        type_filter_expression = " OR ".join(type_filter_expressions)
+        filter_expressions.append(type_filter_expression)
+
     if filters:
         for filter_def in filters:
             attr_name = filter_def['attribute']
@@ -469,8 +612,10 @@ def query_table_index(table_name, index_name, partition_key_name, sort_key_name,
     # Join all filter expressions with AND (if any)
     if filter_expressions:
         query_params['FilterExpression'] = " AND ".join(filter_expressions)
-        query_params['ExpressionAttributeNames'] = expression_attribute_names
-        query_params['ExpressionAttributeValues'] = expression_attribute_values
+        if len(expression_attribute_names) > 0:
+            query_params['ExpressionAttributeNames'] = expression_attribute_names
+        if len(expression_attribute_values) > 0:
+            query_params['ExpressionAttributeValues'] = expression_attribute_values
 
     # Limit the query if there's no begins_with filter provided
     if not filter_expressions:

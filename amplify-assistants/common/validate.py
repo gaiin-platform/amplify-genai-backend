@@ -36,6 +36,17 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
+delete_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
+        },
+    },
+    "required": ["assistantId"]
+}
+
 create_assistant_schema = {
     "type": "object",
     "properties": {
@@ -46,6 +57,10 @@ create_assistant_schema = {
         "description": {
             "type": "string",
             "description": "A brief description of the item"
+        },
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
         },
         "tags": {
             "type": "array",
@@ -91,12 +106,12 @@ create_assistant_schema = {
 share_assistant_schema = {
     "type": "object",
     "properties": {
-        "assistantKey": {"type": "string"},
+        "assistantId": {"type": "string"},
         "recipientUsers": {"type": "array", "items": {"type": "string"}},
         "accessType": {"type": "string"},
         "policy": {"type": "string", "default": ""}
     },
-    "required": ["assistantKey", "recipientUsers", "accessType"],
+    "required": ["assistantId", "recipientUsers", "accessType"],
     "additionalProperties": False
 }
 
@@ -163,14 +178,66 @@ chat_assistant_schema = {
                     },
                     "role": {
                         "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "type": "object",
+                        "additionalProperties": True
+                    },
+                    "codeInterpreterMessageData": {
+                        "type": "object",
+                        "properties": {
+                            "threadId": {"type": "string"},
+                            "role": {"type": "string"},
+                            "textContent": {"type": "string"},
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "oneOf": [
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"const": "image_file"},
+                                                "value": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"}
+                                                    },
+                                                    "required": ["file_key"]
+                                                }
+                                            },
+                                            "required": ["type", "value"]
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"const": "file"},
+                                                "value": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"}
+                                                    },
+                                                    "required": ["file_key"]
+                                                }
+                                            },
+                                            "required": ["type", "value"]
+                                        },
+                                    ]
+                                }
+                            }
+                        },
+                        "required": []
                     }
                 },
-                "required": ["id", "content"]
+                "required": ["id", "content", "role"]
             }
         }
     },
     "required": ["id", "fileKeys", "messages"]
 }
+
 
 run_thread_schema = {
     "type": "object",
@@ -212,6 +279,9 @@ validators = {
     "/assistant/create": {
         "create": create_assistant_schema
     },
+    "/assistant/delete": {
+        "delete": delete_assistant_schema
+    },
     "/assistant/share": {
         "share_assistant": share_assistant_schema
     },
@@ -231,6 +301,9 @@ validators = {
         "run_status": id_request_schema
     },
     "/assistant/chat": {
+        "chat": chat_assistant_schema
+    },
+    "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
     "/": {
