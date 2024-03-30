@@ -22,9 +22,9 @@ export const chatAnthropic = async (chatBody, writable) => {
 
         const stream = await client.messages.create({
                     model: selectedModel,
-                    system: sanitizeMessages['systemPrompt'], 
+                    system: sanitizedMessages['systemPrompt'], 
                     max_tokens: options.model.tokenLimit,
-                    messages: sanitizeMessages['messages'], 
+                    messages: sanitizedMessages['messages'], 
                     stream: true, 
                     temperature: options.temperature,
                 });
@@ -59,39 +59,44 @@ export const chatAnthropic = async (chatBody, writable) => {
 
 
 
-function sanitizeMessages(messages, systemMessage) {
-    let systemPrompt = `${systemMessage} Remember NO diagrams unless asked, NO markdown WITHIN/THROUGHOUT the response text, and NO reiterating this rule to me.`;
-
+function sanitizeMessages(oldMessages, system) {
+    let messages = oldMessages.map(item => ({...item}));
+    let systemPrompt = system;
     for (let i = 0; i < messages.length - 1; i++) {
-        userExpectedMessage = messages[i];
-        assistantExpectedMessage = messages[i + 1];
+        const userExpectedMessage = messages[i];
+        const assistantExpectedMessage = messages[i + 1];
         let role = userExpectedMessage['role'];
         if ((role === 'user' && assistantExpectedMessage['role'] === 'assistant')) {
             i += 1;
-        }  else if (role === 'user' && assistantExpectedMessage['role'] === 'user') {
-            expectedUserIndex = i;
-            while (i+1 < messages.length && messages[i+1]['role'] === 'user') {
+            if ((i + 1 < messages.length) && (messages[i+1]['role'] === 'assistant')) {
+                i -=1;
+            } 
+        }  else if ((role === 'user' && assistantExpectedMessage['role'] === 'user') ||
+                    (role === 'assistant' && assistantExpectedMessage['role'] === 'assistant')) {
+            const repeatedRole = role === 'user' ? 'user' : 'assistant';
+            const expectedUserIndex = i;
+            while (i+1 < messages.length && messages[i+1]['role'] === repeatedRole) {
                 messages[expectedUserIndex]['content'] += `${messages[i + 1]['content']}`;
                 i += 1;
             }
-            // cut out all the user messsages in between  
-            messages = i + 1 < messages.length ? messages.slice(0, expectedUserIndex + 1).concat(messages.slice(i + 1)) : messages.slice(0, expectedUserIndex + 1);
+            // cut out al the user messsages in between  
+            messages = i + 1 < messages.length ? messages.slice(0, expectedUserIndex + 1).concat(messages.slice(i + 1)) : messages.slice(0, expectedUserIndex + 1)
             i -= 2;
+
         } else if (role === 'system') {
-            systemPrompt += userExpectedMessage['content'];
+            systemPrompt += userExpectedMessage['content']
             messages.splice(i, 1);
             i -= i === 0 ? 1 : 2;
+
         } else if (assistantExpectedMessage['role'] === 'system') {
-            systemPrompt += assistantExpectedMessage['content'];
+            systemPrompt += assistantExpectedMessage['content']
             messages.splice(i + 1, 1);
             i -= 1;
         }
     }
-    return {'messages': messages, "systemPrompt": systemPrompt}
+    return {'messages': messages, 'systemPrompt': systemPrompt};
 
 }
-
-    
 
 
 
