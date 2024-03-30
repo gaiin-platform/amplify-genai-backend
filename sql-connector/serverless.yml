@@ -59,7 +59,6 @@ provider:
     PRIVATE_SUBNET_ONE: ${self:custom.stageVariables.PRIVATE_SUBNET_ONE}
     PRIVATE_SUBNET_TWO: ${self:custom.stageVariables.PRIVATE_SUBNET_TWO}
     VPC_CIDR: ${self:custom.stageVariables.VPC_CIDR}
-    API_ID: ${self:custom.stageVariables.API_ID}
     SES_SECRET_ARN: ${self:custom.stageVariables.SES_SECRET_ARN}
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
     SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
@@ -71,7 +70,7 @@ provider:
     # MYSQL_DB_HOST: ${self:custom.stageVariables.MYSQL_DB_HOST}
     MYSQL_DB_USERNAME: mysqladmin_${sls:stage}
     MYSQL_DB_NAME: AmplifyMySQL_${sls:stage}
-    MYSQL_DB_SECRETS_NAME: ${self:custom.stageVariables.MYSQL_DB_SECRETS_NAME}
+    MYSQL_DB_SECRETS_NAME: ${sls:stage}/mysql/db-creds
     DB_MODE: ${self:custom.stageVariables.DB_MODE}
     MYSQL_WRITE_ENDPOINT: !GetAtt MySQLDbCluster.Endpoint.Address
     # ${self:service}-${self:provider.stage}-MySQLDbClusterWriteEndpoint

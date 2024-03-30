@@ -19,20 +19,20 @@ CREATE TABLE IF NOT EXISTS embeddings (
     src VARCHAR(255),
     locations jsonb,
     orig_indexes jsonb,
-    char_index INTEGER[],
+    char_index INTEGER,
     token_count INTEGER,
     embedding_index INTEGER,
     owner_email VARCHAR(255),
     content TEXT,
     vector_embedding vector(1536),
-    qa_vector_embedding vector(1536)
+    qa_vector_embedding vector(1536),
     content_tsvector TSVECTOR
 
 );
 """
 
 # Create Indexes
-create INDEX on embeddings USING hnsw (vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
+CREATE INDEX on embeddings USING hnsw (vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
 
 ## Create a trigger function: This function will be called whenever a row is inserted or updated in your table.
 CREATE OR REPLACE FUNCTION update_tsvector_column() RETURNS trigger AS $$

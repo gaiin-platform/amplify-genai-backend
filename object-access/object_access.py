@@ -24,8 +24,61 @@ def is_sufficient_privilege(object_id, permission_level, policy, requested_acces
         return False
 
 
+def add_access_response(access_responses, object_id, access_type, response):
+    if object_id not in access_responses:
+        access_responses[object_id] = {}
+    access_responses[object_id][access_type] = response
+
+
+@validated("simulate_access_to_objects")
+def simulate_access_to_objects(event, context, current_user, name, data, username, cognito_groups):
+    table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+    table = dynamodb.Table(table_name)
+
+    data = data['data']
+    data_sources = data['objects']
+
+    access_responses = {}
+
+    for object_id, access_types in data_sources.items():
+        # Check if any permissions already exist for the object_id
+        for access_type in access_types:
+            try:
+                query_response = table.get_item(
+                    Key={
+                        'object_id': object_id,
+                        'principal_id': current_user
+                    }
+                )
+                item = query_response.get('Item')
+
+                if not item:
+                    print(f"User does not have access to objectId {object_id} with access type {access_type}.")
+                    add_access_response(access_responses, object_id, access_type, False)
+                    continue
+
+                permission_level = item.get('permission_level')
+                policy = item.get('policy')
+                if not is_sufficient_privilege(object_id, permission_level, policy, access_type):
+                    print(f"User does not have access to objectId {object_id} with access type {access_type}.")
+                    add_access_response(access_responses, object_id, access_type, False)
+                    continue
+
+                print(f"User has access to objectId {object_id} with access type {access_type}.")
+                add_access_response(access_responses, object_id, access_type, True)
+            except:
+                print(f"Error in simulate_access_to_objects.")
+                add_access_response(access_responses, object_id, access_type, False)
+
+    return {
+        'statusCode': 200,
+        'body': 'User access responses simulated.',
+        'data': access_responses
+    }
+
+
 @validated("can_access_objects")
-def can_access_objects(event, context, current_user, name, data):
+def can_access_objects(event, context, current_user, name, data, username, cognito_groups):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
 
@@ -44,7 +97,6 @@ def can_access_objects(event, context, current_user, name, data):
             )
             item = query_response.get('Item')
 
-            # If there are no permissions, create the initial item with the current_user as the owner
             if not item:
                 return {
                     'statusCode': 403,
@@ -81,7 +133,7 @@ def can_access_objects(event, context, current_user, name, data):
 
 
 @validated("update_object_permissions")
-def update_object_permissions(event, context, current_user, name, data):
+def update_object_permissions(event, context, current_user, name, data, username, cognito_groups):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
 
@@ -165,3 +217,46 @@ def update_object_permissions(event, context, current_user, name, data):
         'statusCode': 200,
         'body': json.dumps('Permissions updated successfully.')
     }
+
+
+@validated("create_cognito_group")
+def create_cognito_group(event, context, current_user, name, data, username, cognito_groups):
+    """
+    Create a Cognito user group in the specified user pool and add the current user to it.
+
+    :param event: AWS Lambda event object.
+    :param context: AWS Lambda context object.
+    :param current_user: The username or sub of the current user.
+    :param name: The name of the user pool (not used in this function).
+    :param data: The data containing the groupName and description.
+    :return: The response from the create_group call or None if an error occurred.
+    """
+    data = data['data']
+    user_pool_id = os.environ['COGNITO_USER_POOL_ID']
+    group_name = data['groupName']
+    description = data['groupDescription']
+
+    # Initialize a Cognito Identity Provider client
+    cognito_idp = boto3.client('cognito-idp')
+
+    try:
+        # Create the group
+        response = cognito_idp.create_group(
+            GroupName=group_name,
+            UserPoolId=user_pool_id,
+            Description=description
+        )
+        print(f"Group '{group_name}' created successfully.")
+
+        # Add the current user to the group
+        cognito_idp.admin_add_user_to_group(
+            UserPoolId=user_pool_id,
+            Username=username,
+            GroupName=group_name
+        )
+        print(f"User '{current_user}' added to group '{group_name}' successfully.")
+
+        return response
+    except ClientError as e:
+        print(f"An error occurred: {e}")
+        return None

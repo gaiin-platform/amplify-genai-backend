@@ -73,7 +73,8 @@ provider:
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
+    #RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
+    RAG_POSTGRES_DB_READ_ENDPOINT: prod-rag-cluster.cluster-chyilp474xua.us-east-1.rds.amazonaws.com
     KEYWORD_MODEL_NAME: ${self:custom.stageVariables.KEYWORD_MODEL_NAME}
     QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
@@ -81,6 +82,7 @@ provider:
     USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
+    OBJECT_ACCESS_TABLE: vu-amplify-object-access-${sls:stage}-object-access
    
 
   iam:
@@ -108,6 +110,7 @@ provider:
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
             - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
             
 
@@ -148,7 +151,6 @@ functions:
                 - EmbeddingChunksIndexQueue
                 - Arn
          
-
       environment:
         RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
         MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
@@ -217,7 +219,7 @@ resources:
         DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
         DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
         Engine: aurora-postgresql
-        EngineVersion: '15.3' # Specify the compatible engine version for Serverless v2
+        EngineVersion: '15.4' # Specify the compatible engine version for Serverless v2
         ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
           MinCapacity: ${self:provider.environment.MIN_ACU}
           MaxCapacity: ${self:provider.environment.MAX_ACU}
