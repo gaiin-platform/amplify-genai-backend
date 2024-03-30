@@ -10,7 +10,7 @@ export const chatAnthropic = async (chatBody, writable) => {
     const options = {...body.options}; 
     delete body.options; 
 
-    sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
+    const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
 
     try {
         // Ensure credentials are in ~/.aws/credentials
