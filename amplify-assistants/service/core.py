@@ -318,6 +318,7 @@ def create_assistant(event, context, current_user, name, data):
     extracted_data = data['data']
     assistant_name = extracted_data['name']
     description = extracted_data['description']
+    uri = extracted_data.get('uri', None)
     assistant_public_id = extracted_data.get('assistantId', None)
     tags = extracted_data.get('tags', [])
 
@@ -348,6 +349,7 @@ def create_assistant(event, context, current_user, name, data):
         data_sources=data_sources,
         tools=tools,
         provider=provider,
+        uri=uri,
         assistant_public_id=assistant_public_id
     )
 
@@ -435,7 +437,7 @@ def get_most_recent_assistant_version(assistants_table,
 
 
 def save_assistant(assistants_table, assistant_name, description, instructions, data_sources, provider, tools,
-                   user_that_owns_the_assistant, version, tags, assistant_public_id=None, data = None):
+                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None, data = None):
     """
     Saves the assistant data to the DynamoDB table.
 
@@ -452,6 +454,10 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
 
     Returns:
         dict: The saved assistant data.
+        :param assistant_public_id:
+        :param version:
+        :param tags:
+        :param uri:
     """
     # Get the current timestamp in the format 2024-01-16T12:40:23.308162
     timestamp = time.strftime('%Y-%m-%dT%H:%M:%S')
@@ -480,6 +486,7 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'dataSourcesHash': datasources_sha256,
         'instructionsHash': instructions_sha256,
         'tags': tags,
+        'uri': uri,
         'coreHash': core_sha256,
         'hash': full_sha256,
         'name': assistant_name,
@@ -574,6 +581,7 @@ def create_or_update_assistant(
         data_sources,
         tools,
         provider,
+        uri,
         assistant_public_id=None
 ):
     """
@@ -589,6 +597,7 @@ def create_or_update_assistant(
         data_sources (list): A list of data sources used by the assistant.
         tools (list): A list of tools used by the assistant.
         provider (str): The provider of the assistant (e.g., 'amplify', 'openai').
+        uri (str): The URI of the assistant (optional).
         assistant_public_id (str): The public ID of the assistant (optional).
 
     Returns:
@@ -623,6 +632,7 @@ def create_or_update_assistant(
             user_that_owns_the_assistant,
             new_version,
             tags,
+            uri,
             assistant_public_id
         )
         new_item['version'] = new_version
@@ -677,6 +687,7 @@ def create_or_update_assistant(
             user_that_owns_the_assistant,
             1,
             tags,
+            uri,
             None, 
             data
         )

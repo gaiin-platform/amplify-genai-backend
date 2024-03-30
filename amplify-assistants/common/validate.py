@@ -73,6 +73,10 @@ create_assistant_schema = {
             "type": "string",
             "description": "Instructions related to the item"
         },
+        "uri": {
+            "type": "string",
+            "description": "The endpoint that receives requests for the assistant"
+        },
         "dataSources": {
             "type": "array",
             "description": "A list of data sources",
