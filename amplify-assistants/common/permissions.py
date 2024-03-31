@@ -59,7 +59,7 @@ permissions_by_state_type = {
     "/assistant/chat": {
         "chat": can_create_assistant_thread
     },
-     "/assistant/chat_with_code_interpreter": {
+    "/assistant/chat_with_code_interpreter": {
         "chat_with_code_interpreter": can_create_assistant_thread
     },
     "/": {
