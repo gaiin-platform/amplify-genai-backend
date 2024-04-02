@@ -30,7 +30,7 @@ export const chatMistral = async (chatBody, writable) => {
                 body: JSON.stringify(payload),
                 contentType: "application/json",
                 accept: "application/json",
-                modelId: 'mistral.mistral-7b-instruct-v0:2'//options.model.id 
+                modelId: options.model.id 
         });
 
         logger.debug("Initiating call to Mistral Bedrock");
