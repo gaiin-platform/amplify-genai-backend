@@ -77,6 +77,7 @@ const invokeCodeIterpreterAction =
         }
         //ensure that assistant_id is not null (in case assistant creation was necessary and failed)
         if (assistantId) {
+            context.body.messages.at(-1)['content'] += "\nDo not include mock download links! Do generate images when asked. If applicable, Do tell me some information about the file you have produced and refer to them by their corresponding file name. "
             const chat_data = {
                 id: assistantId,
                 messages: context.body.messages.slice(1),
@@ -167,7 +168,7 @@ const todaysDate = () => {
 //give user time to read
 const sleepAction = { 
     execute: async (llm, context, dataSources) => {
-        await new Promise(resolve => setTimeout(resolve, 15000)); 
+        await new Promise(resolve => setTimeout(resolve, 13000)); 
     }
   }
 
@@ -191,7 +192,7 @@ const sleepAction = {
         { execute: async (llm, context, dataSources) => {  await new Promise(resolve => setTimeout(resolve, 3000)) }}];
 
 
-  function createEntertainmentAction(actionType, description, content) {
+  function createEntertainmentAction(actionType, description, content, appendMessages = false) {
     return new AssistantState(actionType, description,
             outputToStatus(
                 { summary: `While you wait, enjoy a dose of entertainment with ${formatCamelToSentence(actionType)}!`, inProgress: true },
@@ -200,8 +201,8 @@ const sleepAction = {
                         [{  role: "user",
                             content: `I want entertainment! The topic is "${actionType}". 
                             This is a array of previous responses you have said. Do not repeat anything similar. ${entertainmentHistoryList} 
-                            \n\n Respond to the following only, without any introduction or preamble:: ${content}\n\n`
-                        }], actionType, { appendMessages: false, streamResults: false, retries: 1, isEntertainment: true }
+                            \n\n Do not respond to anything else except the following text, without any introduction or preamble: ${content}\n\n`
+                        }], actionType, { appendMessages: appendMessages, streamResults: false, retries: 1, isEntertainment: true}
                     ),
                     updateStatus(actionType, {inProgress: true}, actionType), sleepAction, 
                     ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
@@ -214,7 +215,7 @@ const sleepAction = {
 
 function entertainmentHistoryList (actionType) { /////
     return (llm, context, dataSources) => {
-        return String(context.data['entertainmentHistory'][actionType]);
+        return  String(context.data['entertainmentHistory'][actionType]);
     }
 }
 
@@ -299,16 +300,15 @@ const States = {
     onTopicPun: createEntertainmentAction("onTopicPun",
                 "Respond with creative fun and silly puns based on the theme of the conversation",
                 `Generate 3 puns related to this conversation's overall topic or theme, ensuring they're clever and 
-                suitable for all audiences. The puns should be engaging, sparking a light-hearted moment for the reader.`
+                suitable for all audiences. The puns should be engaging, sparking a light-hearted moment for the reader.`, true
     ),
     
 
     roastMyPrompt: createEntertainmentAction("roastMyPrompt",
-                "Look at the user input prompts and give them a roast", //////
-                `Users input prompt: ${(llm, context, dataSources) => {return String(context.data['userPrompt'])}}
-                Craft 1 concise light-hearted roast about the users input prompt provided, keeping it witty and suitable for all 
+                "Look at the user input prompts and give them a roast", 
+                `Craft 1 concise light-hearted roast about the users previous 'user' prompt messages (outline which user message you are referring to), keeping it witty and suitable for all 
                 audiences. The roast should playfully critique the prompt's theme or content in one or two sentences while 
-                being informative while suggesting tips to enhance the users prompt crafting skills.`
+                being informative while suggesting tips to enhance the users prompt crafting skills.`, true
     ),
     
 
@@ -321,7 +321,8 @@ const States = {
     lifeHacks: createEntertainmentAction("lifeHacks",
                 "Respond with practical and simple life hacks",
                 `Provide 3 life hacks that simplify common daily tasks, ensuring they're practical and easy to implement for a 
-                wide audience. Each hack should be explained in one or two sentences, designed to offer a quick and effective solution.`
+                wide audience. Each hack should be explained in one or two sentences, designed to offer a quick and effective solution.
+                The life hacks can also relate to the general topic and tools discussed in the conversation but, not required`, true
     ),
     
 

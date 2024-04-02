@@ -83,7 +83,7 @@ def file_keys_to_file_ids(file_keys):
     return file_ids
 
 
-def send_image_file_to_s3(file_content, file_key, file_name, user_id, content_type = 'binary/octet-stream'):
+def send_file_to_s3(file_content, file_key, file_name, user_id, content_type = 'binary/octet-stream'):
     print("Sending files to s3")
     bucket_name = os.environ['ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME']
     
@@ -126,7 +126,7 @@ def create_low_res_version(file):
         ratio = min(max_width / original_width, max_height / original_height)
         target_size = (int(original_width * ratio), int(original_height * ratio))
         
-        resized_image = image.resize(target_size, Image.ANTIALIAS)
+        resized_image = image.resize(target_size, Image.LANCZOS)
         
         # Save the resized image to a bytes buffer
         resized_bytes = BytesIO()
@@ -135,7 +135,7 @@ def create_low_res_version(file):
         
         # Check if the resized image meets the size criteria
         if resized_size <= target_size_bytes:
-            break  # Image size is under target, exit loop
+            break
         
         # Calculate scale factor based on the current size vs. target size
         size_ratio = resized_size / target_size_bytes
@@ -545,21 +545,24 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
         'data': responseData  
     }
 
+
+
 def get_response_values(file, content_type, file_key, current_user, file_name = None):
     print("Get response Values")
     values = {}
-    presigned_url = send_image_file_to_s3(file.content, file_key, file_name, current_user, content_type)
-    
+    presigned_url = send_file_to_s3(file.content, file_key, file_name, current_user, content_type)
+    file_size = file_size(file)
     if (presigned_url['success']):
         values['file_key'] = file_key
         values['presigned_url'] = presigned_url['presigned_url']
-
-    if ('png' in content_type) and is_large(file): # we only display some of the csv and small pdf
+        values['file_size'] = file_size
+    
+    if ('png' in content_type) and (file_size > 204800): #Greater than 200KB 
         print("File was too large!")
         # Create a low-resplution version of the file
         file_key_low_res = file_key + '-low-res'
         low_res_file_content = create_low_res_version(file)
-        presigned_url_low_res = send_image_file_to_s3(low_res_file_content, file_key_low_res, file_name, current_user, content_type)
+        presigned_url_low_res = send_file_to_s3(low_res_file_content, file_key_low_res, file_name, current_user, content_type)
         if (presigned_url_low_res['success']):
             values['file_key_low_res'] = file_key_low_res
             values['presigned_url_low_res'] = presigned_url['presigned_url']
@@ -569,9 +572,12 @@ def get_response_values(file, content_type, file_key, current_user, file_name = 
         return {'success': True, 'data' : {'type': content_type,'values': values}}
     return {'success': False, 'error': 'Failed to send file to s3 and get presigned url'}
 
-def is_large(file):
-    image_size = BytesIO(file.content).seek(0, 2).tell()
-    return image_size > 204800 #Greater than 200KB
+
+def file_size(file):
+    file_bytes = BytesIO(file.content)
+    file_bytes.seek(0, 2)  # Move the pointer to the end of the file
+    file_size = file_bytes.tell()  # Get the current file position (which is the file size)
+    return file_size
     
 def record_thread_usage(op_details, info):
     print("Recording thread usage")
@@ -835,6 +841,7 @@ def get_assistant(assistant_id, current_user):
 
     try:
         # Fetch the assistant from DynamoDB
+        print("Assistant key: ", assistant_id)
         response = assistantstable.get_item(Key={'id': assistant_id})
         
         if 'Item' not in response:
@@ -1150,7 +1157,7 @@ def create_new_assistant(
         'createdAt': timestamp,
         'updatedAt': timestamp,
         'fileKeys': file_keys,
-        'data': { provider: {'assistantId': assistant_info['assistantId']}} 
+        'data': assistant_info['data'] 
     }
 
     # Put the new item into the DynamoDB table

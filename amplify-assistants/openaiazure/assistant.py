@@ -119,7 +119,7 @@ def delete_assistant(event, context, current_user, name, data):
 
 
 @validated(op="download")                      
-def get_presigned_download_url(event, context, current_user, name, data):
+def get_presigned_url_code_interpreter(event, context, current_user, name, data):
   data = data['data']
   key = data['key']
   file_name = data.get('file_name', None)

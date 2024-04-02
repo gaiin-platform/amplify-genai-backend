@@ -176,11 +176,11 @@ functions:
     url:
       cors: true
     
-  download_file:
-    handler: openaiazure/assistant.get_presigned_download_url
+  download_code_interpreter_file:
+    handler: openaiazure/assistant.get_presigned_url_code_interpreter
     events:
       - http:
-          path: assistant/files/download
+          path: assistant/files/download/codeinterpreter
           method: post
           cors: true
 
