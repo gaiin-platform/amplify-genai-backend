@@ -103,6 +103,63 @@ create_assistant_schema = {
     "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
 }
 
+
+create_code_interpreter_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "The name of the item"
+        },
+        "provider": {
+            "type": "string",
+            "description": "openai or azure"
+        },
+        "description": {
+            "type": "string",
+            "description": "A brief description of the item"
+        },
+        "tags": {
+            "type": "array",
+            "description": "A list of tags associated with the item",
+            "items": {
+                "type": "string"
+            }
+        },
+        "instructions": {
+            "type": "string",
+            "description": "Instructions related to the item"
+        },
+        "dataSources": {
+            "type": "array",
+            "description": "A list of data sources",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The key of the data source"
+                    }
+                }
+            }
+        },
+        "tools": {
+            "type": "array",
+            "description": "A list of tools associated with the item",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": "The type of tool"
+                    }
+                }
+            }
+        }
+    },
+    "required": ["name", "description", "tags", "instructions", "tools"]
+}
+
 share_assistant_schema = {
     "type": "object",
     "properties": {
@@ -200,12 +257,16 @@ chat_assistant_schema = {
                                             "type": "object",
                                             "properties": {
                                                 "type": {"const": "image_file"},
-                                                "value": {
+                                                "values": {
                                                     "type": "object",
                                                     "properties": {
-                                                        "file_key": {"type": "string"}
+                                                        "file_key": {"type": "string"},
+                                                        "presigned_url": {"type": "string"},
+                                                        "file_key_low_res": {"type": "string"},
+                                                        "presigned_url_low_res": {"type": "string"}
                                                     },
-                                                    "required": ["file_key"]
+                                                    "required": ["file_key", "presigned_url"],
+                                                    "additionalProperties": False
                                                 }
                                             },
                                             "required": ["type", "value"]
@@ -214,12 +275,16 @@ chat_assistant_schema = {
                                             "type": "object",
                                             "properties": {
                                                 "type": {"const": "file"},
-                                                "value": {
+                                                "values": {
                                                     "type": "object",
                                                     "properties": {
-                                                        "file_key": {"type": "string"}
+                                                        "file_key": {"type": "string"},
+                                                        "presigned_url": {"type": "string"},
+                                                        "file_key_low_res": {"type": "string"},
+                                                        "presigned_url_low_res": {"type": "string"}
                                                     },
-                                                    "required": ["file_key"]
+                                                    "required": ["file_key", "presigned_url"],
+                                                    "additionalProperties": False
                                                 }
                                             },
                                             "required": ["type", "value"]
@@ -271,6 +336,18 @@ id_request_schema = {
     "required": ["id"]
 }
 
+key_request_schema = {
+    "type": "object",
+    "properties": {
+        "key": {
+            "type": "string",
+            "description": "Key."
+        }
+    },
+    "required": ["key"]
+}
+
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -306,8 +383,14 @@ validators = {
     "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
+    "/assistant/create/codeinterpreter": {
+        "create": create_code_interpreter_assistant_schema
+    },
     "/": {
         "chat": chat_assistant_schema
+    },
+    "/assistant/files/download": {
+        "download": key_request_schema
     },
 }
 

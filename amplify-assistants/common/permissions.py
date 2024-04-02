@@ -10,6 +10,9 @@ def can_create_assistant(user, data):
 def can_create_assistant_thread(user, data):
     return True
 
+def can_download(user, data):
+  return True
+
 
 """
 Every service must define the permissions for each operation
@@ -61,8 +64,14 @@ permissions_by_state_type = {
     },
      "/assistant/chat_with_code_interpreter": {
         "chat_with_code_interpreter": can_create_assistant_thread
+    }, 
+    "/assistant/create/codeinterpreter": {
+        "create": can_create_assistant
     },
     "/": {
         "chat": can_create_assistant_thread
     },
+      "/assistant/files/download": {
+    "download": can_download
+  },
 }

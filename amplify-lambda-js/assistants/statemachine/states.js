@@ -227,7 +227,6 @@ export const updateStatus = (id, status, contextDataKey = null) => {
                 }
             }
 
-
             const statusEvent = (context.status[id]) ? context.status[id] : newStatus(status);
 
             if (status.summary) {
@@ -829,6 +828,10 @@ export class AssistantState {
 
     addTransition(toStateName, description) {
         this.transitions.push({to: toStateName, description: description});
+    }
+
+    removeTransitions() {
+        this.transitions = [];
     }
 
     buildPrompt(context, dataSources) {

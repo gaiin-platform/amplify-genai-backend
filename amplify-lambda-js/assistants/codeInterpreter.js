@@ -30,7 +30,8 @@ const requestErrorResponse = (context) => {
 //function call to code_interpeter endpoints in an action type format
 const invokeCodeIterpreterAction = 
     // { execute: 
-    async (llm, context, dataSources) => {
+    async (llm, context, dataSources) => { 
+
         if (!(context)) return; 
         const token = context.params.account.accessToken;
         const options = context.body.options
@@ -60,7 +61,7 @@ const invokeCodeIterpreterAction =
                 const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_CREATE_CODE_INTERPRETER_ENPOINT); 
 
                 if (responseData && responseData.success) {
-                    assistantId = responseData.data.id
+                    assistantId = responseData.data.assistantId
                     //we need to ensure we send the assistant_id back to be saved in the conversation
                     sendDeltaToStream(context.responseStream, "codeInterpreter", `codeInterpreterAssistantId=${assistantId}`);
                     
@@ -99,7 +100,7 @@ const invokeCodeIterpreterAction =
             }
         } 
     
-        await new Promise(resolve => setTimeout(resolve, 3000)); 
+        await new Promise(resolve => setTimeout(resolve, 3000)); // give stream time to get to user
         // to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
         context.data['isCodeInterpreterDone'] = true;
 
@@ -163,11 +164,10 @@ const todaysDate = () => {
     return `${today.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`; 
 }
 
-
-const sleepAction = {
+//give user time to read
+const sleepAction = { 
     execute: async (llm, context, dataSources) => {
-        while (!context.data['isCodeInterpreterDone'])
-            await new Promise(resolve => setTimeout(resolve, 3000)); 
+        await new Promise(resolve => setTimeout(resolve, 15000)); 
     }
   }
 
@@ -176,25 +176,79 @@ const sleepAction = {
     return str.split(/(?=[A-Z])/).map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ')
   }
 
+
+  const riddleAnswerActions = 
+        [ { execute: (llm, context, dataSources) => {
+                const answerPromptAction =  
+                new PromptAction(
+                    [{ role: "user",
+                        content: `What is the answer to this riddle? ${context.data.guessTheRiddle}. Response with the answer only and an exclamation point! Feel free to add some laughs`
+                    }], 'riddleAnswer', { appendMessages: false, streamResults: false, retries: 1, isEntertainment: true }
+                );
+                return answerPromptAction.execute(llm, context, dataSources);
+            }
+        }, updateStatus('riddleAnswer', {inProgress: true}, 'riddleAnswer'), 
+        { execute: async (llm, context, dataSources) => {  await new Promise(resolve => setTimeout(resolve, 3000)) }}];
+
+
   function createEntertainmentAction(actionType, description, content) {
     return new AssistantState(actionType, description,
             outputToStatus(
                 { summary: `While you wait, enjoy a dose of entertainment with ${formatCamelToSentence(actionType)}!`, inProgress: true },
                 chainActions([
                     new PromptAction(
-                        [{
-                            role: "assistant",
-                            content: `Get extremely creative! I want to entertain my user with "${actionType}",
-                            Only provide one response for the task. \n\n`+ content
+                        [{  role: "user",
+                            content: `I want entertainment! The topic is "${actionType}". 
+                            This is a array of previous responses you have said. Do not repeat anything similar. ${entertainmentHistoryList} 
+                            \n\n Respond to the following only, without any introduction or preamble:: ${content}\n\n`
                         }], actionType, { appendMessages: false, streamResults: false, retries: 1, isEntertainment: true }
                     ),
-                    updateStatus(actionType, {inProgress: true}, actionType), sleepAction,
-
+                    updateStatus(actionType, {inProgress: true}, actionType), sleepAction, 
+                    ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
+                    (llm, context, dataSources) => { States.randomEntertainment.removeTransitions();
+                        context.data['entertainmentHistory'][actionType].push(context.data[actionType]); }
                 ])
             )
     );
 }
 
+function entertainmentHistoryList (actionType) { /////
+    return (llm, context, dataSources) => {
+        return String(context.data['entertainmentHistory'][actionType]);
+    }
+}
+
+const selectEntertainment = (llm, context, dataSources) => {
+    if (context.data['isCodeInterpreterDone']) {
+        States.randomEntertainment.addTransition(States.done.name, "Code Interpreter is done so we are done");
+    } else {
+        const leftEntertainment = context.data['entertainmentTypes'].length;
+        if (leftEntertainment === 0) context.data['entertainmentTypes'] = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
+        const randomIndex = Math.floor(Math.random() * (leftEntertainment - 1));
+        
+        const entertainmentSelected = context.data['entertainmentTypes'][randomIndex];
+        switch (entertainmentSelected) {
+            case 'todayInHistory':
+                States.randomEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
+                break;
+            case 'onTopicPun':
+                States.randomEntertainment.addTransition(States.onTopicPun.name, "The next random state is says puns, go here");
+                break;
+            case 'roastMyPrompt':
+                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is prompt roasting, go here");
+                break;
+            case 'guessTheRiddle':
+                States.randomEntertainment.addTransition(States.guessTheRiddle.name, "The next random state is riddles, go here");
+                break;
+            case 'lifeHacks':
+                States.randomEntertainment.addTransition(States.lifeHacks.name, "The next random state is  life hacks, go here");
+                break;
+            default:
+                console.log("Error with entertainment states")
+        }
+        context.data['entertainmentTypes'].splice(randomIndex, 1);
+    }
+}
 
 // This is the set of states that will be in the state machine.
 const States = {
@@ -202,8 +256,17 @@ const States = {
     "Update user and set up for Code Interpreter",
     chainActions([
         updateStatus("prepareCodeInterpreter", {summary: "Preparing your request to code interpreter...", inProgress: true}),
-        // add a flag to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
-        (llm, context, dataSources) => { context.data['isCodeInterpreterDone'] = false }, //sleepAction
+       
+        (llm, context, dataSources) => { context.data['isCodeInterpreterDone'] = false; // add a flag to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
+            let entertainmentTypes = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
+            let entertainmentHistory = {};
+            entertainmentTypes.forEach((type) => {
+                entertainmentHistory[type] = [];
+            });
+            context.data['entertainmentTypes'] = entertainmentTypes;
+            context.data['entertainmentHistory'] = entertainmentHistory;
+            context.data['userPrompt'] = context.body.messages.at(-1)['content'];
+        }, 
     ]), false,
     ),
 
@@ -213,37 +276,37 @@ const States = {
 
     chooseEntertainment: new AssistantState("chooseEntertainment",
         "Randomly choose the next entertainment state while we wait for code interpreter! Pick from 'Today in History', 'On Topic Pun', 'Roast My Prompt', 'Guess the Riddle', or 'Life Hacks' ",
-        "Your random selection of entertainment will lead to the next state. The entertainment options are Today in History, On Topic Pun,Roast My Prompt, Riddle, Life Hacks or rather wait. Try to mix it up! We want to entertain the user while they wait so get creative.",
-        chainActions([(llm, context, dataSources) => { logger.debug(String(context.data['isCodeInterpreterDone']))}]),
+        null,
         false, {extraInstructions: {postInstructions: "Choose a random state to go to"}}
     ),
+    //randomize state calls [entertianment] random index .add  call function and remove it,  
     
-    moreEntertainment: new AssistantState("moreEntertainment",
+    randomEntertainment: new AssistantState("randomEntertainment",
         "Determine if we need more entertainment to wait for code interpreter to finish up",
-        chainActions([codeInterpreterStatusUpdate, 
-            updateStatus("codeInterpreterStatus", {inProgress: true}, 'codeInterpreterCurStatusSummary'), sleepAction     
-        ]), false, {extraInstructions: {postInstructions: `
-                Is Code Interpreter done? If not, we need to continue to entertain the user until it is done. If it is done processing then go to the done state otherwise randomly choose the next entertainment state while we wait for code interpreter! 
-                The value of isCodeInterpreterDone is ${(llm, context, dataSources) => { return String(context.data['isCodeInterpreterDone'])}}. Do not go to the done state unless you read true`}}
+        chainActions([selectEntertainment, codeInterpreterStatusUpdate, 
+            updateStatus("codeInterpreterStatus", {inProgress: true}, 'codeInterpreterCurStatusSummary'), 
+        ]), 
     ),
 
     todayInHistory: createEntertainmentAction("todayInHistory",
                 "Respond with a fun, short, and interesting Today in History fact",
-                `Provide a a few concise 'Today in History' fact related to today's date, covering a significant 
-                or unique events in one or two sentences each for a general audience. Today is ${todaysDate()}`,
+                `Using historical knowledge up to the current date, provide a fun, short, and interesting "Today in History" fact related to today's month and day (${todaysDate()}). 
+                Can you give me 3 concise facts about events that happened on this day in history, in any year? 
+                Each fact should be two or three sentences and appropriate for a general audience.`,
                     
     ),
 
     onTopicPun: createEntertainmentAction("onTopicPun",
                 "Respond with creative fun and silly puns based on the theme of the conversation",
-                `Generate a few puns related to this conversation's overall topic or theme, ensuring they're clever and 
+                `Generate 3 puns related to this conversation's overall topic or theme, ensuring they're clever and 
                 suitable for all audiences. The puns should be engaging, sparking a light-hearted moment for the reader.`
     ),
     
 
     roastMyPrompt: createEntertainmentAction("roastMyPrompt",
-                "Look at the user input prompts and give them a roast",
-                `Craft light-hearted roasts about the users input prompt provided, keeping it witty and suitable for all 
+                "Look at the user input prompts and give them a roast", //////
+                `Users input prompt: ${(llm, context, dataSources) => {return String(context.data['userPrompt'])}}
+                Craft 1 concise light-hearted roast about the users input prompt provided, keeping it witty and suitable for all 
                 audiences. The roast should playfully critique the prompt's theme or content in one or two sentences while 
                 being informative while suggesting tips to enhance the users prompt crafting skills.`
     ),
@@ -257,7 +320,7 @@ const States = {
     
     lifeHacks: createEntertainmentAction("lifeHacks",
                 "Respond with practical and simple life hacks",
-                `Provide a few life hacks that simplify common daily tasks, ensuring they're practical and easy to implement for a 
+                `Provide 3 life hacks that simplify common daily tasks, ensuring they're practical and easy to implement for a 
                 wide audience. Each hack should be explained in one or two sentences, designed to offer a quick and effective solution.`
     ),
     
@@ -275,71 +338,19 @@ const States = {
     done: new DoneState(),
 };
 
-
-
-
-
-// States.initialState.addTransition(States.invokeCodeInterpreter.name, "Start by calling Code Interpreter");
+// // We start in the outline state.
 const current = States.initialState;
+
+// We add transitions to the state machine to define the state machine.
 States.initialState.addTransition(States.invokeCodeInterpreter.name, "Start by calling Code Interpreter");
 
-// //test
-States.invokeCodeInterpreter.addTransition(States.moreEntertainment.name, "Start by calling Code Interpreter");
-// States.moreEntertainment.addTransition(States.moreEntertainment.name, "Code Interpreter NOT done, so go here");
-States.moreEntertainment.addTransition(States.done.name, "Code Interpreter IS DONE so lets go output the response");
+States.invokeCodeInterpreter.addTransition(States.randomEntertainment.name, "Choose a random next state!");
 
-
-// // We start in the outline state.
-// const current = States.initialState;
-
-// // We add transitions to the state machine to define the state machine.
-// States.initialState.addTransition(States.invokeCodeInterpreter.name, "Start by calling Code Interpreter");
-
-// States.invokeCodeInterpreter.addTransition(States.chooseEntertainment.name, "Choose a random next state!");
-
-// // States.chooseEntertainment.addTransition(USER_INPUT_STATE, "While we wait on code interpreter to finish, lets ask the user what they want for entertaiment");
-// // States.chooseEntertainment.addTransition(States.chooseEntertainment.name, "User did not choose within the options, so ask them to choose their entertainment again");
-
-// States.chooseEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
-// States.chooseEntertainment.addTransition(States.onTopicPun.name, "The next random state is says puns, go here");
-// States.chooseEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is prompt roasting, go here");
-// States.chooseEntertainment.addTransition(States.guessTheRiddle.name, "The next random state is riddles, go here");
-// States.chooseEntertainment.addTransition(States.lifeHacks.name, "The next random state is  life hacks, go here");
-// // States.chooseEntertainment.addTransition(States.iRatherWait.name, "If the user_input says they do not want entertainment or rather wait, go here");
-
-
-// States.todayInHistory.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.onTopicPun.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.roastMyPrompt.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.guessTheRiddle.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.lifeHacks.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-
-// // States.iRatherWait.addTransition(States.iRatherWait.name, "Code Interpreter is not done so we going to keep waiting");
-// // States.iRatherWait.addTransition(States.done.name, "Code Interpreter is done so lets go output the response");
-
-
-// States.moreEntertainment.addTransition(States.chooseEntertainment.name, "If Code Interpreter is not done then go back to chooseEntertainment");
-// States.moreEntertainment.addTransition(States.done.name, "Code Interpreter is done so we are done");
-
-// const current = States.initialState;
-
-// // We add transitions to the state machine to define the state machine.
-// States.initialState.addTransition(States.moreEntertainment.name, "Choose a random next state!");
-
-// States.moreEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
-// States.moreEntertainment.addTransition(States.onTopicPun.name, "The next random state is says puns, go here");
-// States.moreEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is prompt roasting, go here");
-// States.moreEntertainment.addTransition(States.guessTheRiddle.name, "The next random state is riddles, go here");
-// States.moreEntertainment.addTransition(States.lifeHacks.name, "The next random state is  life hacks, go here");
-
-
-// States.todayInHistory.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.onTopicPun.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.roastMyPrompt.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.guessTheRiddle.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-// States.lifeHacks.addTransition(States.moreEntertainment.name, "Go Check if we need more entertainment");
-
-// States.moreEntertainment.addTransition(States.done.name, "Code Interpreter is done so we are done");
+States.todayInHistory.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
+States.onTopicPun.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
+States.roastMyPrompt.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
+States.guessTheRiddle.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
+States.lifeHacks.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 
 
 // We create the assistant with the state machine and the current state.
@@ -347,9 +358,6 @@ export const codeInterpreterAssistant = new StateBasedAssistant(
     "Code Interpreter Assistant",
     "Code Interpreter Assistant",
     description, 
-
-
-
     //This function should return true if the assistant can support the dataSources and false otherwise.
     (m) => {
         return true
