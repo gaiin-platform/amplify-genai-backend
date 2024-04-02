@@ -21,7 +21,7 @@ export const chatAnthropic = async (chatBody, writable) => {
         const selectedModel = options.model.id;
 
         const stream = await client.messages.create({
-                    model: selectedModel,
+                    model: "anthropic.claude-3-haiku-20240307-v1:0",//selectedModel,
                     system: sanitizedMessages['systemPrompt'], 
                     max_tokens: options.model.tokenLimit,
                     messages: sanitizedMessages['messages'], 
@@ -33,8 +33,6 @@ export const chatAnthropic = async (chatBody, writable) => {
             for await (const completion of stream) {
                 sendDeltaToStream(writable, "answer", completion);  
             }    
-        
-
         //end writable stream
         writable.end();
 
@@ -46,54 +44,39 @@ export const chatAnthropic = async (chatBody, writable) => {
             logger.error('Error with Writable stream: ', error);
             reject(error);
         });
-        
-        
+         
     } catch (error) {
         logger.error('Error invoking Bedrock Anthropic: ', error);
-
-
     }
-
 }
 
 
-
-
 function sanitizeMessages(oldMessages, system) {
-    let messages = oldMessages.map(item => ({...item}));
-    let systemPrompt = system;
-    for (let i = 0; i < messages.length - 1; i++) {
-        const userExpectedMessage = messages[i];
-        const assistantExpectedMessage = messages[i + 1];
-        let role = userExpectedMessage['role'];
-        if ((role === 'user' && assistantExpectedMessage['role'] === 'assistant')) {
+    if (!oldMessages) return oldMessages;
+    let messages = [];
+    
+    let systemPrompt = system + " No diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me.";
+    let i = -1;
+    let j = 0;
+    while (j < oldMessages.length) {
+        const curMessageRole = oldMessages[j]['role'];
+        const oldContent = oldMessages[j]['content'];
+        if (curMessageRole === 'system') {
+            systemPrompt += oldContent;
+        } else if (messages.length == 0 || (messages[i]['role'] !== curMessageRole)) {
+            oldMessages[j]['content'] = oldMessages[j]['content'].trimEnd() // remove white space, final messages cause error if not
+            messages.push(oldMessages[j]);
             i += 1;
-            if ((i + 1 < messages.length) && (messages[i+1]['role'] === 'assistant')) {
-                i -=1;
-            } 
-        }  else if ((role === 'user' && assistantExpectedMessage['role'] === 'user') ||
-                    (role === 'assistant' && assistantExpectedMessage['role'] === 'assistant')) {
-            const repeatedRole = role === 'user' ? 'user' : 'assistant';
-            const expectedUserIndex = i;
-            while (i+1 < messages.length && messages[i+1]['role'] === repeatedRole) {
-                messages[expectedUserIndex]['content'] += `${messages[i + 1]['content']}`;
-                i += 1;
-            }
-            // cut out al the user messsages in between  
-            messages = i + 1 < messages.length ? messages.slice(0, expectedUserIndex + 1).concat(messages.slice(i + 1)) : messages.slice(0, expectedUserIndex + 1)
-            i -= 2;
-
-        } else if (role === 'system') {
-            systemPrompt += userExpectedMessage['content']
-            messages.splice(i, 1);
-            i -= i === 0 ? 1 : 2;
-
-        } else if (assistantExpectedMessage['role'] === 'system') {
-            systemPrompt += assistantExpectedMessage['content']
-            messages.splice(i + 1, 1);
-            i -= 1;
-        }
+        } else if (messages[i]['role'] === oldMessages[j]['role']) {
+            messages[i]['content'] += oldContent;
+        } 
+        j += 1;
     }
+
+    if (messages.length === 0 || (messages[0]['role'] !== 'user')) {
+        if (systemPrompt) messages.unshift({'role': 'user', 'content': `${systemPrompt}`});
+    } 
+
     return {'messages': messages, 'systemPrompt': systemPrompt};
 
 }
