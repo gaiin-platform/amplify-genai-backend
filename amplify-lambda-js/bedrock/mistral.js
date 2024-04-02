@@ -11,18 +11,18 @@ export const chatMistral = async (chatBody, writable) => {
     const options = {...body.options}; 
     delete body.options; 
 
+    const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
+
+
     try {
         // Ensure credentials are in ~/.aws/credentials
         logger.debug("Initializing Bedrock Client");
         const client = new BedrockRuntimeClient({region: "us-west-2"}); 
 
         logger.debug("Format Messages array to string");
-        const prompt = body.messages.map((message, index) => {
-            return message.role === 'user' || index === 0 ? `[INST] ${message.content} [/INST] ` : message.content;
-            });
 
         const payload = {
-            prompt: `<s> ${prompt} </s>`,
+            prompt: sanitizedMessages,
             max_tokens: options.model.tokenLimit,
             temperature: options.temperature
         };        
@@ -30,7 +30,7 @@ export const chatMistral = async (chatBody, writable) => {
                 body: JSON.stringify(payload),
                 contentType: "application/json",
                 accept: "application/json",
-                modelId: options.model.id 
+                modelId: 'mistral.mistral-7b-instruct-v0:2'//options.model.id 
         });
 
         logger.debug("Initiating call to Mistral Bedrock");
@@ -68,4 +68,38 @@ export const chatMistral = async (chatBody, writable) => {
 
 
     }
+}
+
+function sanitizeMessages(oldMessages, system) {
+    if (!oldMessages) return '';
+    let messages = [];
+    let systemPrompt = system + " No diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me.";
+
+    let i = -1;
+    let j = 0;
+    while (j < oldMessages.length) {
+        const curMessageRole = oldMessages[j]['role'];
+        const oldContent = oldMessages[j]['content'];
+        if (curMessageRole === 'system') {
+            systemPrompt += oldContent;
+        } else if (messages.length == 0 || (messages[i]['role'] !== curMessageRole)) {
+            messages.push(oldMessages[j]);
+            i += 1;
+        } else if (messages[i]['role'] === oldMessages[j]['role']) {
+            messages[i]['content'] += oldContent;
+        } 
+        j += 1;
+    }
+
+    if (messages.length === 0) {
+        return `<s> [INST] ${systemPrompt} [/INST] </s> `
+    } else if (messages[0]['role'] !== 'user') {
+        messages.unshift({'role': 'user', 'content': `${systemPrompt}`});
+    } 
+
+    return  messages.map((message, index) => {
+        if (index === messages.length - 1 && message['role'] === 'user') return `[INST] System Prompt: ${systemPrompt}  \n User Message: ${message.content} [/INST]`;
+        return message.role === 'user' ? `<s>[INST] ${message.content} [/INST] ` :  `${message.content} </s>`;
+                      
+    }).join('');
 }
