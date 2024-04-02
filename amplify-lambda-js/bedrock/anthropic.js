@@ -21,7 +21,7 @@ export const chatAnthropic = async (chatBody, writable) => {
         const selectedModel = options.model.id;
 
         const stream = await client.messages.create({
-                    model: "anthropic.claude-3-haiku-20240307-v1:0",//selectedModel,
+                    model: selectedModel,
                     system: sanitizedMessages['systemPrompt'], 
                     max_tokens: options.model.tokenLimit,
                     messages: sanitizedMessages['messages'], 
