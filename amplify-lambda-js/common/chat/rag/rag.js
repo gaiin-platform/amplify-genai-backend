@@ -1,5 +1,5 @@
 import axios from "axios";
-import {getAccessToken, setModel} from "../../params.js";
+import {getAccessToken, setModel, getModel, getCheapestModelEquivalent} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {LLM} from "../../llm.js";
@@ -46,7 +46,8 @@ async function getRagResults(params, token, search, ragDataSourceKeys, count) {
 export const getContextMessages = async (chatFn, params, chatBody, dataSources) => {
     const ragLLMParams = setModel(
         {...params, options: {skipRag: true}},
-        Models[process.env.RAG_ASSISTANT_MODEL_ID]);
+        getCheapestModelEquivalent(getModel(params)));
+        //Models[process.env.RAG_ASSISTANT_MODEL_ID]);
 
     const llm = new LLM(
         chatFn,

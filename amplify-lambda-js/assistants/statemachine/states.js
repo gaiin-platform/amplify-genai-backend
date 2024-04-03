@@ -12,7 +12,7 @@ import Handlebars from "handlebars";
 import yaml from 'js-yaml';
 import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
-import {getUser} from "../../common/params.js";
+import {getCheapestModelEquivalent, getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
 
 const formatStateNamesAsEnum = (transitions) => {
@@ -450,7 +450,7 @@ export const ragAction = (config = {
                 messages,
                 options: {
                     ...llm.defaultBody,
-                    model: Models[process.env.RAG_ASSISTANT_MODEL_ID],
+                    model: getCheapestModelEquivalent(getModel(llm.params)),//Models[process.env.RAG_ASSISTANT_MODEL_ID],
                     skipRag: true
                 }
             };

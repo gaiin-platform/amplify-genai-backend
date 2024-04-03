@@ -1,12 +1,14 @@
 import {SQSClient, SendMessageCommand} from '@aws-sdk/client-sqs';
 import {ModelID, Models} from "../../models/models.js";
 import { v4 as uuidv4 } from 'uuid';
+import { getCheapestModelEquivalent } from '../../common/params.js';
 
 // Initialise the SQS client
 const sqsClient = new SQSClient();
 
 
 export const createChatTask = (accessToken, user, resultKey, chatBody, options = {}) => {
+    const model = getCheapestModelEquivalent(options.model);
     const task =
         {
             op: "chat",
@@ -16,7 +18,7 @@ export const createChatTask = (accessToken, user, resultKey, chatBody, options =
             params: {
                 "user": user,
                 "body": {
-                    "model": "gpt-35-turbo",
+                    "model": model.id,
                     "temperature": 1,
                     "max_tokens": 1000,
                     "stream": true,
@@ -24,7 +26,7 @@ export const createChatTask = (accessToken, user, resultKey, chatBody, options =
                     ...chatBody,
                     "options": {
                         "requestId": uuidv4(),
-                        "model": Models[ModelID.GPT_3_5_AZ],
+                        "model": model,
                         "key": "",
                         ...options
                     }

@@ -1,9 +1,10 @@
 import {newStatus} from "../common/status.js";
+import {getMostAdvancedModelEquivalent} from "../common/params.js"
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
-// import {reportWriterAssistant} from "./reportWriter.js";
-// import {documentAssistant} from "./documents.js";
+import {reportWriterAssistant} from "./reportWriter.js";
+import {documentAssistant} from "./documents.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {sendDeltaToStream} from "../common/streams.js";
@@ -11,6 +12,7 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
+
 const logger = getLogger("assistants");
 
 
@@ -29,7 +31,7 @@ const defaultAssistant = {
 
         const model = (body.options && body.options.model) ?
             Models[body.options.model.id]:
-            (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
+            (Models[body.model]);
 
         logger.debug("Using model: ", model);
 
@@ -103,10 +105,10 @@ const batchAssistant = {
 
 export const defaultAssistants = [
     defaultAssistant,
-    codeInterpreterAssistant
+    codeInterpreterAssistant,
     //batchAssistant,
-    //documentAssistant,
-    //reportWriterAssistant,
+    documentAssistant,
+    reportWriterAssistant,
     // csvAssistant,
     //documentSearchAssistant
 ];
@@ -193,16 +195,7 @@ ${body.messages.slice(-1)[0].content}
 ---------------
 `;
     // switch to smartest model of the type 
-    let model = body.model;
-
-    if (model.includes("gpt")) {
-        model = Models["gpt-4-1106-Preview"];
-    } else if (model.includes("anthropic")) { 
-        model = Models["anthropic.claude-3-sonnet-20240229-v1:0"];
-    } else if (model.includes("mistral")) { 
-        model = Models['mistral.mixtral-8x7b-instruct-v0:1'];
-    }
-
+    let model = getMostAdvancedModelEquivalent(body.options.model);
 
     const updatedBody = {messages, options:{model}};
 
@@ -288,7 +281,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     }
 
     selected = selectedAssistant || defaultAssistant;
-   
+    //selected = codeInterpreterAssistant;
 
     llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
 
