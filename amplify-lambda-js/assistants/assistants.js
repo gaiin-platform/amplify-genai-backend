@@ -2,9 +2,10 @@ import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
-import {reportWriterAssistant} from "./reportWriter.js";
-import {documentAssistant} from "./documents.js";
-import {mapReduceAssistant} from "./mapReduceAssistant.js";
+// import {reportWriterAssistant} from "./reportWriter.js";
+// import {documentAssistant} from "./documents.js";
+// import {mapReduceAssistant} from "./mapReduceAssistant.js";
+import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
@@ -102,10 +103,11 @@ const batchAssistant = {
 
 export const defaultAssistants = [
     defaultAssistant,
+    codeInterpreterAssistant
     //batchAssistant,
     //documentAssistant,
     //reportWriterAssistant,
-    csvAssistant,
+    // csvAssistant,
     //documentSearchAssistant
 ];
 
@@ -190,10 +192,17 @@ Please choose the best assistant to help with the task:
 ${body.messages.slice(-1)[0].content}
 ---------------
 `;
+    // switch to smartest model of the type 
+    let model = body.model;
 
-    const model =
-    //    Models[ModelID.GPT_3_5_AZ];
-    Models["gpt-4-1106-Preview"];
+    if (model.includes("gpt")) {
+        model = Models["gpt-4-1106-Preview"];
+    } else if (model.includes("anthropic")) { 
+        model = Models["anthropic.claude-3-sonnet-20240229-v1:0"];
+    } else if (model.includes("mistral")) { 
+        model = Models['mistral.mixtral-8x7b-instruct-v0:1'];
+    }
+
 
     const updatedBody = {messages, options:{model}};
 
@@ -279,6 +288,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     }
 
     selected = selectedAssistant || defaultAssistant;
+   
 
     llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
 
