@@ -19,9 +19,9 @@ custom:
     layer: true
   serverless-offline: 
     custom:
-      config: ${file(../var/${self:provider.stage}-var.yml)}     
+      config: ${file(../var/${self:provider.stage}-var.yml)}
 
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)}
   stages:
     - dev
     - staging
@@ -34,10 +34,16 @@ custom:
     tags:
       - Key: Environment
         Value: ${self:provider.stage}
+  
+  # uncomment this to enable a post-deployment automation that will trigger updating the table
+  # custom:
+  #   scripts:
+  #     hooks:
+  #       'after:deploy:deploy': serverless invoke --function updateModelExchangeRateTable --stage dev
 
 provider:
   name: aws
-  runtime: python3.9
+  runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
@@ -46,39 +52,49 @@ provider:
     serverSideEncryption: AES256
   
   environment:
-    REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    MODEL_EXCHANGE_RATE_TABLE: ${self:custom.stageVariables.MODEL_EXCHANGE_RATE_TABLE}
 
   iam:
     role:
       statements:
         - Effect: Allow
           Action:
-            - dynamodb:GetRecords
-            - dynamodb:GetShardIterator
-            - dynamodb:DescribeStream
-            - dynamodb:ListStreams
+            - secretsmanager:GetSecretValue
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:CreateTable
           
           Resource:
-            - arn:aws:dynamodb:us-east-1:*:table/${sls:stage}-chat-usage/stream/*
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
 
-        - Effect: Allow
-          Action:
-            - logs:CreateLogGroup
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-          Resource:
-            - arn:aws:logs:us-east-1:*:log-group:/aws/lambda/${self:service}-${sls:stage}-*:*
 
 functions:
-  chatBillingHandler:
-    handler: handler.lambda_handler
-    memorySize: 1024
-    timeout: 900
+  updateModelExchangeRateTable:
+    runtime: python3.11
+    handler: exchange_rates/update_table.updateModelExchangeRateTable
     events:
-      - stream:
-          type: dynamodb
-          arn: ${self:custom.stageVariables.STREAM_ARN}
-          batchSize: 100
-          startingPosition: LATEST
+      - http:
+          path: billing/update-model-exchange-rates
+          method: post
+          cors: true
+    environment:
+      EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
 
+resources:
+  Resources:
+    ExchangeRateTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: 'ModelID'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'ModelID'
+            KeyType: 'HASH'
