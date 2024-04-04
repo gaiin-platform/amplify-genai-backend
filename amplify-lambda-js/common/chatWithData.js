@@ -1,12 +1,12 @@
 import { Writable } from 'stream';
-import {extractKey, getContexts, translateUserDataSourcesToHashDataSources} from "../datasource/datasources.js";
+import {getContexts, getDataSourcesByUse} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
-import {anthropicTransform} from "./chat/events/bedrock.js";
+import {claudeTransform, mistralTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
@@ -107,20 +107,13 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // 2. Do we even need the documents farther back in the conversation to answer the question?
     // 3. Is the document done processing wtih RAG, if not, run against the whole document.
 
-    let msgDataSources = chatRequestOrig.messages.slice(-1)[0].data?.dataSources || [];
-
-    const convoDataSources = await translateUserDataSourcesToHashDataSources(
-        chatRequestOrig.messages.slice(0,-1)
-            .filter( m => {
-                return m.data && m.data.dataSources
-            }).flatMap(m => m.data.dataSources)
-    );
-
-    const ragDataSources = [
-        ...(params.options.ragOnly? dataSources : []),
-        ...(params.options.ragOnly? msgDataSources : []),
-        ...convoDataSources
-        ];
+    const allSources = await getDataSourcesByUse(params, chatRequestOrig, dataSources);
+    // These data sources are the ones that will be completely inserted into the
+    // conversation
+    dataSources = allSources.dataSources;
+    // These data sources will be searched with RAG for relevant information to
+    // insert into the conversation
+    let ragDataSources = allSources.ragDataSources;
 
     // This is helpful later to convert a key to a data source
     // file name and type
@@ -136,7 +129,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     const ragStatus = newStatus({
         inProgress: true,
         sticky: false,
-        message: "I am searching for relevant information.",
+        message: "I am searching for relevant information...",
         icon: "aperture",
     });
     if(ragDataSources.length > 0 && !params.options.skipRag){
@@ -249,11 +242,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             recordUsage(account, requestId, model, 0, increment, {});
         }
 
+        const selectedModel = model.id;
         let result;
-        if (model.id.includes("gpt")) {
+        if (selectedModel.includes("gpt")) {
             result = openAiTransform(event);  
-        } else if (model.id.includes("claude")) {
-            result = anthropicTransform(event);
+            
+        } else if (selectedModel.includes("anthropic")) {
+            result = claudeTransform(event);
+
+        } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
+            result = mistralTransform(event);
         }
 
         if(!result){

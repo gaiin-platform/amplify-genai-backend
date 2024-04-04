@@ -60,7 +60,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
         // Add the context as the next to last message in the
         // message list. This will provide the context for the user's
         // prompt.
-        messages = addContextMessage(messages, context);
+        messages = addContextMessage(messages, context, chatRequest.options.model.id);
 
         const requestWithData = {
             ...chatRequest,

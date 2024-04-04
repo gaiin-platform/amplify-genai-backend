@@ -6,7 +6,12 @@ export const ModelID = {
     GPT_3_5_AZ: 'gpt-35-turbo',
     GPT_3_5_AZ_FN: 'gpt-35-turbo-1106',
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
-    CLAUDE_2_1: 'anthropic.claude-v2:1'
+    CLAUDE_2_1: 'anthropic.claude-v2:1',
+    CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
+    CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
+    MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
+    MIXTRAL_8X7B: 'mistral.mixtral-8x7b-instruct-v0:1'
+
 };
 
 
@@ -53,7 +58,30 @@ export const Models = {
         tokenLimit: 200000,
         visible: false,
     },
-    
+    [ModelID.CLAUDE_3_SONNET]: {
+     id: ModelID.CLAUDE_3_SONNET,
+     name: 'Claude-3-Sonnet (bedrock)',
+     tokenLimit: 200000,
+     visible: false,
+    },
+    [ModelID.CLAUDE_3_HAIKU]: {
+        id: ModelID.CLAUDE_3_HAIKU,
+        name: 'Claude-3-Haiku (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
+    },
+    [ModelID.MISTRAL_7B]: {
+        id: ModelID.MISTRAL_7B,
+        name: 'Mistral-7b-Instruct (bedrock)',
+        tokenLimit: 8000,
+        visible: false,
+       },
+    [ModelID.MIXTRAL_8X7B]: {
+        id: ModelID.MIXTRAL_8X7B,
+        name: 'Mixtral-7x8b-Instruct (bedrock)',
+        tokenLimit: 32000,
+        visible: false,
+       },
 };
 
 
