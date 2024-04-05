@@ -1,4 +1,4 @@
-service: chat-billing-service
+service: chat-billing
 
 frameworkVersion: '3'
 
@@ -52,25 +52,38 @@ provider:
     serverSideEncryption: AES256
   
   environment:
-    MODEL_EXCHANGE_RATE_TABLE: ${self:custom.stageVariables.MODEL_EXCHANGE_RATE_TABLE}
+    MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
+    BILLING_TABLE: ${self:service}-${sls:stage}-billing
+    CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:*:table/vu-amplify-${sls:stage}-chat-usage/stream/*
 
   iam:
     role:
       statements:
         - Effect: Allow
+        Action:
+          - dynamodb:DescribeStream
+          - dynamodb:GetRecords
+          - dynamodb:GetShardIterator
+          - dynamodb:ListStreams
+        Resource:
+          - ${self:provider.environment.CHAT_USAGE_TABLE_STREAM_ARN}
+        - Effect: Allow
           Action:
-            - secretsmanager:GetSecretValue
-            - dynamodb:Query
-            - dynamodb:Scan
-            - dynamodb:GetItem
-            - dynamodb:PutItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - dynamodb:CreateTable
+          - secretsmanager:GetSecretValue
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+          - dynamodb:CreateTable
           
           Resource:
-            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
+          - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
+          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
+          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
+          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}"
+          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
 
 
 functions:
@@ -85,6 +98,17 @@ functions:
     environment:
       EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
 
+  processChatUsageStream:
+    handler: usage/stream_table.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: ${self:provider.environment.CHAT_USAGE_TABLE_STREAM_ARN}
+          batchSize: 10
+          startingPosition: LATEST
+    environment:
+      DESTINATION_TABLE: ${self:provider.environment.BILLING_TABLE}
+
 resources:
   Resources:
     ExchangeRateTable:
@@ -98,3 +122,9 @@ resources:
         KeySchema:
           - AttributeName: 'ModelID'
             KeyType: 'HASH'
+
+    # TODO: finish implementing billing table
+    BillingTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.BILLING_TABLE}
