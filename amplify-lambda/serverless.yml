@@ -792,14 +792,26 @@ resources:
       Properties:
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          -
-            AttributeName: id
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: time
             AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}
-        StreamSpecification: # enable streaming
+        GlobalSecondaryIndexes:
+          - IndexName: UserUsageTimeIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: time
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
+        StreamSpecification:  # enable streaming
           StreamViewType: NEW_AND_OLD_IMAGES
 
 
