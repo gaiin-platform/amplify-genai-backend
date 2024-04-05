@@ -128,3 +128,23 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         TableName: ${self:provider.environment.BILLING_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+          - AttributeName: 'user'
+            AttributeType: 'S'
+          - AttributeName: 'time'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+        GlobalSecondaryIndexes:
+          - IndexName: 'UserTimeIndex'
+            KeySchema:
+              - AttributeName: 'user'
+                KeyType: 'HASH'
+              - AttributeName: 'time'
+                KeyType: 'RANGE'
+            Projection:
+              ProjectionType: 'ALL'
