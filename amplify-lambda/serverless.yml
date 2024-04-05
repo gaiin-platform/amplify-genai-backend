@@ -799,6 +799,8 @@ resources:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}
+        StreamSpecification: # enable streaming
+          StreamViewType: NEW_AND_OLD_IMAGES
 
 
     MarketIndexBucket:
