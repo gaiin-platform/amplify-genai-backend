@@ -10,6 +10,8 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import {getMostAdvancedModelEquivalent} from "../common/params.js"
+
 const logger = getLogger("assistants");
 
 
@@ -27,8 +29,7 @@ const defaultAssistant = {
     handler: async (llm, params, body, ds, responseStream) => {
 
         const model = (body.options && body.options.model) ?
-            Models[body.options.model.id]:
-            (Models[body.model] || Models[ModelID.GPT_3_5_AZ]);
+            Models[body.options.model.id] : (Models[body.model]);
 
         logger.debug("Using model: ", model);
 
@@ -191,9 +192,8 @@ ${body.messages.slice(-1)[0].content}
 ---------------
 `;
 
-    const model =
-    //    Models[ModelID.GPT_3_5_AZ];
-    Models["gpt-4-1106-Preview"];
+    const model =  getMostAdvancedModelEquivalent(body.options.model);
+    
 
     const updatedBody = {messages, options:{model}};
 
