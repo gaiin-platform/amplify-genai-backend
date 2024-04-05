@@ -13,8 +13,14 @@ export const chatMistral = async (chatBody, writable) => {
 
     const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
 
+    
 
     try {
+
+        const currentModel = options.model.id;
+        const selectedModel = currentModel.includes("mistral") ? currentModel : "mistral.mistral-7b-instruct-v0:2";
+        if (currentModel !== selectedModel) logger.debug("**Incompatible model entered Mistral!** ", currentModel);
+
         // Ensure credentials are in ~/.aws/credentials
         logger.debug("Initializing Bedrock Client");
         const client = new BedrockRuntimeClient({region: "us-west-2"}); 
@@ -30,7 +36,7 @@ export const chatMistral = async (chatBody, writable) => {
                 body: JSON.stringify(payload),
                 contentType: "application/json",
                 accept: "application/json",
-                modelId: options.model.id 
+                modelId: selectedModel 
         });
 
         logger.debug("Initiating call to Mistral Bedrock");

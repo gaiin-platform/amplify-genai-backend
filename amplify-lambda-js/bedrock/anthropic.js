@@ -11,15 +11,19 @@ export const chatAnthropic = async (chatBody, writable) => {
     delete body.options; 
 
     const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
-
+    
     try {
         // Ensure credentials are in ~/.aws/credentials
         const client = new AnthropicBedrock({awsRegion: 'us-west-2'}); // default to 1 if omitted
         
         logger.debug("Initiating call to Anthropic Bedrock");
 
-        const selectedModel = options.model.id;
+        // safety gaurd 
+        const currentModel = options.model.id;
+        const selectedModel = currentModel.includes("anthropic") ? currentModel : "anthropic.claude-3-haiku-20240307-v1:0";
+        if (currentModel !== selectedModel) logger.debug("**Incompatible model entered CLAUDE!** ", currentModel);
 
+        
         const stream = await client.messages.create({
                     model: selectedModel,
                     system: sanitizedMessages['systemPrompt'], 
@@ -61,6 +65,7 @@ function sanitizeMessages(oldMessages, system) {
     while (j < oldMessages.length) {
         const curMessageRole = oldMessages[j]['role'];
         const oldContent = oldMessages[j]['content'];
+        if (!oldContent) oldMessages[j]['content'] = "NA Intentionally left empty, disregard and continue";
         if (curMessageRole === 'system') {
             systemPrompt += oldContent;
         } else if (messages.length == 0 || (messages[i]['role'] !== curMessageRole)) {
