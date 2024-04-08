@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
+from decimal import Decimal
 
 # Initialize DynamoDB client
 dynamodb_client = boto3.client("dynamodb")
@@ -20,18 +21,20 @@ def deserialize_dynamodb_stream_image(stream_image):
 def python_to_dynamodb(value):
     if isinstance(value, str):
         return {"S": value}
-    elif isinstance(value, int) or isinstance(value, float):
+    elif isinstance(
+        value, (int, float, Decimal)
+    ):
         return {"N": str(value)}
     elif isinstance(value, dict):
         return {"M": {k: python_to_dynamodb(v) for k, v in value.items()}}
     elif isinstance(value, list):
         return {"L": [python_to_dynamodb(v) for v in value]}
+    elif isinstance(value, bool):
+        return {"BOOL": value}
     elif value is None:
         return {"NULL": True}
     else:
-        raise TypeError(
-            "Unsupported Python type for conversion to DynamoDB AttributeValue"
-        )
+        raise TypeError(f"Unsupported Python type: {type(value)}")
 
 
 def handler(event, context):
