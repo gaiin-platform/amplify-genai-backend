@@ -22,7 +22,7 @@ def deserialize_dynamodb_stream_image(stream_image):
 
 
 def handle_chat_item(item):
-    print("Handling chat item:", item)
+    # print("Handling chat item:", item)
 
     # Extract ModelID from the item
     model_id = item["modelId"]
@@ -63,7 +63,7 @@ def calculate_cost(input_tokens, output_tokens, input_cost, output_cost):
     input_cost_total = (input_tokens / 1000) * input_cost
     output_cost_total = (output_tokens / 1000) * output_cost
     total_cost = input_cost_total + output_cost_total
-    print("Total Cost:", total_cost)
+    # print("Total Cost:", total_cost)
     return total_cost
 
 
@@ -74,7 +74,7 @@ def bill_chat_to_coa(
     input_cost_per_thousand_tokens,
     output_cost_per_thousand_tokens,
 ):
-    print("bill_chat_to_coa called")
+    # print("bill_chat_to_coa called")
 
     # Calculate the total cost for the chat
     total_cost = calculate_cost(
@@ -83,7 +83,7 @@ def bill_chat_to_coa(
         input_cost_per_thousand_tokens,
         output_cost_per_thousand_tokens,
     )
-    print("Total Cost:", total_cost)
+    # print("Total Cost:", total_cost)
 
     # Access the UsagePerCoaTable
     usage_per_coa_table_name = os.environ["USAGE_PER_COA_TABLE"]
@@ -131,19 +131,19 @@ def handle_other_item_types(item, item_type):
 
 
 def handler(event, context):
-    print("Handler started")
+    # print("Handler started")
     try:
         for record in event["Records"]:
-            print(f"Processing record: {record}")
+            # print(f"Processing record: {record}")
             if record["eventName"] == "INSERT":
                 new_image = deserialize_dynamodb_stream_image(
                     record["dynamodb"]["NewImage"]
                 )
-                print(f"New image deserialized: {new_image}")
+                # print(f"New image deserialized: {new_image}")
 
                 coa_string = new_image.get("accountId", "UnknownAccountId")
                 item_type = new_image.get("itemType", "UnknownItemType")
-                print(f"COA String: {coa_string}, Item Type: {item_type}")
+                # print(f"COA String: {coa_string}, Item Type: {item_type}")
 
                 if (
                     coa_string != "general_account"
@@ -153,8 +153,8 @@ def handler(event, context):
                         handle_chat_item(new_image)
                     else:
                         handle_other_item_types(new_image, item_type)
-            else:
-                print(f"Skipped record with eventName: {record['eventName']}")
+            # else:
+                # print(f"Skipped record with eventName: {record['eventName']}")
     except Exception as e:
         print(f"An error occurred in the handler: {e}")
         raise  # Re-raise the exception to see it in CloudWatch logs
