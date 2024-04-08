@@ -60,12 +60,20 @@ provider:
   environment:
     MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
     BILLING_TABLE: ${self:service}-${sls:stage}-billing
+    USAGE_PER_COA_TABLE: ${self:service}-${sls:stage}-usage-per-coa
     # TODO: use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
     CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:514391678313:table/vu-amplify-${sls:stage}-chat-usage/stream/${self:custom.stageVariables.CHAT_USAGE_STREAM_TIMESTAMP}
 
   iam:
     role:
       statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource:
+            - "arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/${self:service}-${self:provider.stage}-*:log-stream:*"
         - Effect: Allow
           Action:
             - dynamodb:DescribeStream
@@ -84,13 +92,14 @@ provider:
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
             - dynamodb:CreateTable
-          
           Resource:
             - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_COA_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_COA_TABLE}/*"
 
 
 functions:
@@ -115,6 +124,19 @@ functions:
           startingPosition: LATEST
     environment:
       DESTINATION_TABLE: ${self:provider.environment.BILLING_TABLE}
+  
+  trackUsage:
+    handler: usage/track_usage.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [BillingTable, StreamArn]
+          batchSize: 10
+          startingPosition: LATEST
+    environment:
+      MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+      USAGE_PER_COA_TABLE: ${self:provider.environment.USAGE_PER_COA_TABLE}
 
 resources:
   Resources:
@@ -154,3 +176,17 @@ resources:
                 KeyType: 'RANGE'
             Projection:
               ProjectionType: 'ALL'
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    
+    UsagePerCoaTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.USAGE_PER_COA_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: 'coa'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'coa'
+            KeyType: 'HASH'
