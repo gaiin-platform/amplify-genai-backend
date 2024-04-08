@@ -51,39 +51,46 @@ provider:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256
   
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+  
   environment:
     MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
     BILLING_TABLE: ${self:service}-${sls:stage}-billing
-    CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:*:table/vu-amplify-${sls:stage}-chat-usage/stream/*
+    # TODO: use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
+    CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:514391678313:table/vu-amplify-${sls:stage}-chat-usage/stream/${self:custom.stageVariables.CHAT_USAGE_STREAM_TIMESTAMP}
 
   iam:
     role:
       statements:
         - Effect: Allow
-        Action:
-          - dynamodb:DescribeStream
-          - dynamodb:GetRecords
-          - dynamodb:GetShardIterator
-          - dynamodb:ListStreams
-        Resource:
-          - ${self:provider.environment.CHAT_USAGE_TABLE_STREAM_ARN}
+          Action:
+            - dynamodb:DescribeStream
+            - dynamodb:GetRecords
+            - dynamodb:GetShardIterator
+            - dynamodb:ListStreams
+          Resource:
+            - ${self:provider.environment.CHAT_USAGE_TABLE_STREAM_ARN}
         - Effect: Allow
           Action:
-          - secretsmanager:GetSecretValue
-          - dynamodb:Query
-          - dynamodb:Scan
-          - dynamodb:GetItem
-          - dynamodb:PutItem
-          - dynamodb:UpdateItem
-          - dynamodb:DeleteItem
-          - dynamodb:CreateTable
+            - secretsmanager:GetSecretValue
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:CreateTable
           
           Resource:
-          - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
-          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
-          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
-          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}"
-          - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
+            - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
 
 
 functions:
@@ -123,7 +130,6 @@ resources:
           - AttributeName: 'ModelID'
             KeyType: 'HASH'
 
-    # TODO: finish implementing billing table
     BillingTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:

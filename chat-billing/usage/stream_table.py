@@ -34,37 +34,6 @@ def python_to_dynamodb(value):
         )
 
 
-# The Lambda handler function
-def handler(event, context):
-    for record in event["Records"]:
-        # We are only interested in 'INSERT' events
-        if record["eventName"] == "INSERT":
-            # Deserialize the new DynamoDB image into a Python dictionary
-            new_image = deserialize_dynamodb_stream_image(
-                record["dynamodb"]["NewImage"]
-            )
-
-            # Add the 'itemType' attribute
-            new_image["itemType"] = "chat"
-
-            # Prepare the item for insertion into the destination table
-            item = {
-                k: {"S": str(v)} if isinstance(v, str) else {"N": str(v)}
-                for k, v in new_image.items()
-            }
-
-            # Insert the item into the destination table
-            try:
-                dynamodb_client.put_item(TableName=destination_table, Item=item)
-                print(
-                    f"Inserted item with id: {new_image['id']} into {destination_table}"
-                )
-            except Exception as e:
-                print(f"Error inserting item: {e}")
-
-    return {"statusCode": 200, "body": "Stream processed successfully"}
-
-
 def handler(event, context):
     for record in event["Records"]:
         if record["eventName"] == "INSERT":
