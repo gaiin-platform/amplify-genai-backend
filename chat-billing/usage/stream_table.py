@@ -44,8 +44,19 @@ def handler(event, context):
                 record["dynamodb"]["NewImage"]
             )
 
-            # Add the 'itemType' attribute
-            new_image["itemType"] = "chat"
+            # Check if 'details' field is not empty and exists
+            if "details" in new_image and new_image["details"]:
+                # Check if 'itemType' in details and if it's value is "threads"
+                if (
+                    "itemType" in new_image["details"]
+                    and new_image["details"]["itemType"] == "codeInterpreter"
+                ):
+                    new_image["itemType"] = "codeInterpreter"
+                # other hanlding other itemTypes will be implemented here
+                else:
+                    new_image["itemType"] = "other"
+            else:
+                new_image["itemType"] = "chat"
 
             # Prepare the item for insertion into the destination table
             item = {k: python_to_dynamodb(v) for k, v in new_image.items()}

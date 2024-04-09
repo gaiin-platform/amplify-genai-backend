@@ -74,7 +74,6 @@ def bill_chat_to_coa(
     input_cost_per_thousand_tokens,
     output_cost_per_thousand_tokens,
 ):
-    # print("bill_chat_to_coa called")
 
     # Calculate the total cost for the chat
     total_cost = calculate_cost(
@@ -106,11 +105,15 @@ def bill_chat_to_coa(
 
     # Update the UsagePerCoaTable with the new costs
     try:
-        if 'Item' not in response:
-            print(f"Creating new cost entry for COA '{coa_string}' with values: {updated_costs}")
+        if "Item" not in response:
+            print(
+                f"Creating new cost entry for COA '{coa_string}' with values: {updated_costs}"
+            )
         else:
-            print(f"Updating existing cost entry for COA '{coa_string}' with new values: {updated_costs}")
-        
+            print(
+                f"Updating existing cost entry for COA '{coa_string}' with new values: {updated_costs}"
+            )
+
         usage_per_coa_table.update_item(
             Key={"coa": coa_string},
             UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc",
@@ -124,22 +127,22 @@ def bill_chat_to_coa(
         print(f"Error updating costs for COA '{coa_string}': {e}")
 
 
-def handle_other_item_types(item, item_type):
-    # Call a different function based on the item_type
-    # Implement your logic here to call the respective function for each itemType
-    pass
+def handle_code_interpreter_item(item):
+    print("Code Interpreter Calculation Here")
+
+
+def handle_other_item_types(item):
+    itemType = item["itemType"]
+    print("unknown itemType:", itemType)
 
 
 def handler(event, context):
-    # print("Handler started")
     try:
         for record in event["Records"]:
-            # print(f"Processing record: {record}")
             if record["eventName"] == "INSERT":
                 new_image = deserialize_dynamodb_stream_image(
                     record["dynamodb"]["NewImage"]
                 )
-                # print(f"New image deserialized: {new_image}")
 
                 coa_string = new_image.get("accountId", "UnknownAccountId")
                 item_type = new_image.get("itemType", "UnknownItemType")
@@ -151,12 +154,12 @@ def handler(event, context):
                 ):
                     if item_type == "chat":
                         handle_chat_item(new_image)
+                    elif item_type == "codeInterpreter":
+                        handle_code_interpreter_item(new_image)
                     else:
-                        handle_other_item_types(new_image, item_type)
-            # else:
-                # print(f"Skipped record with eventName: {record['eventName']}")
+                        handle_other_item_types(new_image)
     except Exception as e:
         print(f"An error occurred in the handler: {e}")
-        raise  # Re-raise the exception to see it in CloudWatch logs
+        raise
 
     return {"statusCode": 200, "body": "Usage tracked successfully"}
