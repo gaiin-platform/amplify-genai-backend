@@ -35,7 +35,7 @@ custom:
       - Key: Environment
         Value: ${self:provider.stage}
   
-  # uncomment this to enable a post-deployment automation that will trigger updating the table
+  # uncomment this to enable a post-deployment automation that will trigger updating the model exchange rate table
   # custom:
   #   scripts:
   #     hooks:
@@ -61,7 +61,8 @@ provider:
     MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
     BILLING_TABLE: ${self:service}-${sls:stage}-billing
     USAGE_PER_COA_TABLE: ${self:service}-${sls:stage}-usage-per-coa
-    # TODO: use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
+    HISTORY_COA_USAGE_TABLE: ${self:service}-${sls:stage}-history-coa-usage
+    # use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
     CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:514391678313:table/vu-amplify-${sls:stage}-chat-usage/stream/${self:custom.stageVariables.CHAT_USAGE_STREAM_TIMESTAMP}
 
   iam:
@@ -100,6 +101,8 @@ provider:
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_COA_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_COA_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_COA_USAGE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_COA_USAGE_TABLE}/*"
 
 
 functions:
@@ -136,6 +139,21 @@ functions:
           startingPosition: LATEST
     environment:
       MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+      USAGE_PER_COA_TABLE: ${self:provider.environment.USAGE_PER_COA_TABLE}
+  
+  resetAndRecordUsage:
+    handler: usage/reset_and_record.handler
+    events:
+      - schedule:
+          rate: cron(0 0 * * ? *) # Daily at midnight UTC
+          input:
+            type: dailyReset
+      - schedule:
+          rate: cron(0 0 1 * ? *) # Monthly on the first day of the month at midnight UTC
+          input:
+            type: monthlyReset
+    environment:
+      HISTORY_COA_USAGE_TABLE: ${self:provider.environment.HISTORY_COA_USAGE_TABLE}
       USAGE_PER_COA_TABLE: ${self:provider.environment.USAGE_PER_COA_TABLE}
 
 resources:
@@ -190,3 +208,28 @@ resources:
         KeySchema:
           - AttributeName: 'coa'
             KeyType: 'HASH'
+
+    HistoryCoaUsageTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.HISTORY_COA_USAGE_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: 'date'
+            AttributeType: 'S'
+          - AttributeName: 'coa'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'date'
+            KeyType: 'HASH'
+          - AttributeName: 'coa'
+            KeyType: 'RANGE'
+        GlobalSecondaryIndexes:
+          - IndexName: 'CoaDateIndex'
+            KeySchema:
+              - AttributeName: 'coa'
+                KeyType: 'HASH'
+              - AttributeName: 'date'
+                KeyType: 'RANGE'
+            Projection:
+              ProjectionType: 'ALL'

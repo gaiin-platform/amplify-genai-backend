@@ -116,19 +116,21 @@ def bill_chat_to_coa(
 
         usage_per_coa_table.update_item(
             Key={"coa": coa_string},
-            UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc",
+            UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc, hasDailyUsage = :hdu",
             ExpressionAttributeValues={
                 ":dc": updated_costs["dailyCost"],
                 ":mc": updated_costs["monthlyCost"],
                 ":tc": updated_costs["totalCost"],
+                ":hdu": "true",  # Set the hasDailyUsage flag to true
             },
         )
     except Exception as e:
         print(f"Error updating costs for COA '{coa_string}': {e}")
 
 
-def handle_code_interpreter_item(item):
+def handle_code_interpreter_session_item(item):
     print("Code Interpreter Calculation Here")
+    # TODO: charge $0.03 to the coa string every time this is called
 
 
 def handle_other_item_types(item):
@@ -154,8 +156,8 @@ def handler(event, context):
                 ):
                     if item_type == "chat":
                         handle_chat_item(new_image)
-                    elif item_type == "codeInterpreter":
-                        handle_code_interpreter_item(new_image)
+                    elif item_type == "codeInterpreterSession":
+                        handle_code_interpreter_session_item(new_image)
                     else:
                         handle_other_item_types(new_image)
     except Exception as e:

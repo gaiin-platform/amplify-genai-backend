@@ -39,6 +39,7 @@ def python_to_dynamodb(value):
 
 def handler(event, context):
     for record in event["Records"]:
+        # TODO: ensure that we need to be doing INSERT check and not another kind of check (for code interpreter); might need to be MODIFY
         if record["eventName"] == "INSERT":
             new_image = deserialize_dynamodb_stream_image(
                 record["dynamodb"]["NewImage"]
@@ -46,12 +47,17 @@ def handler(event, context):
 
             # Check if 'details' field is not empty and exists
             if "details" in new_image and new_image["details"]:
-                # Check if 'itemType' in details and if it's value is "threads"
                 if (
                     "itemType" in new_image["details"]
-                    and new_image["details"]["itemType"] == "codeInterpreter"
+                    and new_image["details"]["itemType"] == "codeInterpreter" # conversation with code interpreter
                 ):
                     new_image["itemType"] = "codeInterpreter"
+                    # TODO: set values of new_image["inputTokens"] and new_image["outputTokens"]
+                    #       need to parse/look in new_image["details"]["session"]
+                    #       need to pull the latest operation out of the latest session
+                    #       if the operation is LIST_MESSAGE, collect outputTokens
+                    #       if the operation is ADD_MESSAGE, collect inputTokens
+                
                 # other hanlding other itemTypes will be implemented here
                 else:
                     new_image["itemType"] = "other"
