@@ -21,9 +21,7 @@ def deserialize_dynamodb_stream_image(stream_image):
 def python_to_dynamodb(value):
     if isinstance(value, str):
         return {"S": value}
-    elif isinstance(
-        value, (int, float, Decimal)
-    ):
+    elif isinstance(value, (int, float, Decimal)):
         return {"N": str(value)}
     elif isinstance(value, dict):
         return {"M": {k: python_to_dynamodb(v) for k, v in value.items()}}
@@ -45,20 +43,30 @@ def handler(event, context):
                 record["dynamodb"]["NewImage"]
             )
 
-            # Check if 'details' field is not empty and exists
+            # ensure the details key exists in the new_image dictionary and that its value is not None or an empty structure
             if "details" in new_image and new_image["details"]:
                 if (
                     "itemType" in new_image["details"]
-                    and new_image["details"]["itemType"] == "codeInterpreter" # conversation with code interpreter
+                    and new_image["details"]["itemType"] == "codeInterpreter"
                 ):
                     new_image["itemType"] = "codeInterpreter"
-                    # TODO: set values of new_image["inputTokens"] and new_image["outputTokens"]
-                    #       need to parse/look in new_image["details"]["session"]
-                    #       need to pull the latest operation out of the latest session
-                    #       if the operation is LIST_MESSAGE, collect outputTokens
-                    #       if the operation is ADD_MESSAGE, collect inputTokens
-                
-                # other hanlding other itemTypes will be implemented here
+                    # Parse the session to find the latest operation
+                    session = new_image["details"].get("session", [])
+                    if session:
+                        latest_operation = session[
+                            -1
+                        ]  # Assume last operation is the latest
+                        operation_type = latest_operation.get("operation")
+                        if operation_type == "LIST_MESSAGE":
+                            new_image["outputTokens"] = latest_operation.get(
+                                "outputTokens", 0
+                            )
+                            new_image["inputTokens"] = 0
+                        elif operation_type == "ADD_MESSAGE":
+                            new_image["inputTokens"] = latest_operation.get(
+                                "inputTokens", 0
+                            )
+                            new_image["outputTokens"] = 0
                 else:
                     new_image["itemType"] = "other"
             else:

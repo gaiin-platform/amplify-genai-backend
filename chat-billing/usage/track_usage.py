@@ -116,21 +116,72 @@ def bill_chat_to_coa(
 
         usage_per_coa_table.update_item(
             Key={"coa": coa_string},
-            UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc, hasDailyUsage = :hdu",
+            UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc",
             ExpressionAttributeValues={
                 ":dc": updated_costs["dailyCost"],
                 ":mc": updated_costs["monthlyCost"],
-                ":tc": updated_costs["totalCost"],
-                ":hdu": "true",  # Set the hasDailyUsage flag to true
+                ":tc": updated_costs["totalCost"]
             },
         )
     except Exception as e:
         print(f"Error updating costs for COA '{coa_string}': {e}")
 
 
+def handle_code_interpreter_item(item):
+    print("Charging For Code Interpreter")
+    handle_chat_item(item)
+
+
 def handle_code_interpreter_session_item(item):
-    print("Code Interpreter Calculation Here")
-    # TODO: charge $0.03 to the coa string every time this is called
+    print("Charging For Code Interpreter Session")
+
+    # Define the cost for a code interpreter session
+    session_cost = 0.03
+
+    # Extract the COA (Chart of Accounts) string from the item
+    coa_string = item["accountId"]
+
+    # Access the UsagePerCoaTable
+    usage_per_coa_table_name = os.environ["USAGE_PER_COA_TABLE"]
+    usage_per_coa_table = dynamodb.Table(usage_per_coa_table_name)
+
+    # Try to get the current cost values for the given COA
+    try:
+        response = usage_per_coa_table.get_item(Key={"coa": coa_string})
+        current_costs = response.get("Item", {})
+    except Exception as e:
+        print(f"Error fetching current costs for COA '{coa_string}': {e}")
+        current_costs = {}
+
+    # Prepare the updated cost values
+    updated_costs = {
+        "dailyCost": current_costs.get("dailyCost", 0) + session_cost,
+        "monthlyCost": current_costs.get("monthlyCost", 0) + session_cost,
+        "totalCost": current_costs.get("totalCost", 0) + session_cost,
+    }
+
+    # Update the UsagePerCoaTable with the new costs
+    try:
+        if "Item" not in response:
+            print(
+                f"Creating new cost entry for COA '{coa_string}' with values: {updated_costs}"
+            )
+        else:
+            print(
+                f"Updating existing cost entry for COA '{coa_string}' with new values: {updated_costs}"
+            )
+
+        usage_per_coa_table.update_item(
+            Key={"coa": coa_string},
+            UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc",
+            ExpressionAttributeValues={
+                ":dc": updated_costs["dailyCost"],
+                ":mc": updated_costs["monthlyCost"],
+                ":tc": updated_costs["totalCost"]
+            },
+        )
+    except Exception as e:
+        print(f"Error updating costs for COA '{coa_string}': {e}")
 
 
 def handle_other_item_types(item):
@@ -156,6 +207,8 @@ def handler(event, context):
                 ):
                     if item_type == "chat":
                         handle_chat_item(new_image)
+                    elif item_type == "codeInterpreter":
+                        handle_code_interpreter_item(new_image)
                     elif item_type == "codeInterpreterSession":
                         handle_code_interpreter_session_item(new_image)
                     else:
