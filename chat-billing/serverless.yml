@@ -60,8 +60,10 @@ provider:
   environment:
     MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
     BILLING_TABLE: ${self:service}-${sls:stage}-billing
-    USAGE_PER_COA_TABLE: ${self:service}-${sls:stage}-usage-per-coa
-    HISTORY_COA_USAGE_TABLE: ${self:service}-${sls:stage}-history-coa-usage
+    USAGE_PER_COA_TABLE: ${self:service}-${sls:stage}-usage-per-coa # delete
+    USAGE_PER_ID_TABLE: ${self:service}-${sls:stage}-usage-per-id
+    HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
+    HISTORY_COA_USAGE_TABLE: ${self:service}-${sls:stage}-history-coa-usage # delete
     # use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
     CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:514391678313:table/vu-amplify-${sls:stage}-chat-usage/stream/${self:custom.stageVariables.CHAT_USAGE_STREAM_TIMESTAMP}
 
@@ -101,11 +103,16 @@ provider:
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_COA_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_COA_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_COA_USAGE_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_COA_USAGE_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
 
 
 functions:
+  # sets the value of the model exchange rates
   updateModelExchangeRateTable:
     runtime: python3.11
     handler: exchange_rates/update_table.updateModelExchangeRateTable
@@ -117,6 +124,7 @@ functions:
     environment:
       EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
 
+  # handles the stream from chat-usage table to billing table
   processChatUsageStream:
     handler: usage/stream_table.handler
     events:
@@ -128,6 +136,7 @@ functions:
     environment:
       DESTINATION_TABLE: ${self:provider.environment.BILLING_TABLE}
   
+  # calculates cost of usage for each action
   trackUsage:
     handler: usage/track_usage.handler
     events:
@@ -139,8 +148,9 @@ functions:
           startingPosition: LATEST
     environment:
       MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
-      USAGE_PER_COA_TABLE: ${self:provider.environment.USAGE_PER_COA_TABLE}
+      USAGE_PER_ID_TABLE: ${self:provider.environment.USAGE_PER_ID_TABLE}
   
+  # saves daily and monthly usage to history table
   resetAndRecordUsage:
     handler: usage/reset_and_record.handler
     events:
@@ -153,11 +163,12 @@ functions:
           input:
             type: monthlyReset
     environment:
-      HISTORY_COA_USAGE_TABLE: ${self:provider.environment.HISTORY_COA_USAGE_TABLE}
-      USAGE_PER_COA_TABLE: ${self:provider.environment.USAGE_PER_COA_TABLE}
+      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+      USAGE_PER_ID_TABLE: ${self:provider.environment.USAGE_PER_ID_TABLE}
 
 resources:
   Resources:
+    # contains values for cost calculations for each model
     ExchangeRateTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -170,6 +181,7 @@ resources:
           - AttributeName: 'ModelID'
             KeyType: 'HASH'
 
+    # chat-usage table streamed to this table along with itemType
     BillingTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -197,37 +209,39 @@ resources:
         StreamSpecification:
           StreamViewType: NEW_AND_OLD_IMAGES
     
-    UsagePerCoaTable:
+    # cost for each action saved to each user
+    UsagePerIdTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
-        TableName: ${self:provider.environment.USAGE_PER_COA_TABLE}
+        TableName: ${self:provider.environment.USAGE_PER_ID_TABLE}
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: 'coa'
+          - AttributeName: 'id'
             AttributeType: 'S'
         KeySchema:
-          - AttributeName: 'coa'
+          - AttributeName: 'id'
             KeyType: 'HASH'
 
-    HistoryCoaUsageTable:
+    # daily and monthly usage saved to this table
+    HistoryUsageTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
-        TableName: ${self:provider.environment.HISTORY_COA_USAGE_TABLE}
+        TableName: ${self:provider.environment.HISTORY_USAGE_TABLE}
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: 'date'
+          - AttributeName: 'id'
             AttributeType: 'S'
-          - AttributeName: 'coa'
+          - AttributeName: 'date'
             AttributeType: 'S'
         KeySchema:
-          - AttributeName: 'date'
+          - AttributeName: 'id'
             KeyType: 'HASH'
-          - AttributeName: 'coa'
+          - AttributeName: 'date'
             KeyType: 'RANGE'
         GlobalSecondaryIndexes:
-          - IndexName: 'CoaDateIndex'
+          - IndexName: 'IdDateIndex'
             KeySchema:
-              - AttributeName: 'coa'
+              - AttributeName: 'id'
                 KeyType: 'HASH'
               - AttributeName: 'date'
                 KeyType: 'RANGE'

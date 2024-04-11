@@ -1,5 +1,4 @@
 import os
-import json
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
 from decimal import Decimal
@@ -50,7 +49,9 @@ def handler(event, context):
                     and new_image["details"]["itemType"] == "codeInterpreter"
                 ):
                     new_image["itemType"] = "codeInterpreter"
+
                     # Parse the session to find the latest operation
+                    # TODO: ensure this parsing is correct
                     session = new_image["details"].get("session", [])
                     if session:
                         latest_operation = session[

@@ -15,8 +15,8 @@ def handler(event, context):
     reset_type = event.get("type")
 
     # Determine the table names from the environment variables
-    history_table_name = os.environ.get("HISTORY_COA_USAGE_TABLE")
-    usage_table_name = os.environ.get("USAGE_PER_COA_TABLE")
+    history_table_name = os.environ.get("HISTORY_USAGE_TABLE")
+    usage_table_name = os.environ.get("USAGE_PER_ID_TABLE")
 
     # Get the table resources
     history_table = dynamodb.Table(history_table_name)
@@ -31,7 +31,8 @@ def handler(event, context):
 
     # Process each item from the usage table
     for item in items:
-        coa = item["coa"]
+        id = item["id"]
+        account_type = item["accountType"]
         daily_cost = item.get("dailyCost", 0)
         monthly_cost = item.get("monthlyCost", 0)
 
@@ -41,12 +42,13 @@ def handler(event, context):
             date_before = now - relativedelta(days=1)
             history_item = {
                 "date": date_before.strftime("%Y-%m-%d"),
-                "coa": coa,
+                "id": id,
+                "accountType": account_type,
                 "dailyCost": daily_cost,
             }
             # Reset the daily usage in the usage table
             usage_table.update_item(
-                Key={"coa": coa},
+                Key={"id": id},
                 UpdateExpression="SET dailyCost = :val",
                 ExpressionAttributeValues={":val": 0},
             )
@@ -56,12 +58,13 @@ def handler(event, context):
             month_before = now - relativedelta(months=1)
             history_item = {
                 "date": month_before.strftime("%Y-%m-01"),
-                "coa": coa,
+                "id": id,
+                "accountType": account_type,
                 "monthlyCost": monthly_cost,
             }
             # Reset the monthly usage in the usage table
             usage_table.update_item(
-                Key={"coa": coa},
+                Key={"id": id},
                 UpdateExpression="SET monthlyCost = :val",
                 ExpressionAttributeValues={":val": 0},
             )
