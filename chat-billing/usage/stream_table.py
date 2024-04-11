@@ -20,7 +20,12 @@ def deserialize_dynamodb_stream_image(stream_image):
 def python_to_dynamodb(value):
     if isinstance(value, str):
         return {"S": value}
-    elif isinstance(value, (int, float, Decimal)):
+    elif isinstance(value, Decimal):  # Convert Decimal to int or float
+        if value % 1 == 0:
+            return {"N": str(int(value))}
+        else:
+            return {"N": str(float(value))}
+    elif isinstance(value, (int, float)):
         return {"N": str(value)}
     elif isinstance(value, dict):
         return {"M": {k: python_to_dynamodb(v) for k, v in value.items()}}
@@ -50,24 +55,33 @@ def handler(event, context):
                 ):
                     new_image["itemType"] = "codeInterpreter"
 
-                    # Parse the session to find the latest operation
-                    # TODO: ensure this parsing is correct
-                    session = new_image["details"].get("session", [])
-                    if session:
-                        latest_operation = session[
-                            -1
-                        ]  # Assume last operation is the latest
-                        operation_type = latest_operation.get("operation")
-                        if operation_type == "LIST_MESSAGE":
-                            new_image["outputTokens"] = latest_operation.get(
-                                "outputTokens", 0
-                            )
-                            new_image["inputTokens"] = 0
-                        elif operation_type == "ADD_MESSAGE":
-                            new_image["inputTokens"] = latest_operation.get(
-                                "inputTokens", 0
-                            )
-                            new_image["outputTokens"] = 0
+                    # Parse the sessions to find the latest operation
+                    # Corrected the key to "sessions" and adjusted the parsing logic
+                    sessions = new_image["details"].get("sessions", {}).get("L", [])
+                    if sessions:
+                        latest_session = sessions[-1]  # Assume last session is the latest
+                        operations = latest_session.get("M", {}).get("operations", {}).get("L", [])
+                        if operations:
+                            latest_operation = operations[-1]  # Assume last operation is the latest
+                            operation_type = latest_operation.get("M", {}).get("type", {}).get("S")
+                            if operation_type == "LIST_MESSAGE":
+                                new_image["outputTokens"] = int(latest_operation.get("M", {}).get("outputTokens", {}).get("N", "0"))
+                                new_image["inputTokens"] = 0
+                                if isinstance(new_image["inputTokens"], Decimal):
+                                    new_image["inputTokens"] = int(new_image["inputTokens"])
+                                if isinstance(new_image["outputTokens"], Decimal):
+                                    new_image["outputTokens"] = int(new_image["outputTokens"])
+                            elif operation_type == "ADD_MESSAGE":
+                                new_image["inputTokens"] = int(latest_operation.get("M", {}).get("inputTokens", {}).get("N", "0"))
+                                new_image["outputTokens"] = 0
+                                if isinstance(new_image["inputTokens"], Decimal):
+                                    new_image["inputTokens"] = int(
+                                        new_image["inputTokens"]
+                                    )
+                                if isinstance(new_image["outputTokens"], Decimal):
+                                    new_image["outputTokens"] = int(
+                                        new_image["outputTokens"]
+                                    )
                 else:
                     new_image["itemType"] = "other"
             else:
@@ -79,8 +93,11 @@ def handler(event, context):
             # Insert the item into the destination table
             try:
                 dynamodb_client.put_item(TableName=destination_table, Item=item)
+                # print(
+                #     f"Inserted item with id: {new_image['id']} into {destination_table}"
+                # )
                 print(
-                    f"Inserted item with id: {new_image['id']} into {destination_table}"
+                    f"Inserted item: {new_image} into {destination_table}"
                 )
             except Exception as e:
                 print(f"Error inserting item: {e}")

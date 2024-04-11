@@ -115,7 +115,7 @@ def bill_chat_to_identifier(
 def handle_code_interpreter_item(dynamodb, item, account_type, identifier):
     print("Charging For Code Interpreter")
     print(item)
-    handle_chat_item(item)
+    handle_chat_item(dynamodb, item, account_type, identifier)
 
 
 def handle_code_interpreter_session_item(dynamodb, item, account_type, identifier):
