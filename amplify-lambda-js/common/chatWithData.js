@@ -177,7 +177,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     logger.debug(`Chat with data called with request id ${requestId}`);
 
     const account = params.account;
-    const model = Models[params.model.id] || Models[ModelID.GPT_3_5_AZ];
+    const model = Models[params.model.id] //|| Models[ModelID.GPT_3_5_AZ];  
     const options = params.options || {};
 
     let srcPrefix = options.source || defaultSource;
