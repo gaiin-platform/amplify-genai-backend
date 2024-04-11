@@ -4,6 +4,7 @@
 import os
 import boto3
 from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
 
 # Initialize DynamoDB client
 dynamodb = boto3.resource("dynamodb")
@@ -36,8 +37,10 @@ def handler(event, context):
 
         # Create the history item based on the reset type
         if reset_type == "dailyReset":
+            # Subtract a day to get the date of the day before
+            date_before = now - relativedelta(days=1)
             history_item = {
-                "date": now.strftime("%Y-%m-%d"),
+                "date": date_before.strftime("%Y-%m-%d"),
                 "coa": coa,
                 "dailyCost": daily_cost,
             }
@@ -49,8 +52,10 @@ def handler(event, context):
             )
 
         elif reset_type == "monthlyReset":
+            # Subtract a month to get the previous month
+            month_before = now - relativedelta(months=1)
             history_item = {
-                "date": now.strftime("%Y-%m-01"),
+                "date": month_before.strftime("%Y-%m-01"),
                 "coa": coa,
                 "monthlyCost": monthly_cost,
             }

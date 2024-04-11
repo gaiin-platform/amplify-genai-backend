@@ -8,6 +8,7 @@ import json
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
 from boto3.dynamodb.conditions import Key
+from decimal import Decimal
 
 # Initialize DynamoDB client
 dynamodb_client = boto3.client("dynamodb")
@@ -60,8 +61,8 @@ def handle_chat_item(item):
 
 def calculate_cost(input_tokens, output_tokens, input_cost, output_cost):
     # Assuming costs are per thousand tokens, we divide by 1000
-    input_cost_total = (input_tokens / 1000) * input_cost
-    output_cost_total = (output_tokens / 1000) * output_cost
+    input_cost_total = (Decimal(input_tokens) / 1000) * Decimal(input_cost)
+    output_cost_total = (Decimal(output_tokens) / 1000) * Decimal(output_cost)
     total_cost = input_cost_total + output_cost_total
     # print("Total Cost:", total_cost)
     return total_cost
@@ -98,9 +99,9 @@ def bill_chat_to_coa(
 
     # Prepare the updated cost values
     updated_costs = {
-        "dailyCost": current_costs.get("dailyCost", 0) + total_cost,
-        "monthlyCost": current_costs.get("monthlyCost", 0) + total_cost,
-        "totalCost": current_costs.get("totalCost", 0) + total_cost,
+        "dailyCost": Decimal(current_costs.get("dailyCost", 0)) + total_cost,
+        "monthlyCost": Decimal(current_costs.get("monthlyCost", 0)) + total_cost,
+        "totalCost": Decimal(current_costs.get("totalCost", 0)) + total_cost,
     }
 
     # Update the UsagePerCoaTable with the new costs
@@ -129,6 +130,7 @@ def bill_chat_to_coa(
 
 def handle_code_interpreter_item(item):
     print("Charging For Code Interpreter")
+    print(item)
     handle_chat_item(item)
 
 
@@ -136,7 +138,7 @@ def handle_code_interpreter_session_item(item):
     print("Charging For Code Interpreter Session")
 
     # Define the cost for a code interpreter session
-    session_cost = 0.03
+    session_cost = Decimal("0.03")
 
     # Extract the COA (Chart of Accounts) string from the item
     coa_string = item["accountId"]
@@ -155,9 +157,9 @@ def handle_code_interpreter_session_item(item):
 
     # Prepare the updated cost values
     updated_costs = {
-        "dailyCost": current_costs.get("dailyCost", 0) + session_cost,
-        "monthlyCost": current_costs.get("monthlyCost", 0) + session_cost,
-        "totalCost": current_costs.get("totalCost", 0) + session_cost,
+        "dailyCost": Decimal(current_costs.get("dailyCost", 0)) + session_cost,
+        "monthlyCost": Decimal(current_costs.get("monthlyCost", 0)) + session_cost,
+        "totalCost": Decimal(current_costs.get("totalCost", 0)) + session_cost,
     }
 
     # Update the UsagePerCoaTable with the new costs
