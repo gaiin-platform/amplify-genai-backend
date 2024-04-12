@@ -139,6 +139,7 @@ functions:
   # calculates cost of usage for each action
   trackUsage:
     handler: usage/track_usage.handler
+    memorySize: 128
     events:
       - stream:
           type: dynamodb
