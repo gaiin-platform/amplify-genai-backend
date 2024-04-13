@@ -11,7 +11,7 @@ ${context.context}
     };
 }
 
-export const addContextMessage = (messages, context) => {
+export const addContextMessage = (messages, context, modelId) => {
     if(context.context && context.context.length > 0) {
         return [
             ...messages.slice(0, -1),
