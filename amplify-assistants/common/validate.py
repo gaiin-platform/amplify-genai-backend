@@ -74,8 +74,15 @@ create_assistant_schema = {
             "description": "Instructions related to the item"
         },
         "uri": {
-            "type": "string",
-            "description": "The endpoint that receives requests for the assistant"
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "The endpoint that receives requests for the assistant"
+                },
+                {
+                    "type": "null"
+                }
+            ]
         },
         "dataSources": {
             "type": "array",
