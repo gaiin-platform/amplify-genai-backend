@@ -58,6 +58,10 @@ export const chatAnthropic = async (chatBody, writable) => {
 function sanitizeMessages(oldMessages, system) {
     if (!oldMessages) return oldMessages;
     let messages = [];
+    const delimiter = "\n_________________________\n";
+    
+    const newestMessage = oldMessages[oldMessages.length - 1]
+    if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] = `${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
     
     let systemPrompt = system + " No diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me.";
     let i = -1;
@@ -73,7 +77,7 @@ function sanitizeMessages(oldMessages, system) {
             messages.push(oldMessages[j]);
             i += 1;
         } else if (messages[i]['role'] === oldMessages[j]['role']) {
-            messages[i]['content'] += oldContent;
+            messages[i]['content'] += delimiter + oldContent;
         } 
         j += 1;
     }
