@@ -22,10 +22,6 @@ custom:
     - staging
     - prod
 
-  apiGateway:
-      restApiId: ${self:provider.environment.REST_API_ID}
-      restApiRootResourceId: ${self:provider.environment.REST_API_ROOT_RESOURCE_ID}
-
 provider:
   name: aws
   runtime: python3.11
@@ -47,6 +43,9 @@ provider:
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID} 
 
+  apiGateway:
+    restApiId: ${self:provider.environment.REST_API_ID}
+    restApiRootResourceId: ${self:provider.environment.REST_API_ROOT_RESOURCE_ID}
 
   iam:
     role:
@@ -107,8 +106,9 @@ functions:
           method: get
           cors: true
 
-  # this will only run locally
-  # upload the login/user_agreement.md file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
+  # this will only run locally; After saving data disclosure document to data-disclosure/data_disclosure.md, 
+  # use command: ~ serverless invoke local --function upload_data_disclosure
+  # upload the locally stored data disclosure file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
   upload_data_disclosure:
     handler: data_disclosure.upload_data_disclosure
     memorySize: 128
