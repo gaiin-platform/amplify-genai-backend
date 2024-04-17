@@ -51,8 +51,12 @@ def upload_data_disclosure(event, context):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     document_name = f"data_disclosure_{timestamp}.md"
 
-    # Upload the document to the S3 bucket
-    s3.put_object(Bucket=bucket_name, Key=document_name, Body=document_content)
+    try:
+        # Upload the document to the S3 bucket
+        s3.put_object(Bucket=bucket_name, Key=document_name, Body=document_content)
+    except Exception as e:
+        print(e)
+        return generate_error_response(500, "Error saving data disclosure to S3")
 
     versions_table = dynamodb.Table(versions_table_name)
 
