@@ -178,25 +178,31 @@ def save_data_disclosure_decision(event, context):
 
 # Pull the most recent data disclosure from the DataDisclosureVersionsTable
 def get_latest_data_disclosure(event, context):
-    table = dynamodb.Table(os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"])
+    versions_table = dynamodb.Table(os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"])
+    bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
 
     try:
         # Query the table for the latest item
-        response = table.query(
-            KeyConditionExpression=Key("key").eq("latest"),
-            ScanIndexForward=False,  # Sorts the versions in descending order
-            Limit=1,
-        )
-        items = response.get("Items", [])
-        if not items:
+        latest_version_details = get_latest_version_details(versions_table)
+        if not latest_version_details:
             # Handle the case where no latest agreement exists
             return generate_error_response(404, "No latest data disclosure found")
-        latest_agreement = items[0]
+
+        # Fetch the content from the S3 bucket
+        document_name = latest_version_details["id"]
+        s3_response = s3.get_object(Bucket=bucket_name, Key=document_name)
+        document_content = s3_response["Body"].read().decode("utf-8")
+
+        # Include the content in the response
+        latest_agreement = latest_version_details
+        latest_agreement["content"] = document_content
+
         return {
             "statusCode": 200,
             "body": json.dumps(
                 {"latest_agreement": latest_agreement}, cls=DecimalEncoder
             ),
+            "headers": {"Content-Type": "application/json"},
         }
     except Exception as e:
         print(e)
