@@ -1,11 +1,13 @@
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 import os
 import json
 from datetime import datetime
 import decimal
 from common.validate import validated
 from common.encoders import DecimalEncoder
+import base64
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -51,7 +53,7 @@ def get_latest_version_details(table):
 # Function to upload a new data disclosure version
 def upload_data_disclosure(event, context):
     # Define the local file path and S3 bucket name
-    local_file_path = "data_disclosure.md"
+    local_file_path = "data_disclosure.pdf"
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
     versions_table_name = os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"]
 
@@ -66,11 +68,11 @@ def upload_data_disclosure(event, context):
 
     # Generate the document name using the current date
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    document_name = f"data_disclosure_{timestamp}.md"
+    document_name = f"data_disclosure_{timestamp}.pdf"
 
     try:
         # Upload the document to the S3 bucket
-        s3.put_object(Bucket=bucket_name, Key=document_name, Body=document_content)
+        s3.put_object(Bucket=bucket_name, Key=document_name, Body=document_content, ContentType='application/pdf')
     except Exception as e:
         print(e)
         return generate_error_response(500, "Error saving data disclosure to S3")
@@ -180,25 +182,34 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
 
     try:
-        # Query the table for the latest item
         latest_version_details = get_latest_version_details(versions_table)
         if not latest_version_details:
-            # Handle the case where no latest agreement exists
             return generate_error_response(404, "No latest data disclosure found")
 
-        # Fetch the content from the S3 bucket
         document_name = latest_version_details["id"]
-        s3_response = s3.get_object(Bucket=bucket_name, Key=document_name)
-        document_content = s3_response["Body"].read().decode("utf-8")
 
-        # Include the content in the response
-        latest_agreement = latest_version_details
-        latest_agreement["content"] = document_content
+        # Generate a pre-signed URL for the PDF document
+        try:
+            pre_signed_url = s3.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": bucket_name,
+                    "Key": document_name,
+                },
+                ExpiresIn=360,
+            )  # URL expires in 6 mins
+        except ClientError as e:
+            print(e)
+            return generate_error_response(500, "Error generating pre-signed URL")
 
         return {
             "statusCode": 200,
             "body": json.dumps(
-                {"latest_agreement": latest_agreement}, cls=DecimalEncoder
+                {
+                    "latest_agreement": latest_version_details,
+                    "pre_signed_url": pre_signed_url,
+                },
+                cls=DecimalEncoder,
             ),
             "headers": {"Content-Type": "application/json"},
         }

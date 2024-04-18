@@ -107,7 +107,7 @@ functions:
           method: get
           cors: true
 
-  # this will only run locally; After saving data disclosure document to data-disclosure/data_disclosure.md, 
+  # this will only run locally; After saving data disclosure document to data-disclosure/data_disclosure.pdf, 
   # use command: ~ serverless invoke local --function upload_data_disclosure
   # upload the locally stored data disclosure file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
   upload_data_disclosure:
