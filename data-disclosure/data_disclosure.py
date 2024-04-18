@@ -4,16 +4,11 @@ import os
 import json
 from datetime import datetime
 import decimal
+from common.validate import validated
+from common.encoders import DecimalEncoder
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
-
-
-class DecimalEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, decimal.Decimal):
-            return str(obj)
-        return super(DecimalEncoder, self).default(obj)
 
 
 def generate_error_response(status_code, message):
@@ -110,7 +105,8 @@ def upload_data_disclosure(event, context):
 
 
 # Check if a user's email has accepted the agreement in the DataDisclosureAcceptanceTable
-def check_data_disclosure_decision(event, context):
+@validated(op="check_data_disclosure_decision")
+def check_data_disclosure_decision(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters") or {}
     email = query_params.get("email")
     if not email:
@@ -135,7 +131,8 @@ def check_data_disclosure_decision(event, context):
 
 
 # Save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
-def save_data_disclosure_decision(event, context):
+@validated(op="save_data_disclosure_decision")
+def save_data_disclosure_decision(event, context, current_user, name, data):
     try:
         body = json.loads(event["body"])
     except json.JSONDecodeError:
@@ -167,7 +164,7 @@ def save_data_disclosure_decision(event, context):
                 "acceptedTimestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
                 "completedTraining": False,
                 "documentVersion": latest_version_details["version"],
-                "documentID": latest_version_details["id"],
+                "documentID": latest_version_details["s3_reference"],
             }
         )
         return {"statusCode": 200, "body": json.dumps({"message": "Record saved"})}
@@ -177,7 +174,8 @@ def save_data_disclosure_decision(event, context):
 
 
 # Pull the most recent data disclosure from the DataDisclosureVersionsTable
-def get_latest_data_disclosure(event, context):
+@validated(op="get_latest_data_disclosure")
+def get_latest_data_disclosure(event, context, current_user, name, data):
     versions_table = dynamodb.Table(os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"])
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
 

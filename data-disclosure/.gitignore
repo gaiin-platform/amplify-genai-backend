@@ -6,3 +6,5 @@ node_modules
 *.pyc
 *.pyo
 .env.local
+
+__pycache__/

@@ -41,7 +41,8 @@ provider:
     DATA_DISCLOSURE_ACCEPTANCE_TABLE: ${self:service}-${sls:stage}-acceptance
     DATA_DISCLOSURE_STORAGE_BUCKET: ${self:service}-${sls:stage}-storage
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID} 
+    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
 
   apiGateway:
     restApiId: ${self:provider.environment.REST_API_ID}
