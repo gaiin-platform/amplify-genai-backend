@@ -19,7 +19,7 @@ export const getSecret = async (secretName) => {
 
     try {
         // Send the command to Secrets Manager service
-        const data = await secretsManagerClient.send(command); // fails here 
+        const data = await secretsManagerClient.send(command); 
 
         let secret;
         if ('SecretString' in data) {
