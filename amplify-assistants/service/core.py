@@ -232,6 +232,7 @@ def list_assistants(event, context, current_user, name, data):
     # assistants.append(get_amplify_automation_assistant())
 
     assistant_ids = [assistant['id'] for assistant in assistants]
+
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
 
     # Make sure each assistant has a data field and initialize it if it doesn't
@@ -360,6 +361,7 @@ def share_assistant(event, context, current_user, name, data):
     assistant_key = extracted_data['assistantId']
     recipient_users = extracted_data['recipientUsers']
     access_type = extracted_data['accessType']
+    data_sources = extracted_data['dataSources']
     policy = extracted_data.get('policy', '')
 
     return share_assistant_with(
@@ -368,11 +370,13 @@ def share_assistant(event, context, current_user, name, data):
         assistant_key=assistant_key,
         recipient_users=recipient_users,
         access_type=access_type,
+        data_sources=data_sources,
         policy=policy
+
     )
 
 
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, policy=''):
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, data_sources, policy=''):
     dynamodb = boto3.resource('dynamodb')
     assistant_entry = get_assistant(assistant_key)
 
@@ -398,8 +402,18 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
         print(f"Error updating permissions for assistant {assistant_public_id}")
         return {'success': False, 'message': 'Error updating permissions'}
     else:
+        print (f"Update data sources object access permissions for users {recipient_users} for assistant {assistant_public_id}")
+        update_object_permissions(
+            access_token=access_token,
+            shared_with_users=recipient_users,
+            keys=data_sources,
+            object_type='datasource',
+            principal_type='user',
+            permission_level='read',
+            policy='')
 
-        for user in recipient_users:
+        for user in recipient_users:     
+
             print(f"Creating alias for user {user} for assistant {assistant_public_id}")
             create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
                                    'latest')
@@ -437,7 +451,7 @@ def get_most_recent_assistant_version(assistants_table,
 
 
 def save_assistant(assistants_table, assistant_name, description, instructions, data_sources, provider, tools,
-                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None, data = None):
+                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None):
     """
     Saves the assistant data to the DynamoDB table.
 
@@ -495,8 +509,7 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'createdAt': timestamp,
         'updatedAt': timestamp,
         'dataSources': data_sources,
-        'version': version,
-        'data': data
+        'version': version
     }
 
     assistants_table.put_item(Item=new_item)
@@ -664,18 +677,6 @@ def create_or_update_assistant(
                      'version': new_version}
         }
     else:
-
-        data = None
-        if provider == 'openai' or provider == 'azure':
-            result = create_new_openai_assistant(
-                assistant_name,
-                instructions,
-                data_sources,
-                tools, 
-                provider
-            )
-            data = result['data']
-
         new_item = save_assistant(
             assistants_table,
             assistant_name,
@@ -689,7 +690,6 @@ def create_or_update_assistant(
             tags,
             uri,
             None, 
-            data
         )
 
         # Update the permissions for the new assistant

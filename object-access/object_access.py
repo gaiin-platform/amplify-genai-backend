@@ -136,7 +136,7 @@ def can_access_objects(event, context, current_user, name, data, username, cogni
 def update_object_permissions(event, context, current_user, name, data, username, cognito_groups):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
-
+    print("Entered update object permissions")
     try:
         data_sources = data['dataSources']
         email_list = data['emailList']
@@ -149,6 +149,7 @@ def update_object_permissions(event, context, current_user, name, data, username
         table = dynamodb.Table(table_name)
 
         for object_id in data_sources:
+        
             # Check if any permissions already exist for the object_id
             query_response = table.query(
                 KeyConditionExpression=boto3.dynamodb.conditions.Key('object_id').eq(object_id)
@@ -177,24 +178,26 @@ def update_object_permissions(event, context, current_user, name, data, username
             if owner_item and owner_item.get('permission_level') in ['owner', 'write']:
                 # If current_user is the owner or has write permission, proceed with updates
                 for principal_id in email_list:
-                    # Create or update the permission level for each principal_id
-                    principal_key = {
-                        'object_id': object_id,
-                        'principal_id': principal_id
-                    }
-                    # Use the provided permission level for other users
-                    update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
-                    expression_attribute_values = {
-                        ':principal_type': principal_type,
-                        ':object_type': object_type,
-                        ':permission_level': provided_permission_level,  # Use the provided permission level
-                        ':policy': policy
-                    }
-                    table.update_item(
-                        Key=principal_key,
-                        UpdateExpression=update_expression,
-                        ExpressionAttributeValues=expression_attribute_values
-                    )
+                    if (current_user != principal_id):  # edge case
+                        print("Object ID: ", object_id, " for user: ", principal_id)
+                        # Create or update the permission level for each principal_id
+                        principal_key = {
+                            'object_id': object_id,
+                            'principal_id': principal_id
+                        }
+                        # Use the provided permission level for other users
+                        update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
+                        expression_attribute_values = {
+                            ':principal_type': principal_type,
+                            ':object_type': object_type,
+                            ':permission_level': provided_permission_level,  # Use the provided permission level
+                            ':policy': policy
+                        }
+                        table.update_item(
+                            Key=principal_key,
+                            UpdateExpression=update_expression,
+                            ExpressionAttributeValues=expression_attribute_values
+                        )
             else:
                 # The current_user does not have 'owner' or 'write' permissions
                 return {
