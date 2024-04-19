@@ -62,21 +62,13 @@ def upload_data_disclosure(event, context):
             500, "Error reading local data disclosure HTML file"
         )
 
+    # Convert HTML content to a string if it's in bytes, to store in DynamoDB
+    if isinstance(html_content, bytes):
+        html_content = html_content.decode("utf-8")
+
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     html_document_name = f"data_disclosure_{timestamp}.html"
     pdf_document_name = f"data_disclosure_{timestamp}.pdf"
-
-    try:
-        # Upload HTML version
-        s3.put_object(
-            Bucket=bucket_name,
-            Key=html_document_name,
-            Body=html_content,
-            ContentType="text/html",
-        )
-    except Exception as e:
-        print(e)
-        return generate_error_response(500, "Error saving HTML data disclosure to S3")
 
     try:
         # Upload PDF version
@@ -105,10 +97,9 @@ def upload_data_disclosure(event, context):
                 "key": "latest",
                 "version": new_version,
                 "pdf_id": pdf_document_name,
-                "html_id": html_document_name,
+                "html_content": html_content,
                 "timestamp": timestamp,
-                "s3_pdf_reference": f"s3://{bucket_name}/{pdf_document_name}",
-                "s3_html_reference": f"s3://{bucket_name}/{html_document_name}",
+                "s3_reference": f"s3://{bucket_name}/{pdf_document_name}",
             }
         )
         return {
@@ -180,7 +171,7 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
                 "acceptedTimestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
                 "completedTraining": False,
                 "documentVersion": latest_version_details["version"],
-                "documentID": latest_version_details["s3_pdf_reference"],
+                "documentID": latest_version_details["s3_reference"],
             }
         )
         return {"statusCode": 200, "body": json.dumps({"message": "Record saved"})}
@@ -201,7 +192,7 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
             return generate_error_response(404, "No latest data disclosure found")
 
         pdf_document_name = latest_version_details["pdf_id"]
-        html_document_name = latest_version_details["html_id"]
+        html_content = latest_version_details.get("html_content")
 
         # Generate a pre-signed URL for the PDF document
         try:
@@ -217,27 +208,13 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
             print(e)
             return generate_error_response(500, "Error generating PDF pre-signed URL")
 
-        # Generate a pre-signed URL for the HTML document
-        try:
-            html_pre_signed_url = s3.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": bucket_name,
-                    "Key": html_document_name,
-                },
-                ExpiresIn=360,  # URL expires in 6 mins
-            )
-        except ClientError as e:
-            print(e)
-            return generate_error_response(500, "Error generating HTML pre-signed URL")
-
         return {
             "statusCode": 200,
             "body": json.dumps(
                 {
                     "latest_agreement": latest_version_details,
                     "pdf_pre_signed_url": pdf_pre_signed_url,
-                    "html_pre_signed_url": html_pre_signed_url,
+                    "html_content": html_content,
                 },
                 cls=DecimalEncoder,
             ),
