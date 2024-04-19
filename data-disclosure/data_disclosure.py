@@ -4,10 +4,8 @@ from botocore.exceptions import ClientError
 import os
 import json
 from datetime import datetime
-import decimal
 from common.validate import validated
 from common.encoders import DecimalEncoder
-import base64
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -19,21 +17,6 @@ def generate_error_response(status_code, message):
         "body": json.dumps({"error": message}),
         "headers": {"Content-Type": "application/json"},
     }
-
-
-# Helper function to get the latest version number
-def get_latest_version_number(table):
-    # Query the table for the latest item
-    response = table.query(
-        KeyConditionExpression=Key("key").eq("latest"),
-        ScanIndexForward=False,  # Sorts the versions in descending order
-        Limit=1,
-    )
-    items = response.get("Items", [])
-    if not items:
-        return 0  # Return zero to indicate that there is no latest version
-    latest_version = int(items[0]["version"])
-    return latest_version
 
 
 # Helper function to get the latest version details
@@ -52,38 +35,67 @@ def get_latest_version_details(table):
 
 # Function to upload a new data disclosure version
 def upload_data_disclosure(event, context):
-    # Define the local file path and S3 bucket name
-    local_file_path = "data_disclosure.pdf"
+    # Define the local file paths and S3 bucket name
+    local_pdf_path = "data_disclosure.pdf"
+    local_html_path = "data_disclosure.html"
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
     versions_table_name = os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"]
 
-    # Attempt to read the document content from the local file
+    # Read the PDF and HTML document content
     try:
-        with open(local_file_path, "rb") as document_file:
-            document_content = document_file.read()
+        with open(local_pdf_path, "rb") as pdf_file:
+            pdf_content = pdf_file.read()
     except FileNotFoundError:
-        return generate_error_response(404, "Data disclosure file not found")
+        return generate_error_response(404, "Data disclosure PDF file not found")
     except IOError as e:
-        return generate_error_response(500, "Error reading local data disclosure file")
-
-    # Generate the document name using the current date
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    document_name = f"data_disclosure_{timestamp}.pdf"
+        return generate_error_response(
+            500, "Error reading local data disclosure PDF file"
+        )
 
     try:
-        # Upload the document to the S3 bucket
-        s3.put_object(Bucket=bucket_name, Key=document_name, Body=document_content, ContentType='application/pdf')
+        with open(local_html_path, "rb") as html_file:
+            html_content = html_file.read()
+    except FileNotFoundError:
+        return generate_error_response(404, "Data disclosure HTML file not found")
+    except IOError as e:
+        return generate_error_response(
+            500, "Error reading local data disclosure HTML file"
+        )
+
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    html_document_name = f"data_disclosure_{timestamp}.html"
+    pdf_document_name = f"data_disclosure_{timestamp}.pdf"
+
+    try:
+        # Upload HTML version
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=html_document_name,
+            Body=html_content,
+            ContentType="text/html",
+        )
     except Exception as e:
         print(e)
-        return generate_error_response(500, "Error saving data disclosure to S3")
+        return generate_error_response(500, "Error saving HTML data disclosure to S3")
 
+    try:
+        # Upload PDF version
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=pdf_document_name,
+            Body=pdf_content,
+            ContentType="application/pdf",
+        )
+    except Exception as e:
+        print(e)
+        return generate_error_response(500, "Error saving pdf data disclosure to S3")
+
+    # Update DynamoDB with new version info, including references to both HTML and PDF
     versions_table = dynamodb.Table(versions_table_name)
-
-    # Get the latest version number from the DataDisclosureVersionsTable
-    latest_version = get_latest_version_number(versions_table)
-
-    # Increment on the latest version
-    new_version = latest_version + 1
+    latest_version_details = get_latest_version_details(versions_table)
+    new_version = (
+        0 if not latest_version_details else int(latest_version_details["version"]) + 1
+    )
 
     # Save the new version information in the DataDisclosureVersionsTable
     try:
@@ -92,9 +104,11 @@ def upload_data_disclosure(event, context):
             Item={
                 "key": "latest",
                 "version": new_version,
-                "id": document_name,
+                "pdf_id": pdf_document_name,
+                "html_id": html_document_name,
                 "timestamp": timestamp,
-                "s3_reference": f"s3://{bucket_name}/{document_name}",
+                "s3_pdf_reference": f"s3://{bucket_name}/{pdf_document_name}",
+                "s3_html_reference": f"s3://{bucket_name}/{html_document_name}",
             }
         )
         return {
@@ -166,7 +180,7 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
                 "acceptedTimestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
                 "completedTraining": False,
                 "documentVersion": latest_version_details["version"],
-                "documentID": latest_version_details["s3_reference"],
+                "documentID": latest_version_details["s3_pdf_reference"],
             }
         )
         return {"statusCode": 200, "body": json.dumps({"message": "Record saved"})}
@@ -186,28 +200,44 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
         if not latest_version_details:
             return generate_error_response(404, "No latest data disclosure found")
 
-        document_name = latest_version_details["id"]
+        pdf_document_name = latest_version_details["pdf_id"]
+        html_document_name = latest_version_details["html_id"]
 
         # Generate a pre-signed URL for the PDF document
         try:
-            pre_signed_url = s3.generate_presigned_url(
+            pdf_pre_signed_url = s3.generate_presigned_url(
                 "get_object",
                 Params={
                     "Bucket": bucket_name,
-                    "Key": document_name,
+                    "Key": pdf_document_name,
                 },
-                ExpiresIn=360,
-            )  # URL expires in 6 mins
+                ExpiresIn=360,  # URL expires in 6 mins
+            )
         except ClientError as e:
             print(e)
-            return generate_error_response(500, "Error generating pre-signed URL")
+            return generate_error_response(500, "Error generating PDF pre-signed URL")
+
+        # Generate a pre-signed URL for the HTML document
+        try:
+            html_pre_signed_url = s3.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": bucket_name,
+                    "Key": html_document_name,
+                },
+                ExpiresIn=360,  # URL expires in 6 mins
+            )
+        except ClientError as e:
+            print(e)
+            return generate_error_response(500, "Error generating HTML pre-signed URL")
 
         return {
             "statusCode": 200,
             "body": json.dumps(
                 {
                     "latest_agreement": latest_version_details,
-                    "pre_signed_url": pre_signed_url,
+                    "pdf_pre_signed_url": pdf_pre_signed_url,
+                    "html_pre_signed_url": html_pre_signed_url,
                 },
                 cls=DecimalEncoder,
             ),
