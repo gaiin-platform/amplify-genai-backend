@@ -7,7 +7,7 @@ import uuid
 
 from boto3.dynamodb.conditions import Key
 from common.object_permissions import update_object_permissions
-from common.data_sources import translate_user_data_sources_to_hash_data_sources, extract_key
+from common.data_sources import translate_user_data_sources_to_hash_data_sources
 from common.share_assistants import share_assistant
 
 import boto3
@@ -98,8 +98,6 @@ def handle_conversation_datasource_permissions(access_token, recipient_users, co
                   datasources_keys.append(doc)
 
   data_sources = translate_user_data_sources_to_hash_data_sources(datasources_keys)
-  for i in range(len(data_sources)):
-    data_sources[i] = extract_key(data_sources[i]['id'])
      
   print("Datasources: ", data_sources)
 

@@ -23,17 +23,17 @@ def translate_user_data_sources_to_hash_data_sources(data_sources):
             if key.startswith("s3://"):
                 key = extract_key(key)
 
-                response = dynamodb_client.get_item(
-                    TableName=hash_files_table_name,
-                    Key={
-                        'id': {'S': key}
-                    }
-                )
+            response = dynamodb_client.get_item(
+                TableName=hash_files_table_name,
+                Key={
+                    'id': {'S': key}
+                }
+            )
 
-                item = response.get('Item')
-                if item:
-                    deserialized_item = {k: type_deserializer.deserialize(v) for k, v in item.items()}
-                    ds['id'] = "s3://" + deserialized_item['textLocationKey']
+            item = response.get('Item')
+            if item:
+                deserialized_item = {k: type_deserializer.deserialize(v) for k, v in item.items()}
+                ds['id'] = deserialized_item['textLocationKey']
         except Exception as e:
             print(e)
             pass

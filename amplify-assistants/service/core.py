@@ -332,8 +332,14 @@ def create_assistant(event, context, current_user, name, data):
     provider = extracted_data.get('provider', 'amplify')
 
     print(f"Data sources before translation: {data_sources}")
+
+    for i in range(len(data_sources)):
+        source = data_sources[i]
+        if (not source['id'].startswith("s3://")): data_sources[i]['id'] = source['key']
+
     data_sources = translate_user_data_sources_to_hash_data_sources(data_sources)
-    print(f"Data sources after translation: {data_sources}")
+    
+    print(f"Data sources after translation and extraction: {data_sources}")
 
     # Auth check: need to update to new permissions endpoint
     if not can_access_objects(data['access_token'], data_sources):
