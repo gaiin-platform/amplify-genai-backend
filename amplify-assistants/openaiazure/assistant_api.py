@@ -1,5 +1,6 @@
 from enum import Enum
 import json
+import math
 import uuid
 import time
 from functools import reduce
@@ -13,6 +14,7 @@ from openai import OpenAI
 from openai import AzureOpenAI
 from datetime import datetime, timezone
 from .token import count_tokens
+from PIL import Image
 
 
 openai_provider = os.environ['ASSISTANTS_OPENAI_PROVIDER']
@@ -81,18 +83,24 @@ def file_keys_to_file_ids(file_keys):
     return file_ids
 
 
-def send_image_file_to_s3(file, file_key, content_type = 'binary/octet-stream'):
+def send_file_to_s3(file_content, file_key, file_name, user_id, content_type = 'binary/octet-stream'):
     print("Sending files to s3")
     bucket_name = os.environ['ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME']
     
-    try:
+    try: 
         print("Transfer file to s3 bucket: ".format(bucket_name))
-        file_stream = BytesIO(file.content)
+        file_stream = BytesIO(file_content)
         print("File Stream: ", file_stream)
         s3.upload_fileobj(file_stream, bucket_name, file_key, 
                           ExtraArgs={'ACL': 'private','ContentType': content_type})
 
         print(f"File uploaded to S3 bucket '{bucket_name}' with key '{file_key}'")
+
+        file_url = get_presigned_download_url(file_key, user_id, file_name)
+        if (file_url['success']):
+            return {"success" : True, "presigned_url": file_url['downloadUrl']}
+        return file_url
+
     except (NoCredentialsError):
         print('Credentials not available')
     except (ClientError) as e:
@@ -106,6 +114,46 @@ def send_image_file_to_s3(file, file_key, content_type = 'binary/octet-stream'):
         file_stream.close()
 
 
+def create_low_res_version(file):
+    print("Creating lower resolution version of image")
+    image = Image.open(BytesIO(file.content))
+    original_width, original_height = image.size
+    target_size_bytes = 204800  # 200KB
+    max_width, max_height = 800, 600  # Initial max dimensions
+    
+    while True:
+        # Calculate the target size while maintaining aspect ratio
+        ratio = min(max_width / original_width, max_height / original_height)
+        target_size = (int(original_width * ratio), int(original_height * ratio))
+        
+        resized_image = image.resize(target_size, Image.LANCZOS)
+        
+        # Save the resized image to a bytes buffer
+        resized_bytes = BytesIO()
+        resized_image.save(resized_bytes, format=image.format)
+        resized_size = resized_bytes.tell()  # Get the resized image size
+        
+        # Check if the resized image meets the size criteria
+        if resized_size <= target_size_bytes:
+            break
+        
+        # Calculate scale factor based on the current size vs. target size
+        size_ratio = resized_size / target_size_bytes
+        scale_factor = math.sqrt(size_ratio)
+        
+        # Adjust max_width and max_height based on scale factor for the next attempt
+        max_width = int(max_width / scale_factor)
+        max_height = int(max_height / scale_factor)
+
+        # Ensure the loop can exit if max dimensions become too small
+        if max_width < 100 or max_height < 100:
+            raise ValueError("Unable to reduce image size to under the target threshold without making it too small.")
+
+    # Ensure buffer is ready for reading
+    resized_bytes.seek(0)  
+    return resized_bytes.getvalue()
+
+
 def determine_content_type(file_name):
     print("Determining file type of: ", file_name)
     extension = file_name.split('.')[-1] 
@@ -117,9 +165,41 @@ def determine_content_type(file_name):
         return 'image/png'
     else:
         return 'binary/octet-stream'
-                            
 
-def chat_with_code_interpreter(current_user, assistant_id, messages, file_keys):
+
+
+def get_presigned_download_url(key, current_user, download_filename = None):
+    s3 = boto3.client('s3')
+    bucket_name = os.environ['ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME']
+    
+    print(f"Getting presigned download URL for {key} for user {current_user}")
+
+    response_headers = {
+        'ResponseContentDisposition': f'attachment; filename="{download_filename}"'} if download_filename else {}
+
+    # If the user matches, generate a presigned URL for downloading the file from S3
+    try:
+        presigned_url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': key,
+                **response_headers
+            },
+            ExpiresIn=604800  # Expiration time for the presigned URL, in seconds
+        )
+    except ClientError as e:
+        print(f"Error generating presigned download URL: {e}")
+        return {'success': False, 'message': "File not found"}
+
+    if presigned_url:
+        return {'success': True, 'downloadUrl': presigned_url}
+    else:
+        return {'success': False, 'message': 'File not found' }
+
+
+
+def chat_with_code_interpreter(current_user, assistant_id, messages, file_keys, account_id, request_id):
     print("Entered Chat_with_code_interpreter")
     assistant_existence = check_assistant_exists(assistant_id, current_user)
     if (not assistant_existence['success']):
@@ -127,17 +207,17 @@ def chat_with_code_interpreter(current_user, assistant_id, messages, file_keys):
     
     azure_assistant_id = assistant_existence['provider_assistant_id']
     print("Initiating chat function")
-    return chat(current_user, azure_assistant_id, messages, assistant_id)
+    return chat(current_user, azure_assistant_id, messages, assistant_id, account_id, request_id)
 
 
-def chat_with_assistant(current_user, assistant_id, messages, file_keys):
+def chat_with_assistant(current_user, assistant_id, messages, file_keys, account_id, request_id):
     assistant_existence = check_assistant_exists(assistant_id, current_user)
     if (not assistant_existence['success']):
         return assistant_existence
 
     #already verified provider_assistant_id exists 
     openai_assistant_id = assistant_existence['provider_assistant_id']
-    return chat(current_user, openai_assistant_id, messages, assistant_id)
+    return chat(current_user, openai_assistant_id, messages, assistant_id, account_id, request_id)
 
 
 def get_active_thread_id_for_chat(client, messages, info): 
@@ -254,7 +334,7 @@ def sanitize_messages(messages):
             "content": content,
             "file_ids": []
         }
-        if message.get('data') and 'datasources' in message['data'] and len(message['data']['datasources']):
+        if (message.get('data') and ('datasources' in message['data']) and (len(message['data']['datasources']))):
             file_ids = file_keys_to_file_ids([source['id'] for source in message['data']['datasources']])
             sanitized_message['file_ids'] = file_ids
         sanitized_messages.append(sanitized_message)
@@ -269,21 +349,41 @@ def sanitize_messages(messages):
 def message_catch_up_on_thread(client, missing_messages, info): ## needs help
     print("Get any missing messages on the thread")
     sanitized_messages = sanitize_messages(missing_messages)
-    # you can only send 10 datasources at a time so we may have to split up the messages 
     messages_to_send = []
+
     current_content = ""
     current_file_ids = []
-    for msg in sanitized_messages: #there will always be at least the new/most recent prompt message
-        current_content += f"\n\n{msg['content']}"
-        # current_file_ids.extend(msg['file_ids'])
-        # # If current_file_ids has reached 10 items, add current message to messages_to_send
-        # if len(current_file_ids) > 10:
-        #     messages_to_send.append({'content': current_content, 'file_ids': current_file_ids[:10]})
-        #     current_content = ""
-        #     current_file_ids = current_file_ids[10:]
-    # If there are remaining file_ids after iteration, add them to the last message
-    # if current_file_ids:
-    messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
+    for i in range(0, len(sanitized_messages)):
+        msg = sanitized_messages[i]
+        if (len(current_file_ids) + len(msg['file_ids']) > 10): # we want message content and files to stay together even 
+            if current_content: messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
+
+            if (len(msg['file_ids']) > 10): #for cases where a large sum of messages are added to one message
+                current_content = f"The following data sources are in regards to my prompt: {msg['content']}"
+                messages_to_send.append({'content': current_content, 'file_ids': msg['file_ids'][:10]})
+
+                current_file_ids = msg['file_ids'][10:]
+                while (current_file_ids):
+                    if len(current_file_ids) > 10:
+                        messages_to_send.append({'content': current_content, 'file_ids': current_file_ids[:10]})
+                        current_file_ids = current_file_ids[10:]
+                    else: # so all sources pertaining to the same messages are together 
+                        #even if there is only one message left over, it still goes with the message that it was attached to.
+                        messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
+                        current_content = ''
+                        current_file_ids = []
+            else: # we can begin the new set of content and file ids 
+                current_content = f"{msg['content']}"
+                current_file_ids = msg['file_ids']
+
+        else: # we can add and merge with previous messages
+            current_content += f"\n{msg['content']}"
+            current_file_ids.extend(msg['file_ids'])
+
+    if current_content: messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
+
+    print("Total messages in to send list: ", len(messages_to_send))
+    print("Messages to send list: ", messages_to_send)
 
     try:
         print("Adding missing messages to thread.")
@@ -309,13 +409,15 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
 
 
 
-def chat(current_user, provider_assistant_id, messages, assistant_key):
+def chat(current_user, provider_assistant_id, messages, assistant_key, account_id, request_id):
     client = get_openai_client()
 
     info = {
     'assistant_key': assistant_key,
     'assistant_id': provider_assistant_id,
-    'current_user': current_user
+    'current_user': current_user,
+    'request_id': request_id,
+    'account_id': account_id
     }
 
     thread_id_data = get_active_thread_id_for_chat(client, messages, info)
@@ -397,10 +499,8 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
                             'textContent': ""
                             }
                     }
-
     # handle formatting content 
     content = []
-    
     for item in assistantMessage.content:
         if item.type == 'text':
             item_data = item.text
@@ -416,17 +516,13 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
                     file_name = file_obj.filename[file_obj.filename.rfind('/') + 1:]  
                     s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}-{file_name}"
                     file_content = client.files.content(file_obj.id)
+
                     # only csv and pdf are currently supported 
                     content_type = determine_content_type(annotation.text)
                     print("File content type: ", content_type)
-                    send_image_file_to_s3(file_content, s3_file_key, content_type)
-
-                    content.append({
-                    'type': content_type,
-                    'value': {
-                        'file_key': s3_file_key,
-                        }
-                    })
+                    content_values = get_response_values(file_content, content_type, s3_file_key, current_user, file_name)
+                    if (content_values['success']):
+                        content.append(content_values['data'])
 
         elif item.type == 'image_file': 
             print("Code Interpreter generated an image file!")
@@ -435,14 +531,10 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
             #send file to s3 ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME 
             s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}"
             file_content = client.files.content(created_file_id)
-            send_image_file_to_s3(file_content, s3_file_key, 'image/png')
 
-            content.append({
-                'type': 'image_file',
-                'value': {
-                    'file_key': s3_file_key
-                }
-            })       
+            content_values = get_response_values(file_content, 'image/png', s3_file_key, current_user)
+            if (content_values['success']):
+                content.append(content_values['data'])   
 
     responseData['data']['content'] = content
     output_tokens = count_tokens(responseData['data']['textContent'])
@@ -455,32 +547,72 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
         'data': responseData  
     }
 
+
+
+def get_response_values(file, content_type, file_key, current_user, file_name = None):
+    print("Get response Values")
+    values = {}
+    presigned_url = send_file_to_s3(file.content, file_key, file_name, current_user, content_type)
+    file_size = file_size(file)
+    if (presigned_url['success']):
+        values['file_key'] = file_key
+        values['presigned_url'] = presigned_url['presigned_url']
+        values['file_size'] = file_size
+    
+    if ('png' in content_type) and (file_size > 204800): #Greater than 200KB 
+        print("File was too large!")
+        # Create a low-resplution version of the file
+        file_key_low_res = file_key + '-low-res'
+        low_res_file_content = create_low_res_version(file)
+        presigned_url_low_res = send_file_to_s3(low_res_file_content, file_key_low_res, file_name, current_user, content_type)
+        if (presigned_url_low_res['success']):
+            values['file_key_low_res'] = file_key_low_res
+            values['presigned_url_low_res'] = presigned_url['presigned_url']
+
+    if (values):
+        print("Values for image key/presigned_url: ", values)
+        return {'success': True, 'data' : {'type': content_type,'values': values}}
+    return {'success': False, 'error': 'Failed to send file to s3 and get presigned url'}
+
+
+def file_size(file):
+    file_bytes = BytesIO(file.content)
+    file_bytes.seek(0, 2)  # Move the pointer to the end of the file
+    file_size = file_bytes.tell()  # Get the current file position (which is the file size)
+    return file_size
     
 def record_thread_usage(op_details, info):
     print("Recording thread usage")
     dynamodb = boto3.resource('dynamodb')
     usage_table = dynamodb.Table(os.environ['ASSISTANT_CHAT_USAGE_DYNAMO_TABLE'])
+
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
    
     current_user = info['current_user']
     entry_key = f"{info['thread_key']}/{info['assistant_key']}"
 
+
     if (op_details['type'] == "CREATE_THREAD"):
         details = {
             'sessions': [{'start_time': op_details['timestamp'], 'operations': [op_details]}],
             'thread_id': info['thread_id'],
-            'assistant_id': info['assistant_id']
+            'assistant_id': info['assistant_id'],
+            'itemType': "codeInterpreter"
             }
         new_item = {
                     'id': entry_key, 
-                    'accountId': "code_interpreter",
+                    'accountId': info['account_id'],
                     'details': details,
                     'modelId': "gpt-4-1106-preview",
                     'time': timestamp,
-                    'user': current_user
+                    'user': current_user,
+                    'requestId': info['request_id'],
                     }
         usage_table.put_item(Item=new_item)
         print("New Entry: ", usage_table.get_item(Key={'id': entry_key})['Item'])
+        
+        add_session_billing_table(timestamp, info)
+        
 
     else:
         response = usage_table.get_item(Key={'id': entry_key})
@@ -504,6 +636,8 @@ def record_thread_usage(op_details, info):
             'thread_id': info['thread_id'],
             'assistant_id': info['assistant_id']
             }
+            add_session_billing_table(timestamp, info)
+
         else:
         # Get the last session
             last_session = sessions[-1] 
@@ -519,6 +653,7 @@ def record_thread_usage(op_details, info):
             else:
                 # If not within an hour, create a new session
                 sessions.append({'start_time': op_details['timestamp'], 'operations': [op_details]})
+                add_session_billing_table(timestamp, info)
 
         # Update the DynamoDB item with the modified details
         usage_table.update_item(
@@ -528,6 +663,22 @@ def record_thread_usage(op_details, info):
         )
         print("Updated Entry: ", usage_table.get_item(Key={'id': entry_key})['Item'])
     print("Successfully recorded thread usage")
+
+
+def add_session_billing_table(timestamp, info):
+    print("Recording session to billing")
+    dynamodb = boto3.resource('dynamodb')
+    billing_table = dynamodb.Table(os.environ['BILLING_DYNAMODB_TABLE'])
+    billing_table.put_item(Item={
+                    'id': f'{str(uuid.uuid4())}',
+                    'accountId': info['account_id'],
+                    'itemType': 'codeInterpreterSession',
+                    'modelId': "gpt-4-1106-preview",
+                    'requestId': info['request_id'],
+                    'time': timestamp,
+                    'user': info['current_user']
+                })
+    print("Billing session recorded")
 
 
 
@@ -714,10 +865,11 @@ def fetch_run_status(run_key, user_id):
 
 def get_assistant(assistant_id, current_user): 
     dynamodb = boto3.resource('dynamodb')
-    assistantstable = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    assistantstable = dynamodb.Table(os.environ['ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE'])
 
     try:
         # Fetch the assistant from DynamoDB
+        print("Assistant key: ", assistant_id)
         response = assistantstable.get_item(Key={'id': assistant_id})
         
         if 'Item' not in response:
@@ -765,7 +917,7 @@ def check_assistant_exists(assistant_id, current_user):
 def run_thread(thread_id, user_id, assistant_id):
     dynamodb = boto3.resource('dynamodb')
     threads_table = dynamodb.Table(os.environ['ASSISTANT_THREADS_DYNAMODB_TABLE'])
-    assistantstable = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    assistantstable = dynamodb.Table(os.environ['ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE'])
     runstable = dynamodb.Table(os.environ['ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE'])
 
     # Get the thread info
@@ -972,7 +1124,7 @@ def create_new_openai_assistant(
         tools,
         provider
 ):
-
+    print("Creating assistant with openai")
     # Create a new assistant using the OpenAI Client
     client = get_openai_client()
 
@@ -986,13 +1138,14 @@ def create_new_openai_assistant(
         model="gpt-4-1106-preview",
         file_ids=file_keys_to_file_ids(recent_file_keys)
     )
-
-    # Return success response
-    return {
-        'success': True,
-        'message': 'Assistant created successfully',
-        'data': {'assistantId': assistant.id, 'provider': provider}
-    }
+    if (assistant.id):
+        # Return success response
+        return {
+            'success': True,
+            'message': 'Assistant created successfully',
+            'data': {'assistantId': assistant.id, 'provider': provider}
+        }
+    return {'success': False, 'error': "Failed to create assistant with openai"}
 
 
 def create_new_assistant(
@@ -1003,26 +1156,21 @@ def create_new_assistant(
         tags,
         file_keys,
         tools, 
-        provider = 'openai'
+        provider = 'azure'
 ):
-    dynamodb = boto3.resource('dynamodb')
-    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    dynamodb = boto3.resource('dynamodb') 
+    assistants_table = dynamodb.Table(os.environ['ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE'])
     timestamp = int(time.time() * 1000)
 
     for file_key in file_keys:
         file_key_user = file_key.split('/')[0]
         if '@' not in file_key_user or len(file_key_user) < 6 or user_id != file_key_user:
-            return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+            return {'success': False, 'error': 'You are not authorized to access the referenced files'}
 
-    # Create a new assistant using the OpenAI Client
-    client = get_openai_client()
-    assistant = client.beta.assistants.create(
-        name=assistant_name,
-        instructions=instructions,
-        tools=tools,
-        model="gpt-4-1106-preview",
-        file_ids=file_keys_to_file_ids(file_keys)
-    )
+    assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys, tools, provider)
+    if (not assistant_info['success']):
+        return assistant_info
+
 
     id_key = f'{user_id}/ast/{str(uuid.uuid4())}'
 
@@ -1037,14 +1185,12 @@ def create_new_assistant(
         'createdAt': timestamp,
         'updatedAt': timestamp,
         'fileKeys': file_keys,
-        'data': { provider: {'assistantId': assistant.id}} ##CHANGE
+        'data': assistant_info['data'] 
     }
-
-    print(json.dumps(new_item, indent=4))
 
     # Put the new item into the DynamoDB table
     assistants_table.put_item(Item=new_item)
-
+    print("Put item in ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE table")
     # Return success response
     return {
         'success': True,
@@ -1055,7 +1201,7 @@ def create_new_assistant(
 
 def delete_assistant_by_id(assistant_id, user_id):
     dynamodb = boto3.resource('dynamodb')
-    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    assistants_table = dynamodb.Table(os.environ['ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE'])
 
     # Check if the assistant belongs to the user
     try:

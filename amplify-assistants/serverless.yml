@@ -46,6 +46,8 @@ provider:
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
     ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
+    BILLING_DYNAMODB_TABLE: ${self:custom.stageVariables.BILLING_DYNAMODB_TABLE}
+
 
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
@@ -191,6 +193,7 @@ functions:
     handler: openaiazure/assistant.chat_with_code_interpreter
     timeout: 900
     url: true
+    
 
 
   run_assistant_thread:
