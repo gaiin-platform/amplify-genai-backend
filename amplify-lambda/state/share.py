@@ -7,7 +7,7 @@ import uuid
 
 from boto3.dynamodb.conditions import Key
 from common.object_permissions import update_object_permissions
-from common.data_sources import translate_user_data_sources_to_hash_data_sources
+from common.data_sources import extract_key, translate_user_data_sources_to_hash_data_sources
 from common.share_assistants import share_assistant
 
 import boto3
@@ -66,6 +66,7 @@ def put_s3_data(bucket_name, filename, data):
     s3_client.create_bucket(Bucket=bucket_name)
 
   # Now put the object (file)
+  # print(f"Putting data: {data} in the share S3 bucket")
   s3_client.put_object(Body=json.dumps(data).encode(), Bucket=bucket_name, Key=filename)
 
   return filename
@@ -132,17 +133,20 @@ def handle_share_assistant(access_token, prompts, recipient_users):
       assistant_data = prompt['data']['assistant']['definition']
 
       data_sources = assistant_data['dataSources']   
+      print("Datasources: ", data_sources)
       
+      data_sources_keys = []
       for i in range(len(data_sources)):
-        data_sources[i] = extract_key(data_sources[i]['id'])
-      
-      
+        data_sources_keys.append(extract_key(data_sources[i]['id']))
+
+      print("Datasource Keys: ", data_sources_keys)
+
       
       data =  {
         'assistantId': prompt['id'],
         'recipientUsers': recipient_users,
         'accessType': 'read',
-        'dataSources': data_sources,
+        'dataSources': data_sources_keys,
         'policy': '',  
       }
       
@@ -185,7 +189,6 @@ def share_with_users(event, context, current_user, name, data):
     shared_assistants = handle_share_assistant(access_token, prompts, users)
     if (not shared_assistants['success']):
       return shared_assistants
-
   succesful_shares = []
 
   for user in users:
