@@ -197,6 +197,10 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
             'updatedBy': current_user
         }
     )
+
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
     return bucket_name, key
 
 
