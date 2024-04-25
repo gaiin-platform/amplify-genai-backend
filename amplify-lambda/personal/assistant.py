@@ -2,12 +2,14 @@ import hashlib
 import json
 import re
 import os
+import uuid
 from datetime import datetime
 import base64
 import email
 from email import policy
 import boto3
 from botocore.exceptions import ClientError
+from assistant.assistant import update_file_tags, create_file_metadata_entry
 
 personal_assistant_email_bucket = os.environ['S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME']
 organization_email_domain = os.environ['ORGANIZATION_EMAIL_DOMAIN']
@@ -51,7 +53,7 @@ def get_target_s3_key_base(email, tag, email_id):
     # Turn the current date into a string
     dt_string = datetime.now().strftime('%Y-%m-%d')
 
-    return f"{email}/{tag}/{dt_string}/{email_id}"
+    return f"{email}/ingest/email/{tag}/{dt_string}/{email_id}"
 
 
 def extract_email_body_and_attachments(sns_message):
@@ -103,7 +105,7 @@ def sanitize_filename(filename):
     return sanitized
 
 
-def save_email_to_s3(email_details, bucket_name, base_prefix):
+def save_email_to_s3(current_user, email_details, tags):
     # Create an S3 client
     s3 = boto3.client('s3')
 
@@ -111,13 +113,15 @@ def save_email_to_s3(email_details, bucket_name, base_prefix):
     # Determine the body content to save (1)
     body = email_content['body_plain'] if email_content['body_plain'] else email_content['body_html']
 
-    # Construct the body file key
-    body_file_name = "email.json"
-    body_key = f"{base_prefix}_{body_file_name}"
+    # create a random uuid for the email
+    uuid_str = str(uuid.uuid4())
+    email_base_name = f"email_{uuid_str}"
+    email_file_name = f"{email_base_name}.json"
+    bucket_name, body_key = create_file_metadata_entry(current_user, email_file_name, "application/json", tags, {}, "email")
 
     email_to_save = {
         "body": body,
-        "key_base": base_prefix,
+        "key_base": email_base_name,
         "timestamp": email_details['timestamp'],
         "subject": email_details['subject'],
         "sender": email_details['sender'],
@@ -125,7 +129,6 @@ def save_email_to_s3(email_details, bucket_name, base_prefix):
         "attachment_file_names": [sanitize_filename(attachment['filename'])
                                   for attachment in email_content['attachments']]
     }
-
     # Check if the target key already exists and just return True if it does
     try:
         s3.head_object(Bucket=bucket_name, Key=body_key)
@@ -141,16 +144,16 @@ def save_email_to_s3(email_details, bucket_name, base_prefix):
 
     # Loop through and save all attachments (2)
     for attachment in email_content['attachments']:
-        # Each attachment has a 'filename' and 'content'
+        file_key = f"{email_base_name}_{file_name}"
+        content_type = attachment['content_type']
+        attach_bucket_name, attach_body_key = create_file_metadata_entry(current_user, file_key, content_type, tags, {}, "email")
+
         file_name = attachment['filename']
         file_name = sanitize_filename(file_name)
         file_content = attachment['content']
 
-        # Construct the file key
-        file_key = f"{base_prefix}_{file_name}"
-
         # Save the file to S3
-        s3.put_object(Bucket=bucket_name, Key=file_key, Body=file_content)
+        s3.put_object(Bucket=attach_bucket_name, Key=attach_body_key, Body=file_content)
 
         print(f"Saved attachment to s3://{bucket_name}/{file_key}")
 
@@ -180,14 +183,14 @@ def index_email(parsed_destination_email, source_email, ses_notification):
     email_details['contents'] = parsed_email
 
     user_email = f"{parsed_destination_email['user']}@{organization_email_domain}"
-    tag = parsed_destination_email['tag'] if parsed_destination_email['tag'] else 'default'
+    tag = parsed_destination_email['tag'] if parsed_destination_email['tag'] else 'email'
 
     print(f"Email ID: {email_id}")
     s3_key = get_target_s3_key_base(user_email, tag, email_id)
     print(f"S3 Key Base: {s3_key}")
 
     # Save the email to S3
-    save_email_to_s3(email_details, personal_assistant_email_bucket, s3_key)
+    save_email_to_s3(user_email, email_details, [tag])
     return True
 
 
