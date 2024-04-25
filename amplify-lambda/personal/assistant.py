@@ -11,7 +11,6 @@ import boto3
 from botocore.exceptions import ClientError
 from assistant.assistant import update_file_tags, create_file_metadata_entry
 
-personal_assistant_email_bucket = os.environ['S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME']
 organization_email_domain = os.environ['ORGANIZATION_EMAIL_DOMAIN']
 
 
@@ -114,8 +113,10 @@ def save_email_to_s3(current_user, email_details, tags):
     body = email_content['body_plain'] if email_content['body_plain'] else email_content['body_html']
 
     # create a random uuid for the email
-    uuid_str = str(uuid.uuid4())
-    email_base_name = f"email_{uuid_str}"
+    email_subject = email_details['subject']
+    email_sender = email_details['sender']
+    email_time = email_details['timestamp'],
+    email_base_name = f"Email {email_subject} from {email_sender} at {email_time}"
     email_file_name = f"{email_base_name}.json"
     bucket_name, body_key = create_file_metadata_entry(current_user, email_file_name, "application/json", tags, {}, "email")
 
@@ -144,18 +145,17 @@ def save_email_to_s3(current_user, email_details, tags):
 
     # Loop through and save all attachments (2)
     for attachment in email_content['attachments']:
-        file_key = f"{email_base_name}_{file_name}"
-        content_type = attachment['content_type']
-        attach_bucket_name, attach_body_key = create_file_metadata_entry(current_user, file_key, content_type, tags, {}, "email")
-
         file_name = attachment['filename']
         file_name = sanitize_filename(file_name)
         file_content = attachment['content']
 
+        content_type = attachment['content_type']
+        attach_bucket_name, attach_body_key = create_file_metadata_entry(current_user, file_name, content_type, tags, {}, "email")
+
         # Save the file to S3
         s3.put_object(Bucket=attach_bucket_name, Key=attach_body_key, Body=file_content)
 
-        print(f"Saved attachment to s3://{bucket_name}/{file_key}")
+        print(f"Saved attachment to s3://{attach_bucket_name}/{attach_body_key}")
 
 
 def index_email(parsed_destination_email, source_email, ses_notification):
