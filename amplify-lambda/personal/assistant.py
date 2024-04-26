@@ -84,7 +84,7 @@ def extract_email_body_and_attachments(sns_message):
                 })
         elif content_type == "text/plain" and body_plain is None:  # Plain text body
             body_plain = part.get_payload(decode=True)
-        elif content_type == "text/html" and body_html is None:    # HTML body
+        elif content_type == "text/html" and body_html is None:  # HTML body
             body_html = part.get_payload(decode=True)
 
     # Return the extracted content
@@ -93,6 +93,13 @@ def extract_email_body_and_attachments(sns_message):
         "body_html": body_html.decode('utf-8') if body_html else None,
         "attachments": attachments
     }
+
+
+def find_hash_tags(text):
+    """
+    Finds all tags that start with '#' in the given text, strips off the '#', and returns them as a list.
+    """
+    return [tag[1:] for tag in re.findall(r'#\w+', text)]
 
 
 def sanitize_filename(filename):
@@ -118,18 +125,18 @@ def save_email_to_s3(current_user, email_details, tags):
     email_time = email_details['timestamp'],
     email_base_name = f"Email {email_subject} from {email_sender} at {email_time}"
     email_file_name = f"{email_base_name}.json"
-    bucket_name, body_key = create_file_metadata_entry(current_user, email_file_name, "application/json", tags, {}, "email")
+    bucket_name, body_key = create_file_metadata_entry(current_user, email_file_name, "application/json", tags, {},
+                                                       "email")
 
-    email_to_save = {
-        "body": body,
-        "key_base": email_base_name,
-        "timestamp": email_details['timestamp'],
-        "subject": email_details['subject'],
-        "sender": email_details['sender'],
-        "recipients": email_details['recipients'],
-        "attachment_file_names": [sanitize_filename(attachment['filename'])
-                                  for attachment in email_content['attachments']]
-    }
+    email_to_save_string = (
+        f"timestamp: {email_details['timestamp']}\n"
+        f"subject: {email_details['subject']}\n"
+        f"sender: {email_details['sender']}\n"
+        f"recipients: {', '.join(email_details['recipients'])}\n"
+        f"body:\n-----\n{body}\n-----\n"
+        f"attachment_file_names: {', '.join([sanitize_filename(attachment['filename']) for attachment in email_content['attachments']])}"
+    )
+
     # Check if the target key already exists and just return True if it does
     try:
         s3.head_object(Bucket=bucket_name, Key=body_key)
@@ -139,7 +146,7 @@ def save_email_to_s3(current_user, email_details, tags):
         pass
 
     # Save the body content to S3
-    s3.put_object(Bucket=bucket_name, Key=body_key, Body=json.dumps(email_to_save).encode('utf-8'))
+    s3.put_object(Bucket=bucket_name, Key=body_key, Body=email_to_save_string)
 
     print(f"Saved email body to s3://{bucket_name}/{body_key}")
 
@@ -150,7 +157,8 @@ def save_email_to_s3(current_user, email_details, tags):
         file_content = attachment['content']
 
         content_type = attachment['content_type']
-        attach_bucket_name, attach_body_key = create_file_metadata_entry(current_user, file_name, content_type, tags, {}, "email")
+        attach_bucket_name, attach_body_key = create_file_metadata_entry(current_user, file_name, content_type, tags,
+                                                                         {}, "email")
 
         # Save the file to S3
         s3.put_object(Bucket=attach_bucket_name, Key=attach_body_key, Body=file_content)
@@ -183,14 +191,23 @@ def index_email(parsed_destination_email, source_email, ses_notification):
     email_details['contents'] = parsed_email
 
     user_email = f"{parsed_destination_email['user']}@{organization_email_domain}"
-    tag = parsed_destination_email['tag'] if parsed_destination_email['tag'] else 'email'
+    project_tag = parsed_destination_email['tag'] if parsed_destination_email['tag'] else 'email'
 
     print(f"Email ID: {email_id}")
-    s3_key = get_target_s3_key_base(user_email, tag, email_id)
+    s3_key = get_target_s3_key_base(user_email, project_tag, email_id)
     print(f"S3 Key Base: {s3_key}")
 
+    email_subject = email_details['subject']
+    email_subject_tags = find_hash_tags(email_subject)
+    print(f"Email Subject Tags: {email_subject_tags}")
+
+    all_tags = [project_tag]
+    if email_subject_tags and len(email_subject_tags) > 0:
+        print(f"Updating tags for email {email_id}")
+        all_tags.extend(email_subject_tags)
+
     # Save the email to S3
-    save_email_to_s3(user_email, email_details, [tag])
+    save_email_to_s3(user_email, email_details, all_tags)
     return True
 
 
@@ -248,7 +265,3 @@ def process_email(event, context):
                 return {'disposition': 'STOP_RULE_SET'}
 
         return None
-
-
-
-
