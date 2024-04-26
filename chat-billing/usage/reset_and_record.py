@@ -35,20 +35,24 @@ def handler(event, context):
         account_type = item["accountType"]
         daily_cost = item.get("dailyCost", 0)
         monthly_cost = item.get("monthlyCost", 0)
+        user = item.get("user")
 
         # Create the history item based on the reset type
         if reset_type == "dailyReset" and daily_cost != 0:
             # Subtract a day to get the date of the day before
             date_before = now - relativedelta(days=1)
+            user_date_composite = f"{user}#{date_before.strftime('%Y-%m-%d')}"
             history_item = {
-                "date": date_before.strftime("%Y-%m-%d"),
                 "id": id,
+                "userDateComposite": user_date_composite,
+                "date": date_before.strftime("%Y-%m-%d"),
+                "user": user,
                 "accountType": account_type,
                 "dailyCost": daily_cost,
             }
             # Reset the daily usage in the usage table
             usage_table.update_item(
-                Key={"id": id},
+                Key={"id": id, "user": user},
                 UpdateExpression="SET dailyCost = :val",
                 ExpressionAttributeValues={":val": 0},
             )
@@ -56,15 +60,18 @@ def handler(event, context):
         elif reset_type == "monthlyReset" and monthly_cost != 0:
             # Subtract a month to get the previous month
             month_before = now - relativedelta(months=1)
+            user_date_composite = f"{user}#{month_before.strftime('%Y-%m-01')}"
             history_item = {
-                "date": month_before.strftime("%Y-%m-01"),
                 "id": id,
+                "userDateComposite": user_date_composite,
+                "date": month_before.strftime("%Y-%m-01"),
+                "user": user,
                 "accountType": account_type,
                 "monthlyCost": monthly_cost,
             }
             # Reset the monthly usage in the usage table
             usage_table.update_item(
-                Key={"id": id},
+                Key={"id": id, "user": user},
                 UpdateExpression="SET monthlyCost = :val",
                 ExpressionAttributeValues={":val": 0},
             )
