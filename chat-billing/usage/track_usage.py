@@ -29,7 +29,8 @@ def handler(event, context):
 
                 identifier = new_image.get("accountId", "UnknownAccountId")
                 item_type = new_image.get("itemType", "UnknownItemType")
-                # print(f"COA String: {identifier}, Item Type: {item_type}")
+                user = new_image.get("user", "UnknownUser")
+                # print(f"COA String: {identifier}, Item Type: {item_type}, User: {user}")
 
                 account_type = "coa"  # assume coa is passed, we will check if it is not
                 if (
@@ -42,18 +43,20 @@ def handler(event, context):
                     # print(f"User: {identifier}, Item Type: {item_type}")
 
                 if item_type == "chat":
-                    handle_chat_item(dynamodb, new_image, account_type, identifier)
+                    handle_chat_item(
+                        dynamodb, new_image, account_type, identifier, user
+                    )
                 elif item_type == "codeInterpreter":
                     handle_code_interpreter_item(
-                        dynamodb, new_image, account_type, identifier
+                        dynamodb, new_image, account_type, identifier, user
                     )
                 elif item_type == "codeInterpreterSession":
                     handle_code_interpreter_session_item(
-                        dynamodb, new_image, account_type, identifier
+                        dynamodb, new_image, account_type, identifier, user
                     )
                 else:
                     handle_other_item_types(
-                        dynamodb, new_image, account_type, identifier
+                        dynamodb, new_image, account_type, identifier, user
                     )
     except Exception as e:
         print(f"An error occurred in the handler: {e}")

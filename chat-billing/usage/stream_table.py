@@ -55,24 +55,48 @@ def handler(event, context):
                 ):
                     new_image["itemType"] = "codeInterpreter"
 
-                    # Parse the sessions to find the latest operation
-                    # Corrected the key to "sessions" and adjusted the parsing logic
-                    sessions = new_image["details"].get("sessions", {}).get("L", [])
+                    # Check if sessions is a list or a dictionary with a key 'L'
+                    sessions = new_image["details"].get("sessions", [])
+                    if isinstance(sessions, dict):
+                        sessions = sessions.get("L", [])
+
                     if sessions:
-                        latest_session = sessions[-1]  # Assume last session is the latest
-                        operations = latest_session.get("M", {}).get("operations", {}).get("L", [])
+                        latest_session = sessions[
+                            -1
+                        ]  # Assume last session is the latest
+                        operations = (
+                            latest_session.get("M", {})
+                            .get("operations", {})
+                            .get("L", [])
+                        )
                         if operations:
-                            latest_operation = operations[-1]  # Assume last operation is the latest
-                            operation_type = latest_operation.get("M", {}).get("type", {}).get("S")
+                            latest_operation = operations[
+                                -1
+                            ]  # Assume last operation is the latest
+                            operation_type = (
+                                latest_operation.get("M", {}).get("type", {}).get("S")
+                            )
                             if operation_type == "LIST_MESSAGE":
-                                new_image["outputTokens"] = int(latest_operation.get("M", {}).get("outputTokens", {}).get("N", "0"))
+                                new_image["outputTokens"] = int(
+                                    latest_operation.get("M", {})
+                                    .get("outputTokens", {})
+                                    .get("N", "0")
+                                )
                                 new_image["inputTokens"] = 0
                                 if isinstance(new_image["inputTokens"], Decimal):
-                                    new_image["inputTokens"] = int(new_image["inputTokens"])
+                                    new_image["inputTokens"] = int(
+                                        new_image["inputTokens"]
+                                    )
                                 if isinstance(new_image["outputTokens"], Decimal):
-                                    new_image["outputTokens"] = int(new_image["outputTokens"])
+                                    new_image["outputTokens"] = int(
+                                        new_image["outputTokens"]
+                                    )
                             elif operation_type == "ADD_MESSAGE":
-                                new_image["inputTokens"] = int(latest_operation.get("M", {}).get("inputTokens", {}).get("N", "0"))
+                                new_image["inputTokens"] = int(
+                                    latest_operation.get("M", {})
+                                    .get("inputTokens", {})
+                                    .get("N", "0")
+                                )
                                 new_image["outputTokens"] = 0
                                 if isinstance(new_image["inputTokens"], Decimal):
                                     new_image["inputTokens"] = int(
@@ -96,9 +120,7 @@ def handler(event, context):
                 # print(
                 #     f"Inserted item with id: {new_image['id']} into {destination_table}"
                 # )
-                print(
-                    f"Inserted item: {new_image} into {destination_table}"
-                )
+                print(f"Inserted item: {new_image} into {destination_table}")
             except Exception as e:
                 print(f"Error inserting item: {e}")
 

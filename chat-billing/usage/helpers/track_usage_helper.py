@@ -3,7 +3,7 @@ from boto3.dynamodb.conditions import Key
 from decimal import Decimal
 
 
-def handle_chat_item(dynamodb, item, account_type, identifier):
+def handle_chat_item(dynamodb, item, account_type, identifier, user):
     # Extract ModelID from the item
     model_id = item["modelId"]
 
@@ -35,6 +35,7 @@ def handle_chat_item(dynamodb, item, account_type, identifier):
             outputTokens=item["outputTokens"],
             input_cost_per_thousand_tokens=input_cost_per_thousand_tokens,
             output_cost_per_thousand_tokens=output_cost_per_thousand_tokens,
+            user=user,
         )
     else:
         print(f"No exchange rate found for ModelID: {model_id}")
@@ -57,6 +58,7 @@ def bill_chat_to_identifier(
     outputTokens,
     input_cost_per_thousand_tokens,
     output_cost_per_thousand_tokens,
+    user,
 ):
 
     # Calculate the total cost for the chat
@@ -74,7 +76,7 @@ def bill_chat_to_identifier(
 
     # Try to get the current cost values for the given identifier
     try:
-        response = usage_per_coa_table.get_item(Key={"id": identifier})
+        response = usage_per_coa_table.get_item(Key={"id": identifier, "user": user})
         current_costs = response.get("Item", {})
     except Exception as e:
         print(f"Error fetching current costs for identifier '{identifier}': {e}")
@@ -99,7 +101,7 @@ def bill_chat_to_identifier(
             )
 
         usage_per_coa_table.update_item(
-            Key={"id": identifier},
+            Key={"id": identifier, "user": user},
             UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc, accountType = :at",
             ExpressionAttributeValues={
                 ":dc": updated_costs["dailyCost"],
@@ -112,13 +114,15 @@ def bill_chat_to_identifier(
         print(f"Error updating costs for identifier '{identifier}': {e}")
 
 
-def handle_code_interpreter_item(dynamodb, item, account_type, identifier):
+def handle_code_interpreter_item(dynamodb, item, account_type, identifier, user):
     print("Charging For Code Interpreter")
     print(item)
-    handle_chat_item(dynamodb, item, account_type, identifier)
+    handle_chat_item(dynamodb, item, account_type, identifier, user)
 
 
-def handle_code_interpreter_session_item(dynamodb, item, account_type, identifier):
+def handle_code_interpreter_session_item(
+    dynamodb, item, account_type, identifier, user
+):
     print("Charging For Code Interpreter Session")
 
     # Define the cost for a code interpreter session
@@ -130,7 +134,7 @@ def handle_code_interpreter_session_item(dynamodb, item, account_type, identifie
 
     # Try to get the current cost values for the given identifier
     try:
-        response = usage_per_coa_table.get_item(Key={"id": identifier})
+        response = usage_per_coa_table.get_item(Key={"id": identifier, "user": user})
         current_costs = response.get("Item", {})
     except Exception as e:
         print(f"Error fetching current costs for identifier '{identifier}': {e}")
@@ -155,7 +159,7 @@ def handle_code_interpreter_session_item(dynamodb, item, account_type, identifie
             )
 
         usage_per_coa_table.update_item(
-            Key={"id": identifier},
+            Key={"id": identifier, "user": user},
             UpdateExpression="SET dailyCost = :dc, monthlyCost = :mc, totalCost = :tc, accountType = :at",
             ExpressionAttributeValues={
                 ":dc": updated_costs["dailyCost"],
@@ -168,6 +172,6 @@ def handle_code_interpreter_session_item(dynamodb, item, account_type, identifie
         print(f"Error updating costs for identifier '{identifier}': {e}")
 
 
-def handle_other_item_types(dynamodb, item, account_type, identifier):
+def handle_other_item_types(dynamodb, item, account_type, identifier, user):
     itemType = item["itemType"]
     print("unknown itemType:", itemType)
