@@ -37,7 +37,7 @@ def handler(event, context):
         monthly_cost = item.get("monthlyCost", 0)
 
         # Create the history item based on the reset type
-        if reset_type == "dailyReset":
+        if reset_type == "dailyReset" and daily_cost != 0:
             # Subtract a day to get the date of the day before
             date_before = now - relativedelta(days=1)
             history_item = {
@@ -53,7 +53,7 @@ def handler(event, context):
                 ExpressionAttributeValues={":val": 0},
             )
 
-        elif reset_type == "monthlyReset":
+        elif reset_type == "monthlyReset" and monthly_cost != 0:
             # Subtract a month to get the previous month
             month_before = now - relativedelta(months=1)
             history_item = {
