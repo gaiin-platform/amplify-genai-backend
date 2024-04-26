@@ -60,9 +60,9 @@ provider:
   environment:
     MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
     BILLING_TABLE: ${self:service}-${sls:stage}-billing
-    USAGE_PER_ID_TABLE: ${self:service}-${sls:stage}-usage-per-user
-    HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-user-usage
-    # use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
+    USAGE_PER_ID_TABLE: ${self:service}-${sls:stage}-usage-per-id
+    HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
+    # TODO: use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
     CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:514391678313:table/vu-amplify-${sls:stage}-chat-usage/stream/${self:custom.stageVariables.CHAT_USAGE_STREAM_TIMESTAMP}
 
   iam:
