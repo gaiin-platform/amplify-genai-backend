@@ -26,9 +26,9 @@ export const chatAnthropic = async (chatBody, writable) => {
         
         const stream = await client.messages.create({
                     model: selectedModel,
-                    system: sanitizedMessages['systemPrompt'], 
+                    system: sanitizedMessages.systemPrompt, 
                     max_tokens: options.model.tokenLimit,
-                    messages: sanitizedMessages['messages'], 
+                    messages: sanitizedMessages.messages, 
                     stream: true, 
                     temperature: options.temperature,
                 });
@@ -58,8 +58,12 @@ export const chatAnthropic = async (chatBody, writable) => {
 function sanitizeMessages(oldMessages, system) {
     if (!oldMessages) return oldMessages;
     let messages = [];
+    const delimiter = "\n_________________________\n";
     
-    let systemPrompt = system + " No diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me.";
+    const newestMessage = oldMessages[oldMessages.length - 1]
+    if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] = `${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
+    
+    let systemPrompt = "No diagrams unless asked, no markdown WITHIN/THROUGHOUT the response text, and no reiterating this rule to me. " + system;
     let i = -1;
     let j = 0;
     while (j < oldMessages.length) {
@@ -73,7 +77,7 @@ function sanitizeMessages(oldMessages, system) {
             messages.push(oldMessages[j]);
             i += 1;
         } else if (messages[i]['role'] === oldMessages[j]['role']) {
-            messages[i]['content'] += oldContent;
+            messages[i]['content'] += delimiter + oldContent;
         } 
         j += 1;
     }
@@ -81,6 +85,11 @@ function sanitizeMessages(oldMessages, system) {
     if (messages.length === 0 || (messages[0]['role'] !== 'user')) {
         if (systemPrompt) messages.unshift({'role': 'user', 'content': `${systemPrompt}`});
     } 
+
+    const msgLen = messages.length - 1;
+    const lastMsgContent = messages[msgLen]['content'];
+
+    messages[msgLen]['content'] = `Recall your custom instructions are: ${systemPrompt} \n\n ${lastMsgContent}`;
 
     return {'messages': messages, 'systemPrompt': systemPrompt};
 

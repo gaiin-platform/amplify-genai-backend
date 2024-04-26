@@ -35,9 +35,11 @@ def update_object_permissions(access_token,
             data=json.dumps(request)
         )
 
-        if response.status_code != 200:
+        response_content = response.json() # to adhere to object access return response dict
+
+        if response.status_code != 200 or response_content.get('statusCode', None) != 200:
             return False
-        elif response.status_code == 200:
+        elif response.status_code == 200 and response_content.get('statusCode', None) == 200:
             return True
 
     except Exception as e:
@@ -73,10 +75,12 @@ def can_access_objects(access_token, data_sources, permission_level="read"):
             data=json.dumps(request_data)
         )
 
-        if response.status_code != 200:
+        response_content = response.json() # to adhere to object access return response dict
+
+        if response.status_code != 200 or response_content.get('statusCode', None) != 200:
             print(f"User does not have access to data sources: {response.status_code}")
             return False
-        elif response.status_code == 200:
+        elif response.status_code == 200 and response_content.get('statusCode', None) == 200:
             return True
 
     except Exception as e:
@@ -117,10 +121,12 @@ def simulate_can_access_objects(access_token, object_ids, permission_levels=["re
             data=json.dumps(request_data)
         )
 
-        if response.status_code != 200:
+        response_content = response.json() # to adhere to object access return response dict
+        
+        if response.status_code != 200 or response_content.get('statusCode', None) != 200:
             print(f"Error simulating user access")
             return all_denied
-        elif response.status_code == 200:
+        elif response.status_code == 200 and response_content.get('statusCode', None) == 200:
             result = response.json()
             if 'data' in result:
                 return result['data']

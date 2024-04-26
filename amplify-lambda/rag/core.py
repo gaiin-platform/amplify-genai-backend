@@ -331,9 +331,9 @@ def update_object_permissions(current_user, data):
                     'principal_id': current_user,
                     'principal_type': principal_type,
                     'object_type': object_type,
-                    'permission_level': 'read',  # The current_user becomes the owner
+                    'permission_level': 'write',  # The current_user becomes the owner 
                     'policy': policy
-                })
+                }) 
                 print(f"Created initial item for {object_id} with {current_user} as owner")
 
             else:

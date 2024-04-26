@@ -33,7 +33,7 @@ def translate_user_data_sources_to_hash_data_sources(data_sources):
             item = response.get('Item')
             if item:
                 deserialized_item = {k: type_deserializer.deserialize(v) for k, v in item.items()}
-                ds['id'] =  deserialized_item['textLocationKey']
+                ds['id'] = deserialized_item['textLocationKey']
         except Exception as e:
             print(e)
             pass

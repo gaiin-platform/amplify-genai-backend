@@ -176,38 +176,20 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return {'success': False, 'message': 'File not found'}
 
 
-@validated(op="upload")
-def get_presigned_url(event, context, current_user, name, data):
-    print(f"Data is {data}")
-    data = data['data']
-
+def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
     dynamodb = boto3.resource('dynamodb')
-    s3 = boto3.client('s3')
-    # Retrieve the uploaded file from the Lambda event
-    table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
-
-    name = data['name']
-    type = data['type']
-    tags = data['tags']
-    props = data['data']
-    knowledge_base = data['knowledgeBase']
-
-    print(
-        f"Getting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
-
-    # Set the S3 bucket and key
     bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
     dt_string = datetime.now().strftime('%Y-%m-%d')
-    key = '{}/{}/{}.json'.format(current_user, dt_string, str(uuid.uuid4()))
+    key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
     files_table.put_item(
         Item={
             'id': key,
             'name': name,
-            'type': type,
+            'type': file_type,
             'tags': tags,
-            'data': props,
+            'data': data_props,
             'knowledgeBase': knowledge_base,
             'createdAt': datetime.now().isoformat(),
             'updatedAt': datetime.now().isoformat(),
@@ -216,13 +198,40 @@ def get_presigned_url(event, context, current_user, name, data):
         }
     )
 
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return bucket_name, key
+
+
+@validated(op="upload")
+def get_presigned_url(event, context, current_user, name, data):
+    print(f"Data is {data}")
+    data = data['data']
+
+    dynamodb = boto3.resource('dynamodb')
+    s3 = boto3.client('s3')
+
+    name = data['name']
+    file_type = data['type']
+    tags = data['tags']
+    props = data['data']
+    knowledge_base = data['knowledgeBase']
+
+    print(
+        f"Getting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
+
+    # Set the S3 bucket and key
+    bucket_name, key = create_file_metadata_entry(current_user, name, file_type, tags, props, knowledge_base)
+    print(f"Created metadata entry for file {key} in bucket {bucket_name}")
+
     # Generate a presigned URL for uploading the file to S3
     presigned_url = s3.generate_presigned_url(
         ClientMethod='put_object',
         Params={
             'Bucket': bucket_name,
             'Key': key,
-            'ContentType': type
+            'ContentType': file_type
             # Add any additional parameters like ACL, ContentType, etc. if needed
         },
         ExpiresIn=3600  # Set the expiration time for the presigned URL, in seconds
@@ -302,6 +311,7 @@ def list_tags_for_user(event, context, current_user, name, data):
             'success': False,
             'data': {'tags': []}
         }
+
 
 @validated(op="delete")
 def delete_tag_from_user(event, context, current_user, name, data):
@@ -391,24 +401,32 @@ def add_tags_to_user(current_user, tags_to_add):
                 'message': e.response['Error']['Message']
             }
 
-
 @validated(op="set_tags")
 def update_item_tags(event, context, current_user, name, data):
-    table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
-
     data = data['data']
     item_id = data['id']
     tags = data['tags']
 
-    dynamodb = boto3.resource('dynamodb')  # Create a DynamoDB resource using boto3
-    table = dynamodb.Table(table_name)  # Select the table
+    # Call the helper function to update tags and add them to the user.
+    success, message = update_file_tags(current_user, item_id, tags)
+
+    return {"success": success, "message": message}
+
+
+def update_file_tags(current_user, item_id, tags):
+    # Helper function that updates tags in DynamoDB and adds tags to the user
+    table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
+
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(table_name)
 
     try:
         response = table.get_item(Key={'id': item_id})
         item = response.get('Item')
 
         if item and item.get('createdBy') == current_user:
-            update_response = table.update_item(
+            # Update the item's tags in DynamoDB
+            table.update_item(
                 Key={'id': item_id},
                 UpdateExpression="SET tags = :tags",
                 ExpressionAttributeValues={
@@ -416,18 +434,19 @@ def update_item_tags(event, context, current_user, name, data):
                 }
             )
 
+            # Add tags to the user
             tags_added = add_tags_to_user(current_user, tags)
             if tags_added['success']:
-                print(f"Tags updated for user {current_user}")
+                return True, "Tags updated and added to user"
             else:
-                print(f"Error adding tags to user: {tags_added['message']}")
+                return False, f"Error adding tags to user: {tags_added['message']}"
 
-            return {"success": True, "message": "Tags updated"}
         else:
-            return {"success": False, "message": "File not found"}
+            return False, "File not found or not authorized to update tags"
 
     except ClientError as e:
-        return {"success": False, "message": e.response['Error']['Message']}
+        print(f"Unable to update tags: {e.response['Error']['Message']}")
+        return False, "Unable to update tags"
 
 
 @validated(op="query")
