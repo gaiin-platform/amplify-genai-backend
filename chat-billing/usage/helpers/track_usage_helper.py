@@ -117,7 +117,12 @@ def bill_chat_to_identifier(
 def handle_code_interpreter_item(dynamodb, item, account_type, identifier, user):
     print("Charging For Code Interpreter")
     print(item)
-    handle_chat_item(dynamodb, item, account_type, identifier, user)
+
+    # Check if "inputTokens" or "outputTokens" exist in item
+    if "inputTokens" in item or "outputTokens" in item:
+        handle_chat_item(dynamodb, item, account_type, identifier, user)
+    else:
+        print("No input or output tokens attached to code interpreter request")
 
 
 def handle_code_interpreter_session_item(
