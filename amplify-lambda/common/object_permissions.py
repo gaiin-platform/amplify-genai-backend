@@ -35,6 +35,7 @@ def update_object_permissions(access_token,
         )
 
         response_content = response.json() # to adhere to object access return response dict
+        print("Update object access permissions response: ", response_content)
 
         if response.status_code != 200 or response_content.get('statusCode', None) != 200: 
             return False
