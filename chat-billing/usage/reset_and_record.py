@@ -76,7 +76,10 @@ def handler(event, context):
                 ExpressionAttributeValues={":val": 0},
             )
 
-        # Add the history item to the history table
-        history_table.put_item(Item=history_item)
+        # Only add the history item to the history table if it has been defined
+        if history_item is not None:
+            history_table.put_item(Item=history_item)
+            # Reset history_item to None for the next iteration
+            history_item = None
 
     return {"statusCode": 200, "body": f"Successfully processed {reset_type}"}
