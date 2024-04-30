@@ -110,9 +110,10 @@ functions:
   # upload the locally stored data disclosure file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
   # 
   # This lambda will only run locally. Follow these steps to update the data disclosure document:
-  # Step 1: Save the data disclosure document as a pdf and as HTML at data-disclosure/data_disclosure.pdf and data-disclosure/data_disclosure.html
-  # Step 2: Deploy the lambda via:         ~ serverless deploy --stage dev
-  # Step 3: Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
+  # Step 1a: Save the data disclosure document you want to show in the popup as HTML at data-disclosure/data_disclosure.html
+  # Step 1b: Save the data disclosure document you want at the download link as pdf at data-disclosure/data_disclosure.pdf
+  # Step 2:  Deploy the lambda via:         ~ serverless deploy --stage dev
+  # Step 3:  Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
   upload_data_disclosure:
     handler: data_disclosure.upload_data_disclosure
     memorySize: 128
