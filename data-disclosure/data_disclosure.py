@@ -55,16 +55,17 @@ def upload_data_disclosure(event, context):
     try:
         with open(local_html_path, "rb") as html_file:
             html_content = html_file.read()
+        # Attempt to decode as UTF-8, but handle exceptions
+        try:
+            html_content = html_content.decode("utf-16")
+        except UnicodeDecodeError as e:
+            print(f"Error decoding HTML content: {e}")
+            # Handle the error, e.g., by skipping the decoding or using a different encoding
+            return generate_error_response(500, "Error decoding HTML content")
     except FileNotFoundError:
         return generate_error_response(404, "Data disclosure HTML file not found")
     except IOError as e:
-        return generate_error_response(
-            500, "Error reading local data disclosure HTML file"
-        )
-
-    # Convert HTML content to a string if it's in bytes, to store in DynamoDB
-    if isinstance(html_content, bytes):
-        html_content = html_content.decode("utf-8")
+        return generate_error_response(500, "Error reading local data disclosure HTML file")
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     html_document_name = f"data_disclosure_{timestamp}.html"
