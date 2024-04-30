@@ -57,7 +57,7 @@ def upload_data_disclosure(event, context):
             html_content = html_file.read()
         # Attempt to decode as UTF-8, but handle exceptions
         try:
-            html_content = html_content.decode("utf-16")
+            html_content = html_content.decode("utf-8")  # if this fails, try utf-16
         except UnicodeDecodeError as e:
             print(f"Error decoding HTML content: {e}")
             # Handle the error, e.g., by skipping the decoding or using a different encoding
