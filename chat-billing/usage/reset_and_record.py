@@ -31,6 +31,9 @@ def handler(event, context):
 
     # Process each item from the usage table
     for item in items:
+        # Initialize history_item to None
+        history_item = None
+
         id = item["id"]
         account_type = item["accountType"]
         daily_cost = item.get("dailyCost", 0)
@@ -79,7 +82,5 @@ def handler(event, context):
         # Only add the history item to the history table if it has been defined
         if history_item is not None:
             history_table.put_item(Item=history_item)
-            # Reset history_item to None for the next iteration
-            history_item = None
 
     return {"statusCode": 200, "body": f"Successfully processed {reset_type}"}
