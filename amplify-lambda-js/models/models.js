@@ -11,6 +11,7 @@
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
     CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
+    CLAUDE_3_OPUS: 'anthropic.claude-3-opus-20240229-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
     MIXTRAL_8X7B: 'mistral.mixtral-8x7b-instruct-v0:1',
     MISTRAL_LARGE: 'mistral.mistral-large-2402-v1:0'
@@ -90,6 +91,14 @@ export const Models = {
         outputCost: 0.00125,
         inputCost: 0.00025,
     },
+    [ModelID.CLAUDE_3_OPUS]: {
+        id: ModelID.CLAUDE_3_OPUS,
+        name: 'Claude-3-OPUS (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
+        outputCost: 0.07500,
+        inputCost: 0.01500,
+        },
     [ModelID.MISTRAL_7B]: {
         id: ModelID.MISTRAL_7B,
         name: 'Mistral-7b-Instruct (bedrock)',

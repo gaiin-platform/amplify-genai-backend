@@ -56,6 +56,11 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     logger.debug("Calling OpenAI API with url: "+url);
 
+    const msgLen = data.messages.length - 1;
+    const lastMsgContent = data.messages[msgLen].content;
+
+    data.messages[msgLen].content = `Recall your custom instructions are: ${options.prompt} \n\n ${lastMsgContent}`;
+
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
     function streamAxiosResponseToWritable(url, writableStream) {
