@@ -45,7 +45,7 @@ def simulate_access_to_objects(event, context, current_user, name, data, usernam
     access_responses = {}
 
     for object_id, access_types in data_sources.items():
-        print("checking permissions for obect: ", object_id, " with access: ", access_type)
+        print("checking permissions for object: ", object_id, " with access: ", access_types)
         # Check if any permissions already exist for the object_id
         for access_type in access_types:
             try:
