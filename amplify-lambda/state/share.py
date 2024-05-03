@@ -145,15 +145,6 @@ def handle_conversation_datasource_permissions(access_token, recipient_users, co
 
 
 
-def extract_access_token(event):
-  try: # Extract the Authorization header
-        auth_header = event['headers']['Authorization']
-        access_token = auth_header.split(" ")[1] if len(auth_header.split(" ")) > 1 else None
-        return {'success': True, 'message': 'Retrieved access token', 'access_token': access_token}
-  except KeyError:
-      return {'success': False, 'error': 'Authorization token not provided'}
-
-
 def handle_share_assistant(access_token, prompts, recipient_users):
   for prompt in prompts:
       assistant_data = prompt['data']['assistant']['definition']
@@ -182,12 +173,7 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
-
-  access_token_info = extract_access_token(event)
-  if (not access_token_info['success']): 
-    return access_token_info
-  access_token = access_token_info['access_token']
-  print("Access token extracted success")
+  access_token = data['access_token']
 
   users = data['data']['sharedWith']
   users = [user.lower() for user in users]
