@@ -34,12 +34,6 @@ custom:
     tags:
       - Key: Environment
         Value: ${self:provider.stage}
-  
-  # uncomment this to enable a post-deployment automation that will trigger updating the model exchange rate table
-  # custom:
-  #   scripts:
-  #     hooks:
-  #       'after:deploy:deploy': serverless invoke --function updateModelExchangeRateTable --stage dev
 
 provider:
   name: aws
@@ -60,22 +54,22 @@ provider:
   environment:
     MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
     BILLING_TABLE: ${self:service}-${sls:stage}-billing
-    USAGE_PER_ID_TABLE: ${self:service}-${sls:stage}-usage-per-id
+    USAGE_PER_ID_TABLE: ${self:service}-${sls:stage}-usage-per-id # TODO: Remove this
     HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
-    # TODO: use AWS SDK to dynamically fetch the latest stream ARN as part of the deployment process
+    # TODO: Remove this stream
     CHAT_USAGE_TABLE_STREAM_ARN: arn:aws:dynamodb:us-east-1:514391678313:table/vu-amplify-${sls:stage}-chat-usage/stream/${self:custom.stageVariables.CHAT_USAGE_STREAM_TIMESTAMP}
 
   iam:
     role:
       statements:
-        - Effect: Allow
+        - Effect: Allow # TODO: remove this
           Action:
             - logs:CreateLogGroup
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource:
             - "arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/${self:service}-${self:provider.stage}-*:log-stream:*"
-        - Effect: Allow
+        - Effect: Allow # TODO: remove this
           Action:
             - dynamodb:DescribeStream
             - dynamodb:GetRecords
@@ -99,7 +93,7 @@ provider:
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}" # TODO: remove this
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
@@ -107,6 +101,9 @@ provider:
 
 functions:
   # sets the value of the model exchange rates
+  # TODO:
+  # - finish implementation of AWS pricing API
+  # - make this trigger daily
   updateModelExchangeRateTable:
     runtime: python3.11
     handler: exchange_rates/update_table.updateModelExchangeRateTable
@@ -118,6 +115,7 @@ functions:
     environment:
       EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
 
+  # TODO: remove this stream
   # handles the stream from chat-usage table to billing table
   processChatUsageStream:
     handler: usage/stream_table.handler
@@ -131,6 +129,8 @@ functions:
       DESTINATION_TABLE: ${self:provider.environment.BILLING_TABLE}
   
   # calculates cost of usage for each action
+  # TODO: make this trigger at the end of each day and month, NOT on insert
+  #       this should also save everything to history table
   trackUsage:
     handler: usage/track_usage.handler
     memorySize: 128
@@ -145,6 +145,7 @@ functions:
       MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
       USAGE_PER_ID_TABLE: ${self:provider.environment.USAGE_PER_ID_TABLE}
   
+  # TODO: remove this
   # saves daily and monthly usage to history table
   resetAndRecordUsage:
     handler: usage/reset_and_record.handler
@@ -160,6 +161,8 @@ functions:
     environment:
       HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
       USAGE_PER_ID_TABLE: ${self:provider.environment.USAGE_PER_ID_TABLE}
+  
+  # TODO: add real time report generator
 
 resources:
   Resources:
@@ -176,6 +179,8 @@ resources:
           - AttributeName: 'ModelID'
             KeyType: 'HASH'
 
+    # TODO: this table should only contain code interpreter items
+    #       in the future this may contain lambda, assistant, and infrastructure items
     # chat-usage table streamed to this table along with itemType
     BillingTable:
       Type: 'AWS::DynamoDB::Table'
@@ -204,6 +209,7 @@ resources:
         StreamSpecification:
           StreamViewType: NEW_AND_OLD_IMAGES
     
+    # TODO: remove this
     # cost for each action saved to each user
     UsagePerIdTable:
       Type: 'AWS::DynamoDB::Table'
