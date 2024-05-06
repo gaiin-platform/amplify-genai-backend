@@ -1,14 +1,11 @@
-from openai import AzureOpenAI
-import tiktoken
 import psycopg2
 from psycopg2.extras import Json
 import json
 import os
 import boto3
-import smtplib
 from email.message import EmailMessage
 import logging
-from common.credentials import get_credentials, get_json_credetials, get_endpoint
+from common.credentials import get_credentials
 from botocore.exceptions import ClientError
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
 import urllib

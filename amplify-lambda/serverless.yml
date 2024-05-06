@@ -1,4 +1,4 @@
-service: vu-amplify
+service: amplify-lambda
 
 frameworkVersion: "3"
 
@@ -11,6 +11,7 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-domain-manager
 
 custom:
   pythonRequirements:
@@ -22,55 +23,57 @@ custom:
     - staging
     - prod
 
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 5
 
-    
+  customDomain:
+    domainName: ${self:custom.stageVariables.custom_api_domain}
+    certificateArn: ${self:custom.stageVariables.SSL_CERT_ARN}
+    basePath: 'dev' # optional, set to empty for the root path
+    stage: ${self:provider.stage}
+    createRoute53Record: true # optional, default is false    
+
 provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: false
-  stackTags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
-  tags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
   environment:
-    DYNAMODB_TABLE: ${self:service}-${sls:stage}
-    ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
-    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
-    MARKET_CATEGORIES_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-categories
-    MARKET_ITEMS_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-items
-    THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
-    FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
-    USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
-    HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
-    ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
-    ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
-    CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
-    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
-    S3_MARKET_INDEX_BUCKET_NAME: ${self:service}-${sls:stage}-market-index
-    S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
-    S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
-    S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
-    S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
-    S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
-    S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
-    SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
-    SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
+    DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}
+    ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistants
+    ASSISTANT_THREADS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-threads
+    MARKET_CATEGORIES_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-market-categories
+    MARKET_ITEMS_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-market-items
+    THREAD_RUNS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-thread-runs
+    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-user-files
+    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-hash-files
+    ACCOUNTING_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-accounting
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-accounts
+    CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-chat-usage
+    S3_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
+    S3_MARKET_INDEX_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-market-index
+    S3_BASE_PROMPTS_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-base-prompts
+    S3_CONVERSION_INPUT_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-document-conversion-input
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-document-conversion-output
+    S3_ASSISTANT_UPLOADS_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-uploads
+    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-input
+    S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-chunks
+    S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-file-text
+    SQS_RAG_DOCUMENT_INDEX_QUEUE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-document-index-queue
+    SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-document-chunk-queue
+    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-embedding-${sls:stage}-embedding-progress
+    EMAIL_SETTINGS_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-email-settings
+    PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-personal-assistant-sns-email-topic
+    S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-personal-assistant-email
+    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-object-access
+     
+    #Imported StandAlone Vars
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
     ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVariables.ORGANIZATION_EMAIL_DOMAIN}
-    EMBEDDING_PROGRESS_TABLE: vu-amplify-embedding-${sls:stage}-embedding-progress
-    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
-    PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
-    OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
     SHARE_ASSISTANTS_ENDPOINT: ${self:custom.stageVariables.SHARE_ASSISTANTS_ENDPOINT}
     
 
@@ -115,8 +118,6 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
@@ -125,7 +126,6 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
@@ -141,6 +141,7 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
@@ -164,38 +165,89 @@ functions:
           method: post
           cors: true
 
-  list_tags_user:
-    handler: assistant/assistant.list_tags_for_user
-    events:
-      - http:
-          path: assistant/tags/list
-          method: post
-          cors: true
-
-  delete_tag_user:
-    handler: assistant/assistant.delete_tag_from_user
-    events:
-      - http:
-          path: assistant/tags/delete
-          method: post
-          cors: true
-
-  set_tags_user_files:
-    handler: assistant/assistant.update_item_tags
-    events:
-      - http:
-          path: assistant/files/set_tags
-          method: post
-          cors: true
-
-  query_user_files:
-    handler: assistant/assistant.query_user_files
+  create_assistant:
+    handler: assistant/assistant.create_assistant
     timeout: 30
     events:
       - http:
-          path: assistant/files/query
+          path: assistant/create
           method: post
           cors: true
+
+  delete_assistant:
+    handler: assistant/assistant.delete_assistant
+    events:
+      - http:
+          path: assistant/delete
+          method: post
+          cors: true
+
+  add_message_assistant_thread:
+    handler: assistant/assistant.add_message_assistant_thread
+    timeout: 30
+    events:
+      - http:
+          path: assistant/thread/message/create
+          method: post
+          cors: true
+
+  get_messages_assistant_thread:
+    handler: assistant/assistant.get_messages_assistant_thread
+    events:
+      - http:
+          path: assistant/thread/message/list
+          method: post
+          cors: true
+
+  chat_assistant:
+    handler: assistant/assistant.chat_with_assistant
+    timeout: 30
+    events:
+      - http:
+          path: assistant/chat
+          method: post
+          cors: true
+
+  run_assistant_thread:
+    handler: assistant/assistant.run_assistant_thread
+    events:
+      - http:
+          path: assistant/thread/run
+          method: post
+          cors: true
+
+  run_status_assistant_thread:
+    handler: assistant/assistant.get_run_status_assistant_thread
+    events:
+      - http:
+          path: assistant/thread/run/status
+          method: post
+          cors: true
+
+  list_assistants:
+    handler: assistant/assistant.list_assistants
+    events:
+      - http:
+          path: assistant/list
+          method: post
+          cors: true
+
+  create_assistant_thread:
+    handler: assistant/assistant.create_assistant_thread
+    events:
+      - http:
+          path: assistant/thread/create
+          method: post
+          cors: true
+
+  delete_assistant_thread:
+    handler: assistant/assistant.delete_assistant_thread
+    events:
+      - http:
+          path: assistant/thread/delete
+          method: post
+          cors: true
+
 
   create:
     handler: state/create.create
@@ -350,7 +402,7 @@ functions:
   convert:
     handler: converters/docconverter.handler
     layers:
-      - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
+      - arn:aws:lambda:us-east-1:176977577112:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
     memorySize: 1024
     timeout: 180
     events:
@@ -409,7 +461,6 @@ functions:
 
   email_assistant:
     handler: personal/assistant.process_email
-    timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
       
@@ -654,81 +705,10 @@ resources:
           -
             AttributeName: id
             AttributeType: S
-          -
-            AttributeName: createdBy
-            AttributeType: S
-          -
-            AttributeName: createdAt
-            AttributeType: S
-          -
-            AttributeName: type
-            AttributeType: S
-          -
-            AttributeName: name
-            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: createdBy
-            KeySchema:
-              -
-                AttributeName: createdBy
-                KeyType: HASH
-              -
-                AttributeName: id
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: createdByAndAt
-            KeySchema:
-              -
-                AttributeName: createdBy
-                KeyType: HASH
-              -
-                AttributeName: createdAt
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: createdByAndType
-            KeySchema:
-              -
-                AttributeName: createdBy
-                KeyType: HASH
-              -
-                AttributeName: type
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: createdByAndName
-            KeySchema:
-              -
-                AttributeName: createdBy
-                KeyType: HASH
-              -
-                AttributeName: name
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
         TableName: ${self:provider.environment.FILES_DYNAMO_TABLE}
-
-    UserTagsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          -
-            AttributeName: user
-            AttributeType: S
-        KeySchema:
-          - AttributeName: user
-            KeyType: HASH
-        TableName: ${self:provider.environment.USER_TAGS_DYNAMO_TABLE}
-
 
     HashFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -793,27 +773,13 @@ resources:
       Properties:
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: user
-            AttributeType: S
-          - AttributeName: time
+          -
+            AttributeName: id
             AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}
-        GlobalSecondaryIndexes:
-          - IndexName: UserUsageTimeIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: time
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL  # Or specify the attributes you want projected
-        StreamSpecification:  # enable streaming
-          StreamViewType: NEW_AND_OLD_IMAGES
 
 
     MarketIndexBucket:
@@ -824,6 +790,18 @@ resources:
              CorsRules:
                - AllowedOrigins: ['*']
                  AllowedMethods: ['GET']
+                 AllowedHeaders: ['*']
+                 MaxAge: 3000
+
+
+    PersonalAssistantEmailBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}
+           CorsConfiguration:
+             CorsRules:
+               - AllowedOrigins: ['*']
+                 AllowedMethods: ['GET','PUT', 'POST']
                  AllowedHeaders: ['*']
                  MaxAge: 3000
 
