@@ -409,6 +409,7 @@ functions:
 
   email_assistant:
     handler: personal/assistant.process_email
+    timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
       

@@ -29,11 +29,15 @@ export const canReadDataSources = async (accessToken, dataSources) => {
             body: JSON.stringify(requestData)
         });
 
-        if (response.status !== 200) {
+        const responseBody = await response.json();  // Extracting the response body as JSON as per Allens code returning statusCode in body
+        const statusCode = responseBody.statusCode || undefined;
+    console.log("Response body:", responseBody);
+
+        if (response.status !== 200 || statusCode !== 200) {
             console.error("User does not have access to datasources: " + response.status);
             return false;
         }
-        else if(response.status === 200) {
+        else if(response.status === 200 && statusCode === 200) {
             return true;
         }
     }
