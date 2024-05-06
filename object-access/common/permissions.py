@@ -22,8 +22,13 @@ def get_user(event, data):
 def get_data_owner(event, data):
     return data['user']
 
+def can_read_emails(user, data):
+  return True
 
 permissions_by_state_type = {
+    "/utilities/emails": {
+    "read": can_read_emails
+  },
     "/utilities/update_object_permissions": {
         "update_object_permissions": can_update_permissions
     },
