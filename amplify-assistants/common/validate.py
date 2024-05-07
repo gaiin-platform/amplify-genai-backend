@@ -130,17 +130,11 @@ create_code_interpreter_assistant_schema = {
             "type": "string",
             "description": "Instructions related to the item"
         },
-        "dataSources": {
+        "fileKeys": {
             "type": "array",
-            "description": "A list of data sources",
+            "description": "A list of data sources keys",
             "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "The key of the data source"
-                    }
-                }
+                "type": "string"
             }
         },
         "tools": {
@@ -157,7 +151,7 @@ create_code_interpreter_assistant_schema = {
             }
         }
     },
-    "required": ["name", "description", "tags", "instructions", "tools"]
+    "required": ["name", "description", "tags", "instructions", "fileKeys", "tools"]
 }
 
 share_assistant_schema = {
@@ -216,11 +210,11 @@ chat_assistant_schema = {
         "id": {
             "type": "string"
         },
-        "fileKeys": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
+        "accountId": {
+            "type": "string"
+        },
+        "requestId": {
+            "type": "string"
         },
         "messages": {
             "type": "array",
@@ -300,7 +294,7 @@ chat_assistant_schema = {
             }
         }
     },
-    "required": ["id", "fileKeys", "messages"]
+    "required": ["id", "messages", "accountId", "requestId"]
 }
 
 
@@ -425,11 +419,11 @@ def parse_and_validate(current_user, event, op, validate_body=True):
     except ValidationError as e:
         raise BadRequest(e.message)
 
-    # permission_checker = get_permission_checker(current_user, name, op, data)
+    permission_checker = get_permission_checker(current_user, name, op, data)
 
-    # if not permission_checker(current_user, data):
-    #     # Return a 403 Forbidden if the user does not have permission to append data to this item
-    #     raise Unauthorized("User does not have permission to perform the operation.")
+    if not permission_checker(current_user, data):
+        # Return a 403 Forbidden if the user does not have permission to append data to this item
+        raise Unauthorized("User does not have permission to perform the operation.")
 
     return [name, data]
 

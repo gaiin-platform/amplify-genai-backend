@@ -236,6 +236,8 @@ const isUserDefinedAssistant = (assistantId) => {
 }
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
+    if (body.options && !body.options.skipCodeInterpreter) assistants.push(codeInterpreterAssistant);
+
 
     let selected = defaultAssistant;
 

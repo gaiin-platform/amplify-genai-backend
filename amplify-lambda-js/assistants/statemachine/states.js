@@ -216,7 +216,7 @@ export const updateStatus = (id, status, contextDataKey = null) => {
     return {
         execute: async (llm, context, dataSources) => {
             // we can get new saved context data and use it as the summary info
-            if (status.summary === undefined && typeof contextDataKey === "string") {
+            if (contextDataKey && typeof contextDataKey === "string") {
                 const data = context.data[contextDataKey]
                // if the data message is too long for a summary then just do it as a message
                 if (data.length > 60) {
@@ -720,7 +720,9 @@ const configureLLM = (config, llm) => {
 
     if (config.isEntertainment) { 
         // use the cheaper model!
-        llm.setModel(Models["anthropic.claude-3-haiku-20240307-v1:0"])
+        llm.params.options.model = getCheapestModelEquivalent(llm.params.model);
+        // remove any custom instruction prompts since it is messing up the output 
+        llm.params.options.prompt = "Provide a enjoyable, friendly, make me smile response. Only view the history but, do not address it. Only respond to the prompt that involves entertainment and nothing else.";
     }
 }
 
@@ -761,7 +763,7 @@ export class PromptAction {
         this.streamResults = getParam(config, "streamResults", true);
         this.retries = getParam(config, "retries", 3);
         this.appendMessages = getParam(config, "appendMessages", true);
-        this.isEntertainment = getParam(config, "isEntertainment", false); // added so temp switch the model 
+        this.isEntertainment = getParam(config, "isEntertainment", false); // added so temp switch the model and to grab entertainment history
         this.config = config;
     }
 
@@ -774,6 +776,18 @@ export class PromptAction {
             dataSources = this.config.dataSources;
         } else if ((!dataSources || dataSources.length === 0) && context.activeDataSources.length > 0) {
             dataSources = context.activeDataSources;
+        }
+
+        if (this.isEntertainment && this.outputKey !== 'riddleAnswer') {
+            const entertainmentHistory = context.data['entertainmentHistory'][this.outputKey]; 
+            if (entertainmentHistory.length > 0) {
+            const msgLen = this.messages.length - 1;
+            const lastMsgContent = this.messages[msgLen].content;
+
+            this.messages[msgLen].content = `Provide new information on the topic of entertainment, avoiding any content previously mentioned. Here are the topics discussed before: [${entertainmentHistory}] ` + lastMsgContent;
+
+            }
+           
         }
 
         const updatedMessages = fillInTemplateMessages(this.messages, context.data);

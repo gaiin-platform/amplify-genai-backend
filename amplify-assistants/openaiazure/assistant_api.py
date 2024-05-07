@@ -49,14 +49,15 @@ def file_keys_to_file_ids(file_keys):
     bucket_name = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
     client = get_openai_client()
 
+    updated_keys = []
     for file_key in file_keys:
-        file_key_user = file_key.split('/')[0]
-        if '@' not in file_key_user or len(file_key_user) >= 6:
+        file_key_user = file_key.split('//')[1]
+        if '@' not in file_key_user or len(file_key_user) <= 6:
             return []
-
+        updated_keys.append(file_key_user)
+        
     file_ids = []
-    for file_key in file_keys:
-
+    for file_key in updated_keys:
         print("Downloading file: {}/{} to transfer to OpenAI".format(bucket_name, file_key))
         # Use a BytesIO buffer to download the file directly into memory
         file_stream = BytesIO()
@@ -186,20 +187,22 @@ def get_presigned_download_url(key, current_user, download_filename = None):
                 'Key': key,
                 **response_headers
             },
-            ExpiresIn=3600  # Expiration time for the presigned URL, in seconds
+            ExpiresIn=43200  # Expires in 12 hrs 
         )
     except ClientError as e:
         print(f"Error generating presigned download URL: {e}")
         return {'success': False, 'message': "File not found"}
 
     if presigned_url:
+        print("Successfully retrieved a new presigned url: ", presigned_url)
         return {'success': True, 'downloadUrl': presigned_url}
     else:
+        print("Failed to retrieve a new presigned url")
         return {'success': False, 'message': 'File not found' }
 
 
 
-def chat_with_code_interpreter(current_user, assistant_id, messages, file_keys):
+def chat_with_code_interpreter(current_user, assistant_id, messages, account_id, request_id):
     print("Entered Chat_with_code_interpreter")
     assistant_existence = check_assistant_exists(assistant_id, current_user)
     if (not assistant_existence['success']):
@@ -207,17 +210,17 @@ def chat_with_code_interpreter(current_user, assistant_id, messages, file_keys):
     
     azure_assistant_id = assistant_existence['provider_assistant_id']
     print("Initiating chat function")
-    return chat(current_user, azure_assistant_id, messages, assistant_id)
+    return chat(current_user, azure_assistant_id, messages, assistant_id, account_id, request_id)
 
 
-def chat_with_assistant(current_user, assistant_id, messages, file_keys):
+def chat_with_assistant(current_user, assistant_id, messages, account_id, request_id):
     assistant_existence = check_assistant_exists(assistant_id, current_user)
     if (not assistant_existence['success']):
         return assistant_existence
 
     #already verified provider_assistant_id exists 
     openai_assistant_id = assistant_existence['provider_assistant_id']
-    return chat(current_user, openai_assistant_id, messages, assistant_id)
+    return chat(current_user, openai_assistant_id, messages, assistant_id, account_id, request_id)
 
 
 def get_active_thread_id_for_chat(client, messages, info): 
@@ -334,12 +337,14 @@ def sanitize_messages(messages):
             "content": content,
             "file_ids": []
         }
-        if (message.get('data') and ('datasources' in message['data']) and (len(message['data']['datasources']))):
-            file_ids = file_keys_to_file_ids([source['id'] for source in message['data']['datasources']])
+       
+        if (message.get('data') and ('dataSources' in message['data']) and (len(message['data']['dataSources']))):
+            file_ids = file_keys_to_file_ids([source['id'] for source in message['data']['dataSources']])
             sanitized_message['file_ids'] = file_ids
+            
         sanitized_messages.append(sanitized_message)
         i += 2
-    print("Sanitized messages: ", sanitized_messages)
+    #print("Sanitized messages: ", sanitized_messages)
     return sanitized_messages
 
 
@@ -383,7 +388,7 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
     if current_content: messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
 
     print("Total messages in to send list: ", len(messages_to_send))
-    print("Messages to send list: ", messages_to_send)
+    # print("Messages to send list: ", messages_to_send)
 
     try:
         print("Adding missing messages to thread.")
@@ -409,13 +414,15 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
 
 
 
-def chat(current_user, provider_assistant_id, messages, assistant_key):
+def chat(current_user, provider_assistant_id, messages, assistant_key, account_id, request_id):
     client = get_openai_client()
 
     info = {
     'assistant_key': assistant_key,
     'assistant_id': provider_assistant_id,
-    'current_user': current_user
+    'current_user': current_user,
+    'request_id': request_id,
+    'account_id': account_id
     }
 
     thread_id_data = get_active_thread_id_for_chat(client, messages, info)
@@ -433,7 +440,7 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
             thread_id=openai_thread_id,
             assistant_id=provider_assistant_id
         )
-        print(f"Run created: {run}")
+        # print(f"Run created: {run}")
 
         tries = 28
         while tries > 0:
@@ -448,7 +455,8 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
                 if status.status == 'completed':
                     break
                 elif (status.status in ["failed", "cancelled", "expired"]):
-                    return {'success': False, 'error': 'Run failed!'} 
+                    print("Error run status: ", status)
+                    return {'success': False, 'error': f"Error with run status : {status.satus}"} 
             except Exception as e:
                 print(e)
                 run_data = {openai_provider : {
@@ -512,7 +520,7 @@ def chat(current_user, provider_assistant_id, messages, assistant_key):
                     created_file_id = annotation.file_path.file_id
                     file_obj = client.files.retrieve(created_file_id)
                     file_name = file_obj.filename[file_obj.filename.rfind('/') + 1:]  
-                    s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}-{file_name}"
+                    s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}-FN-{file_name}"
                     file_content = client.files.content(file_obj.id)
 
                     # only csv and pdf are currently supported 
@@ -551,7 +559,7 @@ def get_response_values(file, content_type, file_key, current_user, file_name = 
     print("Get response Values")
     values = {}
     presigned_url = send_file_to_s3(file.content, file_key, file_name, current_user, content_type)
-    file_size = file_size(file)
+    file_size = get_file_size(file)
     if (presigned_url['success']):
         values['file_key'] = file_key
         values['presigned_url'] = presigned_url['presigned_url']
@@ -573,7 +581,7 @@ def get_response_values(file, content_type, file_key, current_user, file_name = 
     return {'success': False, 'error': 'Failed to send file to s3 and get presigned url'}
 
 
-def file_size(file):
+def get_file_size(file):
     file_bytes = BytesIO(file.content)
     file_bytes.seek(0, 2)  # Move the pointer to the end of the file
     file_size = file_bytes.tell()  # Get the current file position (which is the file size)
@@ -583,27 +591,34 @@ def record_thread_usage(op_details, info):
     print("Recording thread usage")
     dynamodb = boto3.resource('dynamodb')
     usage_table = dynamodb.Table(os.environ['ASSISTANT_CHAT_USAGE_DYNAMO_TABLE'])
+
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
    
     current_user = info['current_user']
     entry_key = f"{info['thread_key']}/{info['assistant_key']}"
 
+
     if (op_details['type'] == "CREATE_THREAD"):
         details = {
             'sessions': [{'start_time': op_details['timestamp'], 'operations': [op_details]}],
             'thread_id': info['thread_id'],
-            'assistant_id': info['assistant_id']
+            'assistant_id': info['assistant_id'],
+            'itemType': "codeInterpreter"
             }
         new_item = {
                     'id': entry_key, 
-                    'accountId': "code_interpreter",
+                    'accountId': info['account_id'],
                     'details': details,
                     'modelId': "gpt-4-1106-preview",
                     'time': timestamp,
-                    'user': current_user
+                    'user': current_user,
+                    'requestId': info['request_id'],
                     }
         usage_table.put_item(Item=new_item)
         print("New Entry: ", usage_table.get_item(Key={'id': entry_key})['Item'])
+        
+        add_session_billing_table(timestamp, info)
+        
 
     else:
         response = usage_table.get_item(Key={'id': entry_key})
@@ -627,6 +642,8 @@ def record_thread_usage(op_details, info):
             'thread_id': info['thread_id'],
             'assistant_id': info['assistant_id']
             }
+            add_session_billing_table(timestamp, info)
+
         else:
         # Get the last session
             last_session = sessions[-1] 
@@ -642,6 +659,7 @@ def record_thread_usage(op_details, info):
             else:
                 # If not within an hour, create a new session
                 sessions.append({'start_time': op_details['timestamp'], 'operations': [op_details]})
+                add_session_billing_table(timestamp, info)
 
         # Update the DynamoDB item with the modified details
         usage_table.update_item(
@@ -651,6 +669,22 @@ def record_thread_usage(op_details, info):
         )
         print("Updated Entry: ", usage_table.get_item(Key={'id': entry_key})['Item'])
     print("Successfully recorded thread usage")
+
+
+def add_session_billing_table(timestamp, info):
+    print("Recording session to billing")
+    dynamodb = boto3.resource('dynamodb')
+    billing_table = dynamodb.Table(os.environ['BILLING_DYNAMODB_TABLE'])
+    billing_table.put_item(Item={
+                    'id': f'{str(uuid.uuid4())}',
+                    'accountId': info['account_id'],
+                    'itemType': 'codeInterpreterSession',
+                    'modelId': "gpt-4-1106-preview",
+                    'requestId': info['request_id'],
+                    'time': timestamp,
+                    'user': info['current_user']
+                })
+    print("Billing session recorded")
 
 
 
@@ -1102,6 +1136,7 @@ def create_new_openai_assistant(
 
     # limited to only 20 files total per assistant in general by openai/azure
     recent_file_keys = file_keys[-20:] if len(file_keys) > 20 else file_keys
+    print("File keys: ", recent_file_keys)
 
     assistant = client.beta.assistants.create(
         name=assistant_name,
@@ -1135,8 +1170,8 @@ def create_new_assistant(
     timestamp = int(time.time() * 1000)
 
     for file_key in file_keys:
-        file_key_user = file_key.split('/')[0]
-        if '@' not in file_key_user or len(file_key_user) < 6 or user_id != file_key_user:
+        file_key_user = file_key.split('//')[1]
+        if ('@' not in file_key_user)or len(file_key_user) < 6 or (user_id not in file_key_user):
             return {'success': False, 'error': 'You are not authorized to access the referenced files'}
 
     assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys, tools, provider)

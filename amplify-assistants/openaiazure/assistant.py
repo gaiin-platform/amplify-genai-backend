@@ -27,27 +27,31 @@ def run_assistant_thread(event, context, current_user, name, data):
 def chat_with_assistant(event, context, current_user, name, data):
   assistant_id = data['data'].get('id')
   messages = data['data'].get('messages')
-  file_keys = data['data'].get('fileKeys')
+  account_id = data['data'].get('accountId')
+  request_id = data['data'].get('requestId')
 
   return assistants.chat_with_assistant(
     current_user,
     assistant_id,
     messages,
-    file_keys
+    account_id,
+    request_id
   )
 
-@validated(op="chat_with_code_interpreter") 
+@validated(op="chat") 
 def chat_with_code_interpreter(event, context, current_user, name, data):
   print("Chat_with_code_interpreter validated")
   assistant_id = data['data'].get('id')
   messages = data['data'].get('messages')
-  file_keys = data['data'].get('fileKeys')
+  account_id = data['data'].get('accountId')
+  request_id = data['data'].get('requestId')
 
   return assistants.chat_with_code_interpreter(
     current_user,
     assistant_id,
     messages,
-    file_keys
+    account_id,
+    request_id
   )
 
 @validated(op="add_message")
@@ -91,7 +95,7 @@ def create_code_interpreter_assistant (event, context, current_user, name, data)
   description = extracted_data['description']
   tags = extracted_data.get('tags', [])
   instructions = extracted_data['instructions']
-  file_keys = extracted_data.get('dataSources', [])
+  file_keys = extracted_data.get('fileKeys', [])
   tools = extracted_data.get('tools', [])
   provider =  extracted_data.get('provider', 'azure')
 

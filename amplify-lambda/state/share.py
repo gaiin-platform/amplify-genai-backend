@@ -90,6 +90,12 @@ def share_with_users(event, context, current_user, name, data):
 
   new_data['sharedBy'] = current_user
 
+  conversations = new_data['history']
+
+  if (len(conversations) > 0): 
+    new_data['history'] = remove_code_interpreter_details(conversations) # if it has any
+
+
   succesful_shares = []
 
   for user in users:
@@ -146,6 +152,16 @@ def share_with_users(event, context, current_user, name, data):
       continue
 
   return succesful_shares
+
+
+def remove_code_interpreter_details(conversations):
+    for conversation in conversations:
+        if 'codeInterpreterAssistantId' in conversation:
+            del conversation['codeInterpreterAssistantId']
+            for message in conversation['messages']:
+                if 'codeInterpreterMessageData' in message:
+                    del message['codeInterpreterMessageData']
+    return conversations
 
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
