@@ -147,28 +147,28 @@ def handle_conversation_datasource_permissions(access_token, recipient_users, co
 
 def handle_share_assistant(access_token, prompts, recipient_users):
   for prompt in prompts:
-      assistant_data = prompt['data']['assistant']['definition']
+    if ('data' in prompt and 'assistant' in prompt['data'] and 'definition' in prompt['data']['assistant']):
+        assistant_data = prompt['data']['assistant']['definition']
 
-      data_sources = assistant_data['dataSources']   
-      print("Datasources: ", data_sources, " for assistant id: ", prompt['id'])
-      data_sources_keys = get_data_source_keys(data_sources)
-      
-      data =  {
-        'assistantId': prompt['id'],
-        'recipientUsers': recipient_users,
-        'accessType': 'read',
-        'dataSources': data_sources_keys,
-        'policy': '',  
-      }
-      
-      if not share_assistant(access_token, data):
-        print("Error making share assistant calls for assistant: ", prompt['id'])
-        return {'success': False, 'error': 'Could not successfully make the call to share assistants'}
+        data_sources = assistant_data['dataSources']   
+        print("Datasources: ", data_sources, " for assistant id: ", prompt['id'])
+        data_sources_keys = get_data_source_keys(data_sources)
+        
+        data =  {
+          'assistantId': prompt['id'],
+          'recipientUsers': recipient_users,
+          'accessType': 'read',
+          'dataSources': data_sources_keys,
+          'policy': '',  
+        }
+        
+        if not share_assistant(access_token, data):
+          print("Error making share assistant calls for assistant: ", prompt['id'])
+          return {'success': False, 'error': 'Could not successfully make the call to share assistants'}
       
   print("Share assistant call was a success")    
   return {'success': True, 'message': 'Successfully made the calls to share assistants'}
   
-   
 
 
 @validated("append")

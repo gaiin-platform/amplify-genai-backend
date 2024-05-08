@@ -464,7 +464,7 @@ save_accounts_schema = {
         }
     },
     "required": ["accounts"]
-};
+}
 
 convert_schema = {
     "type": "object",
