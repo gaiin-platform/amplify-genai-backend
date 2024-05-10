@@ -1,4 +1,4 @@
-service: vu-amplify-object-access
+service: object-access
 
 
 frameworkVersion: '3'
@@ -16,19 +16,19 @@ plugins:
   - serverless-iam-roles-per-function
 
 custom:
-  pythonRequirements:
-    dockerizePip: non-linux
-    layer: true
-
-  serverless-offline: 
-    custom:
-      config: ${file(../var/${self:provider.stage}-var.yml)} 
-
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+
+  prune:
+  automatic: true
+  includeLayers: true
+  number: 5  
 
   deploymentBucket:
     versioning: true
@@ -37,16 +37,14 @@ custom:
     tags:
       - Key: Environment
         Value: ${self:provider.stage}
+    
+        
 
 provider:
   name: aws
   runtime: python3.10
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: false
-  deploymentBucket:
-    name: ${self:service}-${sls:stage}-deployment-bucket
-    serverSideEncryption: AES256
 
   apiGateway:
     restApiId:
@@ -84,7 +82,7 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
       REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access
 
     iamRoleStatements:
           - Effect: Allow
@@ -97,7 +95,7 @@ functions:
               - dynamodb:DeleteItem
 
             Resource:
-              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+              - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access"
 
   update_ojbect_perms:
     runtime: python3.10
@@ -116,7 +114,7 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
       REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access
 
     iamRoleStatements:
           - Effect: Allow
@@ -129,7 +127,7 @@ functions:
               - dynamodb:DeleteItem
 
             Resource:
-              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+              - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access"
 
 
   can_access_objects:
@@ -149,7 +147,7 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
       REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access
 
     iamRoleStatements:
           - Effect: Allow
@@ -158,7 +156,7 @@ functions:
               - dynamodb:Scan
               - dynamodb:GetItem
             Resource:
-              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+              - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access"
 
   simulate_access:
      runtime: python3.10
@@ -177,7 +175,7 @@ functions:
        COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
        REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
        REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+       OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access
 
      iamRoleStatements:
            - Effect: Allow
@@ -186,7 +184,7 @@ functions:
                - dynamodb:Scan
                - dynamodb:GetItem
              Resource:
-               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+               - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access"
 
 
   create_cognito_group:
@@ -229,7 +227,7 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
-        TableName: ${self:service}-${sls:stage}-object-access
+        TableName: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-object-access
         AttributeDefinitions:
           - AttributeName: 'object_id'
             AttributeType: 'S'

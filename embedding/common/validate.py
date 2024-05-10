@@ -566,9 +566,8 @@ def validated(op, validate_body=True):
 
                 claims = get_claims(event, context)
 
-                get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
-                current_user = get_email(claims['username'])
-
+                current_user = claims['username']
+                
                 print(f"User: {current_user}")
 
                 # current_user = claims['user']['name']

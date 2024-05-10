@@ -92,7 +92,7 @@ provider:
             - rds-data:CommitTransaction
             - rds-data:RollbackTransaction
           Resource:
-            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
+            - "arn:aws:secretsmanager:us-east-1:*:secret:openai-endpoints-2O6UlC"
             - !GetAtt MySQLDbCluster.DBClusterArn
             - !Ref MySQLDbSecret
 functions:
