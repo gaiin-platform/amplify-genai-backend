@@ -29,7 +29,7 @@ custom:
     number: 5
 
   customDomain:
-    domainName: ${self:custom.stageVariables.custom_api_domain}
+    domainName: ${self:custom.stageVariables.CUSTOM_API_DOMAIN}
     certificateArn: ${self:custom.stageVariables.SSL_CERT_ARN}
     basePath: 'dev' # optional, set to empty for the root path
     stage: ${self:provider.stage}

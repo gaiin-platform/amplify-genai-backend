@@ -46,13 +46,13 @@ provider:
   environment:
     
     #Local Resources Created
-    ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
+    ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-uploads #check this var to make sure it's right?
     ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistants
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistant-thread-runs
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-code-interpreter-files
-    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-code-interpreter-files
+
 
     #Reference Resources created by other services
     BILLING_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-billing

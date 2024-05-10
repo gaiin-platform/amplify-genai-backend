@@ -1,1 +1,6 @@
 boto3
+jsonschema
+pydantic
+python-jose
+requests
+python-dotenv

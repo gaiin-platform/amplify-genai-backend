@@ -66,8 +66,10 @@ export const extractParams = async (event) => {
             };
         }
 
-        const current_user = payload.username.slice('vupingidp_'.length);
-        console.log("Current user: "+current_user)
+        const prefix = 'vupingidp_';
+        const index = payload.username.indexOf(prefix);
+        const current_user = index !== -1 ? payload.username.slice(index + prefix.length) : payload.username;
+        console.log("Current user: " + current_user);
 
         let requestBody;
         try {

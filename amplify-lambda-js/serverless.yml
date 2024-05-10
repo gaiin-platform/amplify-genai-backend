@@ -25,10 +25,10 @@ provider:
   environment:
     #Local Resources Created
     TRACING_ENABLED: false
-    TRACE_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-amplify-${sls:stage}-chat-traces
+    TRACE_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-chat-traces
     #Is this in use?
     ASSISTANT_QUEUE_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-tasks
-    ASSISTANT_TASK_RESULTS_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-amplify-${sls:stage}-assistant-results
+    ASSISTANT_TASK_RESULTS_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-results
 
     #Reference Resource createb by other services
     FILES_DYNAMO_TABLE: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-user-files
