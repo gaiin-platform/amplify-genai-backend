@@ -25,10 +25,13 @@ def get_data_owner(event, data):
 def can_read_emails(user, data):
   return True
 
+def can_read_cognito_groups(user, data):
+  return True
+
 permissions_by_state_type = {
     "/utilities/emails": {
     "read": can_read_emails
-  },
+    },
     "/utilities/update_object_permissions": {
         "update_object_permissions": can_update_permissions
     },
@@ -40,5 +43,8 @@ permissions_by_state_type = {
     },
     "/utilities/create_cognito_group": {
         "create_cognito_group": can_create_cognito_group
+    },
+    "/utilities/in_cognito_group": {
+    "read": can_read_cognito_groups
     }
 }

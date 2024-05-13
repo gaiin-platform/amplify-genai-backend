@@ -64,6 +64,17 @@ functions:
     environment: 
       COGNITO_USERS_TABLE: ${self:custom.stageVariables.COGNITO_USERS_TABLE}
 
+
+  get_in_cognito_group:
+    handler: cognito_users.get_in_cognito_group
+    timeout: 30
+    events:
+      - http:
+          path: /utilities/in_cognito_group
+          method: get
+    environment: 
+      COGNITO_USERS_TABLE: ${self:custom.stageVariables.COGNITO_USERS_TABLE}
+
   share_src_ids:
     runtime: python3.10
     handler: .share_src_ids
