@@ -31,6 +31,12 @@ provider:
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     OPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-ops
 
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+
   iam:
     role:
       statements:
