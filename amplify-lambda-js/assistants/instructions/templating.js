@@ -33,6 +33,8 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
                 opsStr = await formatOps(ops, format);
             }
             contextData["__assistantOps"] = ops;
+
+            llm.sendStateEventToStream({resolvedOps: ops})
         }
 
         Handlebars.registerHelper('ops', function (tagandformat) {
