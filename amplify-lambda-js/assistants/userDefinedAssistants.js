@@ -3,6 +3,8 @@ import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+import {getOps} from "./ops/ops.js";
+import {fillInTemplate} from "./instructions/templating.js";
 
 const dynamodbClient = new DynamoDBClient({ });
 
@@ -78,6 +80,17 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                     (message) => message.role !== "system"
                 );
 
+                const instructions = await fillInTemplate(
+                    llm,
+                    params,
+                    body,
+                    ds,
+                    assistant.instructions,
+                    {
+                        assistant: assistant,
+                    }
+                );
+
                 const updatedBody = {
                     ...body,
                     messages: [
@@ -91,12 +104,13 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                         },
                         {
                             role: 'system',
-                            content: assistant.instructions,
+                            content: instructions,
                         },
                         body.messages.slice(-1)[0]
                     ],
                     options: {
                         ...body.options,
+                        prompt: instructions,
                     }
                 };
 
