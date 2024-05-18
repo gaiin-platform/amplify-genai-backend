@@ -172,6 +172,14 @@ functions:
           method: post
           cors: true
 
+  create_tags_user:
+    handler: assistant/assistant.create_tags
+    events:
+      - http:
+          path: assistant/tags/create
+          method: post
+          cors: true
+
   delete_tag_user:
     handler: assistant/assistant.delete_tag_from_user
     events:

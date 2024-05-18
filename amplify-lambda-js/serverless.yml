@@ -52,6 +52,7 @@ provider:
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     TRACE_BUCKET_NAME: vu-amplify-${sls:stage}-chat-traces
     ASSISTANT_TASK_RESULTS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-results
+    ASSISTANT_LOGS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-chat-logs
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistants
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
@@ -79,6 +80,7 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.ASSISTANT_QUEUE_NAME}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
@@ -170,3 +172,7 @@ resources:
          Type: AWS::S3::Bucket
          Properties:
            BucketName: ${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}
+    AssistantLogsBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}
