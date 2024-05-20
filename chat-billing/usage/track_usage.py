@@ -225,23 +225,29 @@ def bill_chat_to_identifier(
         if time_range == "daily":
             history_usage_table.update_item(
                 Key={"id": identifier, "userDateComposite": user_date_composite},
-                UpdateExpression="SET dailyCost = :dc, accountType = :at, date = :dt, user = :us",
+                UpdateExpression="SET dailyCost = :dc, accountType = :at, #dt = :dt, user = :us",
                 ExpressionAttributeValues={
                     ":dc": updated_costs["dailyCost"],
                     ":at": account_type,
                     ":dt": date,
                     ":us": user,
                 },
+                ExpressionAttributeNames={
+                    "#dt": "date"  # Placeholder for reserved keyword date
+                },
             )
         elif time_range == "monthly":
             history_usage_table.update_item(
                 Key={"id": identifier, "userDateComposite": user_date_composite},
-                UpdateExpression="SET monthlyCost = :mc, accountType = :at, date = :dt, user = :us",
+                UpdateExpression="SET monthlyCost = :mc, accountType = :at, #dt = :dt, user = :us",
                 ExpressionAttributeValues={
                     ":mc": updated_costs["monthlyCost"],
                     ":at": account_type,
                     ":dt": date,
                     ":us": user,
+                },
+                ExpressionAttributeNames={
+                    "#dt": "date"  # Placeholder for reserved keyword date
                 },
             )
         else:
