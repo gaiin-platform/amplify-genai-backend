@@ -59,6 +59,8 @@ functions:
   user_get_shares:
     handler: cognito_users.get_emails
     timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer    
     events:
       - http:
           path: /utilities/emails
@@ -70,6 +72,8 @@ functions:
   get_in_cognito_group:
     handler: cognito_users.get_in_cognito_group
     timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer    
     events:
       - http:
           path: /utilities/in_cognito_group
@@ -228,6 +232,33 @@ functions:
           Resource:
             - arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVariables.COGNITO_USER_POOL_ID}
 
+  sync_cognito_users:
+    runtime: python3.11
+    handler: cognito_users_sync.sync_users_to_dynamo  # Update with the actual path to your handler
+    timeout: 900  # Set an appropriate timeout, max is 15 minutes (900 seconds)
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - schedule:
+          rate: rate(5 minutes)  # Example: run every hour
+          enabled: true
+    environment:
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      COGNITO_USERS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-cognito-users
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cognito-idp:ListUsers
+        Resource:
+          - arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - !GetAtt CognitoUsersTable.Arn
+
 resources:
   Conditions:
     IsProd:
@@ -258,4 +289,16 @@ resources:
                 KeyType: 'HASH'  # Partition key for the secondary index
             Projection:
               ProjectionType: 'ALL'
+    
+    CognitoUsersTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-cognito-users
+        AttributeDefinitions:
+          - AttributeName: 'user_id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'user_id'
+            KeyType: 'HASH'              
           
