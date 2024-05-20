@@ -91,8 +91,8 @@ provider:
 functions:
   # sets the value of the model exchange rates
   # TODO:
-  # - finish implementation of AWS pricing API
-  # - make this trigger daily
+  # - finish implementation of AWS pricing API once Amazon fixes pricing API bug
+  # - make this trigger daily to keep rates up to date
   updateModelExchangeRateTable:
     handler: exchange_rates/update_table.updateModelExchangeRateTable
     memorySize: 128
@@ -107,7 +107,7 @@ functions:
   
   # calculates cost of all usage from the chat usage table and the additional charges table
   # saves costs for each user, coa, and date to the history usage table
-  # triggered daily and monthly
+  # triggered at the start of each day and month
   trackUsage:
     handler: usage/track_usage.handler
     memorySize: 128
@@ -124,6 +124,19 @@ functions:
 
 
   # TODO: add real time report generator
+  # reportGenerator:
+  #   handler: usage/report_generator.handler
+  #   memorySize: 128
+  #   events:
+  #     - http:
+  #         path: billing/report-generator
+  #         method: post
+  #         cors: true
+  #   environment:
+  #     MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
 resources:
   Resources:

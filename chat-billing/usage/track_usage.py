@@ -53,42 +53,39 @@ def query_usage_table(table_name, time_range="daily"):
     current_time = datetime.now(timezone.utc)
 
     if time_range == "daily":
-        # Set start and end time for the previous day
-        start_time = current_time - timedelta(days=1)
-        start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time = start_time + timedelta(days=1)
+        # Get the date string for the previous day
+        date_string = (current_time - timedelta(days=1)).strftime("%Y-%m-%d")
     elif time_range == "monthly":
-        # Set start time to the beginning of the previous month
-        first_day_current_month = current_time.replace(
+        # Get the date string for the beginning of the previous month
+        first_day_previous_month = current_time.replace(
             day=1, hour=0, minute=0, second=0, microsecond=0
-        )
-        start_time = first_day_current_month - timedelta(days=1)
-        start_time = start_time.replace(day=1)
-        end_time = first_day_current_month
+        ) - timedelta(days=1)
+        date_string = first_day_previous_month.strftime("%Y-%m")
     else:
         raise ValueError(f"Unsupported time_range value: {time_range}")
-
-    # Convert start and end time to ISO format strings for comparison
-    start_time_str = start_time.isoformat() + "Z"
-    end_time_str = end_time.isoformat() + "Z"
-
-    # Get the table reference
+    
+    # a single scan request can retrieve up to only 1 MB of data
+    # to retrieve additional items beyond the 1 MB limit, you need to perform another scan operation using the LastEvaluatedKey value 
+    # as your ExclusiveStartKey in the next request to continue scanning from where the previous operation stopped
     table = dynamodb.Table(table_name)
+    scan_kwargs = {"FilterExpression": Key("time").begins_with(date_string)}
+    done = False
+    start_key = None
+    items = []
 
-    # Query the table for records within the specified time range
-    response = table.scan(
-        FilterExpression="#time_attr >= :start_time and #time_attr < :end_time",
-        ExpressionAttributeNames={
-            "#time_attr": "time",  # Use a placeholder for the reserved keyword
-        },
-        ExpressionAttributeValues={
-            ":start_time": start_time_str,
-            ":end_time": end_time_str,
-        },
-    )
+    while not done:
+        if start_key:
+            scan_kwargs["ExclusiveStartKey"] = start_key
+        response = table.scan(**scan_kwargs)
+        items.extend(response.get("Items", []))
+        start_key = response.get("LastEvaluatedKey", None)
+        done = start_key is None
 
     # Return the items from the response
-    return response["Items"]
+    print("Table name:", table_name)
+    print("Date string:", date_string)
+    print("Items returned from table:", items)
+    return items
 
 
 # extract attributes from item and tables, and pass to helper function
