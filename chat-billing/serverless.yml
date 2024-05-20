@@ -9,10 +9,9 @@ package:
 
 plugins:
   - serverless-offline
-  - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-deployment-bucket
-
+  - serverless-python-requirements
 custom:
   pythonRequirements:
     dockerizePip: non-linux
