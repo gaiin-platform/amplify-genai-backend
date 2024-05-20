@@ -5,10 +5,8 @@ from datetime import datetime, timezone
 import csv
 import io
 from decimal import Decimal
-
-os.environ["CHAT_USAGE_TABLE"] = "vu-amplify-dev-chat-usage"
-os.environ["MODEL_EXCHANGE_RATE_TABLE"] = "chat-billing-dev-model-exchange-rates"
-os.environ["HISTORY_USAGE_TABLE"] = "chat-billing-dev-history-usage"
+from common.validate import validated
+import json
 
 # Initialize the DynamoDB client
 dynamodb = boto3.resource("dynamodb")
@@ -107,13 +105,22 @@ def calculate_and_record_todays_usage_costs(chat_records, exchange_rate_table):
     return list(aggregated_costs.values())
 
 
-def reportGenerator(emails):
+@validated(op="report_generator")
+def report_generator(event, context, current_user, name, data):
+    try:
+        body = json.loads(event["body"])
+    except json.JSONDecodeError:
+        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
+
+    emails = body.get("emails")
+
+    print("Emails:", emails)
+    
     if not isinstance(emails, list):
         emails = [emails]
 
     history_table = dynamodb.Table(history_usage_table_name)
     history_records = []
-
     for email in emails:
         resp = history_table.scan(
             FilterExpression=Key("userDateComposite").begins_with(email)
@@ -162,24 +169,11 @@ def reportGenerator(emails):
         )
         all_usage += chat_usage_today_costs_csv_no_header
 
-    return {
-        "historyUsage": history_csv_data,
-        "todayRequests": chat_csv_data,
-        "todayUsage": chat_usage_today_costs_csv,
-        "allUsage": all_usage,
-    }
+    # return {
+    #     "historyUsage": history_csv_data,
+    #     "todayRequests": chat_csv_data,
+    #     "todayUsage": chat_usage_today_costs_csv,
+    #     "allUsage": all_usage,
+    # }
 
-
-# Example usage:
-
-result = reportGenerator(
-    [
-        "maximillian.r.moundas@vanderbilt.edu",
-        "allen.karns@vanderbilt.edu",
-        "karely.rodriguez@vanderbilt.edu",
-    ]
-)
-print("History Usage:", result["historyUsage"])
-print("Today's Requests:", result["todayRequests"])
-print("Cost of Today's Usage:", result["todayUsage"])
-print("All usage:", result["allUsage"])
+    return all_usage

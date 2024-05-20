@@ -123,19 +123,19 @@ functions:
 
   # TODO: add real time report generator
   #       add additional charges logic once that is ready
-  # reportGenerator:
-  #   handler: usage/report_generator.handler
-  #   memorySize: 128
-  #   events:
-  #     - http:
-  #         path: billing/report-generator
-  #         method: post
-  #         cors: true
-  #   environment:
-  #     MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
-  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
-  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
-  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+  reportGenerator:
+    handler: usage/report_generator.report_generator
+    memorySize: 128
+    events:
+      - http:
+          path: billing/report-generator
+          method: post
+          cors: true
+    environment:
+      MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+      CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+      ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
 resources:
   Resources:
