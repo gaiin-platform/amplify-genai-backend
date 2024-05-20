@@ -56,6 +56,8 @@ provider:
     ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
     CHAT_USAGE_TABLE: vu-amplify-${sls:stage}-chat-usage
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
 
   iam:
     role:
