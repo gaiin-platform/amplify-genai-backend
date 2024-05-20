@@ -63,9 +63,9 @@ def query_usage_table(table_name, time_range="daily"):
         date_string = first_day_previous_month.strftime("%Y-%m")
     else:
         raise ValueError(f"Unsupported time_range value: {time_range}")
-    
+
     # a single scan request can retrieve up to only 1 MB of data
-    # to retrieve additional items beyond the 1 MB limit, you need to perform another scan operation using the LastEvaluatedKey value 
+    # to retrieve additional items beyond the 1 MB limit, you need to perform another scan operation using the LastEvaluatedKey value
     # as your ExclusiveStartKey in the next request to continue scanning from where the previous operation stopped
     table = dynamodb.Table(table_name)
     scan_kwargs = {"FilterExpression": Key("time").begins_with(date_string)}
@@ -81,10 +81,11 @@ def query_usage_table(table_name, time_range="daily"):
         start_key = response.get("LastEvaluatedKey", None)
         done = start_key is None
 
+    # print("Table name:", table_name)
+    # print("Date string:", date_string)
+    # print("Items returned from table:", items)
+
     # Return the items from the response
-    print("Table name:", table_name)
-    print("Date string:", date_string)
-    print("Items returned from table:", items)
     return items
 
 

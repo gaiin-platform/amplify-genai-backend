@@ -124,6 +124,7 @@ functions:
 
 
   # TODO: add real time report generator
+  #       add additional charges logic once that is ready
   # reportGenerator:
   #   handler: usage/report_generator.handler
   #   memorySize: 128
