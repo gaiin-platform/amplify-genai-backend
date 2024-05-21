@@ -56,19 +56,20 @@ provider:
             
 functions:
 
-  user_get_shares:
+  cognito_users_get_emails:
     handler: cognito_users.get_emails
     layers:
       - Ref: PythonRequirementsLambdaLayer    
     timeout: 30
-    layers:
-      - Ref: PythonRequirementsLambdaLayer    
     events:
       - http:
           path: /utilities/emails
           method: get
     environment: 
-      COGNITO_USERS_TABLE: ${self:custom.stageVariables.COGNITO_USERS_TABLE}
+      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     
     iamRoleStatements:
           - Effect: Allow
@@ -87,15 +88,16 @@ functions:
     handler: cognito_users.get_in_cognito_group
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
-    layers:
-      - Ref: PythonRequirementsLambdaLayer    
+    timeout: 30   
     events:
       - http:
           path: /utilities/in_cognito_group
           method: get
     environment: 
-      COGNITO_USERS_TABLE: ${self:custom.stageVariables.COGNITO_USERS_TABLE}
+      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
 
   share_src_ids:
     runtime: python3.10
@@ -113,8 +115,6 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
     iamRoleStatements:
@@ -145,8 +145,6 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
     iamRoleStatements:
@@ -178,8 +176,6 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
     iamRoleStatements:
@@ -206,8 +202,6 @@ functions:
        OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
        OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
        COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-       REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-       REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
        OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
      iamRoleStatements:
@@ -236,9 +230,6 @@ functions:
         OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
         OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
         COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-        REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-        REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-      
   
       iamRoleStatements:
         - Effect: Allow
