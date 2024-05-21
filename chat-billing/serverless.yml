@@ -127,6 +127,8 @@ functions:
   reportGenerator:
     handler: usage/report_generator.report_generator
     memorySize: 128
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: billing/report-generator
