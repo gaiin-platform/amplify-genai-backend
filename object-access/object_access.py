@@ -156,7 +156,6 @@ def update_object_permissions(event, context, current_user, name, data, username
         principal_type = data.get('principalType')
         object_type = data.get('objectType')
 
-        # Get the DynamoDB table
         table = dynamodb.Table(table_name)
         
         for object_id in data_sources:
@@ -168,7 +167,6 @@ def update_object_permissions(event, context, current_user, name, data, username
             )
             items = query_response.get('Items')
 
-            # If there are no permissions, create the initial item with the current_user as the owner
             if not items:
                 print(" no permissions, create the initial item with the current_user as the owner")
                 table.put_item(Item={
@@ -176,11 +174,10 @@ def update_object_permissions(event, context, current_user, name, data, username
                     'principal_id': current_user,
                     'principal_type': principal_type,
                     'object_type': object_type,
-                    'permission_level': 'owner',  # The current_user becomes the owner
+                    'permission_level': 'owner',
                     'policy': policy
                 })
 
-            # Check if the current_user has 'owner' or 'write' permissions for the object_id
             owner_key = {
                 'object_id': object_id,
                 'principal_id': current_user
@@ -220,6 +217,7 @@ def update_object_permissions(event, context, current_user, name, data, username
                     'body': json.dumps(
                         f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
                 }
+
     except ClientError as e:
         return {
             'statusCode': e.response['ResponseMetadata']['HTTPStatusCode'],
@@ -235,7 +233,6 @@ def update_object_permissions(event, context, current_user, name, data, username
         'statusCode': 200,
         'body': json.dumps('Permissions updated successfully.')
     }
-
 
 @validated("create_cognito_group")
 def create_cognito_group(event, context, current_user, name, data, username):
