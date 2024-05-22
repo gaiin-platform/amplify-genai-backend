@@ -34,11 +34,13 @@ def sync_users_to_dynamo(event, context):
                 existing_user = dynamo_table.get_item(Key={'user_id': user_id}).get('Item')
                 if existing_user:
                     if any(existing_user.get(attr) != filtered_attributes.get(attr) for attr in filtered_attributes):
+                        filtered_attributes.pop('user_id', None)
+                        # update dynamo expression can not handle ':' so we need to replace with a placeholder '_'
                         dynamo_table.update_item(
                             Key={'user_id': user_id},
-                            UpdateExpression='SET ' + ', '.join(f'#{k}=:{k}' for k in filtered_attributes),
-                            ExpressionAttributeNames={f'#{k}': k for k in filtered_attributes},
-                            ExpressionAttributeValues={f':{k}': v for k, v in filtered_attributes.items()}
+                            UpdateExpression='SET ' + ', '.join(f'#{k.replace(":", "_")}=:{k.replace(":", "_")}' for k in filtered_attributes),
+                            ExpressionAttributeNames={f'#{k.replace(":", "_")}': k for k in filtered_attributes},
+                            ExpressionAttributeValues={f':{k.replace(":", "_")}': v for k, v in filtered_attributes.items()}
                         )
                         print(f"Updated user: {user_id}")
                 else:
