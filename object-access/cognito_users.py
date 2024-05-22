@@ -76,11 +76,9 @@ def get_in_cognito_group(event, context, current_user, name, data, username):
         cognito_groups = response['Item']['custom:vu_groups']
         print("cognito groups: ", cognito_groups)
 
-        in_cognito_group = cognito_groups is not None and cognito_groups != 'null'
-
         return {
                 'statusCode': 200,
-                'body': json.dumps({'inCognitoGroup' : in_cognito_group})
+                'body': json.dumps({'cognitoGroups' : cognito_groups})
                 }
 
     except ClientError as e:

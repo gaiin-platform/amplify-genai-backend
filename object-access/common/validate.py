@@ -3,6 +3,7 @@ import json
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from common.encoders import CombinedEncoder
+import logging
 
 import os
 import requests
@@ -11,6 +12,10 @@ from jose import jwt
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env.local")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
 
 ALGORITHMS = ["RS256"]
 
@@ -136,10 +141,10 @@ def validate_data(name, op, data):
         schema = validators[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
+            logger.info("Data validated for operation: %s", op)
         except ValidationError as e:
-            print(e)
+            logger.error("Validation error for operation: %s, error: %s", op, e)
             raise ValidationError(f"Invalid data: {e.message}")
-        print("Data validated")
 
 
 def parse_and_validate(current_user, event, op, validate_body=True):
@@ -148,25 +153,30 @@ def parse_and_validate(current_user, event, op, validate_body=True):
         try:
             data = json.loads(event['body']) if event.get('body') else {}
         except json.decoder.JSONDecodeError as e:
+            logger.error("JSON Decode Error: %s", e)
             raise BadRequest("Unable to parse JSON body.")
 
     name = event['path']
-
+    logger.info("Validating data for user: %s, event path: %s, operation: %s", current_user, name, op)
+    
     if not name:
+        logger.error("Invalid request, no event path provided")
         raise BadRequest("Unable to perform the operation, invalid request.")
 
     try:
         if validate_body:
             validate_data(name, op, data)
     except ValidationError as e:
+        logger.error("Validation error: %s", e)
         raise BadRequest(e.message)
 
     permission_checker = get_permission_checker(current_user, name, op, data)
 
     if not permission_checker(current_user, data):
-        # Return a 403 Forbidden if the user does not have permission to append data to this item
+        logger.warning("User: %s does not have permission for operation: %s", current_user, op)
         raise Unauthorized("User does not have permission to perform the operation.")
 
+    logger.info("User: %s has permission for operation: %s", current_user, op)
     return [name, data]
 
 
@@ -188,6 +198,8 @@ def validated(op, validate_body=True):
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
                 result = f(event, context, current_user, name, data, username)
+
+                print(f"Result: {result}")
 
                 return {
                     "statusCode": 200,

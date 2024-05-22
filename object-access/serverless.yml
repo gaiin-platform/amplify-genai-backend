@@ -56,26 +56,57 @@ provider:
             
 functions:
 
-  user_get_shares:
+  cognito_users_get_emails:
     handler: cognito_users.get_emails
+    layers:
+      - Ref: PythonRequirementsLambdaLayer    
     timeout: 30
     events:
       - http:
           path: /utilities/emails
           method: get
     environment: 
-      COGNITO_USERS_TABLE: ${self:custom.stageVariables.COGNITO_USERS_TABLE}
+      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+    
+    iamRoleStatements:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
 
+            Resource:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
 
   get_in_cognito_group:
     handler: cognito_users.get_in_cognito_group
-    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30   
     events:
       - http:
           path: /utilities/in_cognito_group
           method: get
     environment: 
-      COGNITO_USERS_TABLE: ${self:custom.stageVariables.COGNITO_USERS_TABLE}
+      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+    
+    iamRoleStatements:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:GetItem
+
+            Resource:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"      
 
   share_src_ids:
     runtime: python3.10
@@ -93,8 +124,6 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
     iamRoleStatements:
@@ -125,8 +154,6 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
     iamRoleStatements:
@@ -158,8 +185,6 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-      REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
     iamRoleStatements:
@@ -186,8 +211,6 @@ functions:
        OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
        OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
        COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-       REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-       REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
        OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
 
      iamRoleStatements:
@@ -216,9 +239,6 @@ functions:
         OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
         OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
         COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-        REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
-        REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-      
   
       iamRoleStatements:
         - Effect: Allow
@@ -227,6 +247,33 @@ functions:
             - cognito-idp:AdminAddUserToGroup
           Resource:
             - arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+
+  sync_cognito_users:
+    runtime: python3.11
+    handler: cognito_users_sync.sync_users_to_dynamo  # Update with the actual path to your handler
+    timeout: 900  # Set an appropriate timeout, max is 15 minutes (900 seconds)
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - schedule:
+          rate: rate(5 minutes)  # Example: run every hour
+          enabled: true
+    environment:
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      COGNITO_USERS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-cognito-users
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cognito-idp:ListUsers
+        Resource:
+          - arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - !GetAtt CognitoUsersTable.Arn
 
 resources:
   Conditions:
@@ -258,4 +305,16 @@ resources:
                 KeyType: 'HASH'  # Partition key for the secondary index
             Projection:
               ProjectionType: 'ALL'
+    
+    CognitoUsersTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-cognito-users
+        AttributeDefinitions:
+          - AttributeName: 'user_id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'user_id'
+            KeyType: 'HASH'              
           
