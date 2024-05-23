@@ -54,6 +54,8 @@ functions:
       
   upload_file:
     handler: service/core.upload_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: qi/upload/conversation
