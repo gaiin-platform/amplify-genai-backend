@@ -160,7 +160,7 @@ def validated(op, validate_body=True):
         def wrapper(event, context):
             try:
 
-                claims = get_claims(event, context)
+                claims, token = get_claims(event, context)
 
                 get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
                 current_user = get_email(claims['username'])
@@ -173,6 +173,7 @@ def validated(op, validate_body=True):
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
+                data["access_token"] = token 
                 result = f(event, context, current_user, name, data)
 
                 return {
@@ -236,7 +237,7 @@ def get_claims(event, context):
             audience=oauth_audience,
             issuer=oauth_issuer_base_url
         )
-        return payload
+        return payload, token
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 
