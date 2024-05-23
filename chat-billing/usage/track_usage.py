@@ -44,6 +44,8 @@ def track_usage(time_range="daily"):
         record_item_cost(item, time_range)
 
     # TODO: handle additional_charges
+    # for item in additional_charges:
+    #     record_additional_item_cost(item, time_range)
 
     return
 
@@ -87,6 +89,118 @@ def query_usage_table(table_name, time_range="daily"):
 
     # Return the items from the response
     return items
+
+
+def record_additional_item_cost():
+    # TODO: handle code interpreter session
+
+    # TODO: handle code interpreter usage (extract usage info out of details field)
+    print()
+
+
+def record_code_interpreter_session_item_cost(
+    account_type,
+    identifier,
+    user,
+    time_range,
+):
+    # Define the cost for a code interpreter session
+    session_cost = Decimal("0.03")
+
+    # Get the previous day's date and time
+    current_time = datetime.now(timezone.utc)
+    date = ""
+
+    if time_range == "daily":
+        # Set start and end time for the previous day
+        start_time = current_time - timedelta(days=1)
+        start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        date = start_time.strftime("%Y-%m-%d")
+    elif time_range == "monthly":
+        # Set start time to the beginning of the previous month
+        first_day_current_month = current_time.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        start_time = first_day_current_month - timedelta(days=1)
+        start_time = start_time.replace(day=1)
+        date = start_time.strftime("%Y-%m")
+    else:
+        raise ValueError(f"Unsupported time_range value: {time_range}")
+
+    # Access the History Usage Table
+    history_usage_table_name = os.environ["HISTORY_USAGE_TABLE"]
+    history_usage_table = dynamodb.Table(history_usage_table_name)
+
+    # Get the current cost values for the given identifier
+    user_date_composite = user + "#" + date
+    try:
+        response = history_usage_table.get_item(
+            Key={"id": identifier, "userDateComposite": user_date_composite}
+        )
+        current_costs = response.get("Item", {})
+    except Exception as e:
+        print(f"Error fetching current costs for identifier '{identifier}': {e}")
+        current_costs = {}
+
+    # Prepare the updated cost values
+    if time_range == "daily":
+        updated_costs = {
+            "dailyCost": Decimal(current_costs.get("dailyCost", 0)) + session_cost,
+        }
+    elif time_range == "monthly":
+        updated_costs = {
+            "monthlyCost": Decimal(current_costs.get("monthlyCost", 0)) + session_cost,
+        }
+    else:
+        raise ValueError(f"Unsupported time_range value: {time_range}")
+
+    # Update the History Usage Table with the new costs
+    try:
+        if "Item" not in response:
+            print(
+                f"Creating new cost entry for identifier '{identifier}' with values: {updated_costs}"
+            )
+        else:
+            print(
+                f"Updating existing cost entry for identifier '{identifier}' with new values: {updated_costs}"
+            )
+
+        if time_range == "daily":
+            history_usage_table.update_item(
+                Key={"id": identifier, "userDateComposite": user_date_composite},
+                UpdateExpression="SET dailyCost = :dc, accountType = :at, #dt = :dt, #us = :us",
+                ExpressionAttributeValues={
+                    ":dc": updated_costs["dailyCost"],
+                    ":at": account_type,
+                    ":dt": date,
+                    ":us": user,
+                },
+                ExpressionAttributeNames={
+                    "#dt": "date",  # Placeholder for reserved keyword date
+                    "#us": "user",  # Placeholder for reserved keyword user
+                },
+            )
+        elif time_range == "monthly":
+            history_usage_table.update_item(
+                Key={"id": identifier, "userDateComposite": user_date_composite},
+                UpdateExpression="SET monthlyCost = :mc, accountType = :at, #dt = :dt, #us = :us",
+                ExpressionAttributeValues={
+                    ":mc": updated_costs["monthlyCost"],
+                    ":at": account_type,
+                    ":dt": date,
+                    ":us": user,
+                },
+                ExpressionAttributeNames={
+                    "#dt": "date",  # Placeholder for reserved keyword date
+                    "#us": "user",  # Placeholder for reserved keyword user
+                },
+            )
+        else:
+            raise ValueError(f"Unsupported time_range value: {time_range}")
+    except Exception as e:
+        print(
+            f"Error updating costs for identifier '{identifier}' and userDateComposite '{user_date_composite}': {e}"
+        )
 
 
 # extract attributes from item and tables, and pass to helper function
