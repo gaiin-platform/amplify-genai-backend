@@ -15,11 +15,15 @@ plugins:
 custom:
   pythonRequirements:
     dockerizePip: non-linux
+    layer: true
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
+
+  
+
 
     
 provider:
