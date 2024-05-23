@@ -54,14 +54,13 @@ sample_schema = {
 qi_summary_schema = {
             "type": "object",
             "properties": {
-                "type": {"type": "string"},
-                "summary": {"type": "string"},
-                "description": {"type": "string"},
-                "feedbackImprovements": {"type": "string"},
-                "additionalComments": {"type": "string"},
-                "dataSources": {"type": "array"}
+                "type": {"type": ["string", "null"]},
+                "summary": {"type": ["string", "null"]},
+                "purpose": {"type": ["string", "null"]},
+                "additionalComments": {"type": ["string", "null"]},
+                "numberOfDataSources": {"type": "number"}
             },
-            "required": ["type", "summary", "description", "feedbackImprovements"]
+            "required": ["type"]
         }
 
 conversation_schema = {
@@ -108,7 +107,7 @@ The permission is related to a request path and to a specific operation.
 """
 validators = {
     "/qi/upload/conversation": {
-        "coversation_upload": conversation_schema
+        "conversation_upload": conversation_schema
     },
 }
 

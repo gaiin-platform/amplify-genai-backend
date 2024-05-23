@@ -17,8 +17,8 @@ def get_user_cognito_groups(access_token):
             cognito_group_endpoint,
             headers=headers,
         )
-        print("Response: ", response.content)
         response_content = response.json() # to adhere to object access return response dict
+        print("Response: ", response_content)
         body = json.loads(response_content['body'])
         if response.status_code != 200  or response_content.get('statusCode', None) != 200 or not "cognitoGroups" in body:
             print("Error calling get user cognito groups: ",  response_content['body'].get("error", response.text))

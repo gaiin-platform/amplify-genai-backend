@@ -7,7 +7,7 @@ import boto3
 from common.cognito_user_groups import get_user_cognito_groups
 
 
-@validated(op="coversation_upload")
+@validated(op="conversation_upload")
 def upload_conversation(event, context, current_user, name, data):
     access_token = data['access_token']
     qi_data = data['data']
