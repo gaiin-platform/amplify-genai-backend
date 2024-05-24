@@ -10,7 +10,7 @@ def get_emails(event, context, current_user, name, data, username):
     query_params = event.get('queryStringParameters', {})
     print("Query params: ", query_params)
     email_prefix = query_params.get('emailprefix', '')
-    if not email_prefix or not is_valid_email_prefix(email_prefix):
+    if (not email_prefix or not is_valid_email_prefix(email_prefix)):
         return {
                 'statusCode': 400,
                 'body': json.dumps({'error': 'Invalid or missing email parameter'})
@@ -21,10 +21,17 @@ def get_emails(event, context, current_user, name, data, username):
 
     try:
         print("Initiate query to cognito user dynamo table")
-        response = cognito_user_table.scan(
-                FilterExpression='begins_with(user_id, :email_prefix)',
-                ExpressionAttributeValues={':email_prefix': email_prefix.lower()}
+        response = None
+        if email_prefix == '*':  # If the prefix is '*', get all entries
+            response = cognito_user_table.scan(
+                ProjectionExpression='user_id'
             )
+        else:
+            response = cognito_user_table.scan(
+                    ProjectionExpression='user_id',
+                    FilterExpression='begins_with(user_id, :email_prefix)',
+                    ExpressionAttributeValues={':email_prefix': email_prefix.lower()}
+                )
         
         # print("Response: ", response)
         if 'Items' not in response:
@@ -49,6 +56,7 @@ def get_emails(event, context, current_user, name, data, username):
                 }
        
 def is_valid_email_prefix(prefix):
+    if (prefix == '*'): return True
     """ Validate the email prefix against a simple character check or regex. """
     if re.match(r"^[a-zA-Z0-9._%+@-]+$", prefix):
         return True
