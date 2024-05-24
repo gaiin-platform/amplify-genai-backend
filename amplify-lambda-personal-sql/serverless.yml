@@ -31,6 +31,12 @@ provider:
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     PERSONAL_DB_DYNAMO_TABLE: ${self:service}-${sls:stage}-personal-db
 
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+
   iam:
     role:
       statements:
@@ -47,7 +53,7 @@ provider:
 
 functions:
 
-  persona_db_create:
+  personal_db_create:
     handler: service/core.create_or_update_personal_db
     timeout: 30
     events:
