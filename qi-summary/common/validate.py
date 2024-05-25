@@ -58,7 +58,9 @@ qi_summary_schema = {
                 "summary": {"type": ["string", "null"]},
                 "purpose": {"type": ["string", "null"]},
                 "additionalComments": {"type": ["string", "null"]},
-                "numberOfDataSources": {"type": "number"}
+                "numberOfDataSources": {"type": "number"},
+                "includeUser": {"type": "boolean"},
+                "dataSources": {"type": ["array", "null"]}
             },
             "required": ["type"]
         }
