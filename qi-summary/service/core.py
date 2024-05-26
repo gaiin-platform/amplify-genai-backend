@@ -9,10 +9,16 @@ from common.cognito_user_groups import get_user_cognito_groups
 
 @validated(op="conversation_upload")
 def upload_conversation(event, context, current_user, name, data):
-    access_token = data['access_token']
-    qi_data = data['data']
     s3 = boto3.client('s3')
     qi_bucket = os.environ['QI_FILES_BUCKET_NAME']
+
+    access_token = data['access_token']
+    qi_data = data['data']
+    qi = qi_data["qiData"]
+    if (qi['includeUser']): qi['nonAnonymousUser'] = current_user
+
+    qi.pop('includeUser', None)
+
 
     cognito_groups = get_user_cognito_groups(access_token)
     print(current_user, " belongs to groups: ", cognito_groups)
