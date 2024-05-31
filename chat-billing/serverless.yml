@@ -97,6 +97,7 @@ functions:
   # TODO:
   # - finish implementation of AWS pricing API once Amazon fixes pricing API bug
   # - make this trigger daily to keep rates up to date
+  # - shorten name of function (causes problems for certain long deployment names)
   updateModelExchangeRateTable:
     handler: exchange_rates/update_table.updateModelExchangeRateTable
     memorySize: 128
