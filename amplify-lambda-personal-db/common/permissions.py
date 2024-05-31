@@ -22,19 +22,16 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/pdb/sql/create": {
+    "/personal/db/create": {
         "create_db": can_create_db
     },
-    "/pdb/sql/list": {
+    "/personal/db/list": {
         "list_dbs": can_create_db
     },
-    "/pdb/sql/insert": {
+    "/personal/db/items/insert": {
         "insert_db_row": can_create_db
     },
-    "/pdb/sql/list": {
+    "/personal/db/items/list": {
         "list_items": can_create_db
-    },
-    "/pdb/sql/schema": {
-        "describe": can_create_db
     },
 }
