@@ -173,6 +173,20 @@ file_set_tags_schema = {
     "additionalProperties": False
 }
 
+create_tags_schema = {
+    "type": "object",
+    "properties": {
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        }
+    },
+    "additionalProperties": False
+}
+
 user_list_tags_schema = {
     "type": "object",
     "properties": {
@@ -582,6 +596,9 @@ validators = {
     },
     "/assistant/tags/delete": {
         "delete": user_delete_tag_schema
+    },
+    "/assistant/tags/create": {
+        "create": create_tags_schema
     },
     "/assistant/tags/list": {
         "list": user_list_tags_schema

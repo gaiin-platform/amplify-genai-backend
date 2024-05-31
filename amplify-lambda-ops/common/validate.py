@@ -3,7 +3,6 @@ import json
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from common.encoders import CombinedEncoder
-import logging
 
 import os
 import requests
@@ -12,10 +11,6 @@ from jose import jwt
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env.local")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger()
 
 ALGORITHMS = ["RS256"]
 
@@ -40,99 +35,30 @@ class NotFound(HTTPException):
     def __init__(self, message="Not Found"):
         super().__init__(404, message)
 
-update_object_permissions = {
+
+"""
+Every service must define a schema each operation here. The schema is applied to the data field of the request
+body. You do NOT need to include the top-level "data" key in the schema.
+"""
+sample_schema = {
     "type": "object",
     "properties": {
-        "emailList": {
-            "type": "array",
-            "description": "An array of userids to update permissions for."
-        },
-        "dataSources": {
-            "type": "array",
-            "description": "A list of data sources to for permission updates."
-        },
-        "permissionLevel": {
+        "msg": {
             "type": "string",
-            "description": "The permission level to set for the users."
-        },
-        "principalType": {
-            "type": "string",
-            "description": "The principal type to set for the users."
-        },
-        "objectType": {
-            "type": "string",
-            "description": "The object type to set for the object."
-        },
-        "policy": {
-            "type": "string",
-            "description": "Placehold for future fine grained policy map"
-        }
-
-    },
-    "required": ["dataSources", "emailList", "permissionLevel"]
-}
-
-check_object_permissions = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "dataSources": {
-            "type": "object",
-            "additionalProperties": {
-                "type": "string"
-            }
+            "description": "The msg to echo"
         }
     },
-    "required": ["dataSources"]
+    "required": ["msg"]
 }
 
-simulate_access_to_objects = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "objects": {
-            "type": "object",
-            "additionalProperties": {
-                "type": "array",
-                "items": {
-                    "type": "string"
-                }
-            }
-        }
-    },
-    "required": ["objects"]
-}
-
-create_cognito_group = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "groupName": {
-            "type": "string",
-            "description": "The name of the group to create."
-            },
-        "groupDescription": {
-            "type": "string",
-            "description": "The description of the group to create."
-        }
-    },
-    "required": ["groupName", "groupDescription"]
-}
-
+"""
+Every service must define the permissions for each operation here. 
+The permission is related to a request path and to a specific operation.
+"""
 validators = {
-    
-    "/utilities/update_object_permissions": {
-        "update_object_permissions": update_object_permissions
+    "/someservice/sample": {
+        "sample": sample_schema
     },
-    "/utilities/can_access_objects": {
-        "can_access_objects": check_object_permissions
-    },
-    "/utilities/simulate_access_to_objects": {
-        "simulate_access_to_objects": simulate_access_to_objects
-    },
-    "/utilities/create_cognito_group": {
-    "create_cognito_grou": create_cognito_group
-    }
 }
 
 
@@ -141,10 +67,10 @@ def validate_data(name, op, data):
         schema = validators[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
-            logger.info("Data validated for operation: %s", op)
         except ValidationError as e:
-            logger.error("Validation error for operation: %s, error: %s", op, e)
+            print(e)
             raise ValidationError(f"Invalid data: {e.message}")
+        print("Data validated")
 
 
 def parse_and_validate(current_user, event, op, validate_body=True):
@@ -153,30 +79,25 @@ def parse_and_validate(current_user, event, op, validate_body=True):
         try:
             data = json.loads(event['body']) if event.get('body') else {}
         except json.decoder.JSONDecodeError as e:
-            logger.error("JSON Decode Error: %s", e)
             raise BadRequest("Unable to parse JSON body.")
 
     name = event['path']
-    logger.info("Validating data for user: %s, event path: %s, operation: %s", current_user, name, op)
-    
+
     if not name:
-        logger.error("Invalid request, no event path provided")
         raise BadRequest("Unable to perform the operation, invalid request.")
 
     try:
         if validate_body:
             validate_data(name, op, data)
     except ValidationError as e:
-        logger.error("Validation error: %s", e)
         raise BadRequest(e.message)
 
     permission_checker = get_permission_checker(current_user, name, op, data)
 
     if not permission_checker(current_user, data):
-        logger.warning("User: %s does not have permission for operation: %s", current_user, op)
+        # Return a 403 Forbidden if the user does not have permission to append data to this item
         raise Unauthorized("User does not have permission to perform the operation.")
 
-    logger.info("User: %s has permission for operation: %s", current_user, op)
     return [name, data]
 
 
@@ -191,15 +112,14 @@ def validated(op, validate_body=True):
                 current_user = get_email(claims['username'])
 
                 print(f"User: {current_user}")
-                username = claims['username']
+
+                # current_user = claims['user']['name']
 
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
-                result = f(event, context, current_user, name, data, username)
-
-                print(f"Result: {result}")
+                result = f(event, context, current_user, name, data)
 
                 return {
                     "statusCode": 200,

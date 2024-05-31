@@ -280,7 +280,10 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     selected = selectedAssistant || defaultAssistant;
 
-    llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
+    llm.sendStateEventToStream({
+        currentAssistant: selectedAssistant.name,
+        currentAssistantId: clientSelectedAssistant || selectedAssistant.name
+    })
 
     status.inProgress = false;
     llm.sendStatus(status);

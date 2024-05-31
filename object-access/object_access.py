@@ -220,6 +220,7 @@ def update_object_permissions(event, context, current_user, name, data, username
                     'body': json.dumps(
                         f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
                 }
+
     except ClientError as e:
         return {
             'statusCode': e.response['ResponseMetadata']['HTTPStatusCode'],
@@ -235,7 +236,6 @@ def update_object_permissions(event, context, current_user, name, data, username
         'statusCode': 200,
         'body': json.dumps('Permissions updated successfully.')
     }
-
 
 @validated("create_cognito_group")
 def create_cognito_group(event, context, current_user, name, data, username):

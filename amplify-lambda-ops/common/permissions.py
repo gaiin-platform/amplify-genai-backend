@@ -3,7 +3,7 @@ def get_permission_checker(user, ptype, op, data):
     return permissions_by_state_type.get(ptype, {}).get(op, lambda for_user, with_data: False)
 
 
-def can_upload(user, data):
+def can_get_ops(user, data):
     """
     Sample permission checker
     :param user: the user to check
@@ -22,7 +22,7 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/qi/upload/conversation": {
-        "conversation_upload": can_upload
+    "/ops/get": {
+        "get": can_get_ops
     },
 }

@@ -356,6 +356,15 @@ def delete_tag_from_user(event, context, current_user, name, data):
             }
 
 
+@validated(op="create")
+def create_tags(event, context, current_user, name, data):
+    data = data['data']
+    tags_to_add = data['tags']
+
+    # Call the helper function to add tags to the user
+    return add_tags_to_user(current_user, tags_to_add)
+
+
 def add_tags_to_user(current_user, tags_to_add):
     """Add a tag to user's list of tags if it doesn't already exist."""
     dynamodb = boto3.resource('dynamodb')

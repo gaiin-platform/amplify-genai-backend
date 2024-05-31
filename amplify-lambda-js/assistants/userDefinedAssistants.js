@@ -3,7 +3,11 @@ import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+import {getOps} from "./ops/ops.js";
+import {fillInTemplate} from "./instructions/templating.js";
+import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 
+const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
 
 async function getAssistantByAlias(user, assistantId) {
@@ -29,6 +33,7 @@ async function getAssistantByAlias(user, assistantId) {
 }
 
 async function getAssistantByAssistantDatabaseId(id) {
+
     const params = {
         TableName: process.env.ASSISTANTS_DYNAMODB_TABLE,
         Key: {
@@ -46,6 +51,38 @@ async function getAssistantByAssistantDatabaseId(id) {
     } catch (error) {
         console.error('Error getting assistant alias:', error);
         return null;
+    }
+}
+
+const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
+    // Define the parameters for the putObject operation
+
+    if(!process.env.ASSISTANT_LOGS_BUCKET_NAME) {
+        console.error("ASSISTANT_LOGS_BUCKET_NAME environment variable is not set");
+        console.log("Will not log assistant chat");
+        return null;
+    }
+
+    // date string in format 2023-12-29/
+    const date = new Date().toISOString().split('T')[0];
+    const requestId = chatBody.options.requestId;
+
+    const key = `${assistant.assistantId}/${date}/${currentUser}/${requestId}.json`;
+
+    const putObjectParams = {
+        Bucket: process.env.ASSISTANT_LOGS_BUCKET_NAME,
+        Key: key,
+        Body: JSON.stringify({request:chatBody, currentUser, metadata}),
+    };
+
+    try {
+        // Upload the object to S3
+        const data = await s3Client.send(new PutObjectCommand(putObjectParams));
+        console.log("Object uploaded successfully. Location:", resultKey);
+        return data;
+    } catch (error) {
+        console.error("Error uploading object:", error);
+        throw error;
     }
 }
 
@@ -78,6 +115,17 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                     (message) => message.role !== "system"
                 );
 
+                const instructions = await fillInTemplate(
+                    llm,
+                    params,
+                    body,
+                    ds,
+                    assistant.instructions,
+                    {
+                        assistant: assistant,
+                    }
+                );
+
                 const updatedBody = {
                     ...body,
                     messages: [
@@ -91,21 +139,42 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                         },
                         {
                             role: 'system',
-                            content: assistant.instructions,
+                            content: instructions,
                         },
                         body.messages.slice(-1)[0]
                     ],
                     options: {
                         ...body.options,
+                        prompt: instructions,
                     }
                 };
 
-                assistantBase.handler(
+                await assistantBase.handler(
                     llm,
                     params,
                     updatedBody,
                     ds,
                     responseStream);
+
+                try {
+                    if (assistant.data && assistant.data.logChats) {
+                        const user = assistant.data.logAnonymously ?
+                            "anonymous" : params.account.user;
+
+                        await saveChatToS3(
+                            assistant,
+                            user,
+                            body,
+                            {
+                                user: params.account.user,
+                                assistant: assistant,
+                                dataSources: ds,
+                            }
+                        );
+                    }
+                } catch (e) {
+                    console.error('Error logging assistant chat to S3:', e);
+                }
             }
         };
 

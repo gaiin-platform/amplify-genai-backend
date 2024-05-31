@@ -51,6 +51,9 @@ permissions_by_state_type = {
   "/assistant/files/set_tags": {
     "set_tags": can_upload
   },
+  "/assistant/tags/create": {
+    "create": can_upload
+  },
   "/assistant/tags/delete": {
     "delete": can_upload
   },

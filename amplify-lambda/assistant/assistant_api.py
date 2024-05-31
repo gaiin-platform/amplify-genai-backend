@@ -13,9 +13,9 @@ from boto3.dynamodb.conditions import Key
 import os
 from openai import OpenAI
 
-
 dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
+
 
 def get(dictionary, *keys):
     return reduce(lambda d, key: d.get(key, None) if isinstance(d, dict) else None, keys, dictionary)
@@ -45,7 +45,7 @@ def file_keys_to_file_ids(user_id, file_keys):
         # Use a BytesIO buffer to download the file directly into memory
         file_stream = BytesIO()
         s3.download_fileobj(bucket_name, file_key, file_stream)
-        file_stream.seek(0) # Move to the beginning of the file-like object
+        file_stream.seek(0)  # Move to the beginning of the file-like object
 
         print("Uploading file to OpenAI: {}".format(file_key))
 
@@ -66,6 +66,7 @@ def file_keys_to_file_ids(user_id, file_keys):
 
     return file_ids
 
+
 def get_thread(thread_key, user_id):
     dynamodb = boto3.resource('dynamodb')
     threads_table = dynamodb.Table(os.environ['ASSISTANT_THREADS_DYNAMODB_TABLE'])
@@ -82,7 +83,7 @@ def get_thread(thread_key, user_id):
             return {'success': False, 'error': 'Not authorized to access this thread'}
 
         # Extract the OpenAI thread ID from the item
-        openai_thread_id = get(item, 'data','openai','threadId')
+        openai_thread_id = get(item, 'data', 'openai', 'threadId')
 
         if not openai_thread_id:
             return {'success': False, 'error': 'Thread not found'}
@@ -100,7 +101,6 @@ def get_thread(thread_key, user_id):
 
 
 def chat_with_assistant(current_user, assistant_id, messages, file_keys):
-
     assistant_info = get_assistant(assistant_id, current_user)
     if not assistant_info['success']:
         return assistant_info  # Return error if any
@@ -160,7 +160,6 @@ def chat_with_assistant(current_user, assistant_id, messages, file_keys):
     print(f"Fetching the messages from {openai_thread_id}")
     messages = client.beta.threads.messages.list(thread_id=openai_thread_id)
 
-
     print(f"Formatting messages")
     ourMessages = []
     for message in messages.data:
@@ -172,7 +171,7 @@ def chat_with_assistant(current_user, assistant_id, messages, file_keys):
 
         ourMessage = {
             'data': {
-                'openai':{
+                'openai': {
                     'messageId': message.id,
                     'threadId': message.thread_id,
                     'runId': message.run_id,
@@ -215,9 +214,6 @@ def chat_with_assistant(current_user, assistant_id, messages, file_keys):
     }
 
 
-
-
-
 def fetch_messages_for_thread(thread_key, user_id):
     # Get the thread using the extracted function
     thread_info = get_thread(thread_key, user_id)
@@ -233,7 +229,7 @@ def fetch_messages_for_thread(thread_key, user_id):
     for message in messages.data:
         ourMessage = {
             'data': {
-                'openai':{
+                'openai': {
                     'messageId': message.id,
                     'threadId': message.thread_id,
                     'runId': message.run_id,
@@ -272,7 +268,6 @@ def fetch_messages_for_thread(thread_key, user_id):
         ourMessage['data']['content'] = content
 
         ourMessages.append(ourMessage)
-
 
     # export interface Message {
     #     role: Role;
@@ -402,8 +397,8 @@ def run_thread(thread_id, user_id, assistant_id):
     if assistant_item['user'] != user_id:
         return {'success': False, 'message': 'You are not authorized to run this assistant'}
 
-    openai_thread_id = get(thread_item, 'data', 'openai', 'threadId') #item['data']['openai']['thread_id']
-    openai_assistant_id = get(assistant_item, 'data', 'openai', 'assistantId') #item['data']['openai']['thread_id']
+    openai_thread_id = get(thread_item, 'data', 'openai', 'threadId')  # item['data']['openai']['thread_id']
+    openai_assistant_id = get(assistant_item, 'data', 'openai', 'assistantId')  # item['data']['openai']['thread_id']
 
     # Running the assistant's thread
     print(f"Running thread: {thread_id}/{assistant_id}/=>openai=>{openai_thread_id}/{openai_assistant_id}")
@@ -432,7 +427,8 @@ def run_thread(thread_id, user_id, assistant_id):
     return {'success': True, 'message': 'Run started successfully', 'data': {'runId': run_key}}
 
 
-def add_message_to_openai_thread(client, user_id, thread_id, openai_thread_id, message_id, content, role, file_keys, data={}):
+def add_message_to_openai_thread(client, user_id, thread_id, openai_thread_id, message_id, content, role, file_keys,
+                                 data={}):
     dynamodb = boto3.resource('dynamodb')
 
     for file_key in file_keys:
@@ -453,7 +449,7 @@ def add_message_to_openai_thread(client, user_id, thread_id, openai_thread_id, m
         'success': True,
         'message': 'Message added successfully',
         'data': {
-            'message':{
+            'message': {
                 'id': message_id,
                 'data': {
                     'threadId': thread_id,
@@ -462,6 +458,7 @@ def add_message_to_openai_thread(client, user_id, thread_id, openai_thread_id, m
             }
         }
     }
+
 
 def add_message_to_thread(user_id, thread_id, message_id, content, role, file_keys, data={}):
     dynamodb = boto3.resource('dynamodb')
@@ -504,7 +501,7 @@ def add_message_to_thread(user_id, thread_id, message_id, content, role, file_ke
         'success': True,
         'message': 'Message added successfully',
         'data': {
-            'message':{
+            'message': {
                 'id': message_id,
                 'data': {
                     'threadId': thread_id,
@@ -528,7 +525,6 @@ def delete_thread_by_id(thread_id, user_id):
     item = response['Item']
     if item['user'] != user_id:
         return {'success': False, 'message': 'You are not authorized to delete this thread'}
-
 
     openai_thread_id = get(item, 'data', 'openai', 'threadId')
 
