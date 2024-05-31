@@ -35,99 +35,81 @@ class NotFound(HTTPException):
     def __init__(self, message="Not Found"):
         super().__init__(404, message)
 
-update_object_permissions = {
+
+"""
+Every service must define a schema each operation here. The schema is applied to the data field of the request
+body. You do NOT need to include the top-level "data" key in the schema.
+"""
+sample_schema = {
     "type": "object",
     "properties": {
-        "emailList": {
-            "type": "array",
-            "description": "An array of userids to update permissions for."
-        },
-        "dataSources": {
-            "type": "array",
-            "description": "A list of data sources to for permission updates."
-        },
-        "permissionLevel": {
+        "msg": {
             "type": "string",
-            "description": "The permission level to set for the users."
-        },
-        "principalType": {
-            "type": "string",
-            "description": "The principal type to set for the users."
-        },
-        "objectType": {
-            "type": "string",
-            "description": "The object type to set for the object."
-        },
-        "policy": {
-            "type": "string",
-            "description": "Placehold for future fine grained policy map"
+            "description": "The msg to echo"
         }
-
     },
-    "required": ["dataSources", "emailList", "permissionLevel"]
+    "required": ["msg"]
 }
 
-check_object_permissions = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "dataSources": {
+qi_summary_schema = {
             "type": "object",
-            "additionalProperties": {
-                "type": "string"
-            }
-        }
-    },
-    "required": ["dataSources"]
-}
-
-simulate_access_to_objects = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "objects": {
-            "type": "object",
-            "additionalProperties": {
-                "type": "array",
-                "items": {
-                    "type": "string"
-                }
-            }
-        }
-    },
-    "required": ["objects"]
-}
-
-create_cognito_group = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "groupName": {
-            "type": "string",
-            "description": "The name of the group to create."
+            "properties": {
+                "type": {"type": "string"},
+                "summary": {"type": "string"},
+                "description": {"type": "string"},
+                "feedbackImprovements": {"type": "string"},
+                "additionalComments": {"type": "string"},
+                "dataSources": {"type": "array"}
             },
-        "groupDescription": {
-            "type": "string",
-            "description": "The description of the group to create."
+            "required": ["type", "summary", "description", "feedbackImprovements"]
+        }
+
+conversation_schema = {
+    "type": "object",
+    "properties": {
+        "qiData": qi_summary_schema,
+        "conversation": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["role", "content"]
+                    }
+                },
+                "folderId": {"type": ["string", "null"]},
+                "model": {"type": "object"},
+                "prompt": {"type": "string"},
+                "temperature": {"type": "number"},
+                "promptTemplate": {"type": ["object", "null"]},
+                "tags": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"}
+                },
+                "maxTokens": {"type": ["number", "null"]},
+            },
+            "required": ["messages", "model", "prompt", "temperature"]
         }
     },
-    "required": ["groupName", "groupDescription"]
+    "required": ["qiData", "conversation"]
 }
 
+
+"""
+Every service must define the permissions for each operation here. 
+The permission is related to a request path and to a specific operation.
+"""
 validators = {
-    
-    "/utilities/update_object_permissions": {
-        "update_object_permissions": update_object_permissions
+    "/qi/upload/conversation": {
+        "coversation_upload": conversation_schema
     },
-    "/utilities/can_access_objects": {
-        "can_access_objects": check_object_permissions
-    },
-    "/utilities/simulate_access_to_objects": {
-        "simulate_access_to_objects": simulate_access_to_objects
-    },
-    "/utilities/create_cognito_group": {
-    "create_cognito_grou": create_cognito_group
-    }
 }
 
 
@@ -140,6 +122,9 @@ def validate_data(name, op, data):
             print(e)
             raise ValidationError(f"Invalid data: {e.message}")
         print("Data validated")
+    else:
+        raise Exception("Invalid data or path")
+    
 
 
 def parse_and_validate(current_user, event, op, validate_body=True):
@@ -181,13 +166,14 @@ def validated(op, validate_body=True):
                 current_user = get_email(claims['username'])
 
                 print(f"User: {current_user}")
-                username = claims['username']
+
+                # current_user = claims['user']['name']
 
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
-                result = f(event, context, current_user, name, data, username)
+                result = f(event, context, current_user, name, data)
 
                 return {
                     "statusCode": 200,

@@ -331,19 +331,23 @@ def create_assistant(event, context, current_user, name, data):
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
 
-    print(f"Data sources before translation: {data_sources}")
+    if (len(data_sources) > 0):
+        print(f"Data sources before translation: {data_sources}")
 
-    for i in range(len(data_sources)):
-        source = data_sources[i]
-        if (not source['id'].startswith("s3://")): data_sources[i]['id'] = source['key']
+        for i in range(len(data_sources)):
+            source = data_sources[i]
+            if (not source['id'].startswith("s3://")): data_sources[i]['id'] = source['key']
+        
+        print(f"Final data sources before translation: {data_sources}")
 
-    data_sources = translate_user_data_sources_to_hash_data_sources(data_sources)
-    
-    print(f"Data sources after translation and extraction: {data_sources}")
+        data_sources = translate_user_data_sources_to_hash_data_sources(data_sources)
+        
+        print(f"Data sources after translation and extraction: {data_sources}")
 
-    # Auth check: need to update to new permissions endpoint
-    if not can_access_objects(data['access_token'], data_sources):
-        return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+        # Auth check: need to update to new permissions endpoint
+        if not can_access_objects(data['access_token'], data_sources):
+            return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+        
 
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_or_update_assistant(

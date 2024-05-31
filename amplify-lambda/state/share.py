@@ -9,7 +9,7 @@ from boto3.dynamodb.conditions import Key
 from common.object_permissions import update_object_permissions
 from common.data_sources import extract_key, translate_user_data_sources_to_hash_data_sources
 from common.share_assistants import share_assistant
-
+import copy
 import boto3
 
 from common.validate import HTTPException, validated
@@ -86,26 +86,52 @@ def get_base_prompts(event, context, current_user, name, data):
   }
 
 
+def get_data_source_keys(data_sources):
+  print("Get keys from data sources")
+  data_sources_keys = []
+  for i in range(len(data_sources)):
+    ds = data_sources[i]
+    # print("current datasource: ", ds)
+    key = ''
+    if (ds['id'].startswith("global/")): 
+      key = ds['id']
+    else:
+      if (ds["id"].startswith("s3://global/")):
+        key = extract_key(ds['id'])
+      else:
+        ds_copy = copy.deepcopy(ds)
+        # Assistant attached data sources tends to have id vals of uuids vs they key we need 
+        if ('key' in ds):
+          ds_copy['id']= ds["key"]
+
+        key = translate_user_data_sources_to_hash_data_sources([ds_copy])[0]['id'] #cant 
+
+      print("Updated Key: ", key)
+
+    if (not key): return {'success': False, 'error': 'Could not extract key'} 
+    data_sources_keys.append(key)
+  
+  print("Datasource Keys: ", data_sources_keys)
+  return data_sources_keys
 
 
 def handle_conversation_datasource_permissions(access_token, recipient_users, conversations):
   print('Enter handle shared datasources in conversations')
-  datasources_keys = []
+  total_data_sources_keys = []
   for conversation in conversations:
       for message in conversation['messages']:  
           # Check if 'data' and 'dataSources' keys exist and 'dataSources' has items
           if 'data' in message and 'dataSources' in message['data'] and len(message['data']['dataSources']) > 0:
-              for doc in message['data']['dataSources']:
-                  datasources_keys.append(doc)
-
-  data_sources = translate_user_data_sources_to_hash_data_sources(datasources_keys)
-     
-  print("Datasources: ", data_sources)
+              data_sources_keys = get_data_source_keys(message['data']['dataSources'])
+              total_data_sources_keys.extend(data_sources_keys)
+  
+  
+  print("All Datasource Keys: ", total_data_sources_keys)
 
   if not update_object_permissions(
         access_token=access_token,
-        shared_with_users= recipient_users,
-        keys= data_sources,
+        shared_with_users=recipient_users,
+        keys=total_data_sources_keys,
         object_type='datasource',
         principal_type='user',
         permission_level='read',
@@ -119,60 +145,42 @@ def handle_conversation_datasource_permissions(access_token, recipient_users, co
 
 
 
-def extract_access_token(event):
-  try: # Extract the Authorization header
-        auth_header = event['headers']['Authorization']
-        access_token = auth_header.split(" ")[1] if len(auth_header.split(" ")) > 1 else None
-        return {'success': True, 'message': 'Retrieved access token', 'access_token': access_token}
-  except KeyError:
-      return {'success': False, 'error': 'Authorization token not provided'}
-
-
 def handle_share_assistant(access_token, prompts, recipient_users):
   for prompt in prompts:
-      assistant_data = prompt['data']['assistant']['definition']
+    if ('data' in prompt and 'assistant' in prompt['data'] and 'definition' in prompt['data']['assistant']):
+        assistant_data = prompt['data']['assistant']['definition']
 
-      data_sources = assistant_data['dataSources']   
-      print("Datasources: ", data_sources)
-      
-      data_sources_keys = []
-      for i in range(len(data_sources)):
-        data_sources_keys.append(extract_key(data_sources[i]['id']))
-
-      print("Datasource Keys: ", data_sources_keys)
-
-      
-      data =  {
-        'assistantId': prompt['id'],
-        'recipientUsers': recipient_users,
-        'accessType': 'read',
-        'dataSources': data_sources_keys,
-        'policy': '',  
-      }
-      
-      if not share_assistant(access_token, data):
-        print("Error making share assistant calls for assistant: ", prompt['id'])
-        return {'success': False, 'error': 'Could not successfully make the call to share assistants'}
+        data_sources = assistant_data['dataSources']   
+        print("Datasources: ", data_sources, " for assistant id: ", prompt['id'])
+        data_sources_keys = get_data_source_keys(data_sources)
+        
+        data =  {
+          'assistantId': prompt['id'],
+          'recipientUsers': recipient_users,
+          'accessType': 'read',
+          'dataSources': data_sources_keys,
+          'policy': '',  
+        }
+        
+        if not share_assistant(access_token, data):
+          print("Error making share assistant calls for assistant: ", prompt['id'])
+          return {'success': False, 'error': 'Could not successfully make the call to share assistants'}
       
   print("Share assistant call was a success")    
   return {'success': True, 'message': 'Successfully made the calls to share assistants'}
   
-   
 
 
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
-
-  access_token_info = extract_access_token(event)
-  if (not access_token_info['success']): 
-    return access_token_info
-  access_token = access_token_info['access_token']
-  print("Access token extracted success")
+  access_token = data['access_token']
 
   users = data['data']['sharedWith']
+  users = [user.lower() for user in users]
+
   note = data['data']['note']
   new_data = data['data']['sharedData']
-  new_data['sharedBy'] = current_user
+  new_data['sharedBy'] = current_user.lower()
 
   conversations = new_data['history']
 
