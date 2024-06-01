@@ -23,18 +23,21 @@ user can do the operation.
 """
 permissions_by_state_type = {
     "/pdb/sql/create": {
-        "create_db": can_create_db
+        "create": can_create_db
     },
     "/pdb/sql/list": {
-        "list_dbs": can_create_db
+        "list": can_create_db
     },
-    "/pdb/sql/insert": {
-        "insert_db_row": can_create_db
+    "/pdb/sql/row/insert": {
+        "insert": can_create_db
     },
-    "/pdb/sql/list": {
+    "/pdb/sql/row/list": {
         "list_items": can_create_db
     },
     "/pdb/sql/schema": {
         "describe": can_create_db
+    },
+    "/pdb/sql/query": {
+        "query": can_create_db
     },
 }

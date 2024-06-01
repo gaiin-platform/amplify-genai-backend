@@ -13,6 +13,8 @@ plugins:
   - serverless-prune-plugin
 
 custom:
+  pythonRequirements:
+    dockerizePip: true
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
@@ -32,6 +34,7 @@ provider:
     PERSONAL_SQL_DYNAMO_TABLE: ${self:service}-${sls:stage}-personal-sql
     PERSONAL_SQL_S3_BUCKET: ${self:service}-${sls:stage}-personal-sql
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
+    PERSONAL_SQL_METADATA_TABLE: ${self:service}-${sls:stage}-personal-sql-metadata
 
   apiGateway:
     restApiId:
@@ -52,6 +55,7 @@ provider:
             - dynamodb:Scan
           Resource:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}"
         - Effect: Allow
           Action:
             - s3:GetObject
@@ -62,12 +66,18 @@ provider:
         - Effect: Allow
           Action:
             - s3:GetObject
+            - s3:PutObject
+          Resource:
+            - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}/*"
+        - Effect: Allow
+          Action:
+            - s3:GetObject
           Resource:
             - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
 
 functions:
 
-  sql_db_describe:
+  pdb_sql_db_describe:
     handler: service/core.describe_personal_db_schemas
     timeout: 30
     events:
@@ -76,8 +86,47 @@ functions:
           method: post
           cors: true
 
+  pdb_sql_get_user_dbs:
+    handler: service/core.get_user_dbs
+    timeout: 30
+    events:
+      - http:
+          path: pdb/sql/list
+          method: post
+          cors: true
+
+  pdb_sql_create_db:
+    handler: service/core.create_db
+    timeout: 30
+    events:
+      - http:
+          path: pdb/sql/create
+          method: post
+          cors: true
+
+  pdb_sql_query_db:
+    handler: service/core.query_personal_db
+    timeout: 30
+    events:
+      - http:
+          path: pdb/sql/query
+          method: post
+          cors: true
+
 resources:
   Resources:
+
+    DBBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.PERSONAL_SQL_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['PUT', 'POST']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+
     DistributedLocksTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -90,4 +139,27 @@ resources:
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
         
-           
+    PersonalSQLMetadataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: creator
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: CreatorIndex
+            KeySchema:
+              - AttributeName: creator
+                KeyType: HASH
+              - AttributeName: name
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST

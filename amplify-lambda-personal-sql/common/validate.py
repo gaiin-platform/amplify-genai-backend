@@ -40,15 +40,62 @@ class NotFound(HTTPException):
 Every service must define a schema each operation here. The schema is applied to the data field of the request
 body. You do NOT need to include the top-level "data" key in the schema.
 """
-sample_schema = {
+create_db_schema = {
     "type": "object",
     "properties": {
-        "msg": {
+        "name": {
             "type": "string",
-            "description": "The msg to echo"
+            "description": "The name of the database"
+        },
+        "description": {
+            "type": "string",
+            "description": "Description of the database",
+            "default": ""
+        },
+        "tags": {
+            "type": "array",
+            "description": "Tags associated with the database",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        },
+        "tables": {
+            "type": "array",
+            "description": "List of tables to be loaded into the database",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "table": {
+                        "type": "string",
+                        "description": "The name of the table"
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "The S3 key for the CSV file"
+                    }
+                },
+                "required": ["table", "key"]
+            }
         }
     },
-    "required": ["msg"]
+    "required": ["name", "tables"]
+}
+
+query_db_schema = {
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string",
+            "description": "The ID of the database"
+        },
+        "query": {
+            "type": "string",
+            "description": "The query to run",
+            "default": ""
+        }
+    },
+    "required": ["id", "query"]
 }
 
 """
@@ -56,8 +103,11 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/someservice/sample": {
-        "sample": sample_schema
+    "/pdb/sql/create": {
+        "create": create_db_schema
+    },
+    "/pdb/sql/query": {
+        "create": query_db_schema
     },
 }
 
