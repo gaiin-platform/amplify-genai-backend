@@ -35,6 +35,9 @@ provider:
     PERSONAL_SQL_S3_BUCKET: ${self:service}-${sls:stage}-personal-sql
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
     PERSONAL_SQL_METADATA_TABLE: ${self:service}-${sls:stage}-personal-sql-metadata
+    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
+    DEFAULT_ACCOUNT: "default"
+    DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
 
   apiGateway:
     restApiId:

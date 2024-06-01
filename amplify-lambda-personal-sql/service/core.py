@@ -31,6 +31,18 @@ def llm_query_db(event, context, current_user, name, data):
         db_id = data['id']
         task = data['query']
 
+        default_options = {
+            'account': 'default',
+            'model': 'gpt-4-turbo',
+            'limit': 25
+        }
+
+        options = data.get('options', default_options)
+        options = {**default_options, **options}
+
+        account = options.get('account', os.getenv('DEFAULT_ACCOUNT'))
+        model = options.get('model', os.getenv('DEFAULT_LLM_QUERY_MODEL'))
+
         max_tries = 3
         result = None
         tries = max_tries
@@ -39,7 +51,7 @@ def llm_query_db(event, context, current_user, name, data):
             try:
                 print(f"Querying db for: {current_user}/{db_id} with task: {task} (Tries left: {tries})")
                 tries -= 1
-                llm_query = llm_chat_query_db(current_user, access_token, "default", db_id, task)
+                llm_query = llm_chat_query_db(current_user, access_token, account, db_id, task, model)
                 sql, thought = parse_result(llm_query)
                 print(f"Thought: {thought}")
                 print(f"SQL: {sql}")

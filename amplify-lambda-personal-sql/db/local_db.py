@@ -290,7 +290,7 @@ def llm_chat_query_db(current_user, access_token, account, db_id, query, model="
         :param current_user:
     """
 
-    print(f"Querying database with ID {db_id} using LLM for user {current_user}")
+    print(f"Querying database with ID {db_id} using LLM for user {current_user} with Model {model}")
     dbschema = describe_schemas_from_user_db(current_user, db_id)
     print(f"Database schema JSON fetched")
     dbschema = convert_schema_dicts_to_text(dbschema)
@@ -336,7 +336,11 @@ sql: "<Insert SQL Query Here with no line breaks>"
         }
     }
 
-    response, _ = chat('http://localhost:8000/', access_token, payload)
+    chat_endpoint = os.getenv('CHAT_ENDPOINT')
+    if not chat_endpoint:
+        raise ValueError("Environment variable 'CHAT_ENDPOINT' is not set.")
+
+    response, _ = chat(chat_endpoint, access_token, payload)
 
     print(f"LLM Response: {response}")
 

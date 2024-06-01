@@ -98,6 +98,37 @@ query_db_schema = {
     "required": ["id", "query"]
 }
 
+llmquery_schema = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Data Schema",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+        "query": {
+            "type": "string"
+        },
+        "options": {
+            "type": "object",
+            "additionalProperties": True
+        }
+    },
+    "required": ["id", "query"]
+}
+
+id_schema = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Data Schema",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+    },
+    "required": ["id"]
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -107,7 +138,13 @@ validators = {
         "create": create_db_schema
     },
     "/pdb/sql/query": {
-        "create": query_db_schema
+        "query": query_db_schema
+    },
+    "/pdb/sql/llmquery": {
+        "query": llmquery_schema
+    },
+    "/pdb/sql/schema": {
+        "describe": id_schema
     },
 }
 
