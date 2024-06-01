@@ -4,10 +4,32 @@ import requests
 import json
 import os
 
-def upload_file(upload_url, accessToken, file_path):
+
+def tag_file(api_url, file_key, accessToken, tags):
+    data = {
+        "data": {
+            "id": file_key,
+            "tags": tags
+        }
+    }
+    headers = {
+        'Accept': '*/*',
+        'Authorization': f'Bearer {accessToken}',
+        'Content-Type': 'application/json'
+    }
+    response = requests.post(api_url+'/assistant/files/set_tags', headers=headers, data=json.dumps(data))
+    response.raise_for_status()  # Raise an exception for HTTP errors
+    result = response.json()
+    return result
+
+
+def upload_file(api_url, accessToken, file_path, tags=[]):
     # Extract file name from file path
     file_name = os.path.basename(file_path)
     content_type, _ = mimetypes.guess_type(file_path)
+
+    if content_type is None:
+        content_type = 'application/octet-stream'
 
     # First step: Get the presigned URL
     headers = {
@@ -18,35 +40,60 @@ def upload_file(upload_url, accessToken, file_path):
     data = {
         "data": {
             "actions": [],
-            "type": "application/pdf",
+            "type": content_type,
             "name": file_name,
             "knowledgeBase": "default",
-            "tags": [],
+            "tags": tags,
             "data": {}
         }
     }
 
-    response = requests.post(upload_url, headers=headers, data=json.dumps(data))
+    response = requests.post(api_url+'/assistant/files/upload', headers=headers, data=json.dumps(data))
     response.raise_for_status()  # Raise an exception for HTTP errors
     presigned_data = response.json()
-
-    print(presigned_data)
 
     # Extract the presigned URL
     presigned_url = presigned_data['uploadUrl']
 
     # Second step: Upload the file to the presigned URL
     with open(file_path, 'rb') as file:
-        upload_response = requests.put(presigned_url, data=file, headers={'Content-Type': content_type})
+        headers = {
+            'Accept': '*/*',
+            'Content-Type': content_type
+        }
+        upload_response = requests.put(presigned_url, data=file, headers=headers)
         upload_response.raise_for_status()  # Raise an exception for HTTP errors
 
     # Extract the key from the response JSON
     file_key = presigned_data.get('key')
 
-    return file_key
+    # Tag the file
+    if tags:
+        tag_file(api_url, file_key, accessToken, tags)
+
+    return presigned_data
+
+def chat(chat_url, accessToken, payload):
+    concatenated_d_data = ""
+    meta_events = []
+
+    # create a content handler that appends the "d" value to the concatenated_d_data
+    def content_handler(data):
+        nonlocal concatenated_d_data
+        concatenated_d_data += data.get("d", "")
+
+    # create a meta handler that appends the meta event to the meta_events list
+    def meta_handler(data):
+        nonlocal meta_events
+        meta_events.append(data)
+
+    # invoke the chat_streaming function with the provided parameters
+    chat_streaming(chat_url, accessToken, payload, content_handler, meta_handler)
+
+    return concatenated_d_data, meta_events
 
 
-def do_chat(url, accessToken, payload):
+def chat_streaming(chat_url, accessToken, payload, content_handler, meta_handler = lambda x: None):
     """
     Invoke the specified endpoint with a JSON payload and handle the streamed response.
 
@@ -73,21 +120,10 @@ def do_chat(url, accessToken, payload):
             "dataSources": [],
             "messages": [
                 {
-                    "role": "system",
-                    "content": "Follow the user's instructions carefully. Respond using markdown. If you are asked to draw a diagram, you can use Mermaid diagrams using mermaid.js syntax in a ```mermaid code block. If you are asked to visualize something, you can use a ```vega code block with Vega-lite. Don't draw a diagram or visualize anything unless explicitly asked to do so. Be concise in your responses unless told otherwise."
-                },
-                {
                     "role": "user",
-                    "content": "Tell me about the change management course.",
+                    "content": "Say hello in three words.",
                     "type": "prompt",
-                    "data": {
-                        "assistant": {
-                            "definition": {
-                                "assistantId": "example-assistant-id",
-                                "name": "Cloud Engineer"
-                            }
-                        }
-                    },
+                    "data": {},
                     "id": "example-id-1234"
                 }
             ],
@@ -95,27 +131,19 @@ def do_chat(url, accessToken, payload):
                 "requestId": "example-request-id",
                 "model": {
                     "id": "gpt-4-1106-Preview",
-                    "name": "GPT-4-Turbo (Azure)",
-                    "maxLength": 24000,
-                    "tokenLimit": 8000,
-                    "actualTokenLimit": 128000,
-                    "inputCost": 0.01,
-                    "outputCost": 0.03,
-                    "description": "Consider for complex tasks requiring advanced understanding.\nOffers further advanced intelligence over its predecessors.\nCan carry out complex mathematical operations, code assistance, analyze intricate documents and datasets, demonstrates critical thinking, and in-depth context understanding.\nTrained on information available through April 2023."
                 },
-                "prompt": "Follow the user's instructions carefully. Respond using markdown. If you are asked to draw a diagram, you can use Mermaid diagrams using mermaid.js syntax in a ```mermaid code block. If you are asked to visualize something, you can use a ```vega code block with Vega-lite. Don't draw a diagram or visualize anything unless explicitly asked to do so. Be concise in your responses unless told otherwise.",
-                "maxTokens": 1000,
+                "prompt": "Follow the user's instructions carefully. Respond using markdown. Be concise in your responses unless told otherwise.",
                 "ragOnly": True,
-                "accountId": "example-account-id"
             }
-        }
+    }
 
     Example usage:
         url = 'https://your-api-endpoint.com/path'
         access_token = 'your_access_token_here'
-        result, meta_events = invoke_endpoint(url, access_token, payload)
-        print("Concatenated Data:", result)
+        result, meta_events = chat(url, access_token, payload)
         print("Meta Events:", meta_events)
+        print("Concatenated Data:", result)
+
     """
     headers = {
         'Authorization': f'Bearer {accessToken}',
@@ -123,13 +151,10 @@ def do_chat(url, accessToken, payload):
     }
 
     # Send POST request to the specified URL
-    response = requests.post(url, headers=headers, json=payload, stream=True)
+    response = requests.post(chat_url, headers=headers, json=payload, stream=True)
 
     if response.status_code != 200:
         response.raise_for_status()
-
-    concatenated_d_data = ""
-    meta_events = []
 
     # Process the streamed response
     for line in response.iter_lines():
@@ -140,12 +165,11 @@ def do_chat(url, accessToken, payload):
                 if stripped_line:
                     data = json.loads(stripped_line)
                     if data.get("s") == "meta":
-                        meta_events.append(data)
+                        meta_handler(data)
                     else:
-                        concatenated_d_data += data.get("d", "")
+                        content_handler(data)
             except json.JSONDecodeError as e:
                 print(f"JSON decode error: {e} - Content: {line}")
                 continue
 
-    return concatenated_d_data, meta_events
 
