@@ -12,6 +12,7 @@ import uuid
 import time
 import os
 
+from llm.chat import chat
 from boto3.dynamodb.conditions import Key
 from dotenv import load_dotenv
 from sqlalchemy.sql import text
@@ -269,6 +270,79 @@ def fetch_data_from_db(s3_bucket, key_table_list, sql_query):
     return result_set
 
 
+def llm_chat_query_db(current_user, access_token, account, db_id, query, model="gpt-4-1106-Preview"):
+    """
+    Query the database using the LLM.
+
+    Args:
+        accessToken (str): The access token for the user.
+        account (str): The account name.
+        model (str): The model name.
+        query (str): The query to execute.
+
+    Returns:
+        list: A list of dictionaries representing the query results.
+        :param model:
+        :param db_id:
+        :param query:
+        :param access_token:
+        :param account:
+        :param current_user:
+    """
+
+    print(f"Querying database with ID {db_id} using LLM for user {current_user}")
+    dbschema = describe_schemas_from_user_db(current_user, db_id)
+    print(f"Database schema JSON fetched")
+    dbschema = convert_schema_dicts_to_text(dbschema)
+    print(f"Database schema created in text")
+
+    payload = {
+        "model": model,
+        "temperature": 1,
+        "max_tokens": 1000,
+        "stream": True,
+        "dataSources": [],
+        "messages": [
+            {
+                "role": "user",
+                "content":
+f"""
+The database schema is:
+----------
+{dbschema}
+----------
+
+Please create a SQL query for the task:                
+----------
+{query}
+----------
+
+In the format:
+thought: "<Insert your step-by-step thoughts in one sentence>"
+sql: "<Insert SQL Query Here with no line breaks>"
+""",
+                "type": "prompt",
+                "data": {},
+                "id": "example-id-1234"
+            }
+        ],
+        "options": {
+            "requestId": str(uuid.uuid4()),
+            "model": {
+                "id": model,
+            },
+            "prompt": "Follow the user's instructions carefully. Respond using the exact format specified.",
+            "ragOnly": True,
+        }
+    }
+
+    response, _ = chat('http://localhost:8000/', access_token, payload)
+
+    print(f"LLM Response: {response}")
+
+    # Query the database
+    return response
+
 def query_db(conn, sql_query):
     engine = sqlalchemy.create_engine('sqlite://', creator=lambda: conn)
     with engine.connect() as connection:
@@ -279,11 +353,20 @@ def query_db(conn, sql_query):
     return result_set
 
 
-def describe_schemas_from_db(s3_bucket, key_table_list):
+def describe_schemas_from_user_db(current_user, db_id):
+    conn = load_db_by_id(current_user, db_id)
+    return describe_schemas_from_db(conn)
+
+
+def describe_schemas_from_temp_db(s3_bucket, key_table_list):
     conn = get_db_connection_wal()
 
     # Load CSVs from S3 to the in-memory DB for each key-table pair
     load_csv_from_s3_to_db(s3_bucket, key_table_list, conn)
+    return describe_schemas_from_db(conn)
+
+
+def describe_schemas_from_db(conn):
 
     # Create an engine and inspector for schema inspection
     engine = sqlalchemy.create_engine('sqlite://', creator=lambda: conn)

@@ -77,14 +77,25 @@ provider:
 
 functions:
 
+  pdb_sql_files_db_describe:
+    handler: service/core.describe_db_schema
+    timeout: 30
+    events:
+      - http:
+          path: pdb/sql/files/schema
+          method: post
+          cors: true
+
+
   pdb_sql_db_describe:
-    handler: service/core.describe_personal_db_schemas
+    handler: service/core.describe_personal_db_schema
     timeout: 30
     events:
       - http:
           path: pdb/sql/schema
           method: post
           cors: true
+
 
   pdb_sql_get_user_dbs:
     handler: service/core.get_user_dbs
@@ -101,6 +112,15 @@ functions:
     events:
       - http:
           path: pdb/sql/create
+          method: post
+          cors: true
+
+  pdb_sql_llm_query_db:
+    handler: service/core.llm_query_db
+    timeout: 30
+    events:
+      - http:
+          path: pdb/sql/llmquery
           method: post
           cors: true
 

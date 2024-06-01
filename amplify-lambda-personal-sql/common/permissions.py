@@ -37,7 +37,13 @@ permissions_by_state_type = {
     "/pdb/sql/schema": {
         "describe": can_create_db
     },
+    "/pdb/sql/files/schema": {
+        "describe": can_create_db
+    },
     "/pdb/sql/query": {
+        "query": can_create_db
+    },
+    "/pdb/sql/llmquery": {
         "query": can_create_db
     },
 }
