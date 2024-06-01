@@ -1,11 +1,10 @@
 import mimetypes
-
 import requests
 import json
 import os
 
 
-def tag_file(api_url, file_key, accessToken, tags):
+def tag_file(api_url, file_key, access_token, tags):
     data = {
         "data": {
             "id": file_key,
@@ -14,7 +13,7 @@ def tag_file(api_url, file_key, accessToken, tags):
     }
     headers = {
         'Accept': '*/*',
-        'Authorization': f'Bearer {accessToken}',
+        'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
     response = requests.post(api_url+'/assistant/files/set_tags', headers=headers, data=json.dumps(data))
@@ -23,7 +22,7 @@ def tag_file(api_url, file_key, accessToken, tags):
     return result
 
 
-def upload_file(api_url, accessToken, file_path, tags=[]):
+def upload_file(api_url, access_token, file_path, tags=[]):
     # Extract file name from file path
     file_name = os.path.basename(file_path)
     content_type, _ = mimetypes.guess_type(file_path)
@@ -34,7 +33,7 @@ def upload_file(api_url, accessToken, file_path, tags=[]):
     # First step: Get the presigned URL
     headers = {
         'Accept': '*/*',
-        'Authorization': f'Bearer {accessToken}',
+        'Authorization': f'Bearer {access_token}',
         'Content-Type': content_type
     }
     data = {
@@ -69,31 +68,12 @@ def upload_file(api_url, accessToken, file_path, tags=[]):
 
     # Tag the file
     if tags:
-        tag_file(api_url, file_key, accessToken, tags)
+        tag_file(api_url, file_key, access_token, tags)
 
     return presigned_data
 
-def chat(chat_url, accessToken, payload):
-    concatenated_d_data = ""
-    meta_events = []
 
-    # create a content handler that appends the "d" value to the concatenated_d_data
-    def content_handler(data):
-        nonlocal concatenated_d_data
-        concatenated_d_data += data.get("d", "")
-
-    # create a meta handler that appends the meta event to the meta_events list
-    def meta_handler(data):
-        nonlocal meta_events
-        meta_events.append(data)
-
-    # invoke the chat_streaming function with the provided parameters
-    chat_streaming(chat_url, accessToken, payload, content_handler, meta_handler)
-
-    return concatenated_d_data, meta_events
-
-
-def chat_streaming(chat_url, accessToken, payload, content_handler, meta_handler = lambda x: None):
+def chat(chat_url, access_token, payload):
     """
     Invoke the specified endpoint with a JSON payload and handle the streamed response.
 
@@ -105,7 +85,7 @@ def chat_streaming(chat_url, accessToken, payload, content_handler, meta_handler
 
     Args:
         url (str): The endpoint URL to send the POST request to.
-        accessToken (str): The access token used for authorization (Bearer token).
+        access_token (str): The access token used for authorization (Bearer token).
         payload (dict): The JSON payload containing the request parameters.
 
     Returns:
@@ -144,9 +124,89 @@ def chat_streaming(chat_url, accessToken, payload, content_handler, meta_handler
         print("Meta Events:", meta_events)
         print("Concatenated Data:", result)
 
+        :param chat_url:
+        :param payload:
+        :param access_token:
+
+    """
+    concatenated_d_data = ""
+    meta_events = []
+
+    # create a content handler that appends the "d" value to the concatenated_d_data
+    def content_handler(data):
+        nonlocal concatenated_d_data
+        concatenated_d_data += data.get("d", "")
+
+    # create a meta handler that appends the meta event to the meta_events list
+    def meta_handler(data):
+        nonlocal meta_events
+        meta_events.append(data)
+
+    # invoke the chat_streaming function with the provided parameters
+    chat_streaming(chat_url, access_token, payload, content_handler, meta_handler)
+
+    return concatenated_d_data, meta_events
+
+
+def chat_streaming(chat_url, access_token, payload, content_handler, meta_handler = lambda x: None):
+    """
+    Invoke the specified endpoint with a JSON payload and handle the streamed response
+    by providing the streamed events to the content_handler and meta_handler.
+
+    This function sends a POST request to the given URL, using the provided access token
+    for authorization. The payload is a JSON object that includes various configurations
+    like model, temperature, max_tokens, and messages.
+
+    Args:
+        url (str): The endpoint URL to send the POST request to.
+        access_token (str): The access token used for authorization (Bearer token).
+        payload (dict): The JSON payload containing the request parameters.
+        content_handler (function): A function that handles the content events.
+        meta_handler (function): A function that handles the meta events.
+
+    Returns:
+        tuple: A tuple containing the concatenated string of "d" values and a list of "meta" events.
+
+    Example payload:
+        payload = {
+            "model": "gpt-4-1106-Preview",
+            "temperature": 1,
+            "max_tokens": 1000,
+            "stream": True,
+            "dataSources": [],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Say hello in three words.",
+                    "type": "prompt",
+                    "data": {},
+                    "id": "example-id-1234"
+                }
+            ],
+            "options": {
+                "requestId": "example-request-id",
+                "model": {
+                    "id": "gpt-4-1106-Preview",
+                },
+                "prompt": "Follow the user's instructions carefully. Respond using markdown. Be concise in your responses unless told otherwise.",
+                "ragOnly": True,
+            }
+    }
+
+    Example usage:
+        url = 'https://your-api-endpoint.com/path'
+        access_token = 'your_access_token_here'
+        chat_streaming(url, access_token, payload, lambda x: print(x), lambda x: print(x))
+
+        :param chat_url:
+        :param payload:
+        :param access_token:
+        :param meta_handler:
+        :param content_handler:
+
     """
     headers = {
-        'Authorization': f'Bearer {accessToken}',
+        'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
 
