@@ -80,8 +80,9 @@ sql: "<Insert SQL Query Here with no line breaks>"
     return response
 
 
-def query_db(conn, sql_query):
-    engine = sqlalchemy.create_engine('sqlite://', creator=lambda: conn)
+def query_db(conn_info, sql_query):
+    conn, engine_type = conn_info
+    engine = sqlalchemy.create_engine(engine_type, creator=lambda: conn)
     with engine.connect() as connection:
         result = connection.execute(text(sql_query))
         # Step 4: Fetch results as dictionary
@@ -91,14 +92,18 @@ def query_db(conn, sql_query):
 
 
 def describe_schemas_from_user_db(current_user, db_id):
-    conn = load_db_by_id(current_user, db_id)
-    return describe_schemas_from_db(conn)
+    conn_info = load_db_by_id(current_user, db_id)
+    return describe_schemas_from_db(conn_info)
 
 
-def describe_schemas_from_db(conn):
+def describe_schemas_from_db(conn_info):
+
+    conn, engine_type = conn_info
+
+    print(f"Describing schema for database with engine type: {engine_type}")
 
     # Create an engine and inspector for schema inspection
-    engine = sqlalchemy.create_engine('sqlite://', creator=lambda: conn)
+    engine = sqlalchemy.create_engine(engine_type, creator=lambda: conn)
     inspector = inspect(engine)
 
     schema_descriptions = []
@@ -153,13 +158,14 @@ def query_db_by_id(current_user, db_id, sql_query):
     """
     # Load the database into memory
     print(f"Loading database with ID {db_id} for user {current_user}")
-    conn = load_db_by_id(current_user, db_id)
+    conn_info = load_db_by_id(current_user, db_id)
 
     print(f"Executing query: {sql_query}")
     # Execute the SQL query
-    result_set = query_db(conn, sql_query)
+    result_set = query_db(conn_info, sql_query)
 
     # Close the database connection
+    conn, _ = conn_info
     conn.close()
 
     return result_set

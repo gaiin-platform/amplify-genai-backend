@@ -135,7 +135,7 @@ def pdbs_handler(current_user, db_id, metadata, data):
 
     print(f"Database loaded into memory for user {current_user} from S3 key {s3_key}")
 
-    return conn
+    return conn, 'sqlite://'
 
 
 def load_db_by_id(current_user, db_id):
@@ -160,8 +160,9 @@ def fetch_data_from_db(s3_bucket, key_table_list, sql_query):
     # Step 2: Load CSVs from S3 to the in-memory DB for each key-table pair
     load_csv_from_s3_to_db(s3_bucket, key_table_list, conn)
 
+    conn_info = conn, 'sqlite://'
     # Step 3: Execute the SQL query
-    result_set = query_db(conn, sql_query)
+    result_set = query_db(conn_info, sql_query)
     conn.close()
 
     return result_set
@@ -169,10 +170,10 @@ def fetch_data_from_db(s3_bucket, key_table_list, sql_query):
 
 def describe_schemas_from_temp_db(s3_bucket, key_table_list):
     conn = get_db_connection_wal()
-
+    conn_info = conn, 'sqlite://'
     # Load CSVs from S3 to the in-memory DB for each key-table pair
     load_csv_from_s3_to_db(s3_bucket, key_table_list, conn)
-    return describe_schemas_from_db(conn)
+    return describe_schemas_from_db(conn_info)
 
 
 def insert_data_to_db(s3_bucket, s3_key, insert_sql, data_list):

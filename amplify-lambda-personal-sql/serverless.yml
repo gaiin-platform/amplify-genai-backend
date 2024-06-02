@@ -118,6 +118,15 @@ functions:
           method: post
           cors: true
 
+  pdb_sql_register_db:
+    handler: service/core.register_db
+    timeout: 30
+    events:
+      - http:
+          path: pdb/sql/register
+          method: post
+          cors: true
+
   pdb_sql_llm_query_db:
     handler: service/core.llm_query_db
     timeout: 30

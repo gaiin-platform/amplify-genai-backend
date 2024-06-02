@@ -25,6 +25,9 @@ permissions_by_state_type = {
     "/pdb/sql/create": {
         "create": can_create_db
     },
+    "/pdb/sql/register": {
+        "register": can_create_db
+    },
     "/pdb/sql/list": {
         "list": can_create_db
     },

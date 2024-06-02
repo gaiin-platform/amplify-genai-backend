@@ -1,12 +1,19 @@
 import os
+import uuid
+import datetime
 import boto3
+
+# Don't remove, required for the registry to work
+from db.postgres import postgres_handler
+
 from common.validate import validated
 from botocore.exceptions import ClientError
 
 from db.local_db import create_and_save_db_for_user, describe_schemas_from_temp_db
 from db.query import llm_chat_query_db, describe_schemas_from_user_db, query_db_by_id, describe_schemas_from_db, \
     convert_schema_dicts_to_text, query_db
-from db.registry import get_dbs_for_user, load_db_by_id
+
+import db.registry as registry
 
 dynamodb = boto3.resource('dynamodb')
 files_bucket = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
@@ -49,7 +56,7 @@ def llm_query_db(event, context, current_user, name, data):
         result = None
         tries = max_tries
 
-        conn = load_db_by_id(current_user, db_id)
+        conn = registry.load_db_by_id(current_user, db_id)
 
         print(f"Querying database with ID {db_id} using LLM for user {current_user} with Model {model}")
         dbschema = describe_schemas_from_db(conn)
@@ -67,7 +74,6 @@ def llm_query_db(event, context, current_user, name, data):
                 print(f"SQL: {sql}")
 
                 result = query_db(conn, sql)
-                #result = query_db_by_id(current_user, db_id, sql)
 
             except Exception as e:
                 print(e)
@@ -83,6 +89,46 @@ def llm_query_db(event, context, current_user, name, data):
         return {
             'success': False,
             'message': "Failed to query DB"
+        }
+
+
+@validated(op="register")
+def register_db(event, context, current_user, name, data):
+    try:
+        event_data = data['data']
+        db_name = event_data.get('name')
+        description = event_data.get('description', '')
+        db_type = event_data.get('type')
+        tags = event_data.get('tags', [])
+        db_data = event_data.get('connection', {})
+
+        # attempt to get a handler for the type
+        handler = None
+        try:
+            handler = registry.get_db_handler_for_type(db_type)
+        except Exception as e:
+            print(e)
+
+        if handler is None:
+            return {
+                'success': False,
+                'message': f"Unsupported database type"
+            }
+
+        db_id = f"{db_type}/{str(uuid.uuid4())}"
+        timestamp = datetime.datetime.now().isoformat()
+
+        registry.register_db(current_user, db_type, db_id, db_name, description, tags, timestamp, db_data)
+
+        return {
+            'success': True,
+            'id': db_id
+        }
+    except Exception as e:
+        print(e)
+        return {
+            'success': False,
+            'message': "Failed to register DB"
         }
 
 
@@ -130,7 +176,7 @@ def get_user_dbs(event, context, current_user, name, data):
         print(f"Fetching list of databases for user: {current_user}")
 
         # Call the function that performs the business logic
-        user_dbs = get_dbs_for_user(current_user)
+        user_dbs = registry.get_dbs_for_user(current_user)
 
         print(f"List of databases fetched for {current_user}")
 
@@ -160,8 +206,9 @@ def describe_personal_db_schema(event, context, current_user, name, data):
         print(f"Fetching schema descriptions for user: {current_user}")
 
         # Call the function that performs the business logic
-        conn = load_db_by_id(current_user, db_id)
-        schema_descriptions = describe_schemas_from_db(conn)
+        conn_info = registry.load_db_by_id(current_user, db_id)
+        schema_descriptions = describe_schemas_from_db(conn_info)
+        conn, _ = conn_info
         conn.close()
 
         print(f"Schema descriptions fetched for {current_user}/{db_id}")
@@ -170,12 +217,16 @@ def describe_personal_db_schema(event, context, current_user, name, data):
             'success': True,
             'data': schema_descriptions
         }
-    except ClientError:
+    except ClientError as e:
+        print("Error in describe_personal_db_schema")
+        print(e)
         return {
             'success': False,
             'message': "Failed to describe schemas from DB"
         }
     except Exception as e:
+        print("Error in describe_personal_db_schema")
+        print(e)
         return {
             'success': False,
             'message': "Failed to describe schemas from DB"

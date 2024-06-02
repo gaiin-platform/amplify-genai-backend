@@ -117,6 +117,42 @@ llmquery_schema = {
     "required": ["id", "query"]
 }
 
+register_schema = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "EventData",
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "The name of the database."
+        },
+        "description": {
+            "type": "string",
+            "description": "A description of the database.",
+            "default": ""
+        },
+        "type": {
+            "type": "string",
+            "description": "The type of the database."
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Tags associated with the database.",
+            "default": []
+        },
+        "connection": {
+            "type": "object",
+            "description": "Connection details for the database.",
+            "additionalProperties": True,
+            "default": {}
+        }
+    },
+    "required": ["name", "type", "description", "connection"]
+}
+
 id_schema = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Data Schema",
@@ -136,6 +172,9 @@ The permission is related to a request path and to a specific operation.
 validators = {
     "/pdb/sql/create": {
         "create": create_db_schema
+    },
+    "/pdb/sql/register": {
+        "create": register_schema
     },
     "/pdb/sql/query": {
         "query": query_db_schema
