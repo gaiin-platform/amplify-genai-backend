@@ -3,8 +3,10 @@ import boto3
 from common.validate import validated
 from botocore.exceptions import ClientError
 
-from db.local_db import describe_schemas_from_db, get_dbs_for_user, create_and_save_db_for_user, query_db_by_id, \
-    describe_schemas_from_temp_db, describe_schemas_from_user_db, llm_chat_query_db
+from db.local_db import create_and_save_db_for_user, describe_schemas_from_temp_db
+from db.query import llm_chat_query_db, describe_schemas_from_user_db, query_db_by_id, describe_schemas_from_db, \
+    convert_schema_dicts_to_text, query_db
+from db.registry import get_dbs_for_user, load_db_by_id
 
 dynamodb = boto3.resource('dynamodb')
 files_bucket = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
@@ -47,16 +49,25 @@ def llm_query_db(event, context, current_user, name, data):
         result = None
         tries = max_tries
 
+        conn = load_db_by_id(current_user, db_id)
+
+        print(f"Querying database with ID {db_id} using LLM for user {current_user} with Model {model}")
+        dbschema = describe_schemas_from_db(conn)
+        print(f"Database schema JSON fetched")
+        dbschema = convert_schema_dicts_to_text(dbschema)
+        print(f"Database schema created in text")
+
         while result is None and tries > 0:
             try:
-                print(f"Querying db for: {current_user}/{db_id} with task: {task} (Tries left: {tries})")
+                print(f"Using LLM to create query for: {current_user}/{db_id} with task: {task} (Tries left: {tries})")
                 tries -= 1
-                llm_query = llm_chat_query_db(current_user, access_token, account, db_id, task, model)
+                llm_query = llm_chat_query_db(current_user, access_token, account, db_id, dbschema, task, model)
                 sql, thought = parse_result(llm_query)
                 print(f"Thought: {thought}")
                 print(f"SQL: {sql}")
 
-                result = query_db_by_id(current_user, db_id, sql)
+                result = query_db(conn, sql)
+                #result = query_db_by_id(current_user, db_id, sql)
 
             except Exception as e:
                 print(e)
@@ -73,6 +84,7 @@ def llm_query_db(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to query DB"
         }
+
 
 @validated(op="create")
 def create_db(event, context, current_user, name, data):
@@ -143,14 +155,16 @@ def describe_personal_db_schema(event, context, current_user, name, data):
     try:
         # Extract parameters from the event data
         event_data = data['data']
-        dbid = event_data.get('id')
+        db_id = event_data.get('id')
 
         print(f"Fetching schema descriptions for user: {current_user}")
 
         # Call the function that performs the business logic
-        schema_descriptions = describe_schemas_from_user_db(current_user, dbid)
+        conn = load_db_by_id(current_user, db_id)
+        schema_descriptions = describe_schemas_from_db(conn)
+        conn.close()
 
-        print(f"Schema descriptions fetched for {current_user}/{dbid}")
+        print(f"Schema descriptions fetched for {current_user}/{db_id}")
 
         return {
             'success': True,
