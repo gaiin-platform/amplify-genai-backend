@@ -499,7 +499,7 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
  * @param dataSource
  * @returns {Promise<{name, content: {canSplit: boolean, tokens, location: {key: *}, content: *}[]}|*[]|*>}
  */
-export const getContent = async (dataSource) => {
+export const getContent = async (chatRequest, params, dataSource) => {
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
@@ -515,6 +515,50 @@ export const getContent = async (dataSource) => {
         }
 
         return result;
+
+    } else if (sourceType === 'pdbs://') {
+        // Call the PDBS API
+
+        const dbId = dataSource.id.slice(sourceType.length);
+        const query = chatRequest.messages.slice(-1)[0].content;
+
+        const url = "https://dev-api.vanderbilt.ai/pdb/sql/llmquery"
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + params.account.accessToken
+            },
+            body: JSON.stringify({
+                data: {
+                    "id":dbId,
+                    "query":query,
+                    "options": {
+                        "model": "gpt-4o"
+                    }
+                }
+            })
+        });
+
+        const data = await response.json();
+
+        const contents = [{
+            "content": JSON.stringify(data.data),
+            "tokens": 1000,
+            "location": {
+                "key": dataSource.id
+            },
+            "canSplit": true
+        }];
+
+        const content =
+            {
+                "name": dataSource.id,
+                "content": contents
+            }
+
+        return content;
+
     } else if (sourceType === 'obj://') {
         logger.debug("Fetching data from object");
 
@@ -555,7 +599,8 @@ export const getContent = async (dataSource) => {
  * @param options
  * @returns {Promise<*[]|*>}
  */
-export const getContexts = async (tokenCounter, dataSource, maxTokens, options) => {
+export const getContexts = async (resolutionEnv, dataSource, maxTokens, options) => {
+    const tokenCounter = resolutionEnv.tokenCounter;
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Get contexts with options", options);
@@ -563,6 +608,6 @@ export const getContexts = async (tokenCounter, dataSource, maxTokens, options) 
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
-    const result = await getContent(dataSource);
+    const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
     return formatAndChunkDataSource(tokenCounter, dataSource, result, maxTokens, options);
 }

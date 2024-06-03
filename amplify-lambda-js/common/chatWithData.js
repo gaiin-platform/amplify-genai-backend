@@ -268,9 +268,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     let contexts = []
     if(!params.options.ragOnly) {
         try {
+            const contextResolverEnv = {
+                tokenCounter: tokenCounter.countTokens,
+                chatFn,
+                params,
+                chatRequest:chatRequestOrig
+            };
+
             contexts = (await Promise.all(
                 dataSources.map(dataSource => {
-                    return getContexts(tokenCounter.countTokens, dataSource, maxTokens, options);
+                    return getContexts(contextResolverEnv, dataSource, maxTokens, options);
                 })))
                 .flat()
                 .map((context) => {
