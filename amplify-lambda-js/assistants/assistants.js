@@ -145,6 +145,7 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 }
 
 export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, assistants = defaultAssistants) => {
+    console.log(chooseAssistantForRequestWithLLM);
 
     const messages = [
         {
@@ -219,6 +220,7 @@ const getTokenCount = (dataSource) => {
 }
 
 export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {
+    console.log("getAvailableAssistantsForDataSources function")
 
     // if (!dataSources || dataSources.length === 0) {
     //     return [defaultAssistant];
@@ -234,6 +236,7 @@ const isUserDefinedAssistant = (assistantId) => {
 }
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
+    logger.info(`Choose Assistant for Request `);
 
     let selected = defaultAssistant;
 
@@ -242,6 +245,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     let selectedAssistant = null;
     if(clientSelectedAssistant) {
+        logger.info(`Client Selected Assistant`);
         selectedAssistant = await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
     }
 
@@ -280,6 +284,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     selected = selectedAssistant || defaultAssistant;
 
+    logger.info("Sending State Event to Stream ", selectedAssistant.name);
     llm.sendStateEventToStream({
         currentAssistant: selectedAssistant.name,
         currentAssistantId: clientSelectedAssistant || selectedAssistant.name
