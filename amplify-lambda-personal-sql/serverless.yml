@@ -36,8 +36,11 @@ provider:
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
     PERSONAL_SQL_METADATA_TABLE: ${self:service}-${sls:stage}-personal-sql-metadata
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
+    DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
+    OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
+    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
 
   apiGateway:
     restApiId:
@@ -77,6 +80,11 @@ provider:
             - s3:GetObject
           Resource:
             - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+          Resource:
+            - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
 
 functions:
 

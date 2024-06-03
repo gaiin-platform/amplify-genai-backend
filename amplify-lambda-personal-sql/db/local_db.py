@@ -9,6 +9,7 @@ import uuid
 import time
 import os
 
+from common.object_permissions import can_access_objects
 from db.query import query_db, describe_schemas_from_db
 from db.registry import register_db, get_db_metadata, db_handler
 
@@ -28,7 +29,7 @@ def get_db_connection_wal():
     return conn
 
 
-def load_csv_from_s3_to_db(s3_bucket, key_table_list, conn):
+def load_csv_from_s3_to_db(current_user, access_token, s3_bucket, key_table_list, conn):
     """
     Load multiple CSV files from S3 to database tables
 
@@ -44,6 +45,12 @@ def load_csv_from_s3_to_db(s3_bucket, key_table_list, conn):
     key_table_list (list): List of dictionaries with 'table' and 'key'
     conn: Database connection
     """
+
+    # Create a list of all the keys from the list of items in key_table_list
+    data_sources = [{'id': item['key']} for item in key_table_list]
+    if not can_access_objects(current_user, access_token, data_sources):
+        raise ValueError("Access denied to the data sources.")
+
     for item in key_table_list:
         table_name = item['table']
         s3_key = item['key']
@@ -154,11 +161,11 @@ def load_db_by_id(current_user, db_id):
     return pdbs_handler(current_user, db_id, metadata, metadata.get('data'))
 
 
-def fetch_data_from_db(s3_bucket, key_table_list, sql_query):
+def fetch_data_from_db(current_user, access_token, s3_bucket, key_table_list, sql_query):
     conn = get_db_connection_wal()
 
     # Step 2: Load CSVs from S3 to the in-memory DB for each key-table pair
-    load_csv_from_s3_to_db(s3_bucket, key_table_list, conn)
+    load_csv_from_s3_to_db(current_user, access_token, s3_bucket, key_table_list, conn)
 
     conn_info = conn, 'sqlite://'
     # Step 3: Execute the SQL query
@@ -168,15 +175,15 @@ def fetch_data_from_db(s3_bucket, key_table_list, sql_query):
     return result_set
 
 
-def describe_schemas_from_temp_db(s3_bucket, key_table_list):
+def describe_schemas_from_temp_db(current_user, access_token, s3_bucket, key_table_list):
     conn = get_db_connection_wal()
     conn_info = conn, 'sqlite://'
     # Load CSVs from S3 to the in-memory DB for each key-table pair
-    load_csv_from_s3_to_db(s3_bucket, key_table_list, conn)
+    load_csv_from_s3_to_db(current_user, access_token, s3_bucket, key_table_list, conn)
     return describe_schemas_from_db(conn_info)
 
 
-def insert_data_to_db(s3_bucket, s3_key, insert_sql, data_list):
+def insert_data_to_db(current_user, access_token, s3_bucket, s3_key, insert_sql, data_list):
     resource_id = f"{s3_bucket}/{s3_key}"
 
     lock_id = acquire_lock(resource_id)
@@ -188,7 +195,7 @@ def insert_data_to_db(s3_bucket, s3_key, insert_sql, data_list):
         conn = get_db_connection_wal()
 
         # Load CSV from S3 to DB
-        load_csv_from_s3_to_db(s3_bucket, s3_key, conn)
+        load_csv_from_s3_to_db(current_user, access_token, s3_bucket, s3_key, conn)
 
         # Prepare and execute insert statements
         cursor = conn.cursor()
@@ -209,7 +216,7 @@ def insert_data_to_db(s3_bucket, s3_key, insert_sql, data_list):
     return {"status": "success"}
 
 
-def create_and_save_db_for_user(current_user, s3_db_bucket, s3_files_bucket, key_table_list, db_name, description, tags):
+def create_and_save_db_for_user(access_token, current_user, s3_db_bucket, s3_files_bucket, key_table_list, db_name, description, tags):
     """
     Create a SQLite database, save it to S3 in a directory under the user, and return a unique identifier for the db.
 
@@ -231,7 +238,7 @@ def create_and_save_db_for_user(current_user, s3_db_bucket, s3_files_bucket, key
     conn = get_db_connection_wal()
 
     # Load CSV files from S3 to the database
-    load_csv_from_s3_to_db(s3_files_bucket, key_table_list, conn)
+    load_csv_from_s3_to_db(current_user, access_token, s3_files_bucket, key_table_list, conn)
 
     # Create the path for saving the DB in S3
     timestamp = datetime.datetime.now().isoformat()

@@ -5,6 +5,7 @@ from boto3.dynamodb.conditions import Key
 from functools import wraps
 from boto3.dynamodb.types import TypeSerializer
 
+from common.secrets import update_dict_with_secrets, store_secrets_in_dict
 
 dynamodb = boto3.client('dynamodb')
 serializer = TypeSerializer()
@@ -34,6 +35,7 @@ def get_db_handler_for_type(type):
 
 
 def load_db_by_id(current_user, db_id):
+
     # Get the metadata for the database
     metadata = get_db_metadata(current_user, db_id)
     db_type = metadata['type']
@@ -59,7 +61,7 @@ def register_db(current_user, db_type, db_id, db_name, description, tags, timest
         'tags': tags,
         'createdAt': timestamp,
         'lastModified': timestamp,
-        'data': data
+        'data': store_secrets_in_dict(data)
     }
 
     # Convert metadata item to the DynamoDB format using TypeSerializer
@@ -120,4 +122,13 @@ def get_db_metadata(current_user, db_id):
         print(f"No metadata found for database with id {db_id}")
         raise ValueError(f"No metadata found for database with id {db_id}")
     metadata = response['Item']
+
+    # This will need to change in order to implement sharing
+    if metadata.get('creator') != current_user:
+        print(f"User {current_user} is not the creator of the database with id {db_id}")
+        raise ValueError(f"User {current_user} is not the creator of the database with id {db_id}")
+
+    data = metadata.get('data')
+    metadata['data'] = update_dict_with_secrets(data)
+
     return metadata

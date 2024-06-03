@@ -135,6 +135,7 @@ def register_db(event, context, current_user, name, data):
 @validated(op="create")
 def create_db(event, context, current_user, name, data):
     try:
+        access_token = data['accessToken']
         event_data = data['data']
         s3_bucket = os.getenv('PERSONAL_SQL_S3_BUCKET')
         key_table_list = event_data.get('tables')
@@ -151,7 +152,7 @@ def create_db(event, context, current_user, name, data):
         print(f"Creating DB for user: {current_user}")
 
         s3_files_bucket = os.getenv('ASSISTANTS_FILES_BUCKET_NAME')
-        db_id = create_and_save_db_for_user(current_user, s3_bucket, s3_files_bucket, key_table_list, db_name, description, tags)
+        db_id = create_and_save_db_for_user(access_token, current_user, s3_bucket, s3_files_bucket, key_table_list, db_name, description, tags)
 
         print(f"DB created for {current_user} with ID: {db_id}")
 
@@ -237,6 +238,7 @@ def describe_personal_db_schema(event, context, current_user, name, data):
 def describe_db_schema(event, context, current_user, name, data):
     try:
         # Extract parameters from the event data
+        access_token = data['accessToken']
         event_data = data['data']
         key_table_list = event_data.get('tables')
 
@@ -249,7 +251,7 @@ def describe_db_schema(event, context, current_user, name, data):
         print(f"Fetching schema descriptions for user: {current_user}")
 
         # Call the function that performs the business logic
-        schema_descriptions = describe_schemas_from_temp_db(files_bucket, key_table_list)
+        schema_descriptions = describe_schemas_from_temp_db(current_user, access_token, files_bucket, key_table_list)
 
         print(f"Schema descriptions fetched for {current_user}")
 
