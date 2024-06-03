@@ -4,6 +4,7 @@ import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
+import getDatasourceHandler from "./external.js";
 
 const logger = getLogger("datasources");
 
@@ -516,49 +517,6 @@ export const getContent = async (chatRequest, params, dataSource) => {
 
         return result;
 
-    } else if (sourceType === 'pdbs://') {
-        // Call the PDBS API
-
-        const dbId = dataSource.id.slice(sourceType.length);
-        const query = chatRequest.messages.slice(-1)[0].content;
-
-        const url = "https://dev-api.vanderbilt.ai/pdb/sql/llmquery"
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + params.account.accessToken
-            },
-            body: JSON.stringify({
-                data: {
-                    "id":dbId,
-                    "query":query,
-                    "options": {
-                        "model": "gpt-4o"
-                    }
-                }
-            })
-        });
-
-        const data = await response.json();
-
-        const contents = [{
-            "content": JSON.stringify(data.data),
-            "tokens": 1000,
-            "location": {
-                "key": dataSource.id
-            },
-            "canSplit": true
-        }];
-
-        const content =
-            {
-                "name": dataSource.id,
-                "content": contents
-            }
-
-        return content;
-
     } else if (sourceType === 'obj://') {
         logger.debug("Fetching data from object");
 
@@ -584,9 +542,15 @@ export const getContent = async (chatRequest, params, dataSource) => {
             }
 
         return content;
-    } else {
-        return [dataSource];
     }
+    else if (sourceType) {
+        const handler = await getDatasourceHandler(sourceType, chatRequest, params, dataSource);
+        if (handler) {
+            return await handler(chatRequest, params, dataSource);
+        }
+    }
+
+    return [dataSource];
 }
 
 /**
