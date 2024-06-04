@@ -1,8 +1,80 @@
 import os
-
+import boto3
 import requests
 import json
 
+
+def update_object_permissions(current_user, data):
+
+    print(f"Updating object permissions for {current_user}")
+
+    dynamodb = boto3.resource('dynamodb')
+    table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+
+    if not table_name:
+        raise ValueError("Environment variable 'OBJECT_ACCESS_DYNAMODB_TABLE' is not set.")
+
+    try:
+        data_sources = data['dataSources']
+        email_list = data['emailList']
+        provided_permission_level = data['permissionLevel']  # Permission level provided for other users
+        policy = data['policy']  # No need to use get() since policy is always present
+        principal_type = data.get('principalType')
+        object_type = data.get('objectType')
+
+        print(f"Updating permission on {data_sources} for {email_list} with {provided_permission_level} and {policy}")
+
+        # Get the DynamoDB table
+        table = dynamodb.Table(table_name)
+
+        for object_id in data_sources:
+            # Check if any permissions already exist for the object_id
+            query_response = table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('object_id').eq(object_id)
+            )
+            items = query_response.get('Items')
+
+            # If there are no permissions, create the initial item with the current_user as the owner
+            if not items:
+                table.put_item(Item={
+                    'object_id': object_id,
+                    'principal_id': current_user,
+                    'principal_type': principal_type,
+                    'object_type': object_type,
+                    'permission_level': 'write',  # The current_user becomes the owner
+                    'policy': policy
+                })
+                print(f"Created initial item for {object_id} with {current_user} as owner")
+
+            else:
+                # If current_user is the owner or has write permission, proceed with updates
+                for principal_id in email_list:
+                    # Create or update the permission level for each principal_id
+                    principal_key = {
+                        'object_id': object_id,
+                        'principal_id': principal_id
+                    }
+                    # Use the provided permission level for other users
+                    update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
+                    expression_attribute_values = {
+                        ':principal_type': principal_type,
+                        ':object_type': object_type,
+                        ':permission_level': provided_permission_level,  # Use the provided permission level
+                        ':policy': policy
+                    }
+                    table.update_item(
+                        Key=principal_key,
+                        UpdateExpression=update_expression,
+                        ExpressionAttributeValues=expression_attribute_values
+                    )
+                    print(f"Updated item for {object_id} with {principal_id} to {provided_permission_level}")
+
+    except Exception as e:
+        print(f"Failed to update permissions: {str(e)}")
+        return False
+
+    print(f"Updated permissions for {data_sources} for {email_list} with {provided_permission_level} and {policy}")
+    return True
 
 
 def can_access_objects(current_user, access_token, data_sources, permission_level="read"):

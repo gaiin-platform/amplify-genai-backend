@@ -5,6 +5,7 @@ from boto3.dynamodb.conditions import Key
 from functools import wraps
 from boto3.dynamodb.types import TypeSerializer
 
+from common.object_permissions import update_object_permissions
 from common.secrets import update_dict_with_secrets, store_secrets_in_dict
 
 dynamodb = boto3.client('dynamodb')
@@ -51,25 +52,54 @@ def load_db_by_id(current_user, db_id):
 
 
 def register_db(current_user, db_type, db_id, db_name, description, tags, timestamp, data):
-    # Save metadata such as description and tags
-    metadata_item = {
-        'id': db_id,
-        'type': db_type,
-        'creator': current_user,
-        'name': db_name,
-        'description': description,
-        'tags': tags,
-        'createdAt': timestamp,
-        'lastModified': timestamp,
-        'data': store_secrets_in_dict(data)
-    }
+    try:
+        print(f"Registering database {db_id} for user {current_user}")
 
-    # Convert metadata item to the DynamoDB format using TypeSerializer
-    metadata_item_dynamodb = {k: serializer.serialize(v) for k, v in metadata_item.items()}
+        existing_db = get_db_metadata_by_user_and_name(current_user, db_name)
+        if existing_db:
+            raise ValueError(f"Database with name {db_name} already exists for user {current_user}")
 
-    # Save metadata to DynamoDB
-    metadata_table = os.getenv('PERSONAL_SQL_METADATA_TABLE')
-    dynamodb.put_item(TableName=metadata_table, Item=metadata_item_dynamodb)
+        # Save metadata such as description and tags
+        metadata_item = {
+            'id': db_id,
+            'type': db_type,
+            'creator': current_user,
+            'name': db_name,
+            'description': description,
+            'tags': tags,
+            'createdAt': timestamp,
+            'lastModified': timestamp,
+            'data': store_secrets_in_dict(data)
+        }
+
+        # Convert metadata item to the DynamoDB format using TypeSerializer
+        metadata_item_dynamodb = {k: serializer.serialize(v) for k, v in metadata_item.items()}
+
+        # Save metadata to DynamoDB
+        metadata_table = os.getenv('PERSONAL_SQL_METADATA_TABLE')
+
+        if not metadata_table:
+            raise ValueError("Environment variable 'PERSONAL_SQL_METADATA_TABLE' is not set.")
+
+        print(f"Saving metadata to table {metadata_table}")
+
+        dynamodb.put_item(TableName=metadata_table, Item=metadata_item_dynamodb)
+
+        print(f"Metadata saved for database {db_id}")
+
+        permissions_update = {
+            'dataSources': [db_id],
+            'emailList': [current_user],
+            'permissionLevel': 'write',
+            'policy': '',
+            'principalType': 'user',
+            'objectType': 'datasource'
+        }
+        update_object_permissions(current_user, permissions_update)
+
+    except Exception as e:
+        print(e)
+        raise e
 
 
 def get_dbs_for_user(user_id):
@@ -132,3 +162,33 @@ def get_db_metadata(current_user, db_id):
     metadata['data'] = update_dict_with_secrets(data)
 
     return metadata
+
+
+def get_db_metadata_by_user_and_name(current_user, db_name):
+    # Get the DynamoDB table name from environment variable
+    metadata_table_name = os.getenv('PERSONAL_SQL_METADATA_TABLE')
+    if not metadata_table_name:
+        raise ValueError("Environment variable 'PERSONAL_SQL_METADATA_TABLE' is not set.")
+
+    # Reference the metadata table
+    dyn = boto3.resource('dynamodb')
+    table = dyn.Table(metadata_table_name)
+
+    # Fetch the metadata for the given current_user and db_name using the secondary index
+    response = table.query(
+        IndexName='CreatorIndex',
+        KeyConditionExpression=Key('creator').eq(current_user) & Key('name').eq(db_name)
+    )
+
+    if not response['Items']:
+        print(f"No metadata found for database with name {db_name} and creator {current_user}")
+        return None
+
+    # Assuming that (creator, name) pair is unique, so there should only be one item in response
+    metadata = response['Items'][0]
+
+    data = metadata.get('data')
+    metadata['data'] = update_dict_with_secrets(data)
+
+    return metadata
+
