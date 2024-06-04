@@ -1,3 +1,5 @@
+# THIS FUNCTION ONLY EXISTS AS REFERENCE UNTIL CODE INTERPRETER BILLING LOGIC IS IMPLEMENTED
+
 import os
 from boto3.dynamodb.conditions import Key
 from decimal import Decimal

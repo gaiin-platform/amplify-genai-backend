@@ -90,24 +90,23 @@ provider:
 
 
 functions:
-  # sets the value of the model exchange rates
+  # sets the value of the model input and output rates
   # currently only triggered manually via:
   # ~ serverless invoke --function updateModelExchangeRateTable --stage dev --log
   # 
   # TODO:
   # - finish implementation of AWS pricing API once Amazon fixes pricing API bug
   # - make this trigger daily to keep rates up to date
-  # - shorten name of function (causes problems for certain long deployment names)
-  updateModelExchangeRateTable:
+  updateModelRateTable:
     handler: exchange_rates/update_table.updateModelExchangeRateTable
     memorySize: 128
     environment:
       EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
 
   
+  # triggered at the start of each day and month
   # calculates cost of all usage from the chat usage table and the additional charges table
   # saves costs for each user, coa, and date to the history usage table
-  # triggered at the start of each day and month
   trackUsage:
     handler: usage/track_usage.handler
     memorySize: 128
