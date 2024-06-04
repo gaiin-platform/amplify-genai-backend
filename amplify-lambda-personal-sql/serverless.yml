@@ -39,6 +39,7 @@ provider:
     DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
+    OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
 
@@ -62,6 +63,12 @@ provider:
           Resource:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}"
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
         - Effect: Allow
           Action:
             - s3:GetObject

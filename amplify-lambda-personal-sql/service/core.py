@@ -2,6 +2,7 @@ import os
 import uuid
 import datetime
 import boto3
+import requests
 
 # Don't remove, required for the registry to work
 from db.postgres import postgres_handler
@@ -42,7 +43,7 @@ def llm_query_db(event, context, current_user, name, data):
 
         default_options = {
             'account': 'default',
-            'model': 'gpt-4-turbo',
+            'model': os.getenv('DEFAULT_LLM_QUERY_MODEL'),
             'limit': 25
         }
 
@@ -74,6 +75,13 @@ def llm_query_db(event, context, current_user, name, data):
                 print(f"SQL: {sql}")
 
                 result = query_db(conn, sql)
+
+            except requests.exceptions.HTTPError as err:
+                print(f'HTTP error occurred: {err}')
+                print(f'Status code: {err.response.status_code}')
+                print(f'Response headers: {err.response.headers}')
+                print(f'Response text: {err.response.text}')
+                result = None
 
             except Exception as e:
                 print(e)

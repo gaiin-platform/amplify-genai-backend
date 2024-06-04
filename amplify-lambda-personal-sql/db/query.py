@@ -28,6 +28,8 @@ def llm_chat_query_db(current_user, access_token, account, db_id, db_schema, que
         :param current_user:
     """
 
+    print(f"Querying database with ID {db_id} using LLM for user {current_user} with Model {model} and query: {query}")
+
     payload = {
         "model": model,
         "temperature": 1,
