@@ -135,15 +135,13 @@ permissions_by_state_type = {
   "/state/conversation/get_multiple": {
     "get_multiple_conversations": can_read
   },
-  # extra slash due to needed / for query params 
-  "/state/conversation/get/": {
+  "/state/conversation/get": {
     "read": can_read
   },
   "/state/conversation/get_all": {
     "read": can_read
   },
-  # extra slash due to needed / for query params 
-  "/state/conversation/delete/": {
+  "/state/conversation/delete": {
     "read": can_delete_item
   },
   "/state/conversation/delete_multiple": {
