@@ -22,7 +22,6 @@ custom:
     - staging
     - prod
 
-
     
 provider:
   name: aws
@@ -77,6 +76,14 @@ provider:
   iam:
     role:
       statements:
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+          Resource:
+            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
         - Effect: Allow
           Action:
             - secretsmanager:GetSecretValue
@@ -144,14 +151,13 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
+
+             
 
 functions:
 
   upload_conversation:
     handler: state/conversation.upload_conversation
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/upload
@@ -160,8 +166,6 @@ functions:
 
   delete_conversation:
     handler: state/conversation.delete_conversation
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/delete
@@ -170,8 +174,6 @@ functions:
 
   delete_multiple_conversations:
     handler: state/conversation.delete_multiple_conversations
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/delete_multiple
@@ -180,8 +182,6 @@ functions:
 
   get_conversation:
     handler: state/conversation.get_conversation
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/get
@@ -190,8 +190,6 @@ functions:
 
   get_multiple_conversations:
     handler: state/conversation.get_multiple_conversations
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/get_multiple
@@ -200,8 +198,6 @@ functions:
 
   get_all_conversation:
     handler: state/conversation.get_all_conversations
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/get_all
