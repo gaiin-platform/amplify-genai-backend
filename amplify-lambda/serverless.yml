@@ -72,6 +72,7 @@ provider:
     OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
     SHARE_ASSISTANTS_ENDPOINT: ${self:custom.stageVariables.SHARE_ASSISTANTS_ENDPOINT}
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
+    S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
 
   iam:
     role:
@@ -151,8 +152,8 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
-
-             
+            - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
+            - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
 
 functions:
 
@@ -981,6 +982,14 @@ resources:
               AllowedHeaders: ['*']
               MaxAge: 3000
     
-
-        
+    ZipFileBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET','PUT','POST']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
            
