@@ -8,7 +8,7 @@
     "serverless-offline": "^13.2.0",
     "serverless-offline-local-authorizers-plugin": "^1.2.0",
     "serverless-prune-plugin": "^2.0.2",
-    "serverless-python-requirements": "^6.0.1"
+    "serverless-python-requirements": "^6.1.0"
   },
   "dependencies": {
     "nodejs": "^0.0.0",

@@ -73,8 +73,7 @@ provider:
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-    #RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
-    RAG_POSTGRES_DB_READ_ENDPOINT: prod-rag-cluster.cluster-chyilp474xua.us-east-1.rds.amazonaws.com
+    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     KEYWORD_MODEL_NAME: ${self:custom.stageVariables.KEYWORD_MODEL_NAME}
     QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVariables.API_VERSION}

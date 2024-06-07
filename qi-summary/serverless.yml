@@ -43,7 +43,8 @@ provider:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
-    QI_FILES_BUCKET_NAME: ${self:custom.stageVariables.QI_FILES_BUCKET_NAME}
+    QI_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-qi-files
+
 
   iam:
     role:

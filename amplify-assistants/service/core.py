@@ -331,18 +331,30 @@ def create_assistant(event, context, current_user, name, data):
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
 
-    if (len(data_sources) > 0):
-        print(f"Data sources before translation: {data_sources}")
+    filtered_ds = []
+    tag_data_sources = []
+    for source in data_sources:
+        if source['id'].startswith("tag://"):
+            tag_data_sources.append(source)
+        else:
+            filtered_ds.append(source)
+    
+    print(f"Tag Data sources: {tag_data_sources}")
 
-        for i in range(len(data_sources)):
-            source = data_sources[i]
-            if (not source['id'].startswith("s3://")): data_sources[i]['id'] = source['key']
-        
-        print(f"Final data sources before translation: {data_sources}")
+    if (len(filtered_ds) > 0):
+        print(f"Data sources before translation: {filtered_ds}")
 
-        data_sources = translate_user_data_sources_to_hash_data_sources(data_sources)
+        for i in range(len(filtered_ds)):
+            source = filtered_ds[i]
+            if (not source['id'].startswith("s3://")): filtered_ds[i]['id'] = source['key']
         
-        print(f"Data sources after translation and extraction: {data_sources}")
+        print(f"Final data sources before translation: {filtered_ds}")
+
+        filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+        
+        print(f"Data sources after translation and extraction: {filtered_ds}")
+
+        data_sources = filtered_ds + tag_data_sources
 
         # Auth check: need to update to new permissions endpoint
         if not can_access_objects(data['access_token'], data_sources):

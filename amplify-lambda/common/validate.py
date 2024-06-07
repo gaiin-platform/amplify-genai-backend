@@ -519,6 +519,61 @@ get_category_schema = {
     "required": ["category"]
 }
 
+conversation_ids_schema = {
+    "type": "object",
+    "properties": {
+        "conversationIds": {
+            "type": "array",
+            "items": {
+                "type": "string",
+            }
+        }
+    },
+    "required": ["conversationIds"]
+}
+
+
+compressed_conversation_schema = {
+    "type": "object",
+    "properties": {
+        "conversation": {
+            "type": "array"
+        },
+        "conversationId" : {
+            "type": "string",
+        },
+        "folder": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string"
+                        },
+                        "date": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["chat", "prompt", "workflow"]
+                        }
+                    },
+                    "required": ["id", "name", "type"]
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        }
+    },
+    "required": ["conversation", "conversationId"]
+}
+
 validators = {
     "/state/share": {
         "append": share_schema,
@@ -598,6 +653,15 @@ validators = {
     },
     "/state/accounts/save": {
         "save": save_accounts_schema
+    },
+    "/state/conversation/upload": {   
+        "conversation_upload": compressed_conversation_schema
+    },
+    "/state/conversation/get_multiple": {   
+        "get_multiple_conversations": conversation_ids_schema
+    },
+    "/state/conversation/delete_multiple": {   
+        "delete_multiple_conversations": conversation_ids_schema
     },
 }
 
