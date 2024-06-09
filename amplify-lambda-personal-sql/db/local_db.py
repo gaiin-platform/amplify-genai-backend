@@ -250,7 +250,7 @@ def create_and_save_db_for_user(access_token, current_user, s3_db_bucket, s3_fil
     # Close the database connection
     conn.close()
 
-    register_db(current_user, 'pdbs', db_id, db_name, description, tags, timestamp,
+    register_db(access_token, current_user, 'pdbs', db_id, db_name, description, tags, timestamp,
                 {
                     'tables': key_table_list,
                     's3Key': user_directory

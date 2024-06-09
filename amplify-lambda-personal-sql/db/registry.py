@@ -1,3 +1,4 @@
+import json
 import os
 
 import boto3
@@ -61,6 +62,9 @@ class DatabaseExistsError(Exception):
 
 def set_datasource_metadata(access_token, id, name, type, tags=[], data={}):
     url = os.getenv("DATASOURCE_REGISTRY_ENDPOINT")
+
+    print(f"Setting datasource metadata for {id} at {url}")
+
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -78,16 +82,13 @@ def set_datasource_metadata(access_token, id, name, type, tags=[], data={}):
     response = requests.post(url, json=body, headers=headers)
 
     if response.status_code == 200:
-        json_response = response.json()
-        if not json_response.get('success', False):
-            print(f"Error setting datasource metadata: {json_response.get('message', 'Unknown error')}")
-        return json_response.get('success', False)
+        return True
     else:
         print(f"Error setting datasource metadata: {response.status_code}")
         return False
 
 
-def register_db(current_user, db_type, db_id, db_name, description, tags, timestamp, data):
+def register_db(access_token, current_user, db_type, db_id, db_name, description, tags, timestamp, data):
     try:
         print(f"Registering database {db_id} for user {current_user}")
 
@@ -135,7 +136,7 @@ def register_db(current_user, db_type, db_id, db_name, description, tags, timest
 
         print(f"Permissions updated for database {db_id}")
 
-        set_datasource_metadata(current_user, f"pdbs://{db_id}", db_name, f"pdbs://{db_type}", tags, data)
+        set_datasource_metadata(access_token, f"pdbs://{db_id}", db_name, f"pdbs://{db_type}", tags, data)
 
         print(f"Datasource registry metadata set for database {db_id}")
 

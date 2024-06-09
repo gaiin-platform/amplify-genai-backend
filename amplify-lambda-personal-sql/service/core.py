@@ -103,6 +103,7 @@ def llm_query_db(event, context, current_user, name, data):
 @validated(op="register")
 def register_db(event, context, current_user, name, data):
     try:
+        access_token = data['accessToken']
         event_data = data['data']
         db_name = event_data.get('name')
         description = event_data.get('description', '')
@@ -126,7 +127,7 @@ def register_db(event, context, current_user, name, data):
         db_id = f"{db_type}/{str(uuid.uuid4())}"
         timestamp = datetime.datetime.now().isoformat()
 
-        registry.register_db(current_user, db_type, db_id, db_name, description, tags, timestamp, db_data)
+        registry.register_db(access_token, current_user, db_type, db_id, db_name, description, tags, timestamp, db_data)
 
         return {
             'success': True,
