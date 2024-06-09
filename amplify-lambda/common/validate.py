@@ -574,6 +574,44 @@ compressed_conversation_schema = {
     "required": ["conversation", "conversationId"]
 }
 
+set_metdata_schema = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string",
+            "description": "The unique id for the datasource item."
+        },
+        "name": {
+            "type": "string",
+            "description": "The name of the data item."
+        },
+        "type": {
+            "type": "string",
+            "description": "The type of the data item."
+        },
+        "knowledge_base": {
+            "type": "string",
+            "description": "The knowledge base, default is 'default'.",
+            "default": "default"
+        },
+        "data": {
+            "type": "object",
+            "description": "Additional properties for the data item.",
+            "default": {}
+        },
+        "tags": {
+            "type": "array",
+            "description": "A list of tags associated with the data item.",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        }
+    },
+    "required": ["id", "name", "type"]
+}
+
 validators = {
     "/state/share": {
         "append": share_schema,
@@ -584,6 +622,9 @@ validators = {
     },
     "/state/share/load": {
         "load": share_load_schema
+    },
+    "/datasource/metadata/set": {
+        "set": set_metdata_schema
     },
     "/assistant/files/upload": {
         "upload": file_upload_schema

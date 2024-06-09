@@ -203,6 +203,84 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
 
     return bucket_name, key
 
+def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
+    dynamodb = boto3.resource('dynamodb')
+    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    dt_string = datetime.now().strftime('%Y-%m-%d')
+    key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
+
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': file_type,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': knowledge_base,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
+    )
+
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return bucket_name, key
+
+
+@validated(op="set")
+def set_datasource_metadata_entry(event, context, current_user, name, data):
+
+    data = data['data']
+    key = data['id']
+    name = data['name']
+    dtype = data['type']
+    kb = data.get('knowledge_base','default')
+    data_props = data.get('data',{})
+    tags = data.get('tags',[])
+
+    dynamodb = boto3.resource('dynamodb')
+
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+
+    # Check if the item already exists
+    response = files_table.get_item(
+        Key={
+            'id': key
+        }
+    )
+
+    if 'Item' in response and response['Item'].get('createdBy') != current_user:
+        # Item already exists, return some error or existing key
+        return {
+            'success': False,
+            'message': 'Item already exists'
+        }
+
+    # Item does not exist, proceed with insertion
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': dtype,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': kb,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
+    )
+
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return key
+
 
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):

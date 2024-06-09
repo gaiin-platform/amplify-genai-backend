@@ -132,6 +132,12 @@ def register_db(event, context, current_user, name, data):
             'success': True,
             'id': db_id
         }
+    except registry.DatabaseExistsError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': f"Database with name {e.db_name} already exists for user {e.user}"
+        }
     except Exception as e:
         print(e)
         return {
@@ -193,12 +199,16 @@ def get_user_dbs(event, context, current_user, name, data):
             'success': True,
             'data': user_dbs
         }
-    except ClientError:
+    except ClientError as e:
+        print("Error in get_user_dbs {e}")
+
         return {
             'success': False,
             'message': "Failed to get list of databases for the user"
         }
     except Exception as e:
+        print("Error in get_user_dbs {e}")
+
         return {
             'success': False,
             'message': str(e)

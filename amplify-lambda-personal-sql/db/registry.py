@@ -1,6 +1,7 @@
 import os
 
 import boto3
+import requests
 from boto3.dynamodb.conditions import Key
 from functools import wraps
 from boto3.dynamodb.types import TypeSerializer
@@ -51,6 +52,41 @@ def load_db_by_id(current_user, db_id):
     return conn
 
 
+class DatabaseExistsError(Exception):
+    def __init__(self, db_name, user):
+        super().__init__(f"Database with name {db_name} already exists for user {user}")
+        self.db_name = db_name
+        self.user = user
+
+
+def set_datasource_metadata(access_token, id, name, type, tags=[], data={}):
+    url = os.getenv("DATASOURCE_REGISTRY_ENDPOINT")
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "data": {
+            "id": id,
+            "name": name,
+            "type": type,
+            "tags": tags,
+            "data": data
+        }
+    }
+
+    response = requests.post(url, json=body, headers=headers)
+
+    if response.status_code == 200:
+        json_response = response.json()
+        if not json_response.get('success', False):
+            print(f"Error setting datasource metadata: {json_response.get('message', 'Unknown error')}")
+        return json_response.get('success', False)
+    else:
+        print(f"Error setting datasource metadata: {response.status_code}")
+        return False
+
+
 def register_db(current_user, db_type, db_id, db_name, description, tags, timestamp, data):
     try:
         print(f"Registering database {db_id} for user {current_user}")
@@ -96,6 +132,12 @@ def register_db(current_user, db_type, db_id, db_name, description, tags, timest
             'objectType': 'datasource'
         }
         update_object_permissions(current_user, permissions_update)
+
+        print(f"Permissions updated for database {db_id}")
+
+        set_datasource_metadata(current_user, f"pdbs://{db_id}", db_name, f"pdbs://{db_type}", tags, data)
+
+        print(f"Datasource registry metadata set for database {db_id}")
 
     except Exception as e:
         print(e)

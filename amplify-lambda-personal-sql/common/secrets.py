@@ -76,7 +76,7 @@ def get_secret_parameter(parameter_name, prefix=DEFAULT_PREFIX):
         )
         return response['Parameter']['Value']
     except ClientError as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred fetching parameter {parameter_name}: {e}")
         return None
 
 

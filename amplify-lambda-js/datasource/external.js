@@ -120,8 +120,7 @@ const getDatasourceHandler = async (sourceType, chatRequest, params, dataSource)
     const config = await getDatasourceRegistryConfig(type);
 
     const handler =  config ? await createHandler(sourceType, config) : null;
-    const result = handler ? await handler : null;
-    return result;
+    return handler;
 }
 
 export default getDatasourceHandler;

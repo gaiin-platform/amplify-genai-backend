@@ -45,6 +45,9 @@ permissions_by_state_type = {
   "/state/base-prompts/get": {
     "get": can_read_share
   },
+  "/datasource/metadata/set": {
+    "set": can_upload
+  },
   "/assistant/files/upload": {
     "upload": can_upload
   },

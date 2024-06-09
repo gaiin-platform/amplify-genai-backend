@@ -262,6 +262,15 @@ functions:
           method: post
           cors: true
 
+  set_datasource_metadata:
+    handler: assistant/assistant.set_datasource_metadata_entry
+    timeout: 30
+    events:
+      - http:
+          path: datasource/metadata/set
+          method: post
+          cors: true
+
   create:
     handler: state/create.create
     events:
