@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import tiktokenModel from '@dqbd/tiktoken/encoders/cl100k_base.json' assert {type: 'json'};
 import { Tiktoken } from '@dqbd/tiktoken/lite';
 

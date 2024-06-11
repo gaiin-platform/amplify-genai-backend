@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
@@ -93,19 +97,23 @@ def parse_and_validate(current_user, event, op, validate_body=True):
     return [name, data]
 
 
-def validated(op, validate_body=True):
+idpPrefix = os.environ['IDP_PREFIX']
+def validated(op, validate_body=True, idpPrefix_variable=None):  # Note the added argument
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 claims = get_claims(event, context)
 
-                get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
-                current_user = get_email(claims['username'])
+                # Updated get_email function
+                def get_email(text, idpPrefix):
+                    if idpPrefix and text.startswith(idpPrefix + '_'):
+                        return text.split(idpPrefix + '_', 1)[1]
+                    else:
+                        return text
+
+                current_user = get_email(claims['username'], idpPrefix_variable)
 
                 print(f"User: {current_user}")
-
-                # current_user = claims['user']['name']
 
                 if current_user is None:
                     raise Unauthorized("User not found.")
@@ -131,6 +139,8 @@ def validated(op, validate_body=True):
 
 
 def get_claims(event, context):
+    # https://cognito-idp.<Region>.amazonaws.com/<userPoolId>/.well-known/jwks.json
+
     oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
     oauth_audience = os.getenv('OAUTH_AUDIENCE')
 
@@ -177,3 +187,4 @@ def get_claims(event, context):
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 
     raise Unauthorized("No Valid Access Token Found")
+

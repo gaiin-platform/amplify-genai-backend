@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -14,6 +17,7 @@ config({ path: join(__dirname, '../../.env.local') });
 // Read environment variables
 const userPoolId = process.env.COGNITO_USER_POOL_ID;
 const clientId = process.env.COGNITO_CLIENT_ID;
+const idpPrefix = process.env.IDP_PREFIX
 
 // Ensure the environment variables are defined
 if (!userPoolId || !clientId) {
@@ -66,8 +70,10 @@ export const extractParams = async (event) => {
             };
         }
 
-        const current_user = payload.username.slice('vupingidp_'.length);
-        console.log("Current user: "+current_user)
+        const prefix = idpPrefix;
+        const index = payload.username.indexOf(prefix);
+        const current_user = index !== -1 ? payload.username.slice(index + prefix.length) : payload.username;
+        console.log("Current user: " + current_user);
 
         let requestBody;
         try {

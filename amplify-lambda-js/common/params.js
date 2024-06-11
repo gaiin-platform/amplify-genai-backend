@@ -1,4 +1,8 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
+
+import { Models } from "../models/models.js";
 // This needs to be refactored into a class and all
 // of the places that use params need to be updated
 //
@@ -43,4 +47,25 @@ export const getAccessToken = (params) => {
 
 export const getAccountId = (params) => {
     return params.account.accountId;
+}
+
+
+export const getCheapestModelEquivalent = (model)  => {
+    if (model.id.includes("gpt")) {
+        return Models["gpt-35-turbo"];
+    } else if (model.id.includes("anthropic")) { 
+        return Models["anthropic.claude-3-haiku-20240307-v1:0"];
+    } else if (model.id.includes("mistral")) { 
+        return Models['mistral.mistral-7b-instruct-v0:2'];
+    }
+}
+
+export const getMostAdvancedModelEquivalent = (model) => {
+    if (model.id.includes("gpt")) {
+        return Models["gpt-4-1106-Preview"];
+    } else if (model.id.includes("anthropic")) { 
+        return Models["anthropic.claude-3-sonnet-20240229-v1:0"];
+    } else if (model.id.includes("mistral")) { 
+        return Models['mistral.mistral-large-2402-v1:0'];
+    }
 }

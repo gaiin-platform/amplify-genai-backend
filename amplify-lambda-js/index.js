@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import {extractParams} from "./common/handlers.js";
 import {routeRequest} from "./router.js";
 import {getLogger} from "./common/logging.js";

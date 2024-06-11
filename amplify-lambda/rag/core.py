@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import hashlib
 import os
 import mimetypes
@@ -304,7 +308,6 @@ def update_object_permissions(current_user, data):
     dynamodb = boto3.resource('dynamodb')
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
 
-
     try:
         data_sources = data['dataSources']
         email_list = data['emailList']
@@ -314,7 +317,6 @@ def update_object_permissions(current_user, data):
         object_type = data.get('objectType')
 
         print(f"Updating permission on {data_sources} for {email_list} with {provided_permission_level} and {policy}")
-
 
         # Get the DynamoDB table
         table = dynamodb.Table(table_name)
@@ -333,9 +335,9 @@ def update_object_permissions(current_user, data):
                     'principal_id': current_user,
                     'principal_type': principal_type,
                     'object_type': object_type,
-                    'permission_level': 'read',  # The current_user becomes the owner
+                    'permission_level': 'write',  # The current_user becomes the owner 
                     'policy': policy
-                })
+                }) 
                 print(f"Created initial item for {object_id} with {current_user} as owner")
 
             else:
@@ -513,6 +515,22 @@ def process_document_for_rag(event, context):
                                 'createdAt': creation_time,
                             }
                             hash_files_table.put_item(Item=hash_file_data)
+                            print(f"Updated hash files entry for {dochash}")
+
+                            files_table.update_item(
+                                Key={
+                                    'id': key
+                                },
+                                UpdateExpression='SET totalTokens = :tokenVal, totalItems = :itemVal, dochash = :hashVal',
+                                ExpressionAttributeValues={
+                                    ':tokenVal': total_tokens,
+                                    ':itemVal': total_items,
+                                    ':hashVal': dochash
+                                }
+                            )
+                            print(
+                                f"Uploaded user files entry with token and item "
+                                f"count for {key}: {total_tokens} / {total_items}")
 
                 except Exception as e:
                     print(f"Error processing document: {str(e)}")
@@ -652,4 +670,3 @@ def chunk_document_for_rag(event, context):
         'statusCode': 200,
         'body': json.dumps('SQS Text Extraction Complete!')
     }
-

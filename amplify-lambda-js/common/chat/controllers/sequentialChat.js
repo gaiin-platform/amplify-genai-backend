@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import {countChatTokens} from "../../../azure/tokens.js";
 import {StreamMultiplexer} from "../../multiplexer.js";
 import {sendSourceMetadata} from "./meta.js";

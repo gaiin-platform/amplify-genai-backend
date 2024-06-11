@@ -1,4 +1,8 @@
 
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
+
 
 def can_share(user, data):
   return True
@@ -47,6 +51,12 @@ permissions_by_state_type = {
   },
   "/assistant/files/set_tags": {
     "set_tags": can_upload
+  },
+  "/assistant/tags/delete": {
+    "delete": can_upload
+  },
+  "/assistant/tags/list": {
+    "list": can_upload
   },
   "/assistant/files/query": {
     "query": can_upload

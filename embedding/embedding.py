@@ -1,17 +1,14 @@
-from openai import AzureOpenAI
-import tiktoken
 import psycopg2
 from psycopg2.extras import Json
 import json
 import os
 import boto3
-import smtplib
-from email.message import EmailMessage
 import logging
-from common.credentials import get_credentials, get_json_credetials, get_endpoint
+from common.credentials import get_credentials
 from botocore.exceptions import ClientError
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
 import urllib
+from create_table import create_table
 sqs = boto3.client('sqs')
 
 
@@ -22,10 +19,10 @@ pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
-sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
+table_name = 'embeddings'
 
 
 pg_password = get_credentials(rag_pg_password)
@@ -86,7 +83,9 @@ def update_dynamodb_status(table, object_id, chunk_index, total_chunks, status):
         logging.error(e)
         raise
 
-
+def table_exists(cursor, table_name):
+    cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s);", (table_name,))
+    return cursor.fetchone()[0]
 
 
 
@@ -99,18 +98,39 @@ db_connection = None
 def get_db_connection():
     global db_connection
     if db_connection is None or db_connection.closed:
+        admin_conn_params = {
+            'dbname': pg_database,
+            'user': pg_user,
+            'password': pg_password,
+            'host': pg_host,
+            'port': 3306  # ensure the port matches the PostgreSQL port which is 5432 by default
+        }
         try:
             db_connection = psycopg2.connect(
                 host=pg_host,
                 database=pg_database,
                 user=pg_user,
                 password=pg_password,
-                port=3306
+                port=3306  # ensure the port matches the PostgreSQL port which is 5432 by default
             )
             logging.info("Database connection established.")
         except psycopg2.Error as e:
             logging.error(f"Failed to connect to the database: {e}")
             raise
+
+        # Once the database connection is established, check if the table exists
+        with db_connection.cursor() as cursor:
+            if not table_exists(cursor, table_name):
+                logging.info(f"Table {table_name} does not exist. Attempting to create table...")
+                if create_table():
+                    logging.info(f"Table {table_name} created successfully.")
+                else:
+                    logging.error(f"Failed to create the table {table_name}.")
+                    raise Exception(f"Table {table_name} creation failed.")
+            else:
+                logging.info(f"Table {table_name} exists.")
+
+    # Return the database connection
     return db_connection
 
 

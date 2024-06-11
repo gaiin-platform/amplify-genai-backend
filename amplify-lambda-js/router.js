@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import {chat} from "./azure/openai.js";
 import {chatAnthropic} from "./bedrock/anthropic.js";
 import {chatMistral} from "./bedrock/mistral.js";
@@ -11,7 +14,7 @@ import {createRequestState, deleteRequestState, updateKillswitch} from "./reques
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {
     extractKey,
-    getDataSourcesInConversation,
+    getDataSourcesInConversation, resolveDataSources,
     translateUserDataSourcesToHashDataSources
 } from "./datasource/datasources.js";
 import {saveTrace, trace} from "./common/trace.js";
@@ -113,33 +116,11 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
             try {
 
-                dataSources = await translateUserDataSourcesToHashDataSources(dataSources);
-
-                const convoDataSources = await translateUserDataSourcesToHashDataSources(
-                    getDataSourcesInConversation(body, true)
-                );
-
-                const allDataSources = [
-                    ...dataSources,
-                    ...convoDataSources
-                ]
-
-                const nonUserSources = allDataSources.filter(ds =>
-                    !extractKey(ds.id).startsWith(params.user+"/")
-                );
-
-                if(nonUserSources && nonUserSources.length > 0) {
-                    if (!await canReadDataSources(params.accessToken, nonUserSources)) {
-                        returnResponse(responseStream, {
-                            statusCode: 401,
-                            body: {error: "Unauthorized data source access."}
-                        });
-                    }
-                }
+                dataSources = await resolveDataSources(params, body, dataSources);
 
             } catch (e) {
-                logger.error("Error checking access on data sources: " + e);
-                returnResponse(responseStream, {
+                logger.error("Unauthorized access on data sources: " + e);
+                return returnResponse(responseStream, {
                     statusCode: 401,
                     body: {error: "Unauthorized data source access."}
                 });

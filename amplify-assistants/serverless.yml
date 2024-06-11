@@ -1,4 +1,4 @@
-service: vu-amplify-assistants
+service: amplify-${self:custom.stageVars.DEP_NAME}-assistants
 
 frameworkVersion: "3"
 
@@ -11,35 +11,64 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-deployment-bucket
+  - serverless-iam-roles-per-function
+ 
 
 custom:
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
+  pythonRequirements:
+    dockerizePip: non-linux
+  
+  prune:
+  automatic: true
+  includeLayers: true
+  number: 5
 
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}         
     
 provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: false
   environment:
-    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    # When using the OpenAI API, you need to provide the ARN of the secret that contains the API key
-    # The secret should be named OPENAI_API_KEY
-    OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
-    # Valid values are either "openai" or "azure"
-    ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
-    ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
+    #Local Resources Created
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
-    OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
+    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
+
+    #Reference Resources created by other services
+    ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
+    BILLING_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-billing
+    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
+    OBJECT_ACCESS_API_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
+    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/simulate_access_to_objects
+    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/update_object_permissions
+    S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
+    ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
+ 
+    #Stand Alone Vars References from local vars file
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}  # Valid values are either "openai" or "azure"
+    #OPENAI_API_KEY_ARN: ${self:custom.stageVars.OPENAI_API_KEY_ARN} #  When using the OpenAI API, you need to provide the ARN of the secret that contains the API key The secret should be named OPENAI_API_KEY
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    
 
   iam:
     role:
@@ -58,13 +87,30 @@ provider:
             - s3:HeadObject
             - s3:ListBucket
           Resource:
-            - "${self:provider.environment.OPENAI_API_KEY_ARN}"
+            #- "${self:provider.environment.OPENAI_API_KEY_ARN}"
+            - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
+            - - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+          Resource: 
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+          Resource:
+            - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/assistants/*"
 
 functions:
 
@@ -74,6 +120,15 @@ functions:
     events:
       - http:
           path: assistant/create
+          method: post
+          cors: true
+
+  list_assistants:
+    handler: service/core.list_assistants
+    timeout: 30
+    events:
+      - http:
+          path: assistant/list
           method: post
           cors: true
 
@@ -87,10 +142,18 @@ functions:
           cors: true
 
   delete_assistant:
-    handler: openaiazure/assistant.delete_assistant
+    handler: service/core.delete_assistant
     events:
       - http:
           path: assistant/delete
+          method: post
+          cors: true
+
+  delete_assistant_open_ai:
+    handler: openaiazure/assistant.delete_assistant
+    events:
+      - http:
+          path: openai/assistant/delete
           method: post
           cors: true
 
@@ -128,6 +191,26 @@ functions:
     timeout: 900
     url:
       cors: true
+    
+
+
+    # for local testing 
+  chat_code_int_assist:
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    timeout: 30
+
+    events:
+      - http:
+          path: assistant/chat_with_code_interpreter
+          method: post
+          cors: true
+
+  chat_code_int_assist_url: 
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    timeout: 900
+    url: true
+    
+
 
   run_assistant_thread:
     handler: openaiazure/assistant.run_assistant_thread
@@ -142,14 +225,6 @@ functions:
     events:
       - http:
           path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  list_assistants:
-    handler: openaiazure/assistant.list_assistants
-    events:
-      - http:
-          path: assistant/list
           method: post
           cors: true
 
@@ -187,6 +262,12 @@ resources:
           -
             AttributeName: name
             AttributeType: S
+          -
+            AttributeName: assistantId
+            AttributeType: S
+          -
+            AttributeName: version
+            AttributeType: N
         KeySchema:
           -
             AttributeName: id
@@ -211,7 +292,62 @@ resources:
 
             Projection:
               ProjectionType: ALL
+          -
+            IndexName: AssistantIdIndex
+            KeySchema:
+              - AttributeName: assistantId
+                KeyType: HASH
+              - AttributeName: version
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}
+
+    AssistantsAliasesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: assistantId
+            AttributeType: S
+          -
+            AttributeName: user
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: user
+            KeyType: HASH
+          -
+            AttributeName: assistantId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          -
+            IndexName: AssistantIdIndex
+            KeySchema:
+              -
+                AttributeName: assistantId
+                KeyType: HASH
+              -
+                AttributeName: user
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: UserIndex
+            KeySchema:
+              -
+                AttributeName: user
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}
 
     AssistantThreadsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -277,3 +413,25 @@ resources:
             Projection:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
+
+    AssistantsFilesBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
+  Outputs:
+    ApiGatewayUrl:
+      Description: URL for the API Gateway in the dev stage
+      Value:
+        Fn::Join:
+          - ""
+          - 
+            - "https://"
+            - Ref: ApiGatewayRestApi
+            - ".execute-api.${aws:region}.amazonaws.com/${self:provider.stage}"
+      Export:
+        Name: "${self:provider.stage}-AssistantsAPIGateway"

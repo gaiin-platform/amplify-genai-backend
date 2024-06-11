@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "../../amplify-genai-iac"
+		},
+		{
+			"name": "amplify-genai-frontend",
+			"path": "../../amplify-genai-frontend"
+		},
+		{
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

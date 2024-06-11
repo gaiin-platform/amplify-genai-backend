@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from common.validate import validated
 from . import assistant_api as assistants
 
@@ -28,12 +32,34 @@ def chat_with_assistant(event, context, current_user, name, data):
   assistant_id = data['data'].get('id')
   messages = data['data'].get('messages')
   file_keys = data['data'].get('fileKeys')
+  account_id = data['data'].get('accountId')
+  request_id = data['data'].get('requestId')
 
   return assistants.chat_with_assistant(
     current_user,
     assistant_id,
     messages,
-    file_keys
+    file_keys, 
+    account_id,
+    request_id
+  )
+
+@validated(op="chat_with_code_interpreter") 
+def chat_with_code_interpreter(event, context, current_user, name, data):
+  print("Chat_with_code_interpreter validated")
+  assistant_id = data['data'].get('id')
+  messages = data['data'].get('messages')
+  file_keys = data['data'].get('fileKeys')
+  account_id = data['data'].get('accountId')
+  request_id = data['data'].get('requestId')
+
+  return assistants.chat_with_code_interpreter(
+    current_user,
+    assistant_id,
+    messages,
+    file_keys,
+    account_id,
+    request_id
   )
 
 @validated(op="add_message")
@@ -71,14 +97,16 @@ def create_assistant_thread(event, context, current_user, name, data):
   return assistants.create_new_thread(current_user)
 
 @validated(op="create")
-def create_assistant(event, context, current_user, name, data):
+def create_code_interpreter_assistant (event, context, current_user, name, data):
   extracted_data = data['data']
   assistant_name = extracted_data['name']
   description = extracted_data['description']
   tags = extracted_data.get('tags', [])
   instructions = extracted_data['instructions']
-  file_keys = extracted_data.get('fileKeys', [])
+  file_keys = extracted_data.get('dataSources', [])
   tools = extracted_data.get('tools', [])
+  provider =  extracted_data.get('provider', 'azure')
+
 
   # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
   return assistants.create_new_assistant(
@@ -88,7 +116,8 @@ def create_assistant(event, context, current_user, name, data):
     instructions=instructions,
     tags=tags,
     file_keys=file_keys,
-    tools=tools
+    tools=tools,
+    provider=provider
   )
 
 
@@ -99,3 +128,14 @@ def delete_assistant(event, context, current_user, name, data):
 
   # Assuming get_openai_client function is defined elsewhere
   return assistants.delete_assistant_by_id(assistant_id, current_user)
+
+
+@validated(op="download")                      
+def get_presigned_url_code_interpreter(event, context, current_user, name, data):
+  data = data['data']
+  key = data['key']
+  file_name = data.get('file_name', None)
+
+  return assistants.get_presigned_download_url(key, current_user, file_name)
+
+

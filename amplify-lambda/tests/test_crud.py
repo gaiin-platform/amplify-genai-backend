@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import unittest
 import yaml
 from generator.crud import update_yml  # Assuming the function is in generator/crud.py
