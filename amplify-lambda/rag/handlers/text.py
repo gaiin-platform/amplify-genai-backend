@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import re
 import chardet
 import io

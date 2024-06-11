@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
@@ -36,6 +40,17 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
+delete_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
+        },
+    },
+    "required": ["assistantId"]
+}
+
 create_assistant_schema = {
     "type": "object",
     "properties": {
@@ -47,6 +62,10 @@ create_assistant_schema = {
             "type": "string",
             "description": "A brief description of the item"
         },
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
+        },
         "tags": {
             "type": "array",
             "description": "A list of tags associated with the item",
@@ -57,6 +76,17 @@ create_assistant_schema = {
         "instructions": {
             "type": "string",
             "description": "Instructions related to the item"
+        },
+        "uri": {
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "The endpoint that receives requests for the assistant"
+                },
+                {
+                    "type": "null"
+                }
+            ]
         },
         "dataSources": {
             "type": "array",
@@ -91,12 +121,13 @@ create_assistant_schema = {
 share_assistant_schema = {
     "type": "object",
     "properties": {
-        "assistantKey": {"type": "string"},
+        "assistantId": {"type": "string"},
         "recipientUsers": {"type": "array", "items": {"type": "string"}},
         "accessType": {"type": "string"},
+        "dataSources": {"type": "array", "items": {"type": "string"}},
         "policy": {"type": "string", "default": ""}
     },
-    "required": ["assistantKey", "recipientUsers", "accessType"],
+    "required": ["assistantId", "recipientUsers", "accessType"],
     "additionalProperties": False
 }
 
@@ -163,14 +194,66 @@ chat_assistant_schema = {
                     },
                     "role": {
                         "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "type": "object",
+                        "additionalProperties": True
+                    },
+                    "codeInterpreterMessageData": {
+                        "type": "object",
+                        "properties": {
+                            "threadId": {"type": "string"},
+                            "role": {"type": "string"},
+                            "textContent": {"type": "string"},
+                            "content": {
+                                "type": "array",
+                                "items": {
+                                    "oneOf": [
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"const": "image_file"},
+                                                "value": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"}
+                                                    },
+                                                    "required": ["file_key"]
+                                                }
+                                            },
+                                            "required": ["type", "value"]
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "type": {"const": "file"},
+                                                "value": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"}
+                                                    },
+                                                    "required": ["file_key"]
+                                                }
+                                            },
+                                            "required": ["type", "value"]
+                                        },
+                                    ]
+                                }
+                            }
+                        },
+                        "required": []
                     }
                 },
-                "required": ["id", "content"]
+                "required": ["id", "content", "role"]
             }
         }
     },
     "required": ["id", "fileKeys", "messages"]
 }
+
 
 run_thread_schema = {
     "type": "object",
@@ -212,6 +295,9 @@ validators = {
     "/assistant/create": {
         "create": create_assistant_schema
     },
+    "/assistant/delete": {
+        "delete": delete_assistant_schema
+    },
     "/assistant/share": {
         "share_assistant": share_assistant_schema
     },
@@ -231,6 +317,9 @@ validators = {
         "run_status": id_request_schema
     },
     "/assistant/chat": {
+        "chat": chat_assistant_schema
+    },
+    "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
     "/": {
@@ -282,21 +371,25 @@ def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
+                # Retrieve IDP_PREFIX from environment variables
+                idp_prefix = os.getenv('IDP_PREFIX')
 
+                # Extract claims and token
                 claims, token = get_claims(event, context)
 
-                get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
+                # Updated get_email function to incorporate idpPrefix
+                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
                 current_user = get_email(claims['username'])
 
                 print(f"User: {current_user}")
 
-                # current_user = claims['user']['name']
-
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
+                # Parse and validate the event data
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
 
+                # Add access_token to data
                 data['access_token'] = token
                 result = f(event, context, current_user, name, data)
 
@@ -316,16 +409,17 @@ def validated(op, validate_body=True):
 
     return decorator
 
-
 def get_claims(event, context):
-    # https://cognito-idp.<Region>.amazonaws.com/<userPoolId>/.well-known/jwks.json
-
+    print("Extracting OAUTH_ISSUER_BASE_URL and OAUTH_AUDIENCE...")
     oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
     oauth_audience = os.getenv('OAUTH_AUDIENCE')
+    print(f"OAUTH_ISSUER_BASE_URL: {oauth_issuer_base_url}\nOAUTH_AUDIENCE: {oauth_audience}")
 
     jwks_url = f'{oauth_issuer_base_url}/.well-known/jwks.json'
+    print(f"Retrieving JWKS from URL: {jwks_url}")
     jwks = requests.get(jwks_url).json()
 
+    print("JWKS Fetch successful. Processing...")
     token = None
     normalized_headers = {k.lower(): v for k, v in event['headers'].items()}
     authorization_key = 'authorization'
@@ -339,9 +433,12 @@ def get_claims(event, context):
                 token = None
 
     if not token:
+        print("No Access Token Found")
         raise Unauthorized("No Access Token Found")
 
+    print("Access Token Found, decoding...")
     header = jwt.get_unverified_header(token)
+    print (token)
     rsa_key = {}
     for key in jwks["keys"]:
         if key["kid"] == header["kid"]:
@@ -352,16 +449,33 @@ def get_claims(event, context):
                 "n": key["n"],
                 "e": key["e"]
             }
+            break
 
     if rsa_key:
-        payload = jwt.decode(
-            token,
-            rsa_key,
-            algorithms=ALGORITHMS,
-            audience=oauth_audience,
-            issuer=oauth_issuer_base_url
-        )
-        return payload, token
+        print("RSA Key Found, validating...")
+        try:
+            payload = jwt.decode(
+                token,
+                rsa_key,
+                algorithms=ALGORITHMS,
+                audience=oauth_audience,
+                issuer=oauth_issuer_base_url
+            )
+            print("Token successfully validated.")
+            print("Payload", payload )
+            return payload, token
+        except jwt.ExpiredSignatureError:
+            print("Token has expired.")
+            raise Unauthorized("Token has expired.")
+        except jwt.InvalidAudienceError:
+            print("Invalid audience.")
+            raise Unauthorized("Invalid audience.")
+        except jwt.InvalidIssuerError:
+            print("Invalid issuer.")
+            raise Unauthorized("Invalid issuer.")
+        except Exception as e:
+            print(f"Error during token validation: {e}")
+            raise Unauthorized(f"Error during token validation: {e}")
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 

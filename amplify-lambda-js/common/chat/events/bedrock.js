@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 
 // for all Claude models 
 export const claudeTransform = (event) => {

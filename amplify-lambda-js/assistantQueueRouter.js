@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import {getLogger} from "./common/logging.js";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import {DeleteMessageCommand, SQSClient} from '@aws-sdk/client-sqs';

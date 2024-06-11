@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 
 
 
@@ -13,12 +16,6 @@ ${context.context}
 
 export const addContextMessage = (messages, context, modelId) => {
     if(context.context && context.context.length > 0) {
-        if (modelId.includes("anthropic")) {
-            const userMessage = messages.slice(-1);
-            userMessage.content += createContextMessage(context).content;
-            return [...messages.slice(0, -1), ...userMessage];
-        }
-
         return [
             ...messages.slice(0, -1),
             createContextMessage(context),

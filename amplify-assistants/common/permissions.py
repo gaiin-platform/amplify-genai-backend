@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 def get_permission_checker(user, ptype, op, data):
     print("Checking permissions for user: {} and type: {} and op: {}".format(user, ptype, op))
     return permissions_by_state_type.get(ptype, {}).get(op, lambda for_user, with_data: False)
@@ -23,10 +27,16 @@ permissions_by_state_type = {
     "/assistant/create": {
         "create": can_create_assistant
     },
+    "/assistant/list": {
+        "list": can_create_assistant
+    },
+    "/assistant/delete": {
+        "delete": can_create_assistant
+    },
     "/assistant/share": {
         "share_assistant": can_create_assistant
     },
-    "/assistant/delete": {
+    "/openai/assistant/delete": {
         "delete": can_create_assistant
     },
     "/assistant/thread/create": {
@@ -52,6 +62,9 @@ permissions_by_state_type = {
     },
     "/assistant/chat": {
         "chat": can_create_assistant_thread
+    },
+    "/assistant/chat_with_code_interpreter": {
+        "chat_with_code_interpreter": can_create_assistant_thread
     },
     "/": {
         "chat": can_create_assistant_thread

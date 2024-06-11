@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
@@ -81,6 +85,23 @@ check_object_permissions = {
     "required": ["dataSources"]
 }
 
+simulate_access_to_objects = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "objects": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "required": ["objects"]
+}
+
 create_cognito_group = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
@@ -104,6 +125,9 @@ validators = {
     },
     "/utilities/can_access_objects": {
         "can_access_objects": check_object_permissions
+    },
+    "/utilities/simulate_access_to_objects": {
+        "simulate_access_to_objects": simulate_access_to_objects
     },
     "/utilities/create_cognito_group": {
     "create_cognito_grou": create_cognito_group
@@ -150,29 +174,29 @@ def parse_and_validate(current_user, event, op, validate_body=True):
     return [name, data]
 
 
-def validated(op, validate_body=True):
+idpPrefix = os.environ['IDP_PREFIX']
+def validated(op, validate_body=True, idpPrefix_variable=None):  # Note the added argument
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 claims = get_claims(event, context)
 
-                get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
-                current_user = get_email(claims['username'])
+                # Updated get_email function
+                def get_email(text, idpPrefix):
+                    if idpPrefix and text.startswith(idpPrefix + '_'):
+                        return text.split(idpPrefix + '_', 1)[1]
+                    else:
+                        return text
+
+                current_user = get_email(claims['username'], idpPrefix_variable)
 
                 print(f"User: {current_user}")
-                username = claims['username']
-                cognito_groups = claims.get('cognito:groups', [])  
-
-                # current_user = claims['user']['name']
 
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
-                result = f(event, context, current_user, name, data, username, cognito_groups)
-                #result['username'] = username  # Add 'username' to the result
-                #result['cognito_groups'] = cognito_groups  # Add 'cognito_groups' to the result
+                result = f(event, context, current_user, name, data)
 
                 return {
                     "statusCode": 200,

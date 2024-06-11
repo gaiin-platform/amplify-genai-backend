@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import os
 
 def get_text_content_location(file_bucket, file_key):

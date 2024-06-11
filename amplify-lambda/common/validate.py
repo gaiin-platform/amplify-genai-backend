@@ -1,9 +1,12 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from common.encoders import CombinedEncoder
-
 import os
 import requests
 from jose import jwt
@@ -156,7 +159,6 @@ file_upload_schema = {
     "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
 }
 
-
 file_set_tags_schema = {
     "type": "object",
     "properties": {
@@ -170,6 +172,23 @@ file_set_tags_schema = {
             },
             "default": []
         }
+    },
+    "additionalProperties": False
+}
+
+user_list_tags_schema = {
+    "type": "object",
+    "properties": {
+    },
+    "additionalProperties": False
+}
+
+user_delete_tag_schema = {
+    "type": "object",
+    "properties": {
+        "tag": {
+            "type": "string"
+        },
     },
     "additionalProperties": False
 }
@@ -208,6 +227,13 @@ file_query_schema = {
         },
         "typePrefix": {
             "type": ["string", "null"]
+        },
+        "types": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
         },
         "tags": {
             "type": "array",
@@ -308,10 +334,10 @@ task_and_category_request_schema = {
 add_charge = {
     "type": "object",
     "properties": {
-        "accountId": { "type": "string" },
-        "charge": { "type": "number" },
-        "description": { "type": "string" },
-        "details": { "type": "object" },
+        "accountId": {"type": "string"},
+        "charge": {"type": "number"},
+        "description": {"type": "string"},
+        "details": {"type": "object"},
     },
     "required": ["accountId", "charge", "description", "details"]
 }
@@ -441,7 +467,7 @@ save_accounts_schema = {
         }
     },
     "required": ["accounts"]
-};
+}
 
 convert_schema = {
     "type": "object",
@@ -501,6 +527,12 @@ validators = {
     },
     "/assistant/files/set_tags": {
         "set_tags": file_set_tags_schema
+    },
+    "/assistant/tags/delete": {
+        "delete": user_delete_tag_schema
+    },
+    "/assistant/tags/list": {
+        "list": user_list_tags_schema
     },
     "/assistant/files/query": {
         "query": file_query_schema
@@ -593,26 +625,36 @@ def parse_and_validate(current_user, event, op, validate_body=True):
         raise Unauthorized("User does not have permission to perform the operation.")
 
     return [name, data]
+    
 
 
-def validated(op, validate_body=True):
+# Make sure ALGORITHMS is defined somewhere, e.g., ALGORITHMS = ["RS256"]
+
+idpPrefix = os.environ['IDP_PREFIX']
+
+def validated(op, validate_body=True, idpPrefix_variable=None):
     def decorator(f):
         def wrapper(event, context):
             try:
+                print("Getting claims...")
+                claims, token = get_claims(event, context)
 
-                claims = get_claims(event, context)
+                def get_email(text, idpPrefix):
+                    if idpPrefix and text.startswith(idpPrefix + '_'):
+                        return text.split(idpPrefix + '_', 1)[1]
+                    else:
+                        return text
 
-                get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
-                current_user = get_email(claims['username'])
+                current_user = get_email(claims['username'], idpPrefix_variable)
 
                 print(f"User: {current_user}")
-
-                # current_user = claims['user']['name']
 
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
+                print("Parsing and validating...")
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
+                data['access_token'] = token
                 result = f(event, context, current_user, name, data)
 
                 return {
@@ -620,6 +662,7 @@ def validated(op, validate_body=True):
                     "body": json.dumps(result, cls=CombinedEncoder)
                 }
             except HTTPException as e:
+                print(f"HTTPException occurred: {e}")
                 return {
                     "statusCode": e.status_code,
                     "body": json.dumps({
@@ -631,16 +674,17 @@ def validated(op, validate_body=True):
 
     return decorator
 
-
 def get_claims(event, context):
-    # https://cognito-idp.<Region>.amazonaws.com/<userPoolId>/.well-known/jwks.json
-
+    print("Extracting OAUTH_ISSUER_BASE_URL and OAUTH_AUDIENCE...")
     oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
     oauth_audience = os.getenv('OAUTH_AUDIENCE')
+    print(f"OAUTH_ISSUER_BASE_URL: {oauth_issuer_base_url}\nOAUTH_AUDIENCE: {oauth_audience}")
 
     jwks_url = f'{oauth_issuer_base_url}/.well-known/jwks.json'
+    print(f"Retrieving JWKS from URL: {jwks_url}")
     jwks = requests.get(jwks_url).json()
 
+    print("JWKS Fetch successful. Processing...")
     token = None
     normalized_headers = {k.lower(): v for k, v in event['headers'].items()}
     authorization_key = 'authorization'
@@ -654,9 +698,12 @@ def get_claims(event, context):
                 token = None
 
     if not token:
+        print("No Access Token Found")
         raise Unauthorized("No Access Token Found")
 
+    print("Access Token Found, decoding...")
     header = jwt.get_unverified_header(token)
+    print (token)
     rsa_key = {}
     for key in jwks["keys"]:
         if key["kid"] == header["kid"]:
@@ -667,17 +714,35 @@ def get_claims(event, context):
                 "n": key["n"],
                 "e": key["e"]
             }
+            break
 
     if rsa_key:
-        payload = jwt.decode(
-            token,
-            rsa_key,
-            algorithms=ALGORITHMS,
-            audience=oauth_audience,
-            issuer=oauth_issuer_base_url
-        )
-        return payload
+        print("RSA Key Found, validating...")
+        try:
+            payload = jwt.decode(
+                token,
+                rsa_key,
+                algorithms=ALGORITHMS,
+                audience=oauth_audience,
+                issuer=oauth_issuer_base_url
+            )
+            print("Token successfully validated.")
+            print("Payload", payload )
+            return payload, token
+        except jwt.ExpiredSignatureError:
+            print("Token has expired.")
+            raise Unauthorized("Token has expired.")
+        except jwt.InvalidAudienceError:
+            print("Invalid audience.")
+            raise Unauthorized("Invalid audience.")
+        except jwt.InvalidIssuerError:
+            print("Invalid issuer.")
+            raise Unauthorized("Invalid issuer.")
+        except Exception as e:
+            print(f"Error during token validation: {e}")
+            raise Unauthorized(f"Error during token validation: {e}")
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 
     raise Unauthorized("No Valid Access Token Found")
+

@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import {ConsoleWritableStream} from "./consoleWriteableStream.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
 import {chat} from "../azure/openai.js";

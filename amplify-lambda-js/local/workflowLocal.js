@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import {chat} from "../azure/openai.js";
 import {Models} from "../models/models.js";
 import {executeWorkflow} from "../workflow/workflow.js";

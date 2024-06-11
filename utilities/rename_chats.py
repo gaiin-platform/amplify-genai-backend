@@ -1,3 +1,7 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from common.validate import validated
 from common.llm import get_chat_llm
 from langchain_core.prompts import ChatPromptTemplate

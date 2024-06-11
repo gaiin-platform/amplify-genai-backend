@@ -1,0 +1,55 @@
+{
+    "models": [
+        {
+            "gpt-4-turbo": {
+                "endpoints": [
+                    {
+                        "url": "https://{your endpoint}/openai/deployments/{your deployment id}/chat/completions?api-version=2023-07-01-preview",
+                        "key": "yourapikey"
+                    }
+                ]
+            }    
+        },
+        {
+            "gpt-4o": {
+                "endpoints": [
+                    {
+                        "url": "https://{your endpoint}/openai/deployments/{your deployment id}/chat/completions?api-version=2023-07-01-preview",
+                        "key": "yourapikey"
+                    }
+                ]
+            }
+        },        
+
+        {
+            "gpt-35-turbo": {
+                "endpoints": [
+                    {
+                        "url": "https://{your endpoint}/openai/deployments/{your deployment id}/chat/completions?api-version=2023-07-01-preview",
+                        "key": "yourapikey"
+                    }
+                ]
+            }
+        },
+        {
+            "text-embedding-ada-002": {
+                "endpoints": [
+                    {
+                        "url": "https://{your endpoint}/",
+                        "key": "yourapikey"
+                    }
+                ]
+            }
+        },
+        {
+            "code-interpreter": {
+                "endpoints": [
+                    {
+                        "url": "https://{your endpoint}",
+                        "key": "yourapikey"
+                    }
+                ]
+            }
+        }
+    ]
+}

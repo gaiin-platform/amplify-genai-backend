@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 
 import {getLogger} from "../common/logging.js";
 import {executeWorkflow} from "../workflow/workflow.js";

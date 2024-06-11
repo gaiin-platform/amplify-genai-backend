@@ -2,20 +2,42 @@
 services:
 
   amplify-lambda:
-    path: ./amplify-lambda 
+    path: ./amplify-lambda
+    params:
+      SHARE_ASSISTANTS_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
+    dependsOn:
+      - amplify-assistants
   
-  amplify-lambda-js:
-    path: ./amplify-lambda-js
-
   vu-amplify-embedding:
     path: ./embedding
+    dependsOn:
+      - amplify-lambda
 
   vu-amplify-object-access:
     path: ./object-access
-
-  sql-connector:
-    path: ./sql-connector
+    dependsOn:
+      - amplify-lambda
 
   amplify-utilities:
     path: ./utilities
+    dependsOn:
+      - amplify-lambda
 
+  chat-billing:
+    path: ./chat-billing
+    dependsOn:
+      - amplify-lambda
+  
+  amplify-assistants:
+    path: ./amplify-assistants
+
+
+  amplify-lambda-js:
+    path: ./amplify-lambda-js
+    params:
+      ASSISTANTS_AZURE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscorecodeUnderscoreintUnderscoreassistUnderscoreurlLambdaFunctionUrl}
+      ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscoreassistantUnderscoreurlLambdaFunctionUrl}
+      ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
+    dependsOn:
+      - amplify-assistants
+  

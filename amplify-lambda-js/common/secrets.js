@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -19,7 +22,7 @@ export const getSecret = async (secretName) => {
 
     try {
         // Send the command to Secrets Manager service
-        const data = await secretsManagerClient.send(command); // fails here 
+        const data = await secretsManagerClient.send(command); 
 
         let secret;
         if ('SecretString' in data) {

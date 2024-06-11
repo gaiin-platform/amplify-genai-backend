@@ -1,3 +1,6 @@
+//Copyright (c) 2024 Vanderbilt University  
+//Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 import express from 'express';
 import cors from 'cors';
 import {routeRequest} from "../router.js";

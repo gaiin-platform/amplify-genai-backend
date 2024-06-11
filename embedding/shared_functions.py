@@ -1,11 +1,13 @@
+
+#Copyright (c) 2024 Vanderbilt University  
+#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 from openai import AzureOpenAI
 import tiktoken
 import re
-import json
 import os
-import boto3
 import logging
-from common.credentials import get_credentials, get_json_credetials, get_endpoint
+from common.credentials import get_endpoint
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -13,7 +15,6 @@ logger.setLevel(logging.INFO)
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version    = os.environ['API_VERSION']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
-keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
 
   #Get embedding token count from tiktoken
@@ -59,42 +60,6 @@ def generate_embeddings(content):
         raise
 
 
-def generate_keywords(content):
-    logger.info("Getting Keywords Endpoints")
-    endpoint, api_key = get_endpoint(keyword_model_name, endpoints_arn)
-    logger.info(f"Endpoint: {endpoint}")
-
-    client = AzureOpenAI(
-    api_key = api_key,
-    azure_endpoint = endpoint,
-    api_version = api_version
-)
-    try:
-        response = client.chat.completions.create(
-            model=keyword_model_name,
-            messages=[{"role": "system", "content": "You are an assistant that helps extract keywords from a given text. Create a complete but concise representation Provide output in the following format ('word1 word2 word3 word4 word5') "},
-                     {"role": "user", "content": f"Please extract keywords from the following text. #######:\n\n{content}"}],
-            max_tokens=10,
-            temperature=0
-        )
-      
-        raw_keywords = response.choices[0].message.content.strip()
-        keywords = clean_text(raw_keywords)
-        logger.info(f"Keywords: {keywords}")
-        return {
-            "statusCode": 200,
-            "body": {
-                "keywords": keywords
-            }
-        }
-    except Exception as e:
-        logger.error(f"An error occurred: {str(e)}", exc_info=True)
-        return {
-            "statusCode": 500,
-            "body": {
-                "error": f"An error occurred: {str(e)}"
-            }
-        }
     
 def generate_questions(content):
 
