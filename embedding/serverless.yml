@@ -103,7 +103,7 @@ provider:
           Resource:
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
+            - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
             - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
