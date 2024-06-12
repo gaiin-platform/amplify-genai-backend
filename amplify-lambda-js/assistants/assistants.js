@@ -12,7 +12,6 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
-import {getMostAdvancedModelEquivalent} from "../common/params.js"
 
 const logger = getLogger("assistants");
 

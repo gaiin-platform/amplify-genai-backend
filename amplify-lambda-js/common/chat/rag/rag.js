@@ -1,5 +1,5 @@
 import axios from "axios";
-import {getAccessToken, setModel, getModel, getCheapestModelEquivalent, getModel, getCheapestModelEquivalent} from "../../params.js";
+import {getAccessToken, setModel, getModel, getCheapestModelEquivalent} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {LLM} from "../../llm.js";
