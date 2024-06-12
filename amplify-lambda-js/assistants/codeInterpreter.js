@@ -427,7 +427,7 @@ export const codeInterpreterAssistant = new StateBasedAssistant(
         return true
     },
     (m) => {
-        return true
+        return true 
     },
     // This is the state machine that the assistant will use to process requests.
     States,

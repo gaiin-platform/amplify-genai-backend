@@ -105,7 +105,6 @@ const batchAssistant = {
 
 export const defaultAssistants = [
     defaultAssistant,
-    codeInterpreterAssistant,
     //batchAssistant,
     documentAssistant,
     reportWriterAssistant,
@@ -283,7 +282,6 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     }
 
     selected = selectedAssistant || defaultAssistant;
-    //selected = codeInterpreterAssistant;
 
     llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
 
