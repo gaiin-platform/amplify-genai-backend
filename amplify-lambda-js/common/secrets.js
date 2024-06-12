@@ -19,7 +19,7 @@ export const getSecret = async (secretName) => {
 
     try {
         // Send the command to Secrets Manager service
-        const data = await secretsManagerClient.send(command); // fails here 
+        const data = await secretsManagerClient.send(command); 
 
         let secret;
         if ('SecretString' in data) {
@@ -45,6 +45,9 @@ const getEndpointData = (parsed_data, model_name) => {
     }
     else if(model_name === "gpt-35-1106" || model_name === "gpt-35-1106"){
         model_name = "gpt-35-turbo";
+    }
+    else if(model_name === "gpt-4o" || model_name === "gpt-4o"){
+        model_name = "gpt-4o";
     }
 
     const endpoint_data = parsed_data.models.find((model) => model.hasOwnProperty(model_name));

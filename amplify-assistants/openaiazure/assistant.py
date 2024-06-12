@@ -95,7 +95,7 @@ def create_code_interpreter_assistant (event, context, current_user, name, data)
   description = extracted_data['description']
   tags = extracted_data.get('tags', [])
   instructions = extracted_data['instructions']
-  file_keys = extracted_data.get('fileKeys', [])
+  file_keys = extracted_data.get('dataSources', [])
   tools = extracted_data.get('tools', [])
   provider =  extracted_data.get('provider', 'azure')
 

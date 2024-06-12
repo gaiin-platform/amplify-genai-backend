@@ -12,6 +12,7 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import {getMostAdvancedModelEquivalent} from "../common/params.js"
 
 const logger = getLogger("assistants");
 
@@ -30,8 +31,7 @@ const defaultAssistant = {
     handler: async (llm, params, body, ds, responseStream) => {
 
         const model = (body.options && body.options.model) ?
-            Models[body.options.model.id]:
-            (Models[body.model]);
+            Models[body.options.model.id] : (Models[body.model]);
 
         logger.debug("Using model: ", model);
 
@@ -147,6 +147,7 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 }
 
 export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, assistants = defaultAssistants) => {
+    console.log(chooseAssistantForRequestWithLLM);
 
     const messages = [
         {
@@ -193,8 +194,9 @@ Please choose the best assistant to help with the task:
 ${body.messages.slice(-1)[0].content}
 ---------------
 `;
-    // switch to smartest model of the type 
-    let model = getMostAdvancedModelEquivalent(body.options.model);
+
+    const model =  getMostAdvancedModelEquivalent(body.options.model);
+    
 
     const updatedBody = {messages, options:{model}};
 
@@ -220,6 +222,7 @@ const getTokenCount = (dataSource) => {
 }
 
 export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {
+    console.log("getAvailableAssistantsForDataSources function")
 
     // if (!dataSources || dataSources.length === 0) {
     //     return [defaultAssistant];
@@ -235,6 +238,7 @@ const isUserDefinedAssistant = (assistantId) => {
 }
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
+    logger.info(`Choose Assistant for Request `);
     if (body.options && !body.options.skipCodeInterpreter) assistants.push(codeInterpreterAssistant);
 
 
@@ -245,6 +249,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     let selectedAssistant = null;
     if(clientSelectedAssistant) {
+        logger.info(`Client Selected Assistant`);
         selectedAssistant = await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
     }
 
@@ -283,7 +288,11 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     selected = selectedAssistant || defaultAssistant;
 
-    llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
+    logger.info("Sending State Event to Stream ", selectedAssistant.name);
+    llm.sendStateEventToStream({
+        currentAssistant: selectedAssistant.name,
+        currentAssistantId: clientSelectedAssistant || selectedAssistant.name
+    })
 
     status.inProgress = false;
     llm.sendStatus(status);

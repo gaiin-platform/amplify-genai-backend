@@ -73,6 +73,17 @@ create_assistant_schema = {
             "type": "string",
             "description": "Instructions related to the item"
         },
+        "uri": {
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "The endpoint that receives requests for the assistant"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
         "dataSources": {
             "type": "array",
             "description": "A list of data sources",
@@ -160,6 +171,7 @@ share_assistant_schema = {
         "assistantId": {"type": "string"},
         "recipientUsers": {"type": "array", "items": {"type": "string"}},
         "accessType": {"type": "string"},
+        "dataSources": {"type": "array", "items": {"type": "string"}},
         "policy": {"type": "string", "default": ""}
     },
     "required": ["assistantId", "recipientUsers", "accessType"],

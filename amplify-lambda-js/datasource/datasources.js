@@ -4,6 +4,7 @@ import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
+import getDatasourceHandler from "./external.js";
 
 const logger = getLogger("datasources");
 
@@ -280,7 +281,9 @@ export const resolveDataSources = async (params, body, dataSources) => {
     );
 
     if (nonUserSources && nonUserSources.length > 0) {
-        if (!await canReadDataSources(params.accessToken, nonUserSources)) {
+        //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
+        const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
+        if (!await canReadDataSources(params.accessToken, ds_with_keys)) {
             throw new Error("Unauthorized data source access.");
         }
     }
@@ -497,7 +500,7 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
  * @param dataSource
  * @returns {Promise<{name, content: {canSplit: boolean, tokens, location: {key: *}, content: *}[]}|*[]|*>}
  */
-export const getContent = async (dataSource) => {
+export const getContent = async (chatRequest, params, dataSource) => {
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
@@ -513,6 +516,7 @@ export const getContent = async (dataSource) => {
         }
 
         return result;
+
     } else if (sourceType === 'obj://') {
         logger.debug("Fetching data from object");
 
@@ -538,9 +542,15 @@ export const getContent = async (dataSource) => {
             }
 
         return content;
-    } else {
-        return [dataSource];
     }
+    else if (sourceType) {
+        const handler = await getDatasourceHandler(sourceType, chatRequest, params, dataSource);
+        if (handler) {
+            return await handler(chatRequest, params, dataSource);
+        }
+    }
+
+    return [dataSource];
 }
 
 /**
@@ -553,7 +563,8 @@ export const getContent = async (dataSource) => {
  * @param options
  * @returns {Promise<*[]|*>}
  */
-export const getContexts = async (tokenCounter, dataSource, maxTokens, options) => {
+export const getContexts = async (resolutionEnv, dataSource, maxTokens, options) => {
+    const tokenCounter = resolutionEnv.tokenCounter;
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Get contexts with options", options);
@@ -561,6 +572,6 @@ export const getContexts = async (tokenCounter, dataSource, maxTokens, options) 
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
-    const result = await getContent(dataSource);
+    const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
     return formatAndChunkDataSource(tokenCounter, dataSource, result, maxTokens, options);
 }

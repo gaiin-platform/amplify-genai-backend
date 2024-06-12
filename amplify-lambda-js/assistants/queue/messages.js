@@ -3,12 +3,14 @@ import {ModelID, Models} from "../../models/models.js";
 import { v4 as uuidv4 } from 'uuid';
 import { getCheapestModelEquivalent } from '../../common/params.js';
 
+
 // Initialise the SQS client
 const sqsClient = new SQSClient();
 
 
 export const createChatTask = (accessToken, user, resultKey, chatBody, options = {}) => {
     const model = getCheapestModelEquivalent(options.model);
+    
     const task =
         {
             op: "chat",

@@ -211,6 +211,7 @@ functions:
     handler: openaiazure/assistant.chat_with_code_interpreter
     timeout: 900
     url: true
+    
 
 
   run_assistant_thread:

@@ -232,6 +232,7 @@ def list_assistants(event, context, current_user, name, data):
     # assistants.append(get_amplify_automation_assistant())
 
     assistant_ids = [assistant['id'] for assistant in assistants]
+
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
 
     # Make sure each assistant has a data field and initialize it if it doesn't
@@ -318,6 +319,7 @@ def create_assistant(event, context, current_user, name, data):
     extracted_data = data['data']
     assistant_name = extracted_data['name']
     description = extracted_data['description']
+    uri = extracted_data.get('uri', None)
     assistant_public_id = extracted_data.get('assistantId', None)
     tags = extracted_data.get('tags', [])
 
@@ -329,13 +331,35 @@ def create_assistant(event, context, current_user, name, data):
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
 
-    print(f"Data sources before translation: {data_sources}")
-    data_sources = translate_user_data_sources_to_hash_data_sources(data_sources)
-    print(f"Data sources after translation: {data_sources}")
+    filtered_ds = []
+    tag_data_sources = []
+    for source in data_sources:
+        if source['id'].startswith("tag://"):
+            tag_data_sources.append(source)
+        else:
+            filtered_ds.append(source)
+    
+    print(f"Tag Data sources: {tag_data_sources}")
 
-    # Auth check: need to update to new permissions endpoint
-    if not can_access_objects(data['access_token'], data_sources):
-        return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+    if (len(filtered_ds) > 0):
+        print(f"Data sources before translation: {filtered_ds}")
+
+        for i in range(len(filtered_ds)):
+            source = filtered_ds[i]
+            if (not source['id'].startswith("s3://")): filtered_ds[i]['id'] = source['key']
+        
+        print(f"Final data sources before translation: {filtered_ds}")
+
+        filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+        
+        print(f"Data sources after translation and extraction: {filtered_ds}")
+
+        data_sources = filtered_ds + tag_data_sources
+
+        # Auth check: need to update to new permissions endpoint
+        if not can_access_objects(data['access_token'], data_sources):
+            return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+        
 
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_or_update_assistant(
@@ -348,6 +372,7 @@ def create_assistant(event, context, current_user, name, data):
         data_sources=data_sources,
         tools=tools,
         provider=provider,
+        uri=uri,
         assistant_public_id=assistant_public_id
     )
 
@@ -358,6 +383,7 @@ def share_assistant(event, context, current_user, name, data):
     assistant_key = extracted_data['assistantId']
     recipient_users = extracted_data['recipientUsers']
     access_type = extracted_data['accessType']
+    data_sources = extracted_data['dataSources']
     policy = extracted_data.get('policy', '')
 
     return share_assistant_with(
@@ -366,11 +392,13 @@ def share_assistant(event, context, current_user, name, data):
         assistant_key=assistant_key,
         recipient_users=recipient_users,
         access_type=access_type,
+        data_sources=data_sources,
         policy=policy
+
     )
 
 
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, policy=''):
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, data_sources, policy=''):
     dynamodb = boto3.resource('dynamodb')
     assistant_entry = get_assistant(assistant_key)
 
@@ -396,8 +424,18 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
         print(f"Error updating permissions for assistant {assistant_public_id}")
         return {'success': False, 'message': 'Error updating permissions'}
     else:
+        print (f"Update data sources object access permissions for users {recipient_users} for assistant {assistant_public_id}")
+        update_object_permissions(
+            access_token=access_token,
+            shared_with_users=recipient_users,
+            keys=data_sources,
+            object_type='datasource',
+            principal_type='user',
+            permission_level='read',
+            policy='')
 
-        for user in recipient_users:
+        for user in recipient_users:     
+
             print(f"Creating alias for user {user} for assistant {assistant_public_id}")
             create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
                                    'latest')
@@ -435,7 +473,7 @@ def get_most_recent_assistant_version(assistants_table,
 
 
 def save_assistant(assistants_table, assistant_name, description, instructions, data_sources, provider, tools,
-                   user_that_owns_the_assistant, version, tags, assistant_public_id=None, data = None):
+                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None):
     """
     Saves the assistant data to the DynamoDB table.
 
@@ -452,6 +490,10 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
 
     Returns:
         dict: The saved assistant data.
+        :param assistant_public_id:
+        :param version:
+        :param tags:
+        :param uri:
     """
     # Get the current timestamp in the format 2024-01-16T12:40:23.308162
     timestamp = time.strftime('%Y-%m-%dT%H:%M:%S')
@@ -480,6 +522,7 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'dataSourcesHash': datasources_sha256,
         'instructionsHash': instructions_sha256,
         'tags': tags,
+        'uri': uri,
         'coreHash': core_sha256,
         'hash': full_sha256,
         'name': assistant_name,
@@ -488,8 +531,7 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'createdAt': timestamp,
         'updatedAt': timestamp,
         'dataSources': data_sources,
-        'version': version,
-        'data': data
+        'version': version
     }
 
     assistants_table.put_item(Item=new_item)
@@ -574,6 +616,7 @@ def create_or_update_assistant(
         data_sources,
         tools,
         provider,
+        uri,
         assistant_public_id=None
 ):
     """
@@ -589,6 +632,7 @@ def create_or_update_assistant(
         data_sources (list): A list of data sources used by the assistant.
         tools (list): A list of tools used by the assistant.
         provider (str): The provider of the assistant (e.g., 'amplify', 'openai').
+        uri (str): The URI of the assistant (optional).
         assistant_public_id (str): The public ID of the assistant (optional).
 
     Returns:
@@ -623,6 +667,7 @@ def create_or_update_assistant(
             user_that_owns_the_assistant,
             new_version,
             tags,
+            uri,
             assistant_public_id
         )
         new_item['version'] = new_version
@@ -654,18 +699,6 @@ def create_or_update_assistant(
                      'version': new_version}
         }
     else:
-
-        data = None
-        if provider == 'openai' or provider == 'azure':
-            result = create_new_openai_assistant(
-                assistant_name,
-                instructions,
-                data_sources,
-                tools, 
-                provider
-            )
-            data = result['data']
-
         new_item = save_assistant(
             assistants_table,
             assistant_name,
@@ -677,8 +710,8 @@ def create_or_update_assistant(
             user_that_owns_the_assistant,
             1,
             tags,
+            uri,
             None, 
-            data
         )
 
         # Update the permissions for the new assistant

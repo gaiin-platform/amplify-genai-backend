@@ -61,8 +61,8 @@ export const getMostAdvancedModelEquivalent = (model) => {
     if (model.id.includes("gpt")) {
         return Models["gpt-4-1106-Preview"];
     } else if (model.id.includes("anthropic")) { 
-        return Models["anthropic.claude-3-sonnet-20240229-v1:0"];
+        return Models["anthropic.claude-3-opus-20240229-v1:0"];
     } else if (model.id.includes("mistral")) { 
-        return Models['mistral.mixtral-8x7b-instruct-v0:1'];
+        return Models['mistral.mistral-large-2402-v1:0'];
     }
 }

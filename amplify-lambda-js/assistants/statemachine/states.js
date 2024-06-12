@@ -450,7 +450,7 @@ export const ragAction = (config = {
                 messages,
                 options: {
                     ...llm.defaultBody,
-                    model: getCheapestModelEquivalent(getModel(llm.params)),//Models[process.env.RAG_ASSISTANT_MODEL_ID],
+                    model:  getCheapestModelEquivalent(getModel(llm.params)), //Models[process.env.RAG_ASSISTANT_MODEL_ID],
                     skipRag: true
                 }
             };

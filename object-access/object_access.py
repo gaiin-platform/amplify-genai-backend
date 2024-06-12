@@ -25,13 +25,17 @@ def is_sufficient_privilege(object_id, permission_level, policy, requested_acces
 
 
 def add_access_response(access_responses, object_id, access_type, response):
+    print("Add access response")
     if object_id not in access_responses:
         access_responses[object_id] = {}
     access_responses[object_id][access_type] = response
+    print("Added access response: ", access_responses)
+
 
 
 @validated("simulate_access_to_objects")
-def simulate_access_to_objects(event, context, current_user, name, data, username, cognito_groups):
+def simulate_access_to_objects(event, context, current_user, name, data, username):
+    print("Simulating object access")
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
 
@@ -41,6 +45,7 @@ def simulate_access_to_objects(event, context, current_user, name, data, usernam
     access_responses = {}
 
     for object_id, access_types in data_sources.items():
+        print("checking permissions for object: ", object_id, " with access: ", access_types)
         # Check if any permissions already exist for the object_id
         for access_type in access_types:
             try:
@@ -78,11 +83,15 @@ def simulate_access_to_objects(event, context, current_user, name, data, usernam
 
 
 @validated("can_access_objects")
-def can_access_objects(event, context, current_user, name, data, username, cognito_groups):
+def can_access_objects(event, context, current_user, name, data, username):
+    print("Can access objects")
+
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
 
     data = data['data']
+
+    print("Data: ", data)
 
     try:
         data_sources = data['dataSources']
@@ -110,6 +119,7 @@ def can_access_objects(event, context, current_user, name, data, username, cogni
             permission_level = item.get('permission_level')
             policy = item.get('policy')
             if not is_sufficient_privilege(object_id, permission_level, policy, access_type):
+                print("User does not have access to objectId: ", object_id)
                 return {
                     'statusCode': 403,
                     'body': json.dumps({
@@ -125,7 +135,7 @@ def can_access_objects(event, context, current_user, name, data, username, cogni
             'statusCode': 500,
             'body': "Internal error determining access. Please try again later."
         }
-
+    print("User passed can access objects.")
     return {
         'statusCode': 200,
         'body': 'User has access to the object(s).'
@@ -133,13 +143,14 @@ def can_access_objects(event, context, current_user, name, data, username, cogni
 
 
 @validated("update_object_permissions")
-def update_object_permissions(event, context, current_user, name, data, username, cognito_groups):
+def update_object_permissions(event, context, current_user, name, data, username):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
-
+    print("Entered update object permissions")
     try:
         data_sources = data['dataSources']
         email_list = data['emailList']
+        print("Email list: ", email_list)
         provided_permission_level = data['permissionLevel']  # Permission level provided for other users
         policy = data['policy']  # No need to use get() since policy is always present
         principal_type = data.get('principalType')
@@ -147,8 +158,10 @@ def update_object_permissions(event, context, current_user, name, data, username
 
         # Get the DynamoDB table
         table = dynamodb.Table(table_name)
-
+        
         for object_id in data_sources:
+            print("Current object Id: ", object_id)
+        
             # Check if any permissions already exist for the object_id
             query_response = table.query(
                 KeyConditionExpression=boto3.dynamodb.conditions.Key('object_id').eq(object_id)
@@ -157,6 +170,7 @@ def update_object_permissions(event, context, current_user, name, data, username
 
             # If there are no permissions, create the initial item with the current_user as the owner
             if not items:
+                print(" no permissions, create the initial item with the current_user as the owner")
                 table.put_item(Item={
                     'object_id': object_id,
                     'principal_id': current_user,
@@ -173,35 +187,40 @@ def update_object_permissions(event, context, current_user, name, data, username
             }
             owner_response = table.get_item(Key=owner_key)
             owner_item = owner_response.get('Item')
-
+            print("check if the current_user has 'owner' or 'write' permissions for the object_id")
             if owner_item and owner_item.get('permission_level') in ['owner', 'write']:
                 # If current_user is the owner or has write permission, proceed with updates
+                print("current_user foes have permissions to proceed with updates")
                 for principal_id in email_list:
-                    # Create or update the permission level for each principal_id
-                    principal_key = {
-                        'object_id': object_id,
-                        'principal_id': principal_id
-                    }
-                    # Use the provided permission level for other users
-                    update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
-                    expression_attribute_values = {
-                        ':principal_type': principal_type,
-                        ':object_type': object_type,
-                        ':permission_level': provided_permission_level,  # Use the provided permission level
-                        ':policy': policy
-                    }
-                    table.update_item(
-                        Key=principal_key,
-                        UpdateExpression=update_expression,
-                        ExpressionAttributeValues=expression_attribute_values
-                    )
+                    if (current_user != principal_id):  # edge case
+                        print("Object ID: ", object_id, " for user: ", principal_id)
+                        # Create or update the permission level for each principal_id
+                        principal_key = {
+                            'object_id': object_id,
+                            'principal_id': principal_id
+                        }
+                        # Use the provided permission level for other users
+                        update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
+                        expression_attribute_values = {
+                            ':principal_type': principal_type,
+                            ':object_type': object_type,
+                            ':permission_level': provided_permission_level,  # Use the provided permission level
+                            ':policy': policy
+                        }
+                        table.update_item(
+                            Key=principal_key,
+                            UpdateExpression=update_expression,
+                            ExpressionAttributeValues=expression_attribute_values
+                        )
             else:
                 # The current_user does not have 'owner' or 'write' permissions
+                print("The current_user does not have 'owner' or 'write' permissions")
                 return {
                     'statusCode': 403,
                     'body': json.dumps(
                         f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
                 }
+
     except ClientError as e:
         return {
             'statusCode': e.response['ResponseMetadata']['HTTPStatusCode'],
@@ -212,15 +231,14 @@ def update_object_permissions(event, context, current_user, name, data, username
             'statusCode': 500,
             'body': json.dumps(f"Error processing request: {str(e)}")
         }
-
+    print("Permissions updated successfully")
     return {
         'statusCode': 200,
         'body': json.dumps('Permissions updated successfully.')
     }
 
-
 @validated("create_cognito_group")
-def create_cognito_group(event, context, current_user, name, data, username, cognito_groups):
+def create_cognito_group(event, context, current_user, name, data, username):
     """
     Create a Cognito user group in the specified user pool and add the current user to it.
 

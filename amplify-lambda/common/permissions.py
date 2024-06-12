@@ -21,6 +21,9 @@ def can_read_share(user, data):
   # Read share automatically pulls data for the authenticated user
   return True
 
+def can_read(user, data):
+  return True
+
 def get_permission_checker(user, type, op, data):
   print("Checking permissions for user: {} and type: {} and op: {}".format(user, type, op))
   return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
@@ -42,11 +45,17 @@ permissions_by_state_type = {
   "/state/base-prompts/get": {
     "get": can_read_share
   },
+  "/datasource/metadata/set": {
+    "set": can_upload
+  },
   "/assistant/files/upload": {
     "upload": can_upload
   },
   "/assistant/files/set_tags": {
     "set_tags": can_upload
+  },
+  "/assistant/tags/create": {
+    "create": can_upload
   },
   "/assistant/tags/delete": {
     "delete": can_upload
@@ -122,5 +131,23 @@ permissions_by_state_type = {
   },
   "/state/accounts/save": {
     "save": can_publish_item
+  },
+  "/state/conversation/upload": {
+    "conversation_upload": can_upload
+  },
+  "/state/conversation/get_multiple": {
+    "get_multiple_conversations": can_read
+  },
+  "/state/conversation/get": {
+    "read": can_read
+  },
+  "/state/conversation/get_all": {
+    "read": can_read
+  },
+  "/state/conversation/delete": {
+    "read": can_delete_item
+  },
+  "/state/conversation/delete_multiple": {
+    "delete_multiple_conversations": can_delete_item
   },
 }
