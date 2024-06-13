@@ -81,8 +81,7 @@ provider:
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     SHARE_ASSISTANTS_ENDPOINT: ${param:SHARE_ASSISTANTS_ENDPOINT}/assistant/share
-    
-    # Vars Referencing other services
+    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/update_object_permissions
     OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
 
