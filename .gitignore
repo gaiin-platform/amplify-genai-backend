@@ -1,4 +1,4 @@
-# Distribution / packaging
+# Python
 .Python
 env/
 build/
@@ -15,18 +15,25 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-.*-env.yml
+__pycache__/
+core/
+Include/
+lib/
+Scripts/
+
+# Environment
 .env*
+.requirements.zip
 
-
-# Serverless directories
+# Serverless
 .serverless
-
 /package
+
+# Node.js
 node_modules
+
+# macOS
 .DS_Store
+
+# IDE
 .idea
-.serverless
-*.pyc
-*.pyo
-.env.local
