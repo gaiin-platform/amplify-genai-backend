@@ -44,21 +44,18 @@ Initial setup requires the creation of a `/var` directory at the root level of t
 
 ## Deployment Process
 
-### Deploying From the Repository Root
+### Deploying All Services From the Repository Root
 
 To deploy a service directly from the root of the repository, use the command structure below, replacing `service-name` with your specific service name and `stage` with the appropriate deployment stage ('dev', 'staging', 'prod'):
 
 serverless service-name:deploy --stage <stage>
 
-### Example deploying from this repository specifically
+### Example Deploying a Specific Service
 
 serverless amplify-lambda:deploy --stage dev
 
 ## Deploying from the Service Directory
 
-If you need to deploy from within a service’s directory, first navigate to that directory, then use the serverless deploy command as shown:
-cd service-name
-serverless deploy --stage <stage>
-Make sure to replace service-name with the actual service’s directory name and <stage> with the targeted deployment stage. ```
+Because we are using serverless-compose to import variables across services, you have to deploy from the root of the repo or you could have issues resolving variables within the application
 
 

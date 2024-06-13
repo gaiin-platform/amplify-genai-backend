@@ -18,11 +18,14 @@ custom:
   pythonRequirements:
     dockerizePip: non-linux
     layer: true
+    slim: true
+    zip: true
+
 
   prune:
     automatic: true
     includeLayers: true
-    number: 5           
+    number: 5
 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   
@@ -33,7 +36,7 @@ custom:
 
   deploymentBucket:
     versioning: true
-    accelerate: true
+    accelerate: false
     blockPublicAccess: true
     tags:
       - Key: Environment
@@ -91,6 +94,7 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    #PGVECTOR_LAMBDA_LAYER_ARN: ${self:custom.stageVars.PGVECTOR_LAMBDA_LAYER_ARN}
 
 
   iam:
@@ -123,75 +127,72 @@ provider:
 
 functions:
   create_table:
-      runtime: python3.10
-      handler: create_table.create_table
-      layers:
-        - Ref: PythonRequirementsLambdaLayer
-      vpc: 
-        securityGroupIds:
-          - !Ref LambdaSecurityGroup
-        subnetIds:
-          - ${self:provider.environment.PRIVATE_SUBNET_ONE}
-          - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-      environment:
-        RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET} #${sls:stage}/rag/postgres/db-creds-2
-        RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
-        RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
-        RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
-
+    runtime: python3.10
+    handler: create_table.create_table
+    layers:
+     - Ref: PythonRequirementsLambdaLayer
+    
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    environment:
+      RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET} #${sls:stage}/rag/postgres/db-creds-2
+      RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
+      RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
   queue_document_for_embedding:
-      runtime: python3.10
-      handler: embedding-sqs.queue_document_for_embedding
-      layers:
-        - Ref: PythonRequirementsLambdaLayer
-      events:
-        - s3:
-            bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
-            event: s3:ObjectCreated:*
-            existing: true
-      environment:
-          EMBEDDING_CHUNKS_INDEX_QUEUE:
-            Ref: EmbeddingChunksIndexQueue
-         
-
+    runtime: python3.10
+    handler: embedding-sqs.queue_document_for_embedding
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
+    environment:
+        EMBEDDING_CHUNKS_INDEX_QUEUE:
+          Ref: EmbeddingChunksIndexQueue
+        
   process_chunk_for_embedding:
-      runtime: python3.10
-      layers: 
-        - Ref: PythonRequirementsLambdaLayer
-      handler: embedding.lambda_handler
-      reservedConcurrency: 200
-      vpc: 
-        securityGroupIds:
-          - !Ref LambdaSecurityGroup
-        subnetIds:
-          - ${self:provider.environment.PRIVATE_SUBNET_ONE}
-          - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-      timeout: 900
-      events:
-        - sqs:
-            arn:
-              Fn::GetAtt:
-                - EmbeddingChunksIndexQueue
-                - Arn
-      environment:
-        RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET} #${sls:stage}/rag/postgres/db-creds-2
-        MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
-        RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
-        RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
-        RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address
-        ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
-        EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
-        QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
-        API_VERSION: ${self:provider.environment.API_VERSION}
-        USER_FILES_TABLE: ${self:provider.environment.USER_FILES_TABLE}
-        EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
+    runtime: python3.10
+    layers: 
+      - Ref: PythonRequirementsLambdaLayer
+    handler: embedding.lambda_handler
+    reservedConcurrency: 200
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 900
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - EmbeddingChunksIndexQueue
+              - Arn
+    environment:
+      RAG_POSTGRES_DB_SECRET: ${self:provider.environment.RAG_POSTGRES_DB_SECRET} #${sls:stage}/rag/postgres/db-creds-2
+      MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
+      RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
+      RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address
+      ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
+      EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
+      QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
+      API_VERSION: ${self:provider.environment.API_VERSION}
+      USER_FILES_TABLE: ${self:provider.environment.USER_FILES_TABLE}
+      EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
 
 
   get_dual_embeddings:
     runtime: python3.10
-    handler: embedding-dual-retrieval.process_input_with_dual_retrieval
     layers:
       - Ref: PythonRequirementsLambdaLayer
+    handler: embedding-dual-retrieval.process_input_with_dual_retrieval
     vpc: 
       securityGroupIds:
         - !Ref LambdaSecurityGroup
