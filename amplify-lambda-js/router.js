@@ -15,6 +15,7 @@ import {
     translateUserDataSourcesToHashDataSources
 } from "./datasource/datasources.js";
 import {saveTrace, trace} from "./common/trace.js";
+import { codeInterpreterAssistant } from "./assistants/codeInterpreter.js";
 
 const doTrace = process.env.TRACING_ENABLED;
 const logger = getLogger("router");
@@ -148,6 +149,9 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 requestId,
                 options
             };
+            console.log(
+                "Enter router: ", body.messages
+            )
 
             await createRequestState(params.user, requestId);
 
@@ -168,6 +172,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 body,
                 dataSources,
                 responseStream);
+            
 
             await deleteRequestState(params.user, requestId);
 
@@ -181,6 +186,9 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 logger.debug("Response", response);
                 returnResponse(responseStream, response);
             }
+            
+
+            
 
         }
     } catch (e) {

@@ -6,8 +6,14 @@ def get_permission_checker(user, ptype, op, data):
 def can_create_assistant(user, data):
     return True
 
+def can_list_assistant(user, data):
+    return True
 
-def can_create_assistant_thread(user, data):
+def can_delete_assistant(user, data):
+    return True
+
+
+def can_chat_with_code_interpreter(user, data):
     return True
 
 def can_download(user, data):
@@ -27,51 +33,30 @@ permissions_by_state_type = {
         "create": can_create_assistant
     },
     "/assistant/list": {
-        "list": can_create_assistant
+        "list": can_list_assistant
     },
     "/assistant/delete": {
-        "delete": can_create_assistant
+        "delete": can_delete_assistant
     },
     "/assistant/share": {
         "share_assistant": can_create_assistant
     },
-    "/openai/assistant/delete": {
-        "delete": can_create_assistant
+    "/assistant/openai/delete": {
+        "delete": can_delete_assistant
     },
-    "/assistant/thread/create": {
-        "create": can_create_assistant_thread
-    },
-    "/assistant/thread/delete": {
-        "delete": can_create_assistant_thread
-    },
-    "/assistant/thread/list": {
-        "create": can_create_assistant_thread
-    },
-    "/assistant/thread/message/create": {
-        "add_message": can_create_assistant_thread
-    },
-    "/assistant/thread/message/list": {
-        "get_messages": can_create_assistant_thread
-    },
-    "/assistant/thread/run": {
-        "run": can_create_assistant_thread
-    },
-    "/assistant/thread/run/status": {
-        "run_status": can_create_assistant_thread
-    },
-    "/assistant/chat": {
-        "chat": can_create_assistant_thread
+    "/assistant/openai/thread/delete": {
+        "delete": can_delete_assistant
     },
      "/assistant/chat_with_code_interpreter": {
-        "chat": can_create_assistant_thread
+        "chat": can_chat_with_code_interpreter
+    }, 
+     "/": {
+        "chat": can_chat_with_code_interpreter
     }, 
     "/assistant/create/codeinterpreter": {
         "create": can_create_assistant
     },
-    "/": {
-        "chat": can_create_assistant_thread
-    },
-      "/assistant/files/download": {
-    "download": can_download
+      "/assistant/files/download/codeinterpreter": {
+     "download": can_download
   },
 }

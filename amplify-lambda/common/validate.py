@@ -269,26 +269,6 @@ file_query_schema = {
     "additionalProperties": False
 }
 
-run_thread_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "The identifier of the thread."
-        },
-        "assistantId": {
-            "type": "string",
-            "description": "The identifier of the assistant."
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions for the assistant (optional).",
-            "default": "",
-            "minLength": 0
-        }
-    },
-    "required": ["id", "assistantId"]
-}
 
 id_request_schema = {
     "type": "object",
@@ -353,77 +333,6 @@ add_charge = {
     "required": ["accountId", "charge", "description", "details"]
 }
 
-add_message_schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "A unique identifier for the object."
-        },
-        "role": {
-            "type": "string",
-            "description": "The role of the user or assistant in the conversation."
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of keys associated with files.",
-            "items": {
-                "type": "string"
-            }
-        },
-        "content": {
-            "type": "string",
-            "description": "The textual content of the message."
-        },
-        "messageId": {
-            "type": "string",
-            "description": "The ID of the message."
-        },
-        "data": {
-            "type": "object",
-            "description": "Optional data as a dictionary with string keys and string values.",
-            "additionalProperties": {
-                "type": "string"
-            }
-        }
-    },
-    "required": ["id", "role", "content", "messageId"],
-}
-
-chat_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string"
-        },
-        "fileKeys": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
-        },
-        "messages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "content": {
-                        "type": "string"
-                    },
-                    "role": {
-                        "type": "string"
-                    }
-                },
-                "required": ["id", "content"]
-            }
-        }
-    },
-    "required": ["id", "fileKeys", "messages"]
-}
 
 publish_item_schema = {
     "type": "object",
@@ -649,24 +558,6 @@ validators = {
     },
     "/assistant/create": {
         "create": create_assistant_schema
-    },
-    "/assistant/thread/create": {
-        "create": {}
-    },
-    "/assistant/thread/message/create": {
-        "add_message": add_message_schema
-    },
-    "/assistant/thread/message/list": {
-        "get_messages": id_request_schema
-    },
-    "/assistant/thread/run": {
-        "run": run_thread_schema
-    },
-    "/assistant/thread/run/status": {
-        "run_status": id_request_schema
-    },
-    "/assistant/chat": {
-        "chat": chat_assistant_schema
     },
     "/market/item/publish": {
         "publish_item": publish_item_schema

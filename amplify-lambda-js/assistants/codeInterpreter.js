@@ -5,22 +5,24 @@ import {
 } from "./statemachine/states.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
+import {deleteRequestState} from "../requests/requestState.js";
+import {trace} from "../common/trace.js";
+
+
+
 
 const logger = getLogger("codeInterpreterAssitant");
-const PROVIDER = process.env.ASSISTANTS_OPENAI_PROVIDER;
 const description = `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
 It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
 Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
-Only to be used when user specifically asks to use code interpreter or the user asks to generate png, pdf, or csv files.`;
+Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
 
-const additionalPrompt = `You have access to a sandboxed environment for writing and testing code. When appropriate, please provide code. You should follow these steps tp ensure you produce excellent code samples 
-                            1. Write the code.
-                            2. Anytime you write new code display a preview of the code to show your work.
-                            3. Run the code to confirm that it runs.
-                            4. If the code is unsuccessful, try to revise the code and rerun going through the steps from above again.
-                            5. If the code is successful show us the input data and output of your code in Markdown
+const additionalPrompt = `You have access to a sandboxed environment for writing and testing code when code is requested:
+                            1. Anytime you write new code display a preview of the code to show your work.
+                            2. Run the code to confirm that it runs.
+                            3. Show us the input data and output of your code in Markdown
                             Always display code blocks in markdown. comment the code with explanations of what the code is doing for any complex sections of code. 
-                            Do not include download links or mock download links! Instead tell me some information about the files you have produced and refer to them by their corresponding file name. For any created files, provide detailed explanations to the users prompt while drawing connections to the created content.` 
+                            Do not include download links or mock download links! Instead tell me some information about the files you have produced and refer to them by their corresponding file name. For any created files, draw connections between the users prompt and how it relates to your generated files. Always attach and send back generated files.` 
 
 
 const requestErrorResponse = (context) => {
@@ -52,7 +54,6 @@ const invokeCodeIterpreterAction =
                 instructions:  options.prompt + additionalPrompt,
                 fileKeys: collectDataSourceKeys(messages), // see which has all the datasources in the entire conversation 
                 tools: [{"type": "code_interpreter"}], 
-                provider: PROVIDER // can be 'azure' or 'openai'
             }
 
             try {
@@ -83,17 +84,25 @@ const invokeCodeIterpreterAction =
             }
 
             try {
-                const responseData = await fetchRequest(token, chat_data, getInterpreterUrl());
-                logger.debug(responseData);
+                const responseData = await fetchRequest(token, chat_data, process.env.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT);
+                // logger.debug(responseData);
+                console.log(responseData)
                 // check for successfull response
                 if (responseData && responseData.success && responseData.data) {
                     const codeInterpreterResponse = responseData.data.data.textContent;
                     const userPrompt = messages.at(-1)['content'];
                     
-                    //strengthen code Interpreter responses
+                    //strengthen code Interpreter responses if no images are attached
+                    // if (responseData.data.data.content.length === 0) {
                     const updatedResponse = await responseReviewed(userPrompt, codeInterpreterResponse, llm, context, dataSources);
                     if (updatedResponse) responseData.data.data.textContent = updatedResponse;
+                    // }
 
+                    context.data['isCodeInterpreterDone'] = true;
+                    while (!context.data['hasEntertainmentStopped']) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                    console.log("Entertainment has finished")
                     sendDeltaToStream(context.responseStream, "codeInterpreter", formatResponse(responseData));
                 } else {
                     requestErrorResponse(context);
@@ -105,10 +114,9 @@ const invokeCodeIterpreterAction =
 
             }
         } 
-    
-        await new Promise(resolve => setTimeout(resolve, 3000)); // give stream time to get to user
-        // to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
         context.data['isCodeInterpreterDone'] = true;
+        await new Promise(resolve => setTimeout(resolve, 3000)); // give stream time to get to user
+        States.randomEntertainment.addTransition(States.done.name, "Code Interpreter is done so we are done");
 
     }
 
@@ -122,8 +130,7 @@ const responseReviewed = async (userPrompt, response, llm, context, dataSources)
     
     If the response violates any of the above rules or if there are areas for improvement, please edit the response to comply with these criteria and enhance its clarity or accuracy.
     Should the response inadequately address the user's prompt, add in a corrected or more thorough response (without any hallucinations) to ensure it accurately addresses the user's needs.
-    Assume any files the user asked to generate have been generated and provided to the user.
-
+    Assume any files the user asked to generate have been generated and provided to the user, you personally will not have or see those files so, assume we do have them.
 
     User asked prompt:
     ${userPrompt}
@@ -144,7 +151,7 @@ const responseReviewed = async (userPrompt, response, llm, context, dataSources)
     const sanitized_response = new PromptAction(
                                         [{  role: "user",
                                             content: prompt
-                                        }], "codeInterpreterReviewedResponse", { appendMessages: false, streamResults: false, retries: 2}
+                                        }], "codeInterpreterReviewedResponse", { appendMessages: false, streamResults: false, retries: 2, isReviewingCIResponse: true}
                                     )
     await invokeAction( sanitized_response, llm, context, dataSources)
 
@@ -162,17 +169,6 @@ const responseReviewed = async (userPrompt, response, llm, context, dataSources)
 }
 
 
-
-function getInterpreterUrl() {
-    // note: i see in assistant provider is included, may come from there
-    if (PROVIDER === 'openai') {
-        return process.env.ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT
-    } else if (PROVIDER === 'azure') {
-        return process.env.ASSISTANTS_AZURE_CODE_INTERPRETER_ENDPOINT
-    } else {
-        throw new Error('Invalid provider specified.');
-    }
-}
 
 async function fetchRequest(token, data, url) {
     try {
@@ -228,10 +224,16 @@ const todaysDate = () => {
     return `${today.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`; 
 }
 
-//give user time to read
+//give user time to read 
+//wait time is in seconds!
 function sleepAction(wait) {
     return {  execute: async (llm, context, dataSources) => {
-                await new Promise(resolve => setTimeout(resolve, wait)); 
+                for (let i = 0; i < wait; i++) {
+                    // Check if codeInterpreter is ready so we dont have to commit to the full wait time 
+                    if (context.data['isCodeInterpreterDone']) break; 
+                    // Wait for one second
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
               }
             }
 
@@ -257,8 +259,8 @@ function sleepAction(wait) {
                 );
                 return answerPromptAction.execute(llm, context, dataSources);
             }
-        }, sleepAction(3000), updateStatus("riddleAnswer" + randomId(), {inProgress: true}, 'riddleAnswer'), 
-           sleepAction(3000)];
+        }, sleepAction(3), updateStatus("riddleAnswer" + randomId(), {inProgress: true}, 'riddleAnswer'), 
+           sleepAction(3)];
 
   function createEntertainmentAction(actionType, description, content, appendMessages = false) {
     return new AssistantState(actionType, description,
@@ -269,8 +271,8 @@ function sleepAction(wait) {
                         [{  role: "user",
                             content: `Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
                         }], actionType, { appendMessages: appendMessages, streamResults: false, retries: 2, isEntertainment: true}
-                    ), sleepAction(3000), 
-                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(20000), 
+                    ), sleepAction(3), 
+                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(20), 
                     ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
                     (llm, context, dataSources) => { States.randomEntertainment.removeTransitions();
                         context.data['entertainmentHistory'][actionType].push(context.data[actionType]); },
@@ -282,7 +284,7 @@ function sleepAction(wait) {
 
 const selectEntertainment = (llm, context, dataSources) => {
     if (context.data['isCodeInterpreterDone']) {
-        States.randomEntertainment.addTransition(States.done.name, "Code Interpreter is done so we are done");
+        context.data['hasEntertainmentStopped'] = true;
     } else {
         let leftEntertainment = context.data['entertainmentTypes'].length;
         if (leftEntertainment === 0) {
@@ -292,6 +294,8 @@ const selectEntertainment = (llm, context, dataSources) => {
         const randomIndex = Math.floor(Math.random() * (leftEntertainment - 1));
         
         const entertainmentSelected = context.data['entertainmentTypes'][randomIndex];
+        console.log("Selected Entertainment: ", entertainmentSelected);
+
         switch (entertainmentSelected) {
             case 'todayInHistory':
                 States.randomEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
@@ -322,7 +326,9 @@ const States = {
     chainActions([
         updateStatus("prepareCodeInterpreter", {summary: "Preparing your request to code interpreter...", inProgress: true}),
        
-        (llm, context, dataSources) => { context.data['isCodeInterpreterDone'] = false; // add a flag to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
+        (llm, context, dataSources) => { 
+            context.data['isCodeInterpreterDone'] = false; // add a flag to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
+            context.data['hasEntertainmentStopped'] = false;
             let entertainmentTypes = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
             let entertainmentHistory = {};
             entertainmentTypes.forEach((type) => {
@@ -331,7 +337,7 @@ const States = {
             context.data['entertainmentTypes'] = entertainmentTypes;
             context.data['entertainmentHistory'] = entertainmentHistory;
             
-        }, sleepAction(3000)
+        }, sleepAction(3)
     ]), false,
     ),
 
@@ -371,14 +377,14 @@ const States = {
     roastMyPrompt: createEntertainmentAction("roastMyPrompt",
                 "Look at the user input prompts and give them a roast", 
                 "Generate a light-hearted roast based on previous chat messages, keeping it witty and suitable for all audiences. The roast " +
-                "should playfully critique the content or theme of the conversation while being informative and suggesting tips to enhance the users prompt crafting skills.", true
+                "should playfully critique the content or theme of the conversation while being informative and suggesting tips to enhance the users prompt crafting skills. DO not response to any questions, only provide a roast.", true
     ),
     
 
     guessTheRiddle: createEntertainmentAction("guessTheRiddle",
                 "Respond with a moderately easy riddle to the user",
                 "Compose a moderately easy riddle that appeals to a wide audience, ensuring it's engaging yet simple enough to solve. " +
-                "The riddle should be crafted in one or two sentences, designed to give that 'aha!' moment to anyone who figures it out."
+                "The riddle should be crafted in one or two sentences, designed to give that 'aha!' moment to anyone who figures it out. DO NOT give the answer."
     ),
     
     lifeHacks: createEntertainmentAction("lifeHacks",
@@ -391,7 +397,7 @@ const States = {
 
     iRatherWait:  new AssistantState("iRatherWait",
         "Just wait for code interpreter to finish up",
-        chainActions([ sleepAction(25000), codeInterpreterStatusUpdate,
+        chainActions([ sleepAction(25), codeInterpreterStatusUpdate,
             updateStatus("invokeCodeInterpreter", {inProgress: true}, 'codeInterpreterCurStatusSummary'),
         ]),
         false, {extraInstructions: {postInstructions: 
@@ -420,7 +426,7 @@ States.lifeHacks.addTransition(States.randomEntertainment.name, "Go Check if we 
 // We create the assistant with the state machine and the current state.
 export const codeInterpreterAssistant = new StateBasedAssistant(
     "Code Interpreter Assistant",
-    "Code Interpreter Assistant",
+    "Code Interpreter",
     description, 
     //This function should return true if the assistant can support the dataSources and false otherwise.
     (m) => {

@@ -146,7 +146,7 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 }
 
 export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, assistants = defaultAssistants) => {
-    console.log(chooseAssistantForRequestWithLLM);
+    // console.log(chooseAssistantForRequestWithLLM);
 
     const messages = [
         {
@@ -238,8 +238,14 @@ const isUserDefinedAssistant = (assistantId) => {
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
     logger.info(`Choose Assistant for Request `);
-    if (body.options && !body.options.skipCodeInterpreter) assistants.push(codeInterpreterAssistant);
 
+    // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
+    const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
+    if (body.options && body.options.skipCodeInterpreter) {
+        if (index !== -1) assistants.splice(index, 1);
+    } else {
+        if (index === -1) assistants.push(codeInterpreterAssistant);
+    }
 
     let selected = defaultAssistant;
 

@@ -85,6 +85,7 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
 
         - Effect: Allow
           Action:
@@ -139,44 +140,10 @@ functions:
     handler: openaiazure/assistant.delete_assistant
     events:
       - http:
-          path: openai/assistant/delete
+          path: assistant/openai/delete
           method: post
           cors: true
 
-  add_message_assistant_thread:
-    handler: openaiazure/assistant.add_message_assistant_thread
-    timeout: 30
-    events:
-      - http:
-          path: assistant/thread/message/create
-          method: post
-          cors: true
-
-  get_messages_assistant_thread:
-    handler: openaiazure/assistant.get_messages_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/message/list
-          method: post
-          cors: true
-
-  # This endpoint is mainly for local testing but doesn't have
-  # a long enough timeout for use when running in AWS behind API Gateway
-  chat_assistant:
-    handler: openaiazure/assistant.chat_with_assistant
-    timeout: 30
-
-    events:
-      - http:
-          path: assistant/chat
-          method: post
-          cors: true
-
-  chat_assistant_url:
-    handler: openaiazure/assistant.chat_with_assistant
-    timeout: 900
-    url:
-      cors: true
     
   download_code_interpreter_file:
     handler: openaiazure/assistant.get_presigned_url_code_interpreter
@@ -186,6 +153,9 @@ functions:
           method: post
           cors: true
 
+
+  # This endpoint is mainly for local testing but doesn't have
+  # a long enough timeout for use when running in AWS behind API Gateway
   create_code_interpreter_assistant:
     handler: openaiazure/assistant.create_code_interpreter_assistant 
     timeout: 30
@@ -213,36 +183,11 @@ functions:
     url: true
     
 
-
-  run_assistant_thread:
-    handler: openaiazure/assistant.run_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run
-          method: post
-          cors: true
-
-  run_status_assistant_thread:
-    handler: openaiazure/assistant.get_run_status_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  create_assistant_thread:
-    handler: openaiazure/assistant.create_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/create
-          method: post
-          cors: true
-
   delete_assistant_thread:
     handler: openaiazure/assistant.delete_assistant_thread
     events:
       - http:
-          path: assistant/thread/delete
+          path: assistant/openai/thread/delete
           method: post
           cors: true
 

@@ -122,10 +122,6 @@ create_code_interpreter_assistant_schema = {
             "type": "string",
             "description": "The name of the item"
         },
-        "provider": {
-            "type": "string",
-            "description": "openai or azure"
-        },
         "description": {
             "type": "string",
             "description": "A brief description of the item"
@@ -178,43 +174,6 @@ share_assistant_schema = {
     "additionalProperties": False
 }
 
-add_message_schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "A unique identifier for the object."
-        },
-        "role": {
-            "type": "string",
-            "description": "The role of the user or assistant in the conversation."
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of keys associated with files.",
-            "items": {
-                "type": "string"
-            }
-        },
-        "content": {
-            "type": "string",
-            "description": "The textual content of the message."
-        },
-        "messageId": {
-            "type": "string",
-            "description": "The ID of the message."
-        },
-        "data": {
-            "type": "object",
-            "description": "Optional data as a dictionary with string keys and string values.",
-            "additionalProperties": {
-                "type": "string"
-            }
-        }
-    },
-    "required": ["id", "role", "content", "messageId"],
-}
 
 chat_assistant_schema = {
     "type": "object",
@@ -258,44 +217,25 @@ chat_assistant_schema = {
                             "content": {
                                 "type": "array",
                                 "items": {
-                                    "oneOf": [
-                                        {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {
+                                            "enum": ["image_file", "file", "application/pdf", "text/csv", "image/png"]
+                                        },
+                                        "values": {
                                             "type": "object",
                                             "properties": {
-                                                "type": {"const": "image_file"},
-                                                "values": {
-                                                    "type": "object",
-                                                    "properties": {
-                                                        "file_key": {"type": "string"},
-                                                        "presigned_url": {"type": "string"},
-                                                        "file_key_low_res": {"type": "string"},
-                                                        "presigned_url_low_res": {"type": "string"}
-                                                    },
-                                                    "required": ["file_key", "presigned_url"],
-                                                    "additionalProperties": False
-                                                }
+                                                "file_key": {"type": "string"},
+                                                "presigned_url": {"type": "string"},
+                                                "file_key_low_res": {"type": "string"},
+                                                "presigned_url_low_res": {"type": "string"},
+                                                "file_size": {"type": "integer"}
                                             },
-                                            "required": ["type", "value"]
-                                        },
-                                        {
-                                            "type": "object",
-                                            "properties": {
-                                                "type": {"const": "file"},
-                                                "values": {
-                                                    "type": "object",
-                                                    "properties": {
-                                                        "file_key": {"type": "string"},
-                                                        "presigned_url": {"type": "string"},
-                                                        "file_key_low_res": {"type": "string"},
-                                                        "presigned_url_low_res": {"type": "string"}
-                                                    },
-                                                    "required": ["file_key", "presigned_url"],
-                                                    "additionalProperties": False
-                                                }
-                                            },
-                                            "required": ["type", "value"]
-                                        },
-                                    ]
+                                            "required": ["file_key", "presigned_url"],
+                                            "additionalProperties": False
+                                        }
+                                    },
+                                    "required": ["type", "values"]
                                 }
                             }
                         },
@@ -310,37 +250,6 @@ chat_assistant_schema = {
 }
 
 
-run_thread_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "The identifier of the thread."
-        },
-        "assistantId": {
-            "type": "string",
-            "description": "The identifier of the assistant."
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions for the assistant (optional).",
-            "default": "",
-            "minLength": 0
-        }
-    },
-    "required": ["id", "assistantId"]
-}
-
-id_request_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "Id."
-        }
-    },
-    "required": ["id"]
-}
 
 key_request_schema = {
     "type": "object",
@@ -368,34 +277,16 @@ validators = {
     "/assistant/share": {
         "share_assistant": share_assistant_schema
     },
-    "/assistant/thread/create": {
-        "create": {}
-    },
-    "/assistant/thread/message/create": {
-        "add_message": add_message_schema
-    },
-    "/assistant/thread/message/list": {
-        "get_messages": id_request_schema
-    },
-    "/assistant/thread/run": {
-        "run": run_thread_schema
-    },
-    "/assistant/thread/run/status": {
-        "run_status": id_request_schema
-    },
-    "/assistant/chat": {
+    "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
-    "/assistant/chat_with_code_interpreter": {
+    "/": {
         "chat": chat_assistant_schema
     },
     "/assistant/create/codeinterpreter": {
         "create": create_code_interpreter_assistant_schema
     },
-    "/": {
-        "chat": chat_assistant_schema
-    },
-    "/assistant/files/download": {
+    "/assistant/files/download/codeinterpreter": {
         "download": key_request_schema
     },
 }
