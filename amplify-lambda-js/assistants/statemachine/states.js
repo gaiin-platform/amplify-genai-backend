@@ -217,8 +217,9 @@ export const updateStatus = (id, status, contextDataKey = null) => {
         execute: async (llm, context, dataSources) => {
             // we can get new saved context data and use it as the summary info
             if (contextDataKey && typeof contextDataKey === "string") {
-                const data = context.data[contextDataKey]
-               // if the data message is too long for a summary then just do it as a message
+                const data = context.data[contextDataKey] || "We were unable to provide entertainment at this time..."
+                console.log("-",data)
+                // if the data message is too long for a summary then just do it as a message
                 if (data.length > 60) {
                     status.summary = "View Contents"
                     status.message = data

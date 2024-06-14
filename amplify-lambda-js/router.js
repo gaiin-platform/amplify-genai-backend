@@ -15,7 +15,6 @@ import {
     translateUserDataSourcesToHashDataSources
 } from "./datasource/datasources.js";
 import {saveTrace, trace} from "./common/trace.js";
-import { codeInterpreterAssistant } from "./assistants/codeInterpreter.js";
 
 const doTrace = process.env.TRACING_ENABLED;
 const logger = getLogger("router");
@@ -173,22 +172,23 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 dataSources,
                 responseStream);
             
+            // code interpreter handles this in its own file because sometimes we end up here as code interpreter is async
+            if (assistant.name !== 'Code Interpreter Assistant') {
+                await deleteRequestState(params.user, requestId);
 
-            await deleteRequestState(params.user, requestId);
+                if(doTrace) {
+                    trace(requestId, ["response"], {stream: responseStream.trace})
+                    await saveTrace(params.user, requestId);
+                }
 
-            if(doTrace) {
-                trace(requestId, ["response"], {stream: responseStream.trace})
-                await saveTrace(params.user, requestId);
+                
             }
 
             if (response) {
-                logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");
-                logger.debug("Response", response);
-                returnResponse(responseStream, response);
+                    logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");
+                    logger.debug("Response", response);
+                    returnResponse(responseStream, response);
             }
-            
-
-            
 
         }
     } catch (e) {

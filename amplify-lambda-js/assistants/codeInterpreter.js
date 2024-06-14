@@ -30,6 +30,17 @@ const requestErrorResponse = (context) => {
 
 }
 
+const cleanupRequest = async (context) => {
+    const user  = context.params.account.user
+    const requestId = context.body.options.requestId || user;
+    await deleteRequestState(user, requestId);
+
+    const doTrace = process.env.TRACING_ENABLED;
+    if(doTrace) {
+        trace(requestId, ["response"], {stream: context.responseStream.trace})
+    }  
+}
+
 //function call to code_interpeter endpoints in an action type format
 const invokeCodeIterpreterAction = 
     async (llm, context, dataSources) => { 
@@ -116,8 +127,9 @@ const invokeCodeIterpreterAction =
         } 
         context.data['isCodeInterpreterDone'] = true;
         await new Promise(resolve => setTimeout(resolve, 3000)); // give stream time to get to user
-        States.randomEntertainment.addTransition(States.done.name, "Code Interpreter is done so we are done");
-
+        States.finalWait.addTransition(States.done.name, "Code Interpreter is done so we are done");
+        
+        cleanupRequest(context);
     }
 
 const responseReviewed = async (userPrompt, response, llm, context, dataSources) => {
@@ -285,6 +297,8 @@ function sleepAction(wait) {
 const selectEntertainment = (llm, context, dataSources) => {
     if (context.data['isCodeInterpreterDone']) {
         context.data['hasEntertainmentStopped'] = true;
+        States.randomEntertainment.addTransition(States.finalWait.name, "Code Interpreter is done so we are done");
+
     } else {
         let leftEntertainment = context.data['entertainmentTypes'].length;
         if (leftEntertainment === 0) {
@@ -403,6 +417,10 @@ const States = {
         false, {extraInstructions: {postInstructions: 
                 `Is Code Interpreter done? If not, we need to continue to wait until it is done.
                 If it is done processing then go to the done state.`}}
+    ),
+    finalWait: new AssistantState("waiting",
+        "We just need a pause for things to finish up, please wait",
+        {  execute: async (llm, context, dataSources) => await new Promise(resolve => setTimeout(resolve, 2000))}, 
     ),
     // This is the end state.
     done: new DoneState(),
