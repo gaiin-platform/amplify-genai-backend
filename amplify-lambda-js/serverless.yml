@@ -33,7 +33,7 @@ provider:
     DATASOURCES_QUERY_ENDPOINT: ${self:custom.stageVariables.DATASOURCES_QUERY_ENDPOINT}
     RAG_ENDPOINT: ${self:custom.stageVariables.RAG_ENDPOINT}
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
-    LLM_ENDPOINTS_SECRETS_NAME: openai-endpoints
+    LLM_ENDPOINTS_SECRETS_NAME: ${stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
@@ -59,6 +59,8 @@ provider:
     ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
     TRACING_ENABLED: false
     DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
+    ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
+    ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT}
 
   iam:
     role:
