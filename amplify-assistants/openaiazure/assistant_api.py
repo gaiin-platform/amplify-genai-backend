@@ -260,7 +260,8 @@ def get_last_known_thread_id(client, messages, info):
     print("Retrieving last known thread and missing messages")
     # traverse backward to see if and when there is some codeiterpreter message data attached to the messages passed in 
     for index in range(len(messages) - 1, -1, -1):
-        if 'codeInterpreterMessageData' in messages[index] and messages[index]['codeInterpreterMessageData'] is not None:
+        if ('codeInterpreterMessageData' in messages[index] and messages[index]['codeInterpreterMessageData'] is not None
+            and 'threadId' in messages[index]['codeInterpreterMessageData']):
             print("Message with code interpreter message data: ", messages[index]['codeInterpreterMessageData'])
             # theres no way the very last message in the list can have codeInterpreterMessageData according to existing logic
             # the list will always contain the new user prompt, so will always at the bare minimum get messages[-1] if code interpreter has been used at some point
@@ -272,7 +273,7 @@ def get_last_known_thread_id(client, messages, info):
                 thread_info = check_last_known_thread(client, info)
                 if (thread_info['success']):
                     return info, messages[index + 1:]
-
+    
     return info, messages # occurs when code interpreter hasnt been used in a conversation or thread id wasnt found, we need to create a new one
 
 
