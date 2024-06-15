@@ -25,8 +25,8 @@ const additionalPrompt = `You have access to a sandboxed environment for writing
                             Do not include download links or mock download links! Instead tell me some information about the files you have produced and refer to them by their corresponding file name. For any created files, draw connections between the users prompt and how it relates to your generated files. Always attach and send back generated files.` 
 
 
-const requestErrorResponse = (context) => {
-    sendDeltaToStream(context.responseStream, "codeInterpreter", formatResponse( { success: false, error: 'Internal error when making code interpreter request.'} ))
+const requestErrorResponse = (context, message) => {
+    sendDeltaToStream(context.responseStream, "codeInterpreter", formatResponse( message || { success: false, error: 'Internal error when making code interpreter request.'} ))
 
 }
 
@@ -63,7 +63,7 @@ const invokeCodeIterpreterAction =
                 description: description, 
                 tags: [],
                 instructions:  options.prompt + additionalPrompt,
-                fileKeys: collectDataSourceKeys(messages), // see which has all the datasources in the entire conversation 
+                fileKeys: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
                 tools: [{"type": "code_interpreter"}], 
             }
 
@@ -81,7 +81,7 @@ const invokeCodeIterpreterAction =
             } catch (error) {
                 // This will catch any errors thrown by fetchRequest or the fetch operation itself
                 console.error('Fetch Request to create assistant Failed:', error);
-                requestErrorResponse(context);
+                requestErrorResponse(context, responseData);
             }
         }
         //ensure that assistant_id is not null (in case assistant creation was necessary and failed)
@@ -97,7 +97,6 @@ const invokeCodeIterpreterAction =
             try {
                 const responseData = await fetchRequest(token, chat_data, process.env.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT);
                 // logger.debug(responseData);
-                console.log(responseData)
                 // check for successfull response
                 if (responseData && responseData.success && responseData.data) {
                     const codeInterpreterResponse = responseData.data.data.textContent;
@@ -113,10 +112,10 @@ const invokeCodeIterpreterAction =
                     while (!context.data['hasEntertainmentStopped']) {
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
-                    console.log("Entertainment has finished")
+                    // console.log("Entertainment has finished")
                     sendDeltaToStream(context.responseStream, "codeInterpreter", formatResponse(responseData));
                 } else {
-                    requestErrorResponse(context);
+                    requestErrorResponse(context, responseData);
                 }
             } catch (error) {
                 // This will catch any errors thrown by fetchRequest or the fetch operation itself
@@ -126,7 +125,7 @@ const invokeCodeIterpreterAction =
             }
         } 
         context.data['isCodeInterpreterDone'] = true;
-        await new Promise(resolve => setTimeout(resolve, 3000)); // give stream time to get to user
+        States.finalWait.removeTransitions();
         States.finalWait.addTransition(States.done.name, "Code Interpreter is done so we are done");
         
         cleanupRequest(context);
@@ -170,13 +169,12 @@ const responseReviewed = async (userPrompt, response, llm, context, dataSources)
 
     const updatedResponse = context.data['codeInterpreterReviewedResponse'];
     if (updatedResponse && !updatedResponse.includes("UNCHANGED")) {
-
+        console.log("LLM improved the response.")
         const regex =/\/START\s+([\s\S]*?)\s+\/END/;;
         const match = updatedResponse.match(regex);
-
         if (match && match[1]) return match[1];
     }
-
+    if (updatedResponse.includes("UNCHANGED")) logger.debug("Code Interpreters response was unchanged when under review")
     return null
 }
 
@@ -227,6 +225,7 @@ const codeInterpreterStatusUpdate =
 
 
 function formatResponse(data) {
+    logger.debug("Error message: ", data)
     return `codeInterpreterResponseData=${JSON.stringify(data)}`
 }
 
@@ -271,8 +270,8 @@ function sleepAction(wait) {
                 );
                 return answerPromptAction.execute(llm, context, dataSources);
             }
-        }, sleepAction(3), updateStatus("riddleAnswer" + randomId(), {inProgress: true}, 'riddleAnswer'), 
-           sleepAction(3)];
+        }, sleepAction(2), updateStatus("riddleAnswer" + randomId(), {inProgress: true}, 'riddleAnswer'), 
+           sleepAction(2)];
 
   function createEntertainmentAction(actionType, description, content, appendMessages = false) {
     return new AssistantState(actionType, description,
@@ -282,8 +281,8 @@ function sleepAction(wait) {
                     new PromptAction(
                         [{  role: "user",
                             content: `Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
-                        }], actionType, { appendMessages: appendMessages, streamResults: false, retries: 2, isEntertainment: true}
-                    ), sleepAction(3), 
+                        }], actionType, { appendMessages: appendMessages, ragOnly: false, skipRag:true, streamResults: false, retries: 2, isEntertainment: true}
+                    ), sleepAction(2), 
                     updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(20), 
                     ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
                     (llm, context, dataSources) => { States.randomEntertainment.removeTransitions();
@@ -295,11 +294,7 @@ function sleepAction(wait) {
  
 
 const selectEntertainment = (llm, context, dataSources) => {
-    if (context.data['isCodeInterpreterDone']) {
-        context.data['hasEntertainmentStopped'] = true;
-        States.randomEntertainment.addTransition(States.finalWait.name, "Code Interpreter is done so we are done");
-
-    } else {
+    if (!context.data['isCodeInterpreterDone']) {
         let leftEntertainment = context.data['entertainmentTypes'].length;
         if (leftEntertainment === 0) {
             context.data['entertainmentTypes'] = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
@@ -308,26 +303,28 @@ const selectEntertainment = (llm, context, dataSources) => {
         const randomIndex = Math.floor(Math.random() * (leftEntertainment - 1));
         
         const entertainmentSelected = context.data['entertainmentTypes'][randomIndex];
-        console.log("Selected Entertainment: ", entertainmentSelected);
+        // console.log("Selected Entertainment: ", entertainmentSelected);
 
         switch (entertainmentSelected) {
             case 'todayInHistory':
-                States.randomEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
+                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is today in history, go here");
                 break;
             case 'onTopicPun':
-                States.randomEntertainment.addTransition(States.onTopicPun.name, "The next random state is says puns, go here");
+                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is says puns, go here");
                 break;
             case 'roastMyPrompt':
                 States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is prompt roasting, go here");
                 break;
             case 'guessTheRiddle':
-                States.randomEntertainment.addTransition(States.guessTheRiddle.name, "The next random state is riddles, go here");
+                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is riddles, go here");
                 break;
             case 'lifeHacks':
-                States.randomEntertainment.addTransition(States.lifeHacks.name, "The next random state is  life hacks, go here");
+                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is  life hacks, go here");
                 break;
             default:
-                console.log("Error with entertainment states")
+                logger.debug("Error with entertainment states")
+                States.randomEntertainment.addTransition(States.done.name, "Error with entertainment states");
+                
         }
         context.data['entertainmentTypes'].splice(randomIndex, 1);
     }
@@ -370,6 +367,12 @@ const States = {
         "Determine if we need more entertainment to wait for code interpreter to finish up",
         chainActions([selectEntertainment, codeInterpreterStatusUpdate, 
             updateStatus("codeInterpreterStatus", {inProgress: true}, 'codeInterpreterCurStatusSummary'), 
+            (llm, context, dataSources) => {
+                if (context.data['isCodeInterpreterDone']) {
+                    States.randomEntertainment.addTransition(States.finalWait.name, "Code Interpreter is finishing up");
+                    // console.log("To waiting state")
+                } 
+            }
         ]), 
     ),
 
@@ -389,9 +392,9 @@ const States = {
     
 
     roastMyPrompt: createEntertainmentAction("roastMyPrompt",
-                "Look at the user input prompts and give them a roast", 
-                "Generate a light-hearted roast based on previous chat messages, keeping it witty and suitable for all audiences. The roast " +
-                "should playfully critique the content or theme of the conversation while being informative and suggesting tips to enhance the users prompt crafting skills. DO not response to any questions, only provide a roast.", true
+                "Look at the user input prompts and give them a friendly roasting", 
+                "Can you give me a playful critique on any random 1 of my recent prompts in the style of a friendly roast? The goal is to be informative and humorously highlight areas where I could refine my prompting skills." + 
+                "Think of it as a light-hearted roast that points out quirks or common pitfalls in a fun way, while offering tips for improvement. Remember, keep it kind and suitable for all audiences. DO not response to any questions, only provide a the critique.", true
     ),
     
 
@@ -418,9 +421,14 @@ const States = {
                 `Is Code Interpreter done? If not, we need to continue to wait until it is done.
                 If it is done processing then go to the done state.`}}
     ),
-    finalWait: new AssistantState("waiting",
+    finalWait: new AssistantState("finalWait",
         "We just need a pause for things to finish up, please wait",
-        {  execute: async (llm, context, dataSources) => await new Promise(resolve => setTimeout(resolve, 2000))}, 
+        (llm, context, dataSources) => {
+            // console.log("Waiting....")
+            const wait = async () => { await new Promise(resolve => setTimeout(resolve, 2000))}
+            wait();
+            context.data['hasEntertainmentStopped'] = true;
+        }, 
     ),
     // This is the end state.
     done: new DoneState(),
@@ -440,6 +448,7 @@ States.roastMyPrompt.addTransition(States.randomEntertainment.name, "Go Check if
 States.guessTheRiddle.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.lifeHacks.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 
+States.finalWait.addTransition(States.finalWait.name, "Wait for code interpreter data to come through");
 
 // We create the assistant with the state machine and the current state.
 export const codeInterpreterAssistant = new StateBasedAssistant(

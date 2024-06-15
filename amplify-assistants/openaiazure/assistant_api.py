@@ -452,7 +452,7 @@ def chat(current_user, provider_assistant_id, messages, assistant_key, account_i
                 print(f"Status {status.status}")
                 if status.status == 'completed':
                     break
-                elif (status.status in ["failed", "cancelled", "expired"]):
+                elif (status.status in ["failed", "cancelled", "cancelling", "requires_action", "expired", "incomplete"]):
                     print("Error run status: ", status)
                     return {'success': False, 'error': f"Error with run status : {status.status}"} 
             except Exception as e:

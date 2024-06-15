@@ -218,7 +218,6 @@ export const updateStatus = (id, status, contextDataKey = null) => {
             // we can get new saved context data and use it as the summary info
             if (contextDataKey && typeof contextDataKey === "string") {
                 const data = context.data[contextDataKey] || "We were unable to provide entertainment at this time..."
-                console.log("-",data)
                 // if the data message is too long for a summary then just do it as a message
                 if (data.length > 60) {
                     status.summary = "View Contents"
@@ -724,6 +723,7 @@ const configureLLM = (config, llm) => {
         llm.params.options.model = getCheapestModelEquivalent(llm.params.model);
         // remove any custom instruction prompts since it is messing up the output 
         llm.params.options.prompt = "Provide a enjoyable, friendly, make me smile response. Only view the history but, do not address it. Only respond to the prompt that involves entertainment and nothing else.";
+        
     }
 
     if (config.isReviewingCIResponse)  {
@@ -787,15 +787,15 @@ export class PromptAction {
         }
 
         if (this.isEntertainment && this.outputKey !== 'riddleAnswer') {
+            // Ensure entertainment is not repeated
             const entertainmentHistory = context.data['entertainmentHistory'][this.outputKey]; 
             if (entertainmentHistory.length > 0) {
                 const msgLen = this.messages.length - 1;
                 const lastMsgContent = this.messages[msgLen].content;
 
                 this.messages[msgLen].content = `Provide new information on the topic of entertainment, avoiding any content previously mentioned. Here are the topics discussed before: [${entertainmentHistory}] ` + lastMsgContent;
-
             }
-           
+            
         }
 
         const updatedMessages = fillInTemplateMessages(this.messages, context.data);
@@ -803,6 +803,13 @@ export class PromptAction {
         let newMessages = this.appendMessages ?
             [...context.history, ...updatedMessages] :
             [...updatedMessages];
+
+         //remove all datasources from the messages
+         if (this.appendMessages && this.isEntertainment) {
+            newMessages.forEach((m) => {
+                if (m.data && m.data.dataSources) delete m.data.dataSources;
+            })
+         }
 
         const result = await llm.promptForString(
             {messages: newMessages},
