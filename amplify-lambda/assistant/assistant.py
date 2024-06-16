@@ -1,7 +1,3 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
-
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -11,110 +7,6 @@ import os
 from . import assistant_api as assistants
 import boto3
 import rag.util
-
-
-@validated(op="get_messages")
-def get_messages_assistant_thread(event, context, current_user, name, data):
-    thread_key = data['data']['id']
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.fetch_messages_for_thread(thread_key, current_user)
-
-
-@validated(op="run_status")
-def get_run_status_assistant_thread(event, context, current_user, name, data):
-    run_key = data['data']['id']
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.fetch_run_status(run_key, current_user)
-
-
-@validated(op="run")
-def run_assistant_thread(event, context, current_user, name, data):
-    thread_id = data['data']['id']
-    assistant_id = data['data']['assistantId']
-
-    # Assuming get_openai_client is defined elsewhere and provides a client instance
-    return assistants.run_thread(thread_id, current_user, assistant_id)
-
-
-@validated(op="chat")
-def chat_with_assistant(event, context, current_user, name, data):
-    assistant_id = data['data'].get('id')
-    messages = data['data'].get('messages')
-    file_keys = data['data'].get('fileKeys')
-
-    return assistants.chat_with_assistant(
-        current_user,
-        assistant_id,
-        messages,
-        file_keys
-    )
-
-
-@validated(op="add_message")
-def add_message_assistant_thread(event, context, current_user, name, data):
-    thread_id = data['data'].get('id')
-    content = data['data'].get('content')
-    message_id = data['data'].get('messageId')
-    role = data['data'].get('role')
-    file_keys = data['data'].get('fileKeys', [])
-    metadata = data['data'].get('data', {})
-
-    # Assuming get_openai_client and file_keys_to_file_ids are defined elsewhere
-    # and both provide their respective functionality
-    return assistants.add_message_to_thread(
-        current_user,
-        thread_id,
-        message_id,
-        content,
-        role,
-        file_keys,
-        metadata
-    )
-
-
-@validated(op="delete")
-def delete_assistant_thread(event, context, current_user, name, data):
-    thread_id = data['data'].get('id')
-
-    # Assuming get_openai_client is defined elsewhere and provides an instance of the OpenAI client
-    return assistants.delete_thread_by_id(thread_id, current_user)
-
-
-@validated(op="create")
-def create_assistant_thread(event, context, current_user, name, data):
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.create_new_thread(current_user)
-
-
-@validated(op="create")
-def create_assistant(event, context, current_user, name, data):
-    extracted_data = data['data']
-    assistant_name = extracted_data['name']
-    description = extracted_data['description']
-    tags = extracted_data.get('tags', [])
-    instructions = extracted_data['instructions']
-    file_keys = extracted_data.get('fileKeys', [])
-    tools = extracted_data.get('tools', [])
-
-    # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
-    return assistants.create_new_assistant(
-        user_id=current_user,
-        assistant_name=assistant_name,
-        description=description,
-        instructions=instructions,
-        tags=tags,
-        file_keys=file_keys,
-        tools=tools
-    )
-
-
-@validated(op="delete")
-def delete_assistant(event, context, current_user, name, data):
-    assistant_id = data['data']['id']
-    print(f"Deleting assistant: {assistant_id}")
-
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.delete_assistant_by_id(assistant_id, current_user)
 
 
 @validated(op="download")
@@ -206,6 +98,84 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
         update_file_tags(current_user, key, tags)
 
     return bucket_name, key
+
+def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
+    dynamodb = boto3.resource('dynamodb')
+    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    dt_string = datetime.now().strftime('%Y-%m-%d')
+    key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
+
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': file_type,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': knowledge_base,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
+    )
+
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return bucket_name, key
+
+
+@validated(op="set")
+def set_datasource_metadata_entry(event, context, current_user, name, data):
+
+    data = data['data']
+    key = data['id']
+    name = data['name']
+    dtype = data['type']
+    kb = data.get('knowledge_base','default')
+    data_props = data.get('data',{})
+    tags = data.get('tags',[])
+
+    dynamodb = boto3.resource('dynamodb')
+
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+
+    # Check if the item already exists
+    response = files_table.get_item(
+        Key={
+            'id': key
+        }
+    )
+
+    if 'Item' in response and response['Item'].get('createdBy') != current_user:
+        # Item already exists, return some error or existing key
+        return {
+            'success': False,
+            'message': 'Item already exists'
+        }
+
+    # Item does not exist, proceed with insertion
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': dtype,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': kb,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
+    )
+
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return key
 
 
 @validated(op="upload")
@@ -358,6 +328,15 @@ def delete_tag_from_user(event, context, current_user, name, data):
                 'success': False,
                 'message': e.response['Error']['Message']
             }
+
+
+@validated(op="create")
+def create_tags(event, context, current_user, name, data):
+    data = data['data']
+    tags_to_add = data['tags']
+
+    # Call the helper function to add tags to the user
+    return add_tags_to_user(current_user, tags_to_add)
 
 
 def add_tags_to_user(current_user, tags_to_add):

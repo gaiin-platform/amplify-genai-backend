@@ -54,6 +54,7 @@ provider:
     THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
+    USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
@@ -71,6 +72,7 @@ provider:
     PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
     S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME: ${self:service}-${sls:stage}-personal-assistant-email
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
+    
 
     # Var File
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
@@ -128,6 +130,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
@@ -173,6 +177,55 @@ functions:
     events:
       - http:
           path: assistant/files/download
+          method: post
+          cors: true
+  list_tags_user:
+    handler: assistant/assistant.list_tags_for_user
+    events:
+      - http:
+          path: assistant/tags/list
+          method: post
+          cors: true
+
+  create_tags_user:
+    handler: assistant/assistant.create_tags
+    events:
+      - http:
+          path: assistant/tags/create
+          method: post
+          cors: true
+
+  delete_tag_user:
+    handler: assistant/assistant.delete_tag_from_user
+    events:
+      - http:
+          path: assistant/tags/delete
+          method: post
+          cors: true
+
+  set_tags_user_files:
+    handler: assistant/assistant.update_item_tags
+    events:
+      - http:
+          path: assistant/files/set_tags
+          method: post
+          cors: true
+
+  query_user_files:
+    handler: assistant/assistant.query_user_files
+    timeout: 30
+    events:
+      - http:
+          path: assistant/files/query
+          method: post
+          cors: true
+
+  set_datasource_metadata:
+    handler: assistant/assistant.set_datasource_metadata_entry
+    timeout: 30
+    events:
+      - http:
+          path: datasource/metadata/set
           method: post
           cors: true
 
@@ -716,10 +769,80 @@ resources:
           -
             AttributeName: id
             AttributeType: S
+          -
+            AttributeName: createdBy
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+          -
+            AttributeName: type
+            AttributeType: S
+          -
+            AttributeName: name
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: createdBy
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndAt
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndType
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: type
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndName
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: name
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.FILES_DYNAMO_TABLE}
+
+    UserTagsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+        TableName: ${self:provider.environment.USER_TAGS_DYNAMO_TABLE}
 
     HashFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
