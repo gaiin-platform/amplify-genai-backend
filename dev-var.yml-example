@@ -1,5 +1,5 @@
 # amplify-lambda
-DEP_NAME: "" #name of the deployment no spaces, less than 10 characters
+DEP_NAME: "" #name of the deployment; must be less than 10 characters and not contain spaces
 COGNITO_USER_POOL_ID: ""
 OAUTH_AUDIENCE: "" #base of application
 OAUTH_ISSUER_BASE_URL: "" #cognito user pool url
@@ -14,18 +14,18 @@ SECRETS_ARN_NAME: "" #secret ARN from AWS for $env-amplify-app-secrets
 LLM_ENDPOINTS_SECRETS_NAME: "" #secret name from AWS for $env-openai-endopoints
 HOSTED_ZONE_ID: "" #app_route53_zone_id from terraform
 AWS_ACCOUNT_ID: ""
-RDS_HOSTED_ZONE_ID: ""
-CUSTOM_API_DOMAIN: ""
+RDS_HOSTED_ZONE_ID: "" #'Z2R2ITUGPM61AM' is us-east-1, use the RDS Hosted Zone ID for your region
+CUSTOM_API_DOMAIN: "" #domain used for API gateway; for example: <env>-api.<domain>.com
 PANDOC_LAMBDA_LAYER_ARN: ""
+ORGANIZATION_EMAIL_DOMAIN: ""
 
-IDP_PREFIX: "vupingidp" #prefix for the custom IDP ie, your own SSO
-ORGANIZATION_EMAIL_DOMAIN: "vanderbilt.edu"
-  # Use RDS Hosted Zone ID for your region
-
+IDP_PREFIX: "vupingidp" #should match the value for provider_name in cognito vars of the terraform deployment
 API_VERSION: "2024-02-15-preview"
+ASSISTANTS_OPENAI_PROVIDER: "azure" #can be switched to 'openai' if using the OpenAI service APIs
+RAG_ASSISTANT_MODEL_ID: "gpt-35-turbo"
 QA_MODEL_NAME: "gpt-35-turbo"
 EMBEDDING_MODEL_NAME: "text-embedding-ada-002"
+
+# these Auroa RDS vars can be changed to suit your deployment needs
 MIN_ACU: "0.5"
-MAX_ACU: "16" 
-ASSISTANTS_OPENAI_PROVIDER: "azure" 
-RAG_ASSISTANT_MODEL_ID: "gpt-35-turbo"
+MAX_ACU: "16"
