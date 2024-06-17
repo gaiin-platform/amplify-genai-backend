@@ -122,7 +122,7 @@ functions:
       ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
 
-  # TODO: add real time report generator
+  # TODO: implement this with a query rather than a scan
   #       add additional charges logic once that is ready
   reportGenerator:
     handler: usage/report_generator.report_generator
@@ -155,9 +155,8 @@ resources:
           - AttributeName: 'ModelID'
             KeyType: 'HASH'
 
-    # TODO: implement this table only containing code interpreter items
-    #       tell karely to send code interpreter charges to this table
-    # in the future this may contain charges for assistants, infrastructure/lambdas, RAG, Dynamo, S3
+    # TODO: handle the  code interpreter charges to this table
+    # in the future this table may contain charges for assistants, infrastructure/lambdas, RAG, Dynamo, S3
     AdditionalChargesTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
