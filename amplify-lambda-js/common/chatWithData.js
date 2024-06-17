@@ -177,7 +177,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     logger.debug(`Chat with data called with request id ${requestId}`);
 
     const account = params.account;
-    const model = Models[params.model.id] //|| Models[ModelID.GPT_3_5_AZ];  
+    const model = Models[params.model.id];
     const options = params.options || {};
 
     let srcPrefix = options.source || defaultSource;
@@ -268,9 +268,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     let contexts = []
     if(!params.options.ragOnly) {
         try {
+            const contextResolverEnv = {
+                tokenCounter: tokenCounter.countTokens,
+                chatFn,
+                params,
+                chatRequest:chatRequestOrig
+            };
+
             contexts = (await Promise.all(
                 dataSources.map(dataSource => {
-                    return getContexts(tokenCounter.countTokens, dataSource, maxTokens, options);
+                    return getContexts(contextResolverEnv, dataSource, maxTokens, options);
                 })))
                 .flat()
                 .map((context) => {

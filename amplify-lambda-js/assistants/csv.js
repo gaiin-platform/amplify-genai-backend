@@ -73,7 +73,7 @@ export const csvAssistant = {
 
             try {
 
-                const content = await getContent(ds);
+                const content = await getContent(body, params, ds);
 
                 if (!content || !content.content || content.content.length === 0) {
                     sendResultToStream(responseStream, "The data source was empty.");

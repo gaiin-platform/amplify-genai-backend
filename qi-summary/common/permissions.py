@@ -23,6 +23,6 @@ user can do the operation.
 """
 permissions_by_state_type = {
     "/qi/upload/conversation": {
-        "coversation_upload": can_upload
+        "conversation_upload": can_upload
     },
 }

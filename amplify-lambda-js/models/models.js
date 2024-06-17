@@ -2,6 +2,7 @@
 
  export const ModelID = {
     GPT_4_TURBO_AZ: 'gpt-4-1106-Preview',
+    GPT_4o_AZ: 'gpt-4o',
     GPT_4_TURBO: 'gpt-4-1106-preview',
     GPT_3_5: 'gpt-3.5-turbo',
     GPT_3_5_FN: 'gpt-3.5-turbo-1106',
@@ -27,6 +28,14 @@ export const Models = {
         outputCost: .03,
         inputCost: .01,
     },
+    [ModelID.GPT_4o_AZ]: {
+        id: ModelID.GPT_4o_AZ,
+        name: 'GPT-4o (Azure)',
+        actualTokenLimit: 128000,
+        visible: true,
+        outputCost: .005,
+        inputCost: .015,
+        },
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',

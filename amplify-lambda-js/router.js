@@ -168,19 +168,25 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 body,
                 dataSources,
                 responseStream);
+            
+            // code interpreter handles this in its own file because sometimes we end up here before code interpreter sends the response
+            // could not figure out why this was the case 
+            if (assistant.name !== 'Code Interpreter Assistant') {
+                await deleteRequestState(params.user, requestId);
 
-            await deleteRequestState(params.user, requestId);
+                if(doTrace) {
+                    trace(requestId, ["response"], {stream: responseStream.trace})
+                    await saveTrace(params.user, requestId);
+                }
 
-            if(doTrace) {
-                trace(requestId, ["response"], {stream: responseStream.trace})
-                await saveTrace(params.user, requestId);
+               
             }
 
             if (response) {
                 logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");
                 logger.debug("Response", response);
                 returnResponse(responseStream, response);
-            }
+            } 
 
         }
     } catch (e) {

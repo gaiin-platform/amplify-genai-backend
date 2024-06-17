@@ -23,18 +23,7 @@ custom:
     - staging
     - prod
 
-  prune:
-    automatic: true
-    includeLayers: true
-    number: 5
-
-  customDomain:
-    domainName: ${self:custom.stageVariables.CUSTOM_API_DOMAIN}
-    certificateArn: ${self:custom.stageVariables.SSL_CERT_ARN}
-    basePath: 'dev' # optional, set to empty for the root path
-    stage: ${self:provider.stage}
-    createRoute53Record: true # optional, default is false    
-
+    
 provider:
   name: aws
   runtime: python3.11
@@ -75,11 +64,20 @@ provider:
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
     ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVariables.ORGANIZATION_EMAIL_DOMAIN}
     SHARE_ASSISTANTS_ENDPOINT: ${self:custom.stageVariables.SHARE_ASSISTANTS_ENDPOINT}
-    
+    S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
+    S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
 
   iam:
     role:
       statements:
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+          Resource:
+            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
         - Effect: Allow
           Action:
             - secretsmanager:GetSecretValue
@@ -145,9 +143,58 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
-
+            - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
+            - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
 
 functions:
+
+  upload_conversation:
+    handler: state/conversation.upload_conversation
+    events:
+      - http:
+          path: state/conversation/upload
+          method: put
+          cors: true
+
+  delete_conversation:
+    handler: state/conversation.delete_conversation
+    events:
+      - http:
+          path: state/conversation/delete
+          method: delete
+          cors: true
+
+  delete_multiple_conversations:
+    handler: state/conversation.delete_multiple_conversations
+    events:
+      - http:
+          path: state/conversation/delete_multiple
+          method: POST
+          cors: true
+
+  get_conversation:
+    handler: state/conversation.get_conversation
+    events:
+      - http:
+          path: state/conversation/get
+          method: get
+          cors: true
+
+  get_multiple_conversations:
+    handler: state/conversation.get_multiple_conversations
+    events:
+      - http:
+          path: state/conversation/get_multiple
+          method: post
+          cors: true
+
+  get_all_conversation:
+    handler: state/conversation.get_all_conversations
+    events:
+      - http:
+          path: state/conversation/get_all
+          method: get
+          cors: true
 
   upload_file:
     handler: assistant/assistant.get_presigned_url
@@ -216,46 +263,14 @@ functions:
           method: post
           cors: true
 
-  run_assistant_thread:
-    handler: assistant/assistant.run_assistant_thread
+  set_datasource_metadata:
+    handler: assistant/assistant.set_datasource_metadata_entry
+    timeout: 30
     events:
       - http:
-          path: assistant/thread/run
+          path: datasource/metadata/set
           method: post
           cors: true
-
-  run_status_assistant_thread:
-    handler: assistant/assistant.get_run_status_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  list_assistants:
-    handler: assistant/assistant.list_assistants
-    events:
-      - http:
-          path: assistant/list
-          method: post
-          cors: true
-
-  create_assistant_thread:
-    handler: assistant/assistant.create_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/create
-          method: post
-          cors: true
-
-  delete_assistant_thread:
-    handler: assistant/assistant.delete_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/delete
-          method: post
-          cors: true
-
 
   create:
     handler: state/create.create
@@ -891,8 +906,26 @@ resources:
           Properties:
             VisibilityTimeout: 300
             QueueName: ${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}
-
     
-
-        
+    remoteConversationsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['PUT', DELETE, GET]
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+    
+    ZipFileBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET','PUT','POST']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
            

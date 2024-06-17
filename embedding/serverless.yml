@@ -83,13 +83,16 @@ provider:
     QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-    VPC_CIDR: ${self:custom.stageVariables.VPC_CIDR}
-    VPC_ID: ${self:custom.stageVariables.VPC_ID}
-    HOSTED_ZONE_ID: ${self:custom.stageVariables.HOSTED_ZONE_ID}
-    RDS_HOSTED_ZONE_ID: ${self:custom.stageVariables.RDS_HOSTED_ZONE_ID}
-    READ_POSTGRES_DOMAIN_NAME: ${self:custom.stageVariables.READ_POSTGRES_DOMAIN_NAME}
-    WRITE_POSTGRES_DOMAIN_NAME: ${self:custom.stageVariables.WRITE_POSTGRES_DOMAIN_NAME}
-
+    RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
+    KEYWORD_MODEL_NAME: ${self:custom.stageVariables.KEYWORD_MODEL_NAME}
+    QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
+    API_VERSION: ${self:custom.stageVariables.API_VERSION}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files
+    EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
+    EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
+    OBJECT_ACCESS_TABLE: vu-amplify-object-access-${sls:stage}-object-access
    
 
   iam:
@@ -109,10 +112,10 @@ provider:
             - sqs:SendMessage
 
           Resource:
-            - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:secretsmanager:us-east-1:*:secret:openai-endpoints-2O6UlC"
-            - "arn:aws:s3:::amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-chunks/*"
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+            - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+            - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-user-files"

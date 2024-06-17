@@ -45,7 +45,7 @@ provider:
     AZURE_OPENAI_RESOURCE_NAME: ${self:custom.stageVariables.AZURE_OPENAI_RESOURCE_NAME}
     OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
-    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME}
+    LLM_ENDPOINTS_SECRETS_NAME: ${stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     COGNITO_CLIENT_ID: ${self:custom.stageVariables.COGNITO_CLIENT_ID}
@@ -67,6 +67,9 @@ provider:
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
     TRACING_ENABLED: false
+    DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
+    ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
+    ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT}
 
   iam:
     role:
@@ -91,9 +94,29 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1:2:100k'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-opus-20240229-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-7b-instruct-v0:2'
+            - 'arn:aws:bedrock:*::foundation-model/mistral.mixtral-8x7b-instruct-v0:1'
+            - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-2402-v1:0'
+            
 
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:Scan
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}"
         - Effect: Allow
           Action:
             - dynamodb:DeleteItem
@@ -130,6 +153,19 @@ resources:
             AttributeName: requestId
             KeyType: RANGE
         TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}
+    DatasourceRegistryDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: type
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: type
+            KeyType: HASH
+        TableName: ${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}
     ChatTracesBucket:
          Type: AWS::S3::Bucket
          Properties:

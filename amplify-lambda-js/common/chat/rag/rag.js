@@ -172,6 +172,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                         });
                         return sources;
                     } catch (e) {
+                        logger.error("Error getting RAG results", e);
                         return [];
                     }
                 });

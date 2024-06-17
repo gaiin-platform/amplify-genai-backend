@@ -24,6 +24,7 @@ async function getAssistantByAlias(user, assistantId) {
         if (response.Item) {
             return unmarshall(response.Item);
         } else {
+            console.log("No item retrieved in getAssistantByAlias")
             return null;
         }
     } catch (error) {
@@ -46,6 +47,7 @@ async function getAssistantByAssistantDatabaseId(id) {
         if (response.Item) {
             return unmarshall(response.Item);
         } else {
+            console.log("No item retrieved in getAssistantByAssistantDatabaseId")
             return null;
         }
     } catch (error) {
@@ -55,6 +57,7 @@ async function getAssistantByAssistantDatabaseId(id) {
 }
 
 const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
+    console.log("saveChatToS3 function")
     // Define the parameters for the putObject operation
 
     if(!process.env.ASSISTANT_LOGS_BUCKET_NAME) {
@@ -177,7 +180,7 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                 }
             }
         };
-
+        console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
         return userDefinedAssistant;
     }
 

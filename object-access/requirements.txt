@@ -1,6 +1,8 @@
-boto3
-jsonschema
-pydantic
-python-jose
-requests
-python-dotenv
+boto3==1.29.1
+botocore==1.32.1
+jose==1.0.0
+jsonschema==4.22.0
+pydantic==2.7.1
+python-dotenv==1.0.1
+python_jose==3.3.0
+Requests==2.32.2
