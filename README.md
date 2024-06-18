@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository serves as a Mono Repo for managing all Amplify Lambda functions.
+This repository serves as a Mono Repo for managing all Amplify Lambda functions. It is part of a larger deployment for Amplify GenAI which can be found at https://github.com/gaiin-platform.
 
 ## Setup Requirements
 
