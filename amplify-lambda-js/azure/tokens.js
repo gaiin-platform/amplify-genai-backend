@@ -14,8 +14,18 @@ export const createTokenCounter = (model) => {
 
     return {
         countTokens: (text) => {
-            const tokens = encoding.encode(text);
-            return tokens.length;
+            if(!text) {
+                return 0;
+            }
+
+            try {
+                const tokens = encoding.encode(text);
+                return tokens.length;
+            } catch (e) {
+                console.error("Uncountable token text: ", text);
+                console.error("Error counting tokens: ", e);
+                return 0;
+            }
         },
         countMessageTokens: (messages) => {
             const counts = messages.map(m => encoding.encode(m.content).length);

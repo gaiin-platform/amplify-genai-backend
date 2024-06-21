@@ -114,6 +114,14 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
 
             handler: async (llm, params, body, ds, responseStream) => {
 
+
+                if(assistant.skipRag) {
+                    params = {
+                        ...params,
+                    options:{...params.options, skipRag: true}
+                    }
+                }
+
                 const messagesWithoutSystem = body.messages.filter(
                     (message) => message.role !== "system"
                 );
