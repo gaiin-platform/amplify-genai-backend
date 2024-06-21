@@ -275,14 +275,36 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 chatRequest:chatRequestOrig
             };
 
+           const statuses = dataSources.map(dataSource => {
+                const status = newStatus({
+                    inProgress: true,
+                    sticky: false,
+                    message: `Searching: ${dataSource.name}...`,
+                    icon: "aperture",
+                });
+                return status;
+            });
+
+           statuses.forEach(status => {
+                sendStatusEventToStream(responseStream, status);
+                forceFlush(responseStream);
+            });
+
             contexts = (await Promise.all(
                 dataSources.map(dataSource => {
-                    return getContexts(contextResolverEnv, dataSource, maxTokens, options);
+                    const results = getContexts(contextResolverEnv, dataSource, maxTokens, options);
+                    return results;
                 })))
                 .flat()
                 .map((context) => {
                     return {...context, id: srcPrefix + "#" + context.id};
                 })
+
+            statuses.forEach(status => {
+                status.inProgress = false;
+                sendStatusEventToStream(responseStream, status);
+                forceFlush(responseStream);
+            });
 
             if (contexts.length > 0) {
                 sendStateEventToStream(responseStream, {
