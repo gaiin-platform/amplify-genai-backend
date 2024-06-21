@@ -75,30 +75,6 @@ permissions_by_state_type = {
   "/assistant/delete": {
     "delete": can_create_assistant
   },
-  "/assistant/thread/create": {
-    "create": can_create_assistant_thread
-  },
-  "/assistant/thread/delete": {
-    "delete": can_create_assistant_thread
-  },
-  "/assistant/thread/list": {
-    "create": can_create_assistant_thread
-  },
-  "/assistant/thread/message/create": {
-    "add_message": can_create_assistant_thread
-  },
-  "/assistant/thread/message/list": {
-    "get_messages": can_create_assistant_thread
-  },
-  "/assistant/thread/run": {
-    "run": can_create_assistant_thread
-  },
-  "/assistant/thread/run/status": {
-    "run_status": can_create_assistant_thread
-  },
-  "/assistant/chat" : {
-    "chat": can_create_assistant_thread
-  },
   "/market/item/publish" : {
     "publish_item": can_publish_item
   },

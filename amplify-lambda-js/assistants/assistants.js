@@ -1,16 +1,17 @@
 import {newStatus} from "../common/status.js";
+import {getMostAdvancedModelEquivalent} from "../common/params.js"
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
-import {mapReduceAssistant} from "./mapReduceAssistant.js";
+// import {mapReduceAssistant} from "./mapReduceAssistant.js";
+import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
-import {getMostAdvancedModelEquivalent} from "../common/params.js"
 
 const logger = getLogger("assistants");
 
@@ -104,9 +105,9 @@ const batchAssistant = {
 export const defaultAssistants = [
     defaultAssistant,
     //batchAssistant,
-    //documentAssistant,
-    //reportWriterAssistant,
-    csvAssistant,
+    documentAssistant,
+    reportWriterAssistant,
+    // csvAssistant,
     //documentSearchAssistant
 ];
 
@@ -145,7 +146,7 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 }
 
 export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, assistants = defaultAssistants) => {
-    console.log(chooseAssistantForRequestWithLLM);
+    // console.log(chooseAssistantForRequestWithLLM);
 
     const messages = [
         {
@@ -237,6 +238,14 @@ const isUserDefinedAssistant = (assistantId) => {
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
     logger.info(`Choose Assistant for Request `);
+
+    // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
+    const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
+    if (body.options && body.options.skipCodeInterpreter) {
+        if (index !== -1) assistants.splice(index, 1);
+    } else {
+        if (index === -1) assistants.push(codeInterpreterAssistant);
+    }
 
     let selected = defaultAssistant;
 

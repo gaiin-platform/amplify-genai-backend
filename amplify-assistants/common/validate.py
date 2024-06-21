@@ -114,6 +114,53 @@ create_assistant_schema = {
     "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
 }
 
+
+create_code_interpreter_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "The name of the item"
+        },
+        "description": {
+            "type": "string",
+            "description": "A brief description of the item"
+        },
+        "tags": {
+            "type": "array",
+            "description": "A list of tags associated with the item",
+            "items": {
+                "type": "string"
+            }
+        },
+        "instructions": {
+            "type": "string",
+            "description": "Instructions related to the item"
+        },
+        "fileKeys": {
+            "type": "array",
+            "description": "A list of data sources keys",
+            "items": {
+                "type": "string"
+            }
+        },
+        "tools": {
+            "type": "array",
+            "description": "A list of tools associated with the item",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": "The type of tool"
+                    }
+                }
+            }
+        }
+    },
+    "required": ["name", "description", "tags", "instructions", "fileKeys", "tools"]
+}
+
 share_assistant_schema = {
     "type": "object",
     "properties": {
@@ -127,43 +174,6 @@ share_assistant_schema = {
     "additionalProperties": False
 }
 
-add_message_schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "A unique identifier for the object."
-        },
-        "role": {
-            "type": "string",
-            "description": "The role of the user or assistant in the conversation."
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of keys associated with files.",
-            "items": {
-                "type": "string"
-            }
-        },
-        "content": {
-            "type": "string",
-            "description": "The textual content of the message."
-        },
-        "messageId": {
-            "type": "string",
-            "description": "The ID of the message."
-        },
-        "data": {
-            "type": "object",
-            "description": "Optional data as a dictionary with string keys and string values.",
-            "additionalProperties": {
-                "type": "string"
-            }
-        }
-    },
-    "required": ["id", "role", "content", "messageId"],
-}
 
 chat_assistant_schema = {
     "type": "object",
@@ -171,11 +181,11 @@ chat_assistant_schema = {
         "id": {
             "type": "string"
         },
-        "fileKeys": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
+        "accountId": {
+            "type": "string"
+        },
+        "requestId": {
+            "type": "string"
         },
         "messages": {
             "type": "array",
@@ -207,36 +217,25 @@ chat_assistant_schema = {
                             "content": {
                                 "type": "array",
                                 "items": {
-                                    "oneOf": [
-                                        {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {
+                                            "enum": ["image_file", "file", "application/pdf", "text/csv", "image/png"]
+                                        },
+                                        "values": {
                                             "type": "object",
                                             "properties": {
-                                                "type": {"const": "image_file"},
-                                                "value": {
-                                                    "type": "object",
-                                                    "properties": {
-                                                        "file_key": {"type": "string"}
-                                                    },
-                                                    "required": ["file_key"]
-                                                }
+                                                "file_key": {"type": "string"},
+                                                "presigned_url": {"type": "string"},
+                                                "file_key_low_res": {"type": "string"},
+                                                "presigned_url_low_res": {"type": "string"},
+                                                "file_size": {"type": "integer"}
                                             },
-                                            "required": ["type", "value"]
-                                        },
-                                        {
-                                            "type": "object",
-                                            "properties": {
-                                                "type": {"const": "file"},
-                                                "value": {
-                                                    "type": "object",
-                                                    "properties": {
-                                                        "file_key": {"type": "string"}
-                                                    },
-                                                    "required": ["file_key"]
-                                                }
-                                            },
-                                            "required": ["type", "value"]
-                                        },
-                                    ]
+                                            "required": ["file_key", "presigned_url"],
+                                            "additionalProperties": False
+                                        }
+                                    },
+                                    "required": ["type", "values"]
                                 }
                             }
                         },
@@ -247,41 +246,22 @@ chat_assistant_schema = {
             }
         }
     },
-    "required": ["id", "fileKeys", "messages"]
+    "required": ["id", "messages", "accountId", "requestId"]
 }
 
 
-run_thread_schema = {
+
+key_request_schema = {
     "type": "object",
     "properties": {
-        "id": {
+        "key": {
             "type": "string",
-            "description": "The identifier of the thread."
-        },
-        "assistantId": {
-            "type": "string",
-            "description": "The identifier of the assistant."
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions for the assistant (optional).",
-            "default": "",
-            "minLength": 0
+            "description": "Key."
         }
     },
-    "required": ["id", "assistantId"]
+    "required": ["key"]
 }
 
-id_request_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "Id."
-        }
-    },
-    "required": ["id"]
-}
 
 """
 Every service must define the permissions for each operation here. 
@@ -297,29 +277,17 @@ validators = {
     "/assistant/share": {
         "share_assistant": share_assistant_schema
     },
-    "/assistant/thread/create": {
-        "create": {}
-    },
-    "/assistant/thread/message/create": {
-        "add_message": add_message_schema
-    },
-    "/assistant/thread/message/list": {
-        "get_messages": id_request_schema
-    },
-    "/assistant/thread/run": {
-        "run": run_thread_schema
-    },
-    "/assistant/thread/run/status": {
-        "run_status": id_request_schema
-    },
-    "/assistant/chat": {
-        "chat": chat_assistant_schema
-    },
     "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
     "/": {
         "chat": chat_assistant_schema
+    },
+    "/assistant/create/codeinterpreter": {
+        "create": create_code_interpreter_assistant_schema
+    },
+    "/assistant/files/download/codeinterpreter": {
+        "download": key_request_schema
     },
 }
 

@@ -13,13 +13,13 @@ export const chatAnthropic = async (chatBody, writable) => {
     const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
     
     try {
+        const currentModel = options.model.id;
         // Ensure credentials are in ~/.aws/credentials
-        const client = new AnthropicBedrock({awsRegion: 'us-west-2'}); // default to 1 if omitted
+        const client = new AnthropicBedrock({awsRegion:  currentModel === "anthropic.claude-3-5-sonnet-20240620-v1:0" ? 'us-east-1' : 'us-west-2'}); // default to 1 if omitted 
         
         logger.debug("Initiating call to Anthropic Bedrock");
 
         // safety gaurd 
-        const currentModel = options.model.id;
         const selectedModel = currentModel.includes("anthropic") ? currentModel : "anthropic.claude-3-haiku-20240307-v1:0";
         if (currentModel !== selectedModel) logger.debug("**Incompatible model entered CLAUDE!** ", currentModel);
 

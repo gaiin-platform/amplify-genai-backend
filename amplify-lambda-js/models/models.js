@@ -11,6 +11,7 @@
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
+    CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
     CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
     CLAUDE_3_OPUS: 'anthropic.claude-3-opus-20240229-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
@@ -91,6 +92,14 @@ export const Models = {
         visible: false,
         outputCost: 0.01500,
         inputCost: 0.00300,
+    },
+    [ModelID.CLAUDE_3_5_SONNET] : { 
+        id: ModelID.CLAUDE_3_5_SONNET,
+        name: 'Claude-3-5-Sonnet (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
+        outputCost: 0.015,
+        inputCost: 0.003,
     },
     [ModelID.CLAUDE_3_HAIKU]: {
         id: ModelID.CLAUDE_3_HAIKU,
