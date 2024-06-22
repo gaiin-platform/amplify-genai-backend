@@ -8,12 +8,12 @@ services:
     dependsOn:
       - amplify-assistants
   
-  vu-amplify-embedding:
+  amplify-embedding:
     path: ./embedding
     dependsOn:
       - amplify-lambda
 
-  vu-amplify-object-access:
+  amplify-object-access:
     path: ./object-access
     dependsOn:
       - amplify-lambda
