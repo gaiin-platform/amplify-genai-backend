@@ -149,7 +149,7 @@ functions:
 
   pdb_sql_llm_query_db:
     handler: service/core.llm_query_db
-    timeout: 30
+    timeout: 90
     events:
       - http:
           path: pdb/sql/llmquery

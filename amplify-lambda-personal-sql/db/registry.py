@@ -40,14 +40,21 @@ def get_db_handler_for_type(type):
 def load_db_by_id(current_user, db_id):
 
     # Get the metadata for the database
+    print(f"Loading database {db_id} for user {current_user}")
     metadata = get_db_metadata(current_user, db_id)
     db_type = metadata['type']
 
     # Extract the data
     data = metadata['data']
 
+    # Get the handler for the database type
+    print(f"Loading database handler of type {db_type}")
     handler = get_db_handler_for_type(db_type)
 
+    if not handler:
+        raise ValueError(f"No handler found for database type {db_type}")
+
+    print(f"Found handler for database type {db_type}")
     # Load the database
     conn = handler(current_user, db_id, metadata, data)
     return conn
@@ -186,6 +193,9 @@ def get_db_metadata(current_user, db_id):
     metadata_table_name = os.getenv('PERSONAL_SQL_METADATA_TABLE')
     if not metadata_table_name:
         raise ValueError("Environment variable 'PERSONAL_SQL_METADATA_TABLE' is not set.")
+
+    print(f"Getting metadata for database with id {db_id} from table {metadata_table_name}")
+
     # Reference the metadata table
     dyn = boto3.resource('dynamodb')
     table = dyn.Table(metadata_table_name)
@@ -195,6 +205,8 @@ def get_db_metadata(current_user, db_id):
         print(f"No metadata found for database with id {db_id}")
         raise ValueError(f"No metadata found for database with id {db_id}")
     metadata = response['Item']
+
+    print(f"Checking ownership/permissions for user {current_user} and db_id {db_id}")
 
     # This will need to change in order to implement sharing
     if metadata.get('creator') != current_user:

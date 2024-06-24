@@ -322,6 +322,7 @@ def create_assistant(event, context, current_user, name, data):
     uri = extracted_data.get('uri', None)
     assistant_public_id = extracted_data.get('assistantId', None)
     tags = extracted_data.get('tags', [])
+    assistant_data = extracted_data.get('data', {})
 
     # delete any tag that starts with amplify: or is in the reserved tags
     tags = [tag for tag in tags if not tag.startswith("amplify:") and tag not in RESERVED_TAGS]
@@ -368,6 +369,7 @@ def create_assistant(event, context, current_user, name, data):
         assistant_name=assistant_name,
         description=description,
         instructions=instructions,
+        assistant_data=assistant_data,
         tags=tags,
         data_sources=data_sources,
         tools=tools,
@@ -472,7 +474,7 @@ def get_most_recent_assistant_version(assistants_table,
     return None
 
 
-def save_assistant(assistants_table, assistant_name, description, instructions, data_sources, provider, tools,
+def save_assistant(assistants_table, assistant_name, description, instructions, assistant_data, data_sources, provider, tools,
                    user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None):
     """
     Saves the assistant data to the DynamoDB table.
@@ -526,6 +528,7 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'coreHash': core_sha256,
         'hash': full_sha256,
         'name': assistant_name,
+        'data': assistant_data,
         'description': description,
         'instructions': instructions,
         'createdAt': timestamp,
@@ -612,6 +615,7 @@ def create_or_update_assistant(
         assistant_name,
         description,
         instructions,
+        assistant_data,
         tags,
         data_sources,
         tools,
@@ -661,6 +665,7 @@ def create_or_update_assistant(
             assistant_name,
             description,
             instructions,
+            assistant_data,
             data_sources,
             provider,
             tools,
@@ -704,6 +709,7 @@ def create_or_update_assistant(
             assistant_name,
             description,
             instructions,
+            assistant_data,
             data_sources,
             provider,
             tools,

@@ -112,6 +112,7 @@ def pdbs_handler(current_user, db_id, metadata, data):
     if not s3_bucket:
         raise ValueError("Environment variable 'PERSONAL_SQL_S3_BUCKET' is not set.")
 
+    print(f"Fetching database contents from S3 key {s3_key}")
     # Fetch the database file from S3
     s3_object = s3.get_object(Bucket=s3_bucket, Key=s3_key)
     db_data = s3_object['Body'].read()
