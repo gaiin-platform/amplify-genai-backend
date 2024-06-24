@@ -576,7 +576,7 @@ def get_response_values(file, content_type, file_key, current_user, file_name = 
             values['presigned_url_low_res'] = presigned_url['presigned_url']
 
     if (values):
-        print("Values for image key/presigned_url: ", values)
+        # print("Values for image key/presigned_url: ", values)
         return {'success': True, 'data' : {'type': content_type,'values': values}}
     return {'success': False, 'error': 'Failed to send file to s3 and get presigned url'}
 

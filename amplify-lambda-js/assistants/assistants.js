@@ -296,10 +296,13 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     selected = selectedAssistant || defaultAssistant;
 
     logger.info("Sending State Event to Stream ", selectedAssistant.name);
-    llm.sendStateEventToStream({
+    let stateInfo = {
         currentAssistant: selectedAssistant.name,
-        currentAssistantId: clientSelectedAssistant || selectedAssistant.name
-    })
+        currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
+    }
+    if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
+    
+    llm.sendStateEventToStream(stateInfo);
 
     status.inProgress = false;
     llm.sendStatus(status);
