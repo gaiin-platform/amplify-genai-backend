@@ -112,6 +112,8 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
             },
             description: assistant.description,
 
+            disclaimer: assistant.disclaimer,
+
             handler: async (llm, params, body, ds, responseStream) => {
 
 

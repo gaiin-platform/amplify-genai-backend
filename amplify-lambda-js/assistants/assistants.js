@@ -256,6 +256,8 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     if(clientSelectedAssistant) {
         logger.info(`Client Selected Assistant`);
         selectedAssistant = await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
+    } else if (body.options.codeInterpreterOnly) {
+        selectedAssistant = codeInterpreterAssistant;
     }
 
     const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
@@ -294,10 +296,13 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     selected = selectedAssistant || defaultAssistant;
 
     logger.info("Sending State Event to Stream ", selectedAssistant.name);
-    llm.sendStateEventToStream({
+    let stateInfo = {
         currentAssistant: selectedAssistant.name,
-        currentAssistantId: clientSelectedAssistant || selectedAssistant.name
-    })
+        currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
+    }
+    if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
+    
+    llm.sendStateEventToStream(stateInfo);
 
     status.inProgress = false;
     llm.sendStatus(status);
