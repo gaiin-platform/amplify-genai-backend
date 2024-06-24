@@ -73,6 +73,10 @@ create_assistant_schema = {
             "type": "string",
             "description": "Instructions related to the item"
         },
+        "disclaimer": {
+            "type": "string",
+            "description": "Appended assistant response disclaimer related to the item"
+        },
         "uri": {
             "oneOf": [
                 {
@@ -111,7 +115,7 @@ create_assistant_schema = {
             }
         }
     },
-    "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
+    "required": ["name", "description", "tags", "instructions", "disclaimer", "dataSources", "tools"]
 }
 
 

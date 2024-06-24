@@ -118,10 +118,20 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const getInsertOnly = sources => sources.filter(ds =>
         !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
 
+    const isDocument = ds =>
+        (ds.id && ds.id.indexOf("://") < 0) ||
+        (ds.key && ds.key.indexOf("://") < 0) ||
+        (ds.id && ds.id.startsWith("s3://")) ||
+        (ds.key && ds.key.startsWith("s3://"));
+
+    const getDocumentDataSources = sources => sources.filter(isDocument);
+
+    const getNonDocumentDataSources = sources => sources.filter(ds => !isDocument(ds));
+
     const nonUniqueRagDataSources = [
         ...(getRagOnly(dataSources)),
         ...(getRagOnly(msgDataSources)),
-        ...convoDataSources
+        ...(getDocumentDataSources(convoDataSources))
     ];
 
     const ragDataSources = Object.values(nonUniqueRagDataSources.reduce(
@@ -130,7 +140,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
 
     const allDataSources = [
         ...(getInsertOnly(dataSources)),
-        ...(getInsertOnly(msgDataSources))
+        ...(getInsertOnly(msgDataSources)),
+        ...(getNonDocumentDataSources(convoDataSources))
     ];
 
     dataSources = Object.values(allDataSources.reduce(

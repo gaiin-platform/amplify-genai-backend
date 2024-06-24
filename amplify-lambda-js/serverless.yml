@@ -45,7 +45,7 @@ provider:
     AZURE_OPENAI_RESOURCE_NAME: ${self:custom.stageVariables.AZURE_OPENAI_RESOURCE_NAME}
     OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
-    LLM_ENDPOINTS_SECRETS_NAME: ${stage}-openai-endpoints
+    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     COGNITO_CLIENT_ID: ${self:custom.stageVariables.COGNITO_CLIENT_ID}
@@ -64,6 +64,7 @@ provider:
     ASSISTANT_LOGS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-chat-logs
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistants
+    API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVariables.API_KEYS_DYNAMODB_TABLE}
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
     TRACING_ENABLED: false
@@ -94,6 +95,7 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'

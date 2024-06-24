@@ -37,6 +37,30 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
             llm.sendStateEventToStream({resolvedOps: ops})
         }
 
+        const dataSourcesInConversationAlready = (body) => {
+            return body.messages.slice(0, -1)
+                .map(m => m.data)
+                .filter(d => d != null)
+                .map(d => d.dataSources)
+                .filter(d => d != null)
+                .flat();
+        }
+
+        Handlebars.registerHelper('dataSources', function (tagandformat) {
+            const all = [...dataSourcesInConversationAlready(body), ...ds];
+            return yaml.dump(all);
+        });
+
+        Handlebars.registerHelper('dataSourcesInConversation', function (tagandformat) {
+            const mds = dataSourcesInConversationAlready(body);
+            return yaml.dump(mds);
+        });
+
+        Handlebars.registerHelper('dataSourcesInCurrentMessage', function (tagandformat) {
+
+            return yaml.dump(ds);
+        });
+
         Handlebars.registerHelper('ops', function (tagandformat) {
             return opsStr;
         });
