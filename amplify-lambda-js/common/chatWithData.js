@@ -1,5 +1,5 @@
 import { Writable } from 'stream';
-import {getContexts, getDataSourcesByUse} from "../datasource/datasources.js";
+import {extractProtocol, getContexts, getDataSourcesByUse, isDocument} from "../datasource/datasources.js";
 import {countChatTokens, countTokens} from "../azure/tokens.js";
 import {handleChat as sequentialChat} from "./chat/controllers/sequentialChat.js";
 import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
@@ -44,6 +44,48 @@ class CustomWritable extends Writable {
 const chooseController = ({chatFn, chatRequest, dataSources}) => {
     return sequentialChat;
     //return parallelChat;
+}
+
+const generateSupersetObject = (arr) => {
+    const result = {};
+
+    arr.forEach(obj => {
+        Object.keys(obj).forEach(key => {
+            if (!result[key]) {
+                result[key] = new Set();
+            }
+            result[key].add(obj[key]);
+        });
+    });
+
+    // Convert sets to arrays for the final result
+    Object.keys(result).forEach(key => {
+        result[key] = Array.from(result[key]);
+    });
+
+    return result;
+}
+
+const summarizeRanges = (obj) => {
+    const result = {};
+
+    Object.keys(obj).forEach(key => {
+        const values = obj[key];
+        if (values.every(value => typeof value === 'number')) {
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            result[key] = `${min}-${max}`;
+        } else {
+            result[key] = values;
+        }
+    });
+
+    return result;
+}
+
+const summarizeLocations = (locations) => {
+    const superset = generateSupersetObject(locations);
+    return summarizeRanges(superset);
 }
 
 const splitMessageToFit = (message, tokenLimit) => {
@@ -307,15 +349,37 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             });
 
             if (contexts.length > 0) {
+
+                const sources = contexts.map(s => {
+                    const dataSource = s.dataSource;
+                    //const summary = summarizeLocations(s.locations);
+
+                    if(isDocument(dataSource)){
+                        const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
+                        const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations};
+                        return {type: 'documentContext', source};
+                    }
+                    else {
+                        const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
+                        return {type, source: {key: dataSource.id, name: dataSource.name || dataSource.id, locations: s.locations}};
+                    }
+                    //const name = dataSourceDetailsLookup[s.id]?.name || "Attached Document ("+s.type+")";
+                    // return {...summary};
+                });
+
+                const byType = sources.reduce((acc, source) => {
+                    if(!acc[source.type]){
+                        acc[source.type] = {sources: [], data: {chunkCount: 0}};
+                    }
+                    acc[source.type].sources.push(source.source);
+                    acc[source.type].data.chunkCount++;
+                    return acc;
+                }, {});
+
                 sendStateEventToStream(responseStream, {
                     sources: {
-                        documentContext: {
-                            sources: dataSources.map(s => {
-                                const name = dataSourceDetailsLookup[s.id]?.name || "Attached Document ("+s.type+")";
-                                return {key: s.id, name, type: s.type};
-                            }),
-                            data: {chunkCount: contexts.length}
-                        }
+                    //
+                        ...byType
                     }
                 });
             }

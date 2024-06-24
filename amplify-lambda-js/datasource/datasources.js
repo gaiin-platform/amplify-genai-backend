@@ -65,6 +65,14 @@ export const getFileText = async (key) => {
     }
 }
 
+export const isDocument = ds =>
+    (ds.id && ds.id.indexOf("://") < 0) ||
+    (ds.key && ds.key.indexOf("://") < 0) ||
+    (ds.id && ds.id.startsWith("s3://")) ||
+    (ds.key && ds.key.startsWith("s3://"));
+
+
+
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
  * and then determines which data sources should be inserted in their entirety into the chat request and which
@@ -85,7 +93,7 @@ export const getFileText = async (key) => {
  */
 export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
 
-    if(params.options.skipRag && params.options.ragOnly){
+    if((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
             dataSources: []
@@ -118,15 +126,17 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const getInsertOnly = sources => sources.filter(ds =>
         !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
 
-    const isDocument = ds =>
-        (ds.id && ds.id.indexOf("://") < 0) ||
-        (ds.key && ds.key.indexOf("://") < 0) ||
-        (ds.id && ds.id.startsWith("s3://")) ||
-        (ds.key && ds.key.startsWith("s3://"));
-
     const getDocumentDataSources = sources => sources.filter(isDocument);
 
     const getNonDocumentDataSources = sources => sources.filter(ds => !isDocument(ds));
+
+    const uniqueDataSources = dss => {return [...Object.values(dss.reduce(
+        (acc, ds) => (acc[ds.id] = ds, acc), {})
+    )];}
+
+    const attachedDataSources = [
+        ...dataSources,
+        ...msgDataSources];
 
     const nonUniqueRagDataSources = [
         ...(getRagOnly(dataSources)),
@@ -134,7 +144,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         ...(getDocumentDataSources(convoDataSources))
     ];
 
-    const ragDataSources = Object.values(nonUniqueRagDataSources.reduce(
+    let ragDataSources = Object.values(nonUniqueRagDataSources.reduce(
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
@@ -148,9 +158,49 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
+    if(params.options.skipRag) {
+        ragDataSources = [];
+    }
+
+    const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
+    const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
+
+    if(params.options.dataSourceOptions) {
+
+        const dataSourceOptions = params.options.dataSourceOptions;
+
+        const insertList = [];
+        const ragList = [];
+
+        if (dataSourceOptions.disableDataSources) {
+            ragDataSources = [];
+            dataSources = [];
+        }
+        else {
+            if (dataSourceOptions.insertConversationDocuments) {
+                insertList.push(...uniqueConvoDataSources);
+            }
+            if (dataSourceOptions.insertAttachedDocuments) {
+                insertList.push(...uniqueAttachedDataSources);
+            }
+            if(dataSourceOptions.ragConversationDocuments) {
+                ragList.push(...uniqueConvoDataSources);
+            }
+            if(dataSourceOptions.ragAttachedDocuments) {
+                ragList.push(...uniqueAttachedDataSources);
+            }
+        }
+
+        ragDataSources = ragList;
+        dataSources = insertList;
+    }
+
     return {
         ragDataSources,
-        dataSources
+        dataSources,
+        conversationDataSources: uniqueConvoDataSources,
+        attachedDataSources: uniqueAttachedDataSources,
+        allDataSources: uniqueDataSources([...uniqueAttachedDataSources, ...uniqueConvoDataSources])
     };
 }
 
@@ -343,9 +393,11 @@ const getChunkAggregator = (maxTokens, options) => {
         maxItemsPerChunk = options.chunking.maxItemsPerChunk;
     }
 
-    return (dataSource, {currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0},
+    return (dataSource,
+            {locations, currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0},
             formattedSourceName,
             formattedContent,
+            location,
             contentTokenCount) => {
         if ((currentTokenCount + contentTokenCount > maxTokens) || (itemCount + 1 > maxItemsPerChunk)) {
             // If the current chunk is too big, push it to the chunks array and start a new one
@@ -353,20 +405,23 @@ const getChunkAggregator = (maxTokens, options) => {
                 chunks.push({
                     id: dataSource.id + "?chunk=" + chunks.length,
                     context: formattedSourceName + currentChunk,
-                    tokens: currentTokenCount
+                    tokens: currentTokenCount,
+                    locations: locations
                 });
                 itemCount = 1;
             }
 
+            locations = [location];
             currentChunk = formattedContent;
             currentTokenCount = contentTokenCount;
         } else {
             // Add to the current chunk
+            locations.push(location);
             currentChunk += (currentChunk ? "\n" : "") + formattedContent;
             currentTokenCount += contentTokenCount;
             itemCount = itemCount + 1;
         }
-        return {chunks, currentChunk, currentTokenCount, itemCount}
+        return {locations, chunks, currentChunk, currentTokenCount, itemCount}
     }
 
 }
@@ -407,9 +462,10 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         }
 
         const chunks = [];
+        const locations = [];
         let currentChunk = '';
         let currentTokenCount = 0;
-        let state = {chunks, currentChunk, currentTokenCount};
+        let state = {chunks, currentChunk, currentTokenCount, locations};
 
         const aggregator = getChunkAggregator(maxTokens, options);
         const formattedSourceName = "Source:" + content.name + " Type:" + dataSource.type + "\n-------------\n";
@@ -417,7 +473,7 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         for (const part of content.content) {
             const formattedContent = contentFormatter(part);
             const contentTokenCount = tokenCounter(formattedContent);
-            state = aggregator(dataSource, state, formattedSourceName, formattedContent, contentTokenCount);
+            state = aggregator(dataSource, state, formattedSourceName, formattedContent, part.location || {}, contentTokenCount);
         }
 
         // Add the last chunk if it has content
@@ -425,7 +481,9 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
             chunks.push({
                 id: dataSource.id + "?chunk=" + chunks.length,
                 context: formattedSourceName + state.currentChunk,
-                tokens: state.currentTokenCount
+                tokens: state.currentTokenCount,
+                locations: state.locations,
+                dataSource
             });
         }
 
@@ -435,7 +493,8 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         return formatAndChunkDataSource(tokenCounter, dataSource, {
             content: [{
                 content: content,
-                location: {}
+                location: {},
+                dataSource
             }]
         }, maxTokens);
     }
