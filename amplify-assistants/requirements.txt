@@ -4,7 +4,6 @@ jose==1.0.0
 jsonschema==4.22.0
 openai==1.35.3
 Pillow==10.1.0
-Pillow==10.3.0
 pydantic==2.7.4
 python-dotenv==1.0.1
 python_jose==3.3.0
