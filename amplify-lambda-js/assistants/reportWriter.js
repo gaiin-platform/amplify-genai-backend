@@ -279,7 +279,7 @@ States.writeSections.addTransition(States.done.name, "Done");
 // We create the assistant with the state machine and the current state.
 export const reportWriterAssistant = new StateBasedAssistant(
     "Report Writer Assistant",
-    "Report Writer Assistant",
+    "Report Writer",
     "This assistant creates an outline and then drafts a report that is longer than can be " +
     "written in a single prompt. It is designed to help you write a report.",
     // Each assistant has a function to decide if it can support the dataSources that were attached to the
