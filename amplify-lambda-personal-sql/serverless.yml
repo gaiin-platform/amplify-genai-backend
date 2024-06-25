@@ -43,6 +43,7 @@ provider:
     OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
     DATASOURCE_REGISTRY_ENDPOINT: ${self:custom.stageVariables.DATASOURCE_REGISTRY_ENDPOINT}
+    HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
 
   apiGateway:
     restApiId:
@@ -53,6 +54,11 @@ provider:
   iam:
     role:
       statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
         - Effect: Allow
           Action:
             - dynamodb:PutItem
