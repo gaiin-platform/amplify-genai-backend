@@ -44,7 +44,6 @@ provider:
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
-    ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:custom.stageVariables.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
     BILLING_DYNAMODB_TABLE: ${self:custom.stageVariables.BILLING_DYNAMODB_TABLE}
@@ -75,7 +74,6 @@ provider:
             - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"

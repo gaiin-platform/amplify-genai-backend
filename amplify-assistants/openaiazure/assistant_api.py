@@ -590,7 +590,7 @@ def get_file_size(file):
 def record_thread_usage(op_details, info):
     print("Recording thread usage")
     dynamodb = boto3.resource('dynamodb')
-    usage_table = dynamodb.Table(os.environ['ASSISTANT_CHAT_USAGE_DYNAMO_TABLE'])
+    usage_table = dynamodb.Table(os.environ['BILLING_DYNAMODB_TABLE'])
 
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
    
