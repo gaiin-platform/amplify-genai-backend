@@ -98,6 +98,14 @@ provider:
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.ASSISTANT_QUEUE_NAME}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-opus-20240229-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-7b-instruct-v0:2'
+            - 'arn:aws:bedrock:*::foundation-model/mistral.mixtral-8x7b-instruct-v0:1'
+            - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-2402-v1:0'
 
         - Effect: Allow
           Action:
