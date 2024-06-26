@@ -9,23 +9,23 @@ def handle_chat_item(dynamodb, item, account_type, identifier, user):
     # Extract ModelID from the item
     model_id = item["modelId"]
 
-    # Access the model exchange rate table table
-    exchange_rate_table_name = os.environ["MODEL_EXCHANGE_RATE_TABLE"]
-    exchange_rate_table = dynamodb.Table(exchange_rate_table_name)
+    # Access the model model rate table table
+    model_rate_table_name = os.environ["MODEL_RATE_TABLE"]
+    model_rate_table = dynamodb.Table(model_rate_table_name)
 
     # Query the table for the matching ModelID
-    response = exchange_rate_table.query(
+    response = model_rate_table.query(
         KeyConditionExpression=Key("ModelID").eq(model_id)
     )
 
-    # Check if we got a matching exchange rate record
+    # Check if we got a matching model rate record
     if response["Items"]:
         # Assuming there's only one match, extract the rates
-        exchange_rate_record = response["Items"][0]
-        input_cost_per_thousand_tokens = exchange_rate_record[
+        model_rate_record = response["Items"][0]
+        input_cost_per_thousand_tokens = model_rate_record[
             "InputCostPerThousandTokens"
         ]
-        output_cost_per_thousand_tokens = exchange_rate_record[
+        output_cost_per_thousand_tokens = model_rate_record[
             "OutputCostPerThousandTokens"
         ]
 
@@ -40,7 +40,7 @@ def handle_chat_item(dynamodb, item, account_type, identifier, user):
             user=user,
         )
     else:
-        print(f"No exchange rate found for ModelID: {model_id}")
+        print(f"No model rate found for ModelID: {model_id}")
 
 
 def calculate_cost(input_tokens, output_tokens, input_cost, output_cost):

@@ -51,7 +51,7 @@ provider:
       ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
   
   environment:
-    MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
+    MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
     ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
     CHAT_USAGE_TABLE: vu-amplify-${sls:stage}-chat-usage
@@ -73,8 +73,8 @@ provider:
             - dynamodb:CreateTable
           Resource:
             - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
@@ -92,16 +92,16 @@ provider:
 functions:
   # sets the value of the model input and output rates
   # currently only triggered manually via:
-  # ~ serverless invoke --function updateModelExchangeRateTable --stage dev --log
+  # ~ serverless invoke --function updateModelRateTable --stage dev --log
   # 
   # TODO:
   # - finish implementation of AWS pricing API once Amazon fixes pricing API bug
   # - make this trigger daily to keep rates up to date
   updateModelRateTable:
-    handler: exchange_rates/update_table.updateModelExchangeRateTable
+    handler: model_rates/update_table.updateModelRateTable
     memorySize: 128
     environment:
-      EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
 
   
   # triggered at the start of each day and month
@@ -116,7 +116,7 @@ functions:
       - schedule:
           rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
     environment:
-      MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
       HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
       CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
       ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
@@ -135,7 +135,7 @@ functions:
           method: post
           cors: true
     environment:
-      MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
       HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
       CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
       ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
@@ -143,11 +143,11 @@ functions:
 resources:
   Resources:
     # model rates needed for usage cost calculations
-    ExchangeRateTable:
+    ModelRateTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
-        TableName: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+        TableName: ${self:provider.environment.MODEL_RATE_TABLE}
         AttributeDefinitions:
           - AttributeName: 'ModelID'
             AttributeType: 'S'

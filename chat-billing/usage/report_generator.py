@@ -27,27 +27,27 @@ def generate_csv(data_list):
 
 
 # Function to calculate the cost per item
-def calculate_cost(item, exchange_rate_table):
+def calculate_cost(item, model_rate_table):
     model_id = item.get("modelId", "")
     input_tokens = Decimal(item.get("inputTokens", 0))
     output_tokens = Decimal(item.get("outputTokens", 0))
 
-    # Query the model exchange rate table for the cost per thousand tokens
-    response = exchange_rate_table.query(
+    # Query the model rate table for the cost per thousand tokens
+    response = model_rate_table.query(
         KeyConditionExpression=Key("ModelID").eq(model_id)
     )
 
     # If no rate is found, return None to indicate the cost couldn't be calculated
     if not response["Items"]:
-        print(f"No exchange rate found for ModelID: {model_id}")
+        print(f"No model rate found for ModelID: {model_id}")
         return None
 
-    exchange_rate_record = response["Items"][0]
+    model_rate_record = response["Items"][0]
     input_cost_per_thousand_tokens = Decimal(
-        exchange_rate_record["InputCostPerThousandTokens"]
+        model_rate_record["InputCostPerThousandTokens"]
     )
     output_cost_per_thousand_tokens = Decimal(
-        exchange_rate_record["OutputCostPerThousandTokens"]
+        model_rate_record["OutputCostPerThousandTokens"]
     )
 
     # Calculate total cost
@@ -58,7 +58,7 @@ def calculate_cost(item, exchange_rate_table):
     return total_cost
 
 
-def calculate_and_record_todays_usage_costs(chat_records, exchange_rate_table):
+def calculate_and_record_todays_usage_costs(chat_records, model_rate_table):
     today_costs = []
     for item in chat_records:
         user = item.get("user", "")
@@ -72,7 +72,7 @@ def calculate_and_record_todays_usage_costs(chat_records, exchange_rate_table):
             identifier = account_id
 
         # Reuse the logic from 'calculate_cost' to get total_cost
-        total_cost = calculate_cost(item, exchange_rate_table)
+        total_cost = calculate_cost(item, model_rate_table)
 
         if total_cost is not None:
             # Creating the record in the same format as 'historyUsage'
@@ -153,9 +153,9 @@ def report_generator(event, context, current_user, name, data):
 
     chat_csv_data = generate_csv(chat_records)
 
-    exchange_rate_table = dynamodb.Table(os.environ["MODEL_EXCHANGE_RATE_TABLE"])
+    model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
     today_costs_formatted = calculate_and_record_todays_usage_costs(
-        chat_records, exchange_rate_table
+        chat_records, model_rate_table
     )
 
     chat_usage_today_costs_csv = generate_csv(today_costs_formatted)
