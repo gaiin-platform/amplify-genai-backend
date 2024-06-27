@@ -3,8 +3,9 @@
 
 
 
- export const ModelID = {
+export const ModelID = {
     GPT_4_TURBO_AZ: 'gpt-4-1106-Preview',
+    GPT_4o_AZ: 'gpt-4o',
     GPT_4_TURBO: 'gpt-4-1106-preview',
     GPT_3_5: 'gpt-3.5-turbo',
     GPT_3_5_FN: 'gpt-3.5-turbo-1106',
@@ -13,6 +14,7 @@
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
+    CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
     CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
     CLAUDE_3_OPUS: 'anthropic.claude-3-opus-20240229-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
@@ -30,6 +32,14 @@ export const Models = {
         outputCost: .03,
         inputCost: .01,
     },
+    [ModelID.GPT_4o_AZ]: {
+        id: ModelID.GPT_4o_AZ,
+        name: 'GPT-4o (Azure)',
+        actualTokenLimit: 128000,
+        visible: true,
+        outputCost: .005,
+        inputCost: .015,
+        },
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',
@@ -85,6 +95,14 @@ export const Models = {
         visible: false,
         outputCost: 0.01500,
         inputCost: 0.00300,
+    },
+    [ModelID.CLAUDE_3_5_SONNET] : { 
+        id: ModelID.CLAUDE_3_5_SONNET,
+        name: 'Claude-3-5-Sonnet (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
+        outputCost: 0.015,
+        inputCost: 0.003,
     },
     [ModelID.CLAUDE_3_HAIKU]: {
         id: ModelID.CLAUDE_3_HAIKU,
