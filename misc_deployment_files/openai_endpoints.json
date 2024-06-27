@@ -1,0 +1,55 @@
+{
+    "models": [
+        {
+            "gpt-4-turbo": {
+                "endpoints": [
+                    {
+                        "url": "https://api.openai.com/v1/chat/completions",
+                        "key": "Open AI Api Key"
+                    }
+                ]
+            }    
+        },
+        {
+            "gpt-4o": {
+                "endpoints": [
+                    {
+                        "url": "https://api.openai.com/v1/chat/completions",
+                        "key": "Open AI Api Key"
+                    }
+                ]
+            }
+        },        
+
+        {
+            "gpt-35-turbo": {
+                "endpoints": [
+                    {
+                        "url": "https://api.openai.com/v1/chat/completions",
+                        "key": "Open AI Api Key"
+                    }
+                ]
+            }
+        },
+        {
+            "text-embedding-ada-002": {
+                "endpoints": [
+                    {
+                        "url": "https://api.openai.com/v1/embeddings",
+                        "key": "Open AI Api Key"
+                    }
+                ]
+            }
+        },
+        {
+            "code-interpreter": {
+                "endpoints": [
+                    {
+                        "url": "https://api.openai.com/v1/",
+                        "key": "Open AI Api Key"
+                    }
+                ]
+            }
+        }
+    ]
+}
