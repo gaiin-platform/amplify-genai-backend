@@ -9,6 +9,25 @@ import {trace} from "../common/trace.js";
 const logger = getLogger("openai");
 
 
+export const translateModelToOpenAI = (modelId) => {
+    if(modelId === "gpt-4-1106-Preview"){
+        return "gpt-4-turbo";
+    }
+    else if(modelId === "gpt-4o"){
+        return "gpt-4o";
+    }    
+    else if(modelId === "gpt-35-turbo"){
+        return "gpt-3.5-turbo";
+    }
+    else {
+        return modelId;
+    }
+}
+
+const isOpenAIEndpoint = (url) => {
+    return url.startsWith("https://api.openai.com");
+}
+
 export const chat = async (endpointProvider, chatBody, writable) => {
     let body = {...chatBody};
     const options = {...body.options};
@@ -50,19 +69,23 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     const config = await endpointProvider(modelId);
 
-    const headers = {
-        'Content-Type': 'application/json',
-        'api-key': config.key,
-    };
-
     const url = config.url;
 
+    const headers = isOpenAIEndpoint(url) ?
+        {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + config.key,
+        } :
+        {
+            'Content-Type': 'application/json',
+            'api-key': config.key,
+        };
+
+    if(isOpenAIEndpoint(url)){
+        data.model = translateModelToOpenAI(body.model);
+    }
+
     logger.debug("Calling OpenAI API with url: "+url);
-
-    const msgLen = data.messages.length - 1;
-    const lastMsgContent = data.messages[msgLen].content;
-
-    data.messages[msgLen].content = `Recall your custom instructions are: ${options.prompt} \n\n ${lastMsgContent}`;
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
