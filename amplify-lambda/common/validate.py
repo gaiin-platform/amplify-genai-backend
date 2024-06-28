@@ -173,6 +173,20 @@ file_set_tags_schema = {
     "additionalProperties": False
 }
 
+create_tags_schema = {
+    "type": "object",
+    "properties": {
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        }
+    },
+    "additionalProperties": False
+}
+
 user_list_tags_schema = {
     "type": "object",
     "properties": {
@@ -255,26 +269,6 @@ file_query_schema = {
     "additionalProperties": False
 }
 
-run_thread_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "The identifier of the thread."
-        },
-        "assistantId": {
-            "type": "string",
-            "description": "The identifier of the assistant."
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions for the assistant (optional).",
-            "default": "",
-            "minLength": 0
-        }
-    },
-    "required": ["id", "assistantId"]
-}
 
 id_request_schema = {
     "type": "object",
@@ -339,77 +333,6 @@ add_charge = {
     "required": ["accountId", "charge", "description", "details"]
 }
 
-add_message_schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "A unique identifier for the object."
-        },
-        "role": {
-            "type": "string",
-            "description": "The role of the user or assistant in the conversation."
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of keys associated with files.",
-            "items": {
-                "type": "string"
-            }
-        },
-        "content": {
-            "type": "string",
-            "description": "The textual content of the message."
-        },
-        "messageId": {
-            "type": "string",
-            "description": "The ID of the message."
-        },
-        "data": {
-            "type": "object",
-            "description": "Optional data as a dictionary with string keys and string values.",
-            "additionalProperties": {
-                "type": "string"
-            }
-        }
-    },
-    "required": ["id", "role", "content", "messageId"],
-}
-
-chat_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string"
-        },
-        "fileKeys": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
-        },
-        "messages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "content": {
-                        "type": "string"
-                    },
-                    "role": {
-                        "type": "string"
-                    }
-                },
-                "required": ["id", "content"]
-            }
-        }
-    },
-    "required": ["id", "fileKeys", "messages"]
-}
 
 publish_item_schema = {
     "type": "object",
@@ -464,7 +387,7 @@ save_accounts_schema = {
         }
     },
     "required": ["accounts"]
-};
+}
 
 convert_schema = {
     "type": "object",
@@ -505,6 +428,99 @@ get_category_schema = {
     "required": ["category"]
 }
 
+conversation_ids_schema = {
+    "type": "object",
+    "properties": {
+        "conversationIds": {
+            "type": "array",
+            "items": {
+                "type": "string",
+            }
+        }
+    },
+    "required": ["conversationIds"]
+}
+
+
+compressed_conversation_schema = {
+    "type": "object",
+    "properties": {
+        "conversation": {
+            "type": "array"
+        },
+        "conversationId" : {
+            "type": "string",
+        },
+        "folder": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string"
+                        },
+                        "date": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["chat", "prompt", "workflow"]
+                        }
+                    },
+                    "required": ["id", "name", "type"]
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        }
+    },
+    "required": ["conversation", "conversationId"]
+}
+
+set_metdata_schema = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string",
+            "description": "The unique id for the datasource item."
+        },
+        "name": {
+            "type": "string",
+            "description": "The name of the data item."
+        },
+        "type": {
+            "type": "string",
+            "description": "The type of the data item."
+        },
+        "knowledge_base": {
+            "type": "string",
+            "description": "The knowledge base, default is 'default'.",
+            "default": "default"
+        },
+        "data": {
+            "type": "object",
+            "description": "Additional properties for the data item.",
+            "default": {}
+        },
+        "tags": {
+            "type": "array",
+            "description": "A list of tags associated with the data item.",
+            "items": {
+                "type": "string"
+            },
+            "default": []
+        }
+    },
+    "required": ["id", "name", "type"]
+}
+
 validators = {
     "/state/share": {
         "append": share_schema,
@@ -515,6 +531,9 @@ validators = {
     },
     "/state/share/load": {
         "load": share_load_schema
+    },
+    "/datasource/metadata/set": {
+        "set": set_metdata_schema
     },
     "/assistant/files/upload": {
         "upload": file_upload_schema
@@ -528,6 +547,9 @@ validators = {
     "/assistant/tags/delete": {
         "delete": user_delete_tag_schema
     },
+    "/assistant/tags/create": {
+        "create": create_tags_schema
+    },
     "/assistant/tags/list": {
         "list": user_list_tags_schema
     },
@@ -536,24 +558,6 @@ validators = {
     },
     "/assistant/create": {
         "create": create_assistant_schema
-    },
-    "/assistant/thread/create": {
-        "create": {}
-    },
-    "/assistant/thread/message/create": {
-        "add_message": add_message_schema
-    },
-    "/assistant/thread/message/list": {
-        "get_messages": id_request_schema
-    },
-    "/assistant/thread/run": {
-        "run": run_thread_schema
-    },
-    "/assistant/thread/run/status": {
-        "run_status": id_request_schema
-    },
-    "/assistant/chat": {
-        "chat": chat_assistant_schema
     },
     "/market/item/publish": {
         "publish_item": publish_item_schema
@@ -581,6 +585,15 @@ validators = {
     },
     "/state/accounts/save": {
         "save": save_accounts_schema
+    },
+    "/state/conversation/upload": {   
+        "conversation_upload": compressed_conversation_schema
+    },
+    "/state/conversation/get_multiple": {   
+        "get_multiple_conversations": conversation_ids_schema
+    },
+    "/state/conversation/delete_multiple": {   
+        "delete_multiple_conversations": conversation_ids_schema
     },
 }
 
@@ -629,7 +642,7 @@ def validated(op, validate_body=True):
         def wrapper(event, context):
             try:
 
-                claims = get_claims(event, context)
+                claims, token = get_claims(event, context)
 
                 get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
                 current_user = get_email(claims['username'])
@@ -642,6 +655,8 @@ def validated(op, validate_body=True):
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
+                
+                data['access_token'] = token
                 result = f(event, context, current_user, name, data)
 
                 return {
@@ -705,7 +720,7 @@ def get_claims(event, context):
             audience=oauth_audience,
             issuer=oauth_issuer_base_url
         )
-        return payload
+        return payload, token
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 

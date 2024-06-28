@@ -20,12 +20,14 @@ SYSTEM_TAG = "amplify:system"
 ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
 ASSISTANT_TAG = "amplify:assistant"
 AMPLIFY_AUTOMATION_TAG = "amplify:automation"
+AMPLIFY_API_KEYS_TAG = "amplify:api-keys"
 
 RESERVED_TAGS = [
     SYSTEM_TAG,
     ASSISTANT_BUILDER_TAG,
     ASSISTANT_TAG,
-    AMPLIFY_AUTOMATION_TAG
+    AMPLIFY_AUTOMATION_TAG,
+    AMPLIFY_API_KEYS_TAG
 ]
 
 
@@ -152,7 +154,63 @@ At the end of every message you output, you will update the assistant in a speci
         'user': 'amplify'
     }
 
+def get_api_key_creator_assistant():
+    instructions = """
+    You are going to help me build a customized ChatGPT assistant. To do this, you will need to help me create the instructions that guide the assistant in its job. 
 
+    What we want to define is:
+    1. Application Name 
+    2. Application Description
+    3. Do we want to define a use to be the delegate 
+    4. Rate limit - unlimited, monthly, weekly, hourly (dollar amount in the format $0.00
+    5. Optional expiration date
+    6. Acesss type - full-access    XOR   chat, assisant, upload file
+
+    You will ask me questions to help determine these things. As we go, try to incrementally output values for all these things. You will write the instructions in a detailed manner that incorporates all of my feedback. Every time I give you new information that changes things, update the information.
+
+    At the end of every message you output, you will update the assistant in a special code block WITH THIS EXACT FORMAT:
+
+    ```api-key
+    {
+    "name": "<FILL IN APPLICATION NAME>"
+    "description": "<FILL IN APPLICATION    DESCRIPTION>"
+    "delegate": "<FILL IN DELEGATE>"
+    ... so on
+    }
+    ```
+    """
+
+    description = "This assistant will guide you through the process of cretaing an Amplify API Key"
+    id = "ast/assistant-api-key-creator"
+    name = "Amplify API Key Creator"
+    datasources = []
+    tags = [AMPLIFY_API_KEYS_TAG, SYSTEM_TAG]
+    created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
+    updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
+    tools = []
+    data = {
+        "provider": "amplify",
+        "conversationTags": [AMPLIFY_API_KEYS_TAG],
+    }
+
+    return {
+        'id': id,
+        'coreHash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'hash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'instructionsHash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'dataSourcesHash': hashlib.sha256(json.dumps(datasources).encode()).hexdigest(),
+        'version': 1,
+        'name': name,
+        'description': description,
+        'instructions': instructions,
+        'tags': tags,
+        'createdAt': created_at,
+        'updatedAt': updated_at,
+        'dataSources': datasources,
+        'data': data,
+        'tools': tools,
+        'user': 'amplify'
+    }
 def check_user_can_share_assistant(assistant, user_id):
     if assistant:
         return assistant['user'] == user_id
@@ -230,6 +288,7 @@ def list_assistants(event, context, current_user, name, data):
     # Add the system assistants
     assistants.append(get_assistant_builder_assistant())
     # assistants.append(get_amplify_automation_assistant())
+    # assistants.append(get_api_key_creator_assistant())
 
     assistant_ids = [assistant['id'] for assistant in assistants]
 
@@ -322,28 +381,46 @@ def create_assistant(event, context, current_user, name, data):
     uri = extracted_data.get('uri', None)
     assistant_public_id = extracted_data.get('assistantId', None)
     tags = extracted_data.get('tags', [])
+    assistant_data = extracted_data.get('data', {})
 
     # delete any tag that starts with amplify: or is in the reserved tags
     tags = [tag for tag in tags if not tag.startswith("amplify:") and tag not in RESERVED_TAGS]
 
     instructions = extracted_data['instructions']
+    disclaimer = extracted_data['disclaimer']
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
 
-    print(f"Data sources before translation: {data_sources}")
-
-    for i in range(len(data_sources)):
-        source = data_sources[i]
-        if (not source['id'].startswith("s3://")): data_sources[i]['id'] = source['key']
-
-    data_sources = translate_user_data_sources_to_hash_data_sources(data_sources)
+    filtered_ds = []
+    tag_data_sources = []
+    for source in data_sources:
+        if source['id'].startswith("tag://"):
+            tag_data_sources.append(source)
+        else:
+            filtered_ds.append(source)
     
-    print(f"Data sources after translation and extraction: {data_sources}")
+    print(f"Tag Data sources: {tag_data_sources}")
 
-    # Auth check: need to update to new permissions endpoint
-    if not can_access_objects(data['access_token'], data_sources):
-        return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+    if (len(filtered_ds) > 0):
+        print(f"Data sources before translation: {filtered_ds}")
+
+        for i in range(len(filtered_ds)):
+            source = filtered_ds[i]
+            if (not source['id'].startswith("s3://")): filtered_ds[i]['id'] = source['key']
+        
+        print(f"Final data sources before translation: {filtered_ds}")
+
+        filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+        
+        print(f"Data sources after translation and extraction: {filtered_ds}")
+
+        data_sources = filtered_ds + tag_data_sources
+
+        # Auth check: need to update to new permissions endpoint
+        if not can_access_objects(data['access_token'], data_sources):
+            return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+        
 
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_or_update_assistant(
@@ -352,6 +429,8 @@ def create_assistant(event, context, current_user, name, data):
         assistant_name=assistant_name,
         description=description,
         instructions=instructions,
+        assistant_data=assistant_data,
+        disclaimer=disclaimer,
         tags=tags,
         data_sources=data_sources,
         tools=tools,
@@ -456,7 +535,7 @@ def get_most_recent_assistant_version(assistants_table,
     return None
 
 
-def save_assistant(assistants_table, assistant_name, description, instructions, data_sources, provider, tools,
+def save_assistant(assistants_table, assistant_name, description, instructions, assistant_data, disclaimer, data_sources, provider, tools,
                    user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None):
     """
     Saves the assistant data to the DynamoDB table.
@@ -484,10 +563,11 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
 
     # Create a dictionary of the core details of the assistant
     # This will be used to create a hash to check if the assistant already exists
-    core_sha256, datasources_sha256, full_sha256, instructions_sha256 = \
+    core_sha256, datasources_sha256, full_sha256, instructions_sha256, disclaimer_sha256 = \
         get_assistant_hashes(assistant_name,
                              description,
                              instructions,
+                             disclaimer,
                              data_sources,
                              provider,
                              tools)
@@ -505,13 +585,16 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
         'user': user_that_owns_the_assistant,
         'dataSourcesHash': datasources_sha256,
         'instructionsHash': instructions_sha256,
+        'disclaimerHash':disclaimer_sha256,
         'tags': tags,
         'uri': uri,
         'coreHash': core_sha256,
         'hash': full_sha256,
         'name': assistant_name,
+        'data': assistant_data,
         'description': description,
         'instructions': instructions,
+        'disclaimer':disclaimer,
         'createdAt': timestamp,
         'updatedAt': timestamp,
         'dataSources': data_sources,
@@ -596,6 +679,8 @@ def create_or_update_assistant(
         assistant_name,
         description,
         instructions,
+        assistant_data,
+        disclaimer,
         tags,
         data_sources,
         tools,
@@ -645,6 +730,8 @@ def create_or_update_assistant(
             assistant_name,
             description,
             instructions,
+            assistant_data,
+            disclaimer,
             data_sources,
             provider,
             tools,
@@ -688,6 +775,8 @@ def create_or_update_assistant(
             assistant_name,
             description,
             instructions,
+            assistant_data,
+            disclaimer,
             data_sources,
             provider,
             tools,
@@ -726,9 +815,10 @@ def create_or_update_assistant(
         }
 
 
-def get_assistant_hashes(assistant_name, description, instructions, data_sources, provider, tools):
+def get_assistant_hashes(assistant_name, description, instructions, disclaimer, data_sources, provider, tools):
     core_details = {
         'instructions': instructions,
+        'disclaimer':disclaimer,
         'dataSources': data_sources,
         'tools': tools,
         'provider': provider
@@ -739,10 +829,11 @@ def get_assistant_hashes(assistant_name, description, instructions, data_sources
     core_sha256 = hashlib.sha256(json.dumps(core_details, sort_keys=True).encode()).hexdigest()
     datasources_sha256 = hashlib.sha256(json.dumps(data_sources.sort(key=lambda x: x['id'])).encode()).hexdigest()
     instructions_sha256 = hashlib.sha256(json.dumps(instructions, sort_keys=True).encode()).hexdigest()
+    disclaimer_sha256 = hashlib.sha256(json.dumps(disclaimer, sort_keys=True).encode()).hexdigest()
     core_details['assistant'] = assistant_name
     core_details['description'] = description
     full_sha256 = hashlib.sha256(json.dumps(core_details, sort_keys=True).encode()).hexdigest()
-    return core_sha256, datasources_sha256, full_sha256, instructions_sha256
+    return core_sha256, datasources_sha256, full_sha256, instructions_sha256, disclaimer_sha256
 
 
 def alias_key_of_type(assistant_public_id, alias_type):

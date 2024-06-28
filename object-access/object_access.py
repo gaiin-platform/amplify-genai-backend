@@ -34,7 +34,7 @@ def add_access_response(access_responses, object_id, access_type, response):
 
 
 @validated("simulate_access_to_objects")
-def simulate_access_to_objects(event, context, current_user, name, data, username, cognito_groups):
+def simulate_access_to_objects(event, context, current_user, name, data, username):
     print("Simulating object access")
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
@@ -45,7 +45,7 @@ def simulate_access_to_objects(event, context, current_user, name, data, usernam
     access_responses = {}
 
     for object_id, access_types in data_sources.items():
-        print("checking permissions for obect: ", object_id, " with access: ", access_type)
+        print("checking permissions for object: ", object_id, " with access: ", access_types)
         # Check if any permissions already exist for the object_id
         for access_type in access_types:
             try:
@@ -83,7 +83,7 @@ def simulate_access_to_objects(event, context, current_user, name, data, usernam
 
 
 @validated("can_access_objects")
-def can_access_objects(event, context, current_user, name, data, username, cognito_groups):
+def can_access_objects(event, context, current_user, name, data, username):
     print("Can access objects")
 
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
@@ -143,7 +143,7 @@ def can_access_objects(event, context, current_user, name, data, username, cogni
 
 
 @validated("update_object_permissions")
-def update_object_permissions(event, context, current_user, name, data, username, cognito_groups):
+def update_object_permissions(event, context, current_user, name, data, username):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
     print("Entered update object permissions")
@@ -220,6 +220,7 @@ def update_object_permissions(event, context, current_user, name, data, username
                     'body': json.dumps(
                         f"User {current_user} does not have sufficient permissions to update permissions for objectId {object_id}.")
                 }
+
     except ClientError as e:
         return {
             'statusCode': e.response['ResponseMetadata']['HTTPStatusCode'],
@@ -236,9 +237,8 @@ def update_object_permissions(event, context, current_user, name, data, username
         'body': json.dumps('Permissions updated successfully.')
     }
 
-
 @validated("create_cognito_group")
-def create_cognito_group(event, context, current_user, name, data, username, cognito_groups):
+def create_cognito_group(event, context, current_user, name, data, username):
     """
     Create a Cognito user group in the specified user pool and add the current user to it.
 

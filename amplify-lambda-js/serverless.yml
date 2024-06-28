@@ -33,7 +33,7 @@ provider:
     DATASOURCES_QUERY_ENDPOINT: ${self:custom.stageVariables.DATASOURCES_QUERY_ENDPOINT}
     RAG_ENDPOINT: ${self:custom.stageVariables.RAG_ENDPOINT}
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
-    LLM_ENDPOINTS_SECRETS_NAME: openai-endpoints
+    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
@@ -46,16 +46,22 @@ provider:
     SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
     OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
     USAGE_ENDPOINT: ${self:custom.stageVariables.USAGE_ENDPOINT}
+    OPS_ENDPOINT: ${self:custom.stageVariables.OPS_ENDPOINT}
     CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     REQUEST_STATE_DYNAMO_TABLE: vu-amplify-${sls:stage}-request-state
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     TRACE_BUCKET_NAME: vu-amplify-${sls:stage}-chat-traces
     ASSISTANT_TASK_RESULTS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-results
+    ASSISTANT_LOGS_BUCKET_NAME: vu-amplify-${sls:stage}-assistant-chat-logs
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistants
+    API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVariables.API_KEYS_DYNAMODB_TABLE}
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
     TRACING_ENABLED: false
+    DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
+    ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
+    ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT}
 
   iam:
     role:
@@ -78,16 +84,19 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.ASSISTANT_QUEUE_NAME}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1:2:100k'
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-opus-20240229-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0'
             - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-7b-instruct-v0:2'
             - 'arn:aws:bedrock:*::foundation-model/mistral.mixtral-8x7b-instruct-v0:1'
             - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-2402-v1:0'
@@ -101,7 +110,11 @@ provider:
           Resource:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
-
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}"
         - Effect: Allow
           Action:
             - dynamodb:DeleteItem
@@ -156,6 +169,19 @@ resources:
             AttributeName: requestId
             KeyType: RANGE
         TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}
+    DatasourceRegistryDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: type
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: type
+            KeyType: HASH
+        TableName: ${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}
     ChatTracesBucket:
          Type: AWS::S3::Bucket
          Properties:
@@ -169,3 +195,7 @@ resources:
          Type: AWS::S3::Bucket
          Properties:
            BucketName: ${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}
+    AssistantLogsBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}
