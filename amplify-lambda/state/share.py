@@ -10,7 +10,6 @@ from common.object_permissions import update_object_permissions
 from common.data_sources import extract_key, translate_user_data_sources_to_hash_data_sources
 from common.share_assistants import share_assistant
 import copy
-import copy
 import boto3
 
 from common.validate import HTTPException, validated
