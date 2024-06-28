@@ -45,7 +45,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, count) {
 
 export const getContextMessages = async (chatFn, params, chatBody, dataSources) => {
     const ragLLMParams = setModel(
-        {...params, options: {skipRag: true}}, //Models[process.env.RAG_ASSISTANT_MODEL_ID]);
+        {...params, options: {skipRag: true, dataSourceOptions:{}}}, //Models[process.env.RAG_ASSISTANT_MODEL_ID]);
         getCheapestModelEquivalent(getModel(params)));
 
     const llm = new LLM(
@@ -172,7 +172,18 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                         });
                         return sources;
                     } catch (e) {
-                        logger.error("Error getting RAG results", e);
+                        if (e.response) {
+                            // Extract status code and response message
+                            const statusCode = e.response.status;
+                            const responseMessage = e.response.data;
+
+                            // Log the status code and message
+                            console.error(`Error: Request failed with status code ${statusCode}`);
+                            console.error(`Response Message: ${JSON.stringify(responseMessage)}`);
+                        }
+                        else {
+                            logger.error("Error getting RAG results", e);
+                        }
                         return [];
                     }
                 });

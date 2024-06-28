@@ -65,6 +65,8 @@ def llm_query_db(event, context, current_user, name, data):
         dbschema = convert_schema_dicts_to_text(dbschema)
         print(f"Database schema created in text")
 
+        final_query = None
+
         while result is None and tries > 0:
             try:
                 print(f"Using LLM to create query for: {current_user}/{db_id} with task: {task} (Tries left: {tries})")
@@ -75,6 +77,7 @@ def llm_query_db(event, context, current_user, name, data):
                 print(f"SQL: {sql}")
 
                 result = query_db(conn, sql)
+                final_query = sql
 
             except requests.exceptions.HTTPError as err:
                 print(f'HTTP error occurred: {err}')
@@ -89,7 +92,8 @@ def llm_query_db(event, context, current_user, name, data):
 
         return {
             'success': True,
-            'data': result
+            'data': result,
+            'location': {"sql_query": final_query}
         }
 
     except Exception as e:

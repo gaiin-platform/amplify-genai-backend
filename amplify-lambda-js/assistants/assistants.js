@@ -105,8 +105,8 @@ const batchAssistant = {
 export const defaultAssistants = [
     defaultAssistant,
     //batchAssistant,
-    documentAssistant,
-    reportWriterAssistant,
+    //documentAssistant,
+    //reportWriterAssistant,
     // csvAssistant,
     //documentSearchAssistant
 ];

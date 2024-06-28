@@ -124,6 +124,49 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                     }
                 }
 
+                if(assistant.ragOnly) {
+                    params = {
+                        ...params,
+                        options:{...params.options, ragOnly: true}
+                    }
+                }
+
+                const dataSourceOptions = {};
+                if(assistant.data && assistant.data.dataSourceOptions) {
+                    dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
+                }
+
+                const extraMessages = [];
+                if(assistant.data && assistant.data.dataSourceOptions) {
+
+                    const dataSourceMetadataForInsertion = [];
+                    const available = await getDataSourcesByUse(params, body, ds);
+
+                    if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
+                        dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
+                    }
+                    if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
+                        dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
+                    }
+
+                    if(dataSourceMetadataForInsertion.length > 0) {
+
+                        const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
+                            return {id: ds.id, name: ds.name, type:ds.type};
+                        });
+
+                        extraMessages.push({
+                            role: "user",
+                            content:
+`You have the following data sources and documents available:
+-------------                        
+${JSON.stringify(dataSourceSummaries)}
+-------------
+`,
+                        });
+                    }
+                }
+
                 const messagesWithoutSystem = body.messages.filter(
                     (message) => message.role !== "system"
                 );
@@ -154,10 +197,12 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                             role: 'system',
                             content: instructions,
                         },
+                        ...extraMessages,
                         body.messages.slice(-1)[0]
                     ],
                     options: {
                         ...body.options,
+                        ...dataSourceOptions,
                         prompt: instructions,
                     }
                 };

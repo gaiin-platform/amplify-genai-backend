@@ -3,6 +3,8 @@ import boto3
 import requests
 import json
 
+from common.datasources import sanitize_s3_data_source_key
+
 
 def update_object_permissions(current_user, data):
 
@@ -79,6 +81,10 @@ def update_object_permissions(current_user, data):
 
 def can_access_objects(current_user, access_token, data_sources, permission_level="read"):
     print(f"Checking access on data sources: {data_sources}")
+
+    # Check if the data source has s3:// or .content.json in the key and strip it out as
+    # needed by calling sanitize_s3_data_source_key
+    data_sources = [sanitize_s3_data_source_key(ds) for ds in data_sources]
 
     # Check if the id of all the data_sources starts with the current_user
     if current_user and all([ds['id'].startswith(current_user+"/") for ds in data_sources]):

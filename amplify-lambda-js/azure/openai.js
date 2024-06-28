@@ -8,10 +8,13 @@ const logger = getLogger("openai");
 
 export const translateModelToOpenAI = (modelId) => {
     if(modelId === "gpt-4-1106-Preview"){
-        return "gpt-4o-2024-05-13";
+        return "gpt-4-turbo";
     }
+    else if(modelId === "gpt-4o"){
+        return "gpt-4o";
+    }    
     else if(modelId === "gpt-35-turbo"){
-        return "gpt-3.5-turbo-1106";
+        return "gpt-3.5-turbo";
     }
     else {
         return modelId;
