@@ -17,8 +17,8 @@ def handler(event, context):
         if time_range in ("monthly", "daily"):
             track_usage(time_range)
         # for local testing
-        elif time_range == "chat-billing-dev-trackUsage":
-            track_usage("daily")
+        # elif time_range == "chat-billing-dev-trackUsage":
+        #     track_usage("daily")
         else:
             error_message = f"Unexpected track usage trigger: {time_range}"
             print(error_message)
@@ -170,7 +170,8 @@ def record_additional_item_cost(item, time_range):
 
 def record_code_interpreter_item_cost(item, time_range):
     cost = 0
-    # TODO: calculate input and output tokens from details field
+    # parse details field to calculate input and output tokens
+    return
     bill_cost_to_identifier(item, time_range, cost)
 
 
