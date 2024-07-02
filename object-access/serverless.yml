@@ -70,6 +70,7 @@ functions:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      API_KEY_TABLE: ${self:service}-${sls:stage}-api-keys
     
     iamRoleStatements:
           - Effect: Allow
@@ -83,6 +84,7 @@ functions:
 
             Resource:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
 
   get_in_cognito_group:
     handler: cognito_users.get_in_cognito_group
@@ -316,5 +318,26 @@ resources:
             AttributeType: 'S'
         KeySchema:
           - AttributeName: 'user_id'
-            KeyType: 'HASH'              
+            KeyType: 'HASH'   
+
+    ApiKeyTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-api-keys
+        AttributeDefinitions:
+          - AttributeName: 'api_owner_id'
+            AttributeType: 'S'
+          - AttributeName: 'apiKey'
+            AttributeType: 'S' 
+        KeySchema:
+          - AttributeName: 'api_owner_id'
+            KeyType: 'HASH'
+        GlobalSecondaryIndexes:
+          - IndexName: ApiKeyIndex
+            KeySchema:
+              - AttributeName: apiKey
+                KeyType: HASH
+            Projection:
+              ProjectionType: 'ALL'          
           

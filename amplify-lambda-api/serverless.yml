@@ -1,0 +1,100 @@
+service: vu-amplify-lambda-python-base
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+    
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  environment:
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVariables.API_KEYS_DYNAMODB_TABLE}
+    ACCOUNTS_DYNAMO_TABLE: ${self:custom.stageVariables.ACCOUNTS_DYNAMO_TABLE}
+    COGNITO_USERS_TABLE:  ${self:custom.stageVariables.COGNITO_USERS_TABLE}
+
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - s3:GetObject
+            - s3:PutObject
+            - s3:HeadObject
+            - s3:ListBucket
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
+
+
+functions:
+
+  get_api_keys:
+    handler: service/core.get_api_keys_for_user
+    events:
+      - http:
+          path: apiKeys/get_keys
+          method: get
+          cors: true
+
+  get_api_key:
+    handler: service/core.get_api_key
+    events:
+      - http:
+          path: apiKeys/get_key
+          method: get
+          cors: true
+
+  create_api_keys:
+    handler: service/core.create_api_keys
+    events:
+      - http:
+          path: apiKeys/create_keys
+          method: post
+          cors: true
+
+  update_api_key:
+    handler: service/code:update_api_key_for_user
+    events:
+      - http:
+          path: apiKeys/update_key
+          method: post
+          cors: true
+      
+  deactivate_key:
+    handler: service/core.deactivate_key
+    events:
+      - http:
+          path: apiKeys/deactivate_key
+          method: put
+          cors: true
+

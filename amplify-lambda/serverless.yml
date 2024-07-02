@@ -73,6 +73,7 @@ provider:
     SHARE_ASSISTANTS_ENDPOINT: ${self:custom.stageVariables.SHARE_ASSISTANTS_ENDPOINT}
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
+    API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVariables.API_KEYS_DYNAMODB_TABLE}
 
   iam:
     role:
@@ -110,6 +111,7 @@ provider:
           Resource:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:OPENAI_API_KEY-REUULJ'
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"

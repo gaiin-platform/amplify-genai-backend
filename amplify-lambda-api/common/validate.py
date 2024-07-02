@@ -9,7 +9,6 @@ import requests
 from jose import jwt
 
 from dotenv import load_dotenv
-
 import boto3
 import json
 from datetime import datetime
@@ -42,234 +41,86 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-delete_assistant_schema = {
+"""
+Every service must define a schema each operation here. The schema is applied to the data field of the request
+body. You do NOT need to include the top-level "data" key in the schema.
+"""
+sample_schema = {
     "type": "object",
     "properties": {
-        "assistantId": {
+        "msg": {
             "type": "string",
-            "description": "The public id of the assistant"
-        },
+            "description": "The msg to echo"
+        }
     },
-    "required": ["assistantId"]
+    "required": ["msg"]
 }
 
-create_assistant_schema = {
+create_api_keys_schema = {
     "type": "object",
     "properties": {
-        "name": {
+        "owner": {
             "type": "string",
-            "description": "The name of the item"
+            "description": "The owner of the API key"
         },
-        "description": {
+        "account": {
             "type": "string",
-            "description": "A brief description of the item"
+            "description": "COA string"
         },
-        "assistantId": {
-            "type": "string",
-            "description": "The public id of the assistant"
-        },
-        "tags": {
-            "type": "array",
-            "description": "A list of tags associated with the item",
-            "items": {
-                "type": "string"
-            }
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions related to the item"
-        },
-        "disclaimer": {
-            "type": "string",
-            "description": "Appended assistant response disclaimer related to the item"
-        },
-        "uri": {
+        "delegate": {
             "oneOf": [
                 {
                     "type": "string",
-                    "description": "The endpoint that receives requests for the assistant"
+                    "description": "Optional delegate responsible for the API key"
                 },
                 {
                     "type": "null"
                 }
             ]
+           
         },
-        "dataSources": {
-            "type": "array",
-            "description": "A list of data sources",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "The key of the data source"
-                    }
-                }
-            }
+        "appName": {
+            "type": "string",
+            "description": "The name of the application using the API key"
         },
-        "tools": {
+        "appDescription": {
+            "type": "string",
+            "description": "A description of the application using the API key"
+        },
+        "rateLimit": {
+            "type": "object",
+            "properties": {
+                "rate": { "type": ["number", "null"] },
+                "period": { "type": "string" } 
+            },
+            "description": "Cost restriction using the API key"
+        },
+        "expiration": {
+            "type":  ["string", "null"],
+            "description": "The expiration date of the API key"
+        },
+        "accessTypes": {
             "type": "array",
-            "description": "A list of tools associated with the item",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "description": "The type of tool"
-                    }
-                }
-            }
+            "items": { "type": "string" },
+            "description": "Types of access permitted by this API key"
+        },
+        "systemUse": {
+            "type": "booelan",
+            "description": "For system use"
         }
     },
-    "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
+    "required": ["owner", "applicationName", "account", "rateLimit", "accessTypes", "systemUse", "delegate"]
 }
 
-
-create_code_interpreter_assistant_schema = {
-    "type": "object",
+deactivate_api_key_schema = {
+     "type": "object",
     "properties": {
-        "name": {
+        "apiKeyId": {
             "type": "string",
-            "description": "The name of the item"
+            "description": "The API key id string"
         },
-        "description": {
-            "type": "string",
-            "description": "A brief description of the item"
-        },
-        "tags": {
-            "type": "array",
-            "description": "A list of tags associated with the item",
-            "items": {
-                "type": "string"
-            }
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions related to the item"
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of data sources keys",
-            "items": {
-                "type": "string"
-            }
-        },
-        "tools": {
-            "type": "array",
-            "description": "A list of tools associated with the item",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "description": "The type of tool"
-                    }
-                }
-            }
-        }
     },
-    "required": ["name", "description", "tags", "instructions", "fileKeys", "tools"]
-}
-
-share_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "assistantId": {"type": "string"},
-        "recipientUsers": {"type": "array", "items": {"type": "string"}},
-        "accessType": {"type": "string"},
-        "dataSources": {"type": "array", "items": {"type": "string"}},
-        "policy": {"type": "string", "default": ""}
-    },
-    "required": ["assistantId", "recipientUsers", "accessType"],
-    "additionalProperties": False
-}
-
-
-chat_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string"
-        },
-        "accountId": {
-            "type": "string"
-        },
-        "requestId": {
-            "type": "string"
-        },
-        "messages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "content": {
-                        "type": "string"
-                    },
-                    "role": {
-                        "type": "string"
-                    },
-                    "type": {
-                        "type": "string"
-                    },
-                    "data": {
-                        "type": "object",
-                        "additionalProperties": True
-                    },
-                    "codeInterpreterMessageData": {
-                        "type": "object",
-                        "properties": {
-                            "threadId": {"type": "string"},
-                            "role": {"type": "string"},
-                            "textContent": {"type": "string"},
-                            "content": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "type": {
-                                            "enum": ["image_file", "file", "application/pdf", "text/csv", "image/png"]
-                                        },
-                                        "values": {
-                                            "type": "object",
-                                            "properties": {
-                                                "file_key": {"type": "string"},
-                                                "presigned_url": {"type": "string"},
-                                                "file_key_low_res": {"type": "string"},
-                                                "presigned_url_low_res": {"type": "string"},
-                                                "file_size": {"type": "integer"}
-                                            },
-                                            "required": ["file_key", "presigned_url"],
-                                            "additionalProperties": False
-                                        }
-                                    },
-                                    "required": ["type", "values"]
-                                }
-                            }
-                        },
-                        "required": []
-                    }
-                },
-                "required": ["id", "content", "role"]
-            }
-        }
-    },
-    "required": ["id", "messages", "accountId", "requestId"]
-}
-
-
-
-key_request_schema = {
-    "type": "object",
-    "properties": {
-        "key": {
-            "type": "string",
-            "description": "Key."
-        }
-    },
-    "required": ["key"]
+    "required": ["apiKeyId"]
 }
 
 
@@ -278,27 +129,12 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/assistant/create": {
-        "create": create_assistant_schema
-    },
-    "/assistant/delete": {
-        "delete": delete_assistant_schema
-    },
-    "/assistant/share": {
-        "share_assistant": share_assistant_schema
-    },
-    "/assistant/chat_with_code_interpreter": {
-        "chat": chat_assistant_schema
-    },
-    "/": {
-        "chat": chat_assistant_schema
-    },
-    "/assistant/create/codeinterpreter": {
-        "create": create_code_interpreter_assistant_schema
-    },
-    "/assistant/files/download/codeinterpreter": {
-        "download": key_request_schema
-    },
+    "apiKeys/deactivate_key": {
+        "deactivate": deactivate_api_key_schema
+    }, 
+    "apiKeys/create_keys": {
+        "create": create_api_keys_schema
+    }
 }
 
 
@@ -321,7 +157,7 @@ def parse_and_validate(current_user, event, op, validate_body=True):
         except json.decoder.JSONDecodeError as e:
             raise BadRequest("Unable to parse JSON body.")
 
-    name = event['path'] if event.get('path') else '/'
+    name = event['path']
 
     if not name:
         raise BadRequest("Unable to perform the operation, invalid request.")
@@ -345,7 +181,6 @@ def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 token = parseToken(event)
                 api_accessed = token[:4] == 'amp-'
 
@@ -357,7 +192,7 @@ def validated(op, validate_body=True):
                     raise Unauthorized("User not found.")
 
                 [name, data] = parse_and_validate(current_user, event, op, validate_body)
-
+                
                 data['access_token'] = token
                 data['account'] = claims['account']
                 print("Default account: ", claims['account'])
@@ -448,7 +283,6 @@ def get_claims(event, context, token):
     raise Unauthorized("No Valid Access Token Found")
 
 
-
 def parseToken(event):
     token = None
     normalized_headers = {k.lower(): v for k, v in event['headers'].items()}
@@ -509,9 +343,9 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('assistants' not in access and 'Full Access' not in access):
-            print("API doesn't have access to assistants")
-            raise PermissionError("API key does not have access to assistants functionality")
+        if ('api_key' not in access and 'Full Access' not in access):
+            print("API doesn't have access to api key functionality")
+            raise PermissionError("API key does not have access to api key functionality")
 
         # Update last accessed
         table.update_item(
