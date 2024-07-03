@@ -12,6 +12,7 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import { mapReduceAssistant } from "./mapReduceAssistant.js";
 
 const logger = getLogger("assistants");
 
@@ -107,8 +108,9 @@ export const defaultAssistants = [
     //batchAssistant,
     //documentAssistant,
     //reportWriterAssistant,
-    // csvAssistant,
+    csvAssistant,
     //documentSearchAssistant
+    mapReduceAssistant
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {

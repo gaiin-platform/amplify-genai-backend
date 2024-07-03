@@ -387,7 +387,7 @@ def create_assistant(event, context, current_user, name, data):
     tags = [tag for tag in tags if not tag.startswith("amplify:") and tag not in RESERVED_TAGS]
 
     instructions = extracted_data['instructions']
-    disclaimer = extracted_data['disclaimer']
+    disclaimer = extracted_data.get("disclaimer", "")
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')

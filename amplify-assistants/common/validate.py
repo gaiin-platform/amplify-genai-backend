@@ -115,7 +115,7 @@ create_assistant_schema = {
             }
         }
     },
-    "required": ["name", "description", "tags", "instructions", "disclaimer", "dataSources", "tools"]
+    "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
 }
 
 
