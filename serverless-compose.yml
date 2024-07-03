@@ -7,16 +7,6 @@ services:
       SHARE_ASSISTANTS_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
     dependsOn:
       - amplify-assistants
-  
-  amplify-embedding:
-    path: ./embedding
-    dependsOn:
-      - amplify-lambda
-
-  amplify-object-access:
-    path: ./object-access
-    dependsOn:
-      - amplify-lambda
 
   amplify-utilities:
     path: ./utilities
