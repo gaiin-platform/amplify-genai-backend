@@ -440,7 +440,7 @@ functions:
 
   index_market_item:
     handler: market/market.index_item
-    reservedConcurrency: 1
+    reservedConcurrency: 10
     events:
       - stream:
           type: dynamodb
