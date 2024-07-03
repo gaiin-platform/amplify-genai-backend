@@ -400,6 +400,11 @@ def process_document_for_rag(event, context):
             # The rest is the same as above
             item = response.get('Item', None)
 
+            if item:
+                print(f"Found file entry for {key}: {item}")
+            else:
+                print(f"File entry not found for {key}")
+
             total_items = 0
             text = None
             location_properties = []
