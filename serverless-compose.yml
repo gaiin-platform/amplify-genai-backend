@@ -21,7 +21,6 @@ services:
   amplify-assistants:
     path: ./amplify-assistants
 
-
   amplify-lambda-js:
     path: ./amplify-lambda-js
     params:
