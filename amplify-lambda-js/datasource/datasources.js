@@ -165,9 +165,11 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if(params.options.dataSourceOptions) {
+    if(params.options.dataSourceOptions || chatRequestOrig.options.dataSourceOptions) {
 
-        const dataSourceOptions = params.options.dataSourceOptions;
+        const dataSourceOptions = {
+        ...(chatRequestOrig.options.dataSourceOptions || {}),
+        ...(params.options.dataSourceOptions || {})};
 
         const insertList = [];
         const ragList = [];
