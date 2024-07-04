@@ -193,8 +193,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             }
         }
 
-        ragDataSources = ragList;
-        dataSources = insertList;
+        ragDataSources = uniqueDataSources(ragList);
+        dataSources = uniqueDataSources(insertList);
     }
 
     return {

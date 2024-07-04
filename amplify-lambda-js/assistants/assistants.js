@@ -110,7 +110,7 @@ export const defaultAssistants = [
     //reportWriterAssistant,
     csvAssistant,
     //documentSearchAssistant
-    mapReduceAssistant
+    //mapReduceAssistant
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {

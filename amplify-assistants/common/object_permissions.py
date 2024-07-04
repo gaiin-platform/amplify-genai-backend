@@ -50,7 +50,11 @@ def update_object_permissions(access_token,
 def can_access_objects(access_token, data_sources, permission_level="read"):
     print(f"Checking access on data sources: {data_sources}")
 
-    access_levels = {ds['id']: permission_level for ds in data_sources}
+    # If there is a protocol on the ID, we need to strip it off
+    access_levels = {
+        ds['id'].split('://')[-1]: permission_level
+        for ds in data_sources
+    }
 
     print(f"With access levels: {access_levels}")
 
