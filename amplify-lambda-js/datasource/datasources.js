@@ -546,7 +546,10 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                 if (Item) {
                     // Convert the returned item from DynamoDB's format to a regular JavaScript object
                     const item = unmarshall(Item);
-                    const result = {...ds, id: "s3://" + item.textLocationKey};
+                    const result = {
+                        ...ds,
+                        metadata: {...ds.metadata, userDataSourceId: ds.id},
+                        id: "s3://" + item.textLocationKey};
                     hashDataSourcesCache.set(key, result);
                     return result;
                 } else {

@@ -24,7 +24,7 @@ def sanitize_s3_data_source_key(data_source_key):
     if data_source_key is None:
         return None
 
-    data_source_key = replace_content_json(data_source_key)
+    #data_source_key = replace_content_json(data_source_key)
     data_source_key = strip_s3_protocol(data_source_key)
     return data_source_key
 
