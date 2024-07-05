@@ -93,6 +93,8 @@ export const isDocument = ds =>
  */
 export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
 
+    logger.debug("Getting data sources by use", dataSources);
+
     if((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
@@ -170,6 +172,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         const dataSourceOptions = {
         ...(chatRequestOrig.options.dataSourceOptions || {}),
         ...(params.options.dataSourceOptions || {})};
+
+        logger.debug("Applying data source options", dataSourceOptions);
 
         const insertList = [];
         const ragList = [];
@@ -328,6 +332,8 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
  * @returns {Promise<(Awaited<any>|Awaited<unknown>)[]>}
  */
 export const resolveDataSources = async (params, body, dataSources) => {
+    logger.info("Resolving data sources", {dataSources: dataSources});
+
     dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(

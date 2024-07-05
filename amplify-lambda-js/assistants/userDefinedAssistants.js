@@ -143,6 +143,7 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                     const available = await getDataSourcesByUse(params, body, ds);
 
                     if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
+                        dataSourceMetadataForInsertion.push(...(assistant.dataSources || []));
                         dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
                     }
                     if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
