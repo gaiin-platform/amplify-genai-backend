@@ -83,7 +83,7 @@ def llm_prompt_datasource(event, context, current_user, name, data):
         options = data.get('options', default_options)
         options = {**default_options, **options}
 
-        result = prompt_llm(access_token, model, datasource, custom_instructions, query, rag_only=False)
+        result, meta_events = prompt_llm(access_token, model, datasource, custom_instructions, query, rag_only=False)
 
         print(f"The result of the prompt was: {result}")
 
@@ -99,6 +99,9 @@ def llm_prompt_datasource(event, context, current_user, name, data):
             # and send it as multiple prompts. Don't allow splitting if it will mess
             # up the semantics of the data.
             'canSplit': True,
+
+            # The meta events from the LLM
+            'metaEvents': meta_events,
 
             # The keys for location can be arbitrary and will be passed to the UI.
             # Useful things to put in here are page, row, paragraph, etc. or anything
@@ -160,6 +163,9 @@ def prompt_llm(access_token, model, datasource, custom_instructions, query, rag_
     if not chat_endpoint:
         raise ValueError("Environment variable 'CHAT_ENDPOINT' is not set.")
 
-    response, _ = chat(chat_endpoint, access_token, payload)
-    return response
+    response, meta_events = chat(chat_endpoint, access_token, payload)
+
+
+
+    return response, meta_events
 
