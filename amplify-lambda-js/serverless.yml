@@ -61,6 +61,8 @@ provider:
     DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
     ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT}
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    
 
   iam:
     role:
