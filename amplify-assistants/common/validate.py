@@ -15,6 +15,7 @@ import json
 from datetime import datetime
 from botocore.exceptions import ClientError
 import re
+from cognito_user_groups import get_user_amplify_groups
 
 load_dotenv(dotenv_path=".env.local")
 
@@ -402,6 +403,7 @@ def validated(op, validate_body=True):
                 data['access_token'] = token
                 data['account'] = claims['account']
                 data['allowed_access'] = claims['allowed_access']
+                data['groups'] = get_groups(current_user, token)
 
                 result = f(event, context, current_user, name, data)
 
@@ -590,3 +592,9 @@ def determine_api_user(data):
     else:
         print("Unknown or missing key type in api_owner_id:", key_type)
         raise Exception("Invalid or unrecognized key type.")
+    
+
+
+def get_groups(user, token):
+    amplify_groups = get_user_amplify_groups(token)
+    return amplify_groups

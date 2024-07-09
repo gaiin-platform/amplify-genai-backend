@@ -5,7 +5,6 @@ import boto3
 import json
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
-from common.cognito_user_groups import get_user_amplify_groups
 
 SYSTEM_TAG = "amplify:system"
 ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
@@ -21,16 +20,14 @@ RESERVED_TAGS = [
     AMPLIFY_API_KEYS_TAG
 ]
 
-def get_system_assistants(access_token):
+def get_system_assistants(groups):
     sys_assistants = []
     sys_assistants.append(get_assistant_builder_assistant())
     # sys_assistants.append(get_amplify_automation_assistant())
 
 
     # logic to handle who gets what assistants according to the groups
-    amplify_groups = get_user_amplify_groups(access_token)
-
-    if ('Amplify_Dev_Api' in amplify_groups):
+    if ('Amplify_Dev_Api' in groups):
         sys_assistants.append(get_api_key_manager_assistant())
         #API Doc Helper 
     
