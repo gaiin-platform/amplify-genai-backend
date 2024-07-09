@@ -179,6 +179,11 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
 
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('file_upload' not in access and 'full_access' not in access):
+        print("User does not have access to the file_upload functionality")
+        return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
+    
     print(f"Data is {data}")
     data = data['data']
 

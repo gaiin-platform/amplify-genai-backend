@@ -45,8 +45,8 @@ def get_api_key(event, context, user, name, data):
             # checks
             # owner with no delegete - owners cant see delegate keys
             # is the delegate - delegates can see the key
-            # key must be active
-            if (((item['owner'] == user and not delegate) or ( delegate == user)) and item.get('active', False)):
+            # Decided its okay to view deactivated keys- use case, you compromised one but unsure what name it was under, you just know what the api key is
+            if (((item['owner'] == user and not delegate) or ( delegate == user))):
                 return {
                     'statusCode': 200,
                     'body': json.dumps({
@@ -59,19 +59,19 @@ def get_api_key(event, context, user, name, data):
                 message = 'Unauthorized to access this API key' if item.get('active', False) else "The key has been deactivated"
                 return {
                     'statusCode': 403,
-                    'body': json.dumps({'error': message})
+                    'body': json.dumps({'success': False , 'error': message})
                 }
         else:
             return {
                 'statusCode': 404,
-                'body': json.dumps({'error': 'API key not found'})
+                'body': json.dumps({'success': False , 'error': 'API key not found'})
             }
     except Exception as e:
         # Handle potential errors
         print(f"An error occurred: {e}")
         return {
             'statusCode': 500,
-            'body': json.dumps({'error': 'Failed to fetch API key'})
+            'body': json.dumps({'success': False , 'error': 'Failed to fetch API key'})
         }
 
 
@@ -95,8 +95,17 @@ def get_api_keys_for_user(event, context, user, name, data):
         if 'Items' in response and response['Items']:
             print(f"API keys found for user {user}")
             for item in response['Items']:
+                # delegate will not be able to see account coa
                 if user == item.get("delegate"):
                     item["account"] = None
+
+                # check if key is expired, if so deactivate key 
+                expiration = item.get("expirationDate")
+                if (item.get("active") and expiration and is_expired(expiration)):
+                    print(f"Key {item.get('applicationName')} is expired and will be deactivated ")
+                    deactivate_key_in_dynamo(user, item.get("api_owner_id"))
+                    item["active"] = False
+
            
             return {'success': True, 'data': response['Items']}
         else:
@@ -112,7 +121,7 @@ def get_api_keys_for_user(event, context, user, name, data):
 def can_create_api_key(user, account):
     # here we want to check valid coa string, 
     pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{3}\.\w{1})$')
-    if (not bool(pattern.match(account))) :
+    if (not bool(pattern.match(account['id']))) :
         return {"success":False, "message": "Invalid COA string"}
     # if delegate,  check user table for valid delegate email cognito user 
     cognito_user_table = dynamodb.Table(os.environ['COGNITO_USERS_TABLE'])
@@ -209,6 +218,7 @@ def create_api_key_for_user(user, api_key) :
 
 @validated("update")
 def update_api_key_for_user(event, context, user, name, data):
+    #ensure key is not expired and is active to perform updates
     data = data['data']
     #update field needs to be one of the following 
     item_id = data["id"]
@@ -243,7 +253,6 @@ def update_api_key_for_user(event, context, user, name, data):
         return {'success': False, 'error': str(e)}
 
 
-
 @validated("deactivate")
 def deactivate_key(event, context, user, name, data):
     item_id = data['data']["id"]
@@ -252,11 +261,14 @@ def deactivate_key(event, context, user, name, data):
             'statusCode': 400,
             'body': json.dumps({'success': False, 'error': 'Invalid or missing API key ID parameter'})
         }
+    deactivate_key_in_dynamo(user, item_id)
 
+
+def deactivate_key_in_dynamo(user, key_id):
     try:
         response = table.get_item(
             Key={
-                'api_owner_id': item_id
+                'api_owner_id': key_id
             }
         )
         if 'Item' in response:
@@ -265,7 +277,7 @@ def deactivate_key(event, context, user, name, data):
             if (item['owner'] == user or item['delegate'] == user):
                 update_response = table.update_item(
                     Key={
-                        'api_owner_id': item_id
+                        'api_owner_id': key_id
                     },
                     UpdateExpression='SET active = :val',
                     ExpressionAttributeValues={
@@ -314,3 +326,7 @@ def is_valid_id_format(id):
     regex = r'^[^/]+/(ownerKey|delegateKey|systemKey)/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
     match = re.fullmatch(regex, id, re.IGNORECASE)
     return bool(match)
+
+def is_expired(date_str):
+    date = datetime.strptime(date_str, '%Y-%m-%d')
+    return date <= datetime.now()

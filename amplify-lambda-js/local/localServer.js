@@ -35,6 +35,7 @@ class SSEWrapper {
     }
 
     returnResponse = (response) => {
+        console.log(response);
         if(!this.initialized) {
             this.res.writeHead(response.statusCode, {
                 'Content-Type': 'application/json',

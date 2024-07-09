@@ -42,6 +42,11 @@ def get_data_from_dynamodb(user, name):
 
 @validated("load")
 def load_data_from_s3(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        print("User does not have access to the share functionality")
+        raise HTTPException(401, 'User does not have access to the share functionality')
+
     s3_key = data['data']['key']
     print("Loading data from S3: {}".format(s3_key))
 
@@ -174,6 +179,11 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        print("User does not have access to the share functionality")
+        return {'success': False, 'error': 'Error: User does not have access to the share functionality'}
+
     access_token = data['access_token']
 
     users = data['data']['sharedWith']
@@ -183,7 +193,7 @@ def share_with_users(event, context, current_user, name, data):
     new_data = data['data']['sharedData']
     new_data['sharedBy'] = current_user.lower()
 
-    conversations = remove_code_interpreter_details(new_data['history']) # if it has any else just return normal convs 
+    conversations = remove_code_interpreter_details(new_data['history']) # if it has any, else it just returns the conv back
 
     # Saving a workspace is sharing with yourself, so we don't need to go through this if it is a workspace save
     if len(conversations) > 0 and len(users) > 0 and current_user != users[0]:
@@ -273,6 +283,11 @@ def remove_code_interpreter_details(conversations):
 
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        print("User does not have access to the share functionality")
+        return None
+
     tableName = os.environ['DYNAMODB_TABLE']
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(tableName)

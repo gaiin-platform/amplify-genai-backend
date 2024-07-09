@@ -1,0 +1,1061 @@
+openapi: 3.0.0
+info:
+  title: Amplify API
+  description: API for interfacing with the Amplify services.
+  version: 1.0.0
+servers:
+  - url: https://api.amplify.com/v1
+paths:
+# amplify-lambda-js
+  /chat:
+    post:
+      summary: Send a chat message and receive a response.
+      operationId: sendMessage
+      description: >
+        This endpoint accepts a chat message and returns a response stream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+                - temperature
+                - max_tokens
+                - messages
+              properties:
+                model:
+                  type: string
+                  enum: [gpt-35-turbo, gpt-4o, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0]
+                temperature:
+                  type: number
+                max_tokens:
+                  type: integer
+                dataSources:
+                  type: array
+                  items:
+                    type: string
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - role
+                      - content
+                    properties:
+                      role:
+                        type: string
+                        enum: [system, assistant, user]
+                      content:
+                        type: string
+                      type:
+                        type: string
+                        enum: [prompt]
+                options:
+                  type: object
+                  properties:
+                    dataSourceOptions:
+                      type: object
+                    ragOnly:
+                      type: boolean
+                    skipRag:
+                      type: boolean
+                    assistantId:
+                      type: string
+                    model:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          enum: [gpt-35-turbo, gpt-4o, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0]
+                    prompt:
+                      type: string
+      responses:
+        '200':
+          description: Chat stream response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+        '400':
+          description: Bad request, the request is invalid or missing required fields.
+        '401':
+          description: Unauthorized, the request lacks valid authentication credentials for the target resource.
+        '403':
+          description: Forbidden, the server understood the request but refuses to authorize it.
+        '404':
+          description: Not found, the server can't find the requested resource.
+      security:
+        - bearerAuth: []
+# amplify-lambda
+  /state/share:
+    post:
+      summary: Share state data.
+      operationId: shareState
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/shareSchema'
+      responses:
+        '200':
+          description: State data successfully shared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                    nullable: true
+        '401':
+          description: User does not have access to the share functionality.
+        '400':
+          description: Bad request, missing or invalid parameters.
+      security:
+        - bearerAuth: []
+    get:
+      summary: Retrieve shared state data.
+      operationId: getSharedState
+      responses:
+        '200':
+          description: List of shared data records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sharedBy:
+                      type: string
+                    note:
+                      type: string
+                    sharedAt:
+                      type: string
+                      format: date-time
+                    key:
+                      type: string
+
+  /state/share/load:
+    post:
+      summary: Load shared state data from storage.
+      operationId: loadSharedState
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/shareLoadSchema'
+      responses:
+        '200':
+          description: Shared data loaded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/exportSchema'
+        '401':
+          description: User does not have access to the share functionality.
+        '404':
+          description: Data not found.
+
+  /assistant/files/upload:
+    post:
+      summary: Upload a file to the assistant.
+      operationId: uploadFile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/fileUploadSchema'
+      responses:
+        '200':
+          description: File upload process initiated or completed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  uploadUrl:
+                    type: string
+                    nullable: true
+                  statusUrl:
+                    type: string
+                    nullable: true
+                  contentUrl:
+                    type: string
+                    nullable: true
+                  metadataUrl:
+                    type: string
+                    nullable: true
+                  key:
+                    type: string
+                    nullable: true
+        '401':
+          description: User does not have access to the file_upload functionality.
+        '400':
+          description: Bad request, incorrect or missing parameters.
+      security:
+        - bearerAuth: []
+
+  /assistant/tags/list:
+    post:
+      summary: List all tags.
+      operationId: listTags
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserListTagsSchema'
+      responses:
+        '200':
+          description: A list of tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      tags:
+                        type: array
+                        items:
+                          type: string
+      security:
+        - bearerAuth: []
+
+  /assistant/tags/create:
+    post:
+      summary: Create new tags.
+      operationId: createTags
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTagsSchema'
+      responses:
+        '200':
+          description: Result of tag creation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+      security:
+        - bearerAuth: []
+
+  /assistant/tags/delete:
+    post:
+      summary: Delete a tag.
+      operationId: deleteTag
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserDeleteTagSchema'
+      responses:
+        '200':
+          description: Result of tag deletion.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+      security:
+        - bearerAuth: []
+
+  /assistant/files/set_tags:
+    post:
+      summary: Associate tags with a file.
+      operationId: setFileTags
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileSetTagsSchema'
+      responses:
+        '200':
+          description: Result of setting file tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+      security:
+        - bearerAuth: []
+
+  /assistant/files/query:
+    post:
+      summary: Query files based on various filter criteria.
+      operationId: queryFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileQuerySchema'
+      responses:
+        '200':
+          description: Returns a list of files that match the query criteria.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FileItem'
+                      pageKey:
+                        type: object
+                        description: Key to retrieve the next page of results
+      security:
+        - bearerAuth: []
+
+
+# embeddings 
+  /embedding-dual-retrieval:
+    post:
+      summary: Retrieve related documents based on user input through dual retrieval method.
+      operationId: dualRetrieval
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/dualRetrievalSchema'
+      responses:
+        '200':
+          description: A list of documents related to the user input.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+
+  /embedding-retrieval:
+    post:
+      summary: Retrieve related documents based on user input.
+      operationId: retrieval
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/processInputSchema'
+      responses:
+        '200':
+          description: A list of documents related to the user input.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: array
+#amplify-assistants
+  /assistant/create:
+    post:
+      summary: Create a new assistant with specified attributes.
+      operationId: createAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAssistantSchema'
+      responses:
+        '200':
+          description: Assistant creation response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/CreationData'
+      security:
+        - bearerAuth: []
+
+  /assistant/list:
+    get:
+      summary: Retrieve a list of all assistants.
+      operationId: listAssistants
+      responses:
+        '200':
+          description: List of assistants retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: array
+      security:
+        - bearerAuth: []
+
+  /assistant/share:
+    post:
+      summary: Share an assistant with other users.
+      operationId: shareAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareAssistantSchema'
+      responses:
+        '200':
+          description: Assistant sharing response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+      security:
+        - bearerAuth: []
+
+  /assistant/delete:
+    post:
+      summary: Delete an assistant by its ID.
+      operationId: deleteAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAssistantSchema'
+      responses:
+        '200':
+          description: Assistant deletion response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+      security:
+        - bearerAuth: []
+
+  /assistant/files/download/codeinterpreter:
+    post:
+      summary: Download files for the Code Interpreter.
+      operationId: downloadCIFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DownloadCIFilesSchema'
+      responses:
+        '200':
+          description: File download for Code Interpreter.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/FileNotFoundResponse'
+                  - $ref: '#/components/schemas/FileDownloadResponse'
+      security:
+        - bearerAuth: []
+
+  /assistant/create/codeinterpreter:
+    post:
+      summary: Create a new Code Interpreter assistant with specified attributes.
+      operationId: createCodeInterpreterAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCodeInterpreterAssistantSchema'
+      responses:
+        '200':
+          description: Response for creating a Code Interpreter assistant.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/CodeInterpreterCreationError'
+                  - type: object
+                    properties:
+                      success:
+                        type: boolean
+                      message:
+                        type: string
+                      data:
+                        type: object
+                        properties:
+                          assistantId:
+                            type: string
+                          provider:
+                            type: string
+
+  /assistant/chat/codeinterpreter:
+    post:
+      summary: Start a chat session with a Code Interpreter assistant.
+      operationId: chatWithCodeInterpreter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatAssistantSchema'
+      responses:
+        '200':
+          description: Returns the chat response from the Code Interpreter assistant.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ChatAssistantError'
+                  - $ref: '#/components/schemas/ChatAssistantSuccess'
+      security:
+        - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: amp
+    
+  schemas:
+    exportSchema:
+      type: object
+      properties:
+        version:
+          type: number
+        history:
+          type: array
+          items:
+            type: string
+        folders:
+          type: array
+          items:
+            type: string
+        prompts:
+          type: array
+          items:
+            type: string
+      required:
+        - history
+        - folders
+        - prompts
+
+    shareSchema:
+      type: object
+      properties:
+        note:
+          type: string
+        sharedWith:
+          type: array
+          items:
+            type: string
+        sharedData:
+          $ref: '#/components/schemas/exportSchema'
+      required:
+        - sharedWith
+        - sharedData
+        - note
+
+    shareLoadSchema:
+      type: object
+      properties:
+        key:
+          type: string
+      required:
+        - key 
+
+    fileUploadSchema:
+      type: object
+      properties:
+        actions:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                enum: ["saveAsData", "createChunks", "ingestRag", "makeDownloadable", "extractText"]
+              params:
+                type: object
+                additionalProperties: true
+            required:
+              - name
+            additionalProperties: false
+        type:
+          type: string
+        name:
+          type: string
+        knowledgeBase:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        data:
+          type: object
+      required:
+        - actions
+        - type
+        - name
+        - knowledgeBase
+        - tags
+        - data
+
+    dualRetrievalSchema:
+      type: object
+      properties:
+        userInput:
+          type: string
+          description: "User input text for embedding and document retrieval."
+        dataSources:
+          type: array
+          description: "A list of data sources to search for related documents."
+          items:
+            type: string
+        limit:
+          type: integer
+          description: "The maximum number of documents to return."
+      required:
+        - userInput
+        - dataSources
+
+    processInputSchema:
+      type: object
+      properties:
+        userInput:
+          type: string
+          description: "User input text for embedding and document retrieval."
+        dataSources:
+          type: array
+          description: "A list of data sources to search for related documents."
+          items:
+            type: string
+        limit:
+          type: integer
+          description: "The maximum number of documents to return."
+      required:
+        - userInput
+        - dataSources
+
+    UserListTagsSchema:
+      type: object
+      additionalProperties: false
+    
+    CreateTagsSchema:
+      type: object
+      properties:
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+      additionalProperties: false
+
+    UserDeleteTagSchema:
+      type: object
+      properties:
+        tag:
+          type: string
+      required:
+        - tag
+      additionalProperties: false
+
+    FileSetTagsSchema:
+      type: object
+      properties:
+        id:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+      required:
+        - id
+      additionalProperties: false  
+    
+    CreateAssistantSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "The name of the item"
+        description:
+          type: string
+          description: "A brief description of the item"
+        assistantId:
+          type: string
+          description: "The public id of the assistant"
+        tags:
+          type: array
+          description: "A list of tags associated with the item"
+          items:
+            type: string
+        instructions:
+          type: string
+          description: "Instructions related to the item"
+        disclaimer:
+          type: string
+          description: "Appended assistant response disclaimer related to the item"
+        uri:
+          oneOf:
+            - type: string
+              description: "The endpoint that receives requests for the assistant"
+            - type: "null"
+        dataSources:
+          type: array
+          description: "A list of data sources"
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: "The key of the data source"
+        tools:
+          type: array
+          description: "A list of tools associated with the item"
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                description: "The type of tool"
+      required:
+        - name
+        - description
+        - tags
+        - instructions
+        - dataSources
+        - tools
+
+    ShareAssistantSchema:
+      type: object
+      properties:
+        assistantId:
+          type: string
+          description: "Unique identifier for the assistant to be shared"
+        recipientUsers:
+          type: array
+          description: "List of recipient user identifiers to share the assistant with"
+          items:
+            type: string
+        accessType:
+          type: string
+          description: "Access level for the shared assistant (e.g., 'read', 'write')"
+        dataSources:
+          type: array
+          description: "List of data source identifiers related to the shared assistant"
+          items:
+            type: string
+        policy:
+          type: string
+          description: "Policy or conditions applied to the shared assistant"
+          default: ""
+      required:
+        - assistantId
+        - recipientUsers
+        - accessType
+      additionalProperties: false
+
+    DeleteAssistantSchema:
+      type: object
+      properties:
+        assistantId:
+          type: string
+          description: "Unique identifier for the assistant to be deleted"
+      required:
+        - assistantId
+
+    DownloadCIFilesSchema:
+      type: object
+      properties:
+        key:
+          type: string
+          description: "Key for identifying the file to be downloaded"
+      required:
+        - key
+
+    CreateCodeInterpreterAssistantSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "The name of the item"
+        description:
+          type: string
+          description: "A brief description of the item"
+        tags:
+          type: array
+          description: "A list of tags associated with the item"
+          items:
+            type: string
+        instructions:
+          type: string
+          description: "Instructions related to the item"
+        fileKeys:
+          type: array
+          description: "A list of data sources keys"
+          items:
+            type: string
+        tools:
+          type: array
+          description: "A list of tools associated with the item"
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                description: "The type of tool"
+      required:
+        - name
+        - description
+        - tags
+        - instructions
+        - fileKeys
+        - tools
+
+    CodeInterpreterCreationError:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: string
+
+    ChatAssistantSchema:
+      type: object
+      properties:
+        id:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/CodeInterpreterMessage'
+      required:
+        - id
+        - messages
+
+    CodeInterpreterMessage:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        role:
+          type: string
+        type:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        codeInterpreterMessageData:
+          type: object
+          properties:
+            threadId:
+              type: string
+            role:
+              type: string
+            textContent:
+              type: string
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/ContentItem'
+      required:
+        - id
+        - content
+        - role
+
+    ContentItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: ["image_file", "file", "application/pdf", "text/csv", "image/png"]
+        values:
+          type: object
+          properties:
+            file_key:
+              type: string
+            presigned_url:
+              type: string
+            file_key_low_res:
+              type: string
+            presigned_url_low_res:
+              type: string
+            file_size:
+              type: integer
+          required:
+            - file_key
+            - presigned_url
+
+    ChatAssistantError:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: string
+
+    ChatAssistantSuccess:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            data:
+              type: object
+              properties:
+                threadId:
+                  type: string
+                role:
+                  type: string
+                textContent:
+                  type: string
+                content:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ContentItem'
+
+
+    FileQuerySchema:
+      type: object
+      properties:
+        startDate:
+          type: string
+          format: date-time
+          default: "2021-01-01T00:00:00Z"
+        pageSize:
+          type: integer
+          default: 10
+        pageKey:
+          type: object
+          properties:
+            id:
+              type: string
+            createdAt:
+              type: string
+            type:
+              type: string
+        namePrefix:
+          type: ["string", "null"]
+        createdAtPrefix:
+          type: ["string", "null"]
+        typePrefix:
+          type: ["string", "null"]
+        types:
+          type: array
+          items:
+            type: string
+          default: []
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+        pageIndex:
+          type: integer
+          default: 0
+        forwardScan:
+          type: boolean
+          default: true
+        sortIndex:
+          type: string
+          default: "createdAt"
+      additionalProperties: False
+
+    FileItem:
+      type: object
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+        createdBy:
+          type: string
+        data:
+          type: object 
+        dochash:
+          type: string
+        knowledgeBase:
+          type: string
+        name:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        totalItems:
+          type: integer
+        totalTokens:
+          type: integer
+        type:
+          type: string
+        updatedAt:
+          type: string
+        updatedBy:
+          type: string
+      required:
+        - id
+        - createdAt
+        - createdBy
+        - data
+        - dochash
+        - knowledgeBase
+        - name
+        - tags
+        - totalItems
+        - totalTokens
+        - type
+        - updatedAt
+        - updatedBy

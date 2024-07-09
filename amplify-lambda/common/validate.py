@@ -51,7 +51,7 @@ export_schema = {
         "folders": {"type": "array"},
         "prompts": {"type": "array"},
     },
-    "required": ["version", "history", "folders", "prompts"]
+    "required": ["history", "folders", "prompts"]
 }
 
 share_schema = {
@@ -566,6 +566,9 @@ validators = {
     "/assistant/create": {
         "create": create_assistant_schema
     },
+    "/assistant/delete": {
+    "delete": {}
+    },
     "/market/item/publish": {
         "publish_item": publish_item_schema
     },
@@ -584,6 +587,9 @@ validators = {
     "/market/item/examples/get": {
         "get_examples": id_and_category_request_schema
     },
+    "/market/category/list" : {
+    "list_categories": {}
+    },
     "/chat/convert": {
         "convert": convert_schema
     },
@@ -593,30 +599,76 @@ validators = {
     "/state/accounts/save": {
         "save": save_accounts_schema
     },
+    "/state/accounts/get": {
+    "get": {}
+    },
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
     },
     "/state/conversation/get_multiple": {   
         "get_multiple_conversations": conversation_ids_schema
     },
+    "/state/conversation/get": {
+        "read" : {}
+    },
+    "/state/conversation/get_all": {
+        "read" : {}
+    },
     "/state/conversation/delete_multiple": {   
         "delete_multiple_conversations": conversation_ids_schema
     },
+    "/state/conversation/delete": {
+        "delete" : {}
+    },
 }
 
+api_validators = {
+    "/state/share": {
+        "append": share_schema,
+        "create": {}
+    },
+    "/state/share/load": {
+        "load": share_load_schema
+    },
+    "/assistant/files/upload": {
+        "upload": file_upload_schema
+    },
+    "/assistant/files/set_tags": {
+        "set_tags": file_set_tags_schema
+    },
+    "/assistant/tags/delete": {
+        "delete": user_delete_tag_schema
+    },
+    "/assistant/tags/create": {
+        "create": create_tags_schema
+    },
+    "/assistant/tags/list": {
+        "list": user_list_tags_schema
+    },
+    "/assistant/files/query": {
+        "query": file_query_schema
+    },
+    "/assistant/create": {
+        "create": create_assistant_schema
+    },
+}
 
-def validate_data(name, op, data):
-    if name in validators and op in validators[name]:
-        schema = validators[name][op]
+def validate_data(name, op, data, api_accessed):
+    validator = api_validators if api_accessed else validators
+    if name in validator and op in validator[name]:
+        schema = validator[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
         except ValidationError as e:
             print(e)
             raise ValidationError(f"Invalid data: {e.message}")
         print("Data validated")
+    else:
+        print(f"Invalid data or path: {name} - op:{op} - data: {data}")
+        raise Exception("Invalid data or path")
 
 
-def parse_and_validate(current_user, event, op, validate_body=True):
+def parse_and_validate(current_user, event, op, api_accessed, validate_body=True):
     data = {}
     if validate_body:
         try:
@@ -631,13 +683,14 @@ def parse_and_validate(current_user, event, op, validate_body=True):
 
     try:
         if validate_body:
-            validate_data(name, op, data)
+            validate_data(name, op, data, api_accessed)
     except ValidationError as e:
         raise BadRequest(e.message)
 
     permission_checker = get_permission_checker(current_user, name, op, data)
 
     if not permission_checker(current_user, data):
+        print("User does not have permission to perform the operation.")
         # Return a 403 Forbidden if the user does not have permission to append data to this item
         raise Unauthorized("User does not have permission to perform the operation.")
 
@@ -659,11 +712,11 @@ def validated(op, validate_body=True):
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
-                [name, data] = parse_and_validate(current_user, event, op, validate_body)
+                [name, data] = parse_and_validate(current_user, event, op, api_accessed, validate_body)
                 
                 data['access_token'] = token
                 data['account'] = claims['account']
-                print("Default account: ", claims['account'])
+                data['allowed_access'] = claims['allowed_access']
 
                 result = f(event, context, current_user, name, data)
 
@@ -737,13 +790,17 @@ def get_claims(event, context, token):
                     account = acct['id']
                     
             if (not account):
-                raise ValueError("No default account found.")
+                account = 'general_account'
         except Exception as e:
             print(f"Error retrieving default account: {e}")
-            raise
+            raise Exception('Error retrieving default account')
 
         payload['account'] = account
         payload['username'] = user
+        # Here we can established the allowed access according to the feature flags in the future
+        # For now it is set to full_access, which says they can do the operation upon entry of the validated function
+        # current access types include: asssistants, share, dual_embedding, chat, file_upload
+        payload['allowed_access'] =  ['full_access']
         return payload
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
@@ -812,9 +869,9 @@ def api_claims(event, context, token):
         # Check for access rights
         access = item.get('accessTypes', [])
         if ('file_upload' not in access and 'share' not in access
-                                        and 'Full Access' not in access):
-            print("API doesn't have access to file uploads")
-            raise PermissionError("API key does not have access to file upload functionality")
+                                        and 'full_access' not in access):
+            print("API key doesn't have access to the functionality")
+            raise PermissionError("API key does not have access to the required functionality")
 
         # Update last accessed
         table.update_item(
@@ -827,7 +884,7 @@ def api_claims(event, context, token):
         # Determine API user
         current_user = determine_api_user(item)
 
-        return {'username': current_user, 'account': item['account']}
+        return {'username': current_user, 'account': item['account']['id'], 'allowed_access': access}
 
     except Exception as e:
         print("Error during DynamoDB operation:", str(e))
@@ -847,3 +904,6 @@ def determine_api_user(data):
     else:
         print("Unknown or missing key type in api_owner_id:", key_type)
         raise Exception("Invalid or unrecognized key type.")
+    
+
+    

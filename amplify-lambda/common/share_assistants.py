@@ -5,7 +5,7 @@ import json
 def share_assistant(access_token, data):
     print("Initiate share assistant call")
 
-    share_assistant_endpoint = os.environ['SHARE_ASSISTANTS_ENDPOINT']
+    share_assistant_endpoint = os.environ['ASSISTANTS_API_BASE_URL'] + '/assistant/share'
     request = {
         "data": data
     }

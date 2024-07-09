@@ -47,11 +47,10 @@ provider:
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
     BILLING_DYNAMODB_TABLE: ${self:custom.stageVariables.BILLING_DYNAMODB_TABLE}
-    OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
-    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
     ACCOUNTS_DYNAMO_TABLE: ${self:custom.stageVariables.ACCOUNTS_DYNAMO_TABLE}
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
   iam:
     role:
@@ -72,6 +71,7 @@ provider:
           Resource:
             - "${self:provider.environment.OPENAI_API_KEY_ARN}"
             - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
@@ -115,7 +115,7 @@ functions:
     events:
       - http:
           path: assistant/list
-          method: post
+          method: get
           cors: true
 
   share_assistant:

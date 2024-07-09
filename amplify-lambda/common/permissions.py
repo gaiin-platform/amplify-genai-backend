@@ -121,7 +121,7 @@ permissions_by_state_type = {
     "read": can_read
   },
   "/state/conversation/delete": {
-    "read": can_delete_item
+    "delete": can_delete_item
   },
   "/state/conversation/delete_multiple": {
     "delete_multiple_conversations": can_delete_item

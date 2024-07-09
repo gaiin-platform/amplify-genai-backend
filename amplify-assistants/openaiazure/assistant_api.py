@@ -898,7 +898,7 @@ def create_new_assistant(
 
     for file_key in file_keys:
         file_key_user = file_key.split('//')[1]
-        if ('@' not in file_key_user)or len(file_key_user) < 6 or (user_id not in file_key_user):
+        if ('@' not in file_key_user) or len(file_key_user) < 6 or (user_id not in file_key_user):
             return {'success': False, 'error': 'You are not authorized to access the referenced files'}
 
     assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys, tools)

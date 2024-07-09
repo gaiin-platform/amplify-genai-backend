@@ -137,7 +137,7 @@ def get_multiple_conversations(event, context, current_user, name, data):
         }
 
 
-@validated("read")
+@validated("delete")
 def delete_conversation(event, context, current_user, name, data):
     query_param =  get_conversation_query_param(event.get('queryStringParameters', {}))
     if (not query_param['success']): 

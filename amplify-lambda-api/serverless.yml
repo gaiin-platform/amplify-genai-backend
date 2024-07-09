@@ -1,4 +1,4 @@
-service: vu-amplify-lambda-python-base
+service: vu-amplify-api
 
 frameworkVersion: "3"
 

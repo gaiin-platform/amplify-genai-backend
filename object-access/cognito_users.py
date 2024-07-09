@@ -95,3 +95,36 @@ def get_in_cognito_group(event, context, current_user, name, data, username):
                 'statusCode': 500,
                 'body': json.dumps({'error': str(e)})
                 }
+    
+
+@validated("read")
+def get_in_amplify_group(event, context, current_user, name, data, username): 
+    dynamodb = boto3.resource('dynamodb')
+    cognito_user_table = dynamodb.Table(os.environ['COGNITO_USERS_TABLE'])
+
+    try:
+        print("Initiate query to cognito user dynamo table for user: ", current_user)
+        response = cognito_user_table.get_item(Key={'user_id': current_user})
+
+        print("Response: ", response)
+
+        if 'Item' not in response:
+            return {
+                'statusCode': 404,
+                'body': json.dumps({'error': 'Failed to check amplify groups'})
+                }
+
+        amplify_groups = response['Item']['amplify_groups']
+        print("amplify_groups: ", amplify_groups)
+
+        return {
+                'statusCode': 200,
+                'body': json.dumps({'amplifyGroups' : amplify_groups})
+                }
+
+    except ClientError as e:
+        print("Error: ", e.response['Error']['Message'])
+        return {
+                'statusCode': 500,
+                'body': json.dumps({'error': str(e)})
+                }

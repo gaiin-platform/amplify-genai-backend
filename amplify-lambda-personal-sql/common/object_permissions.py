@@ -106,7 +106,7 @@ def can_access_objects(current_user, access_token, data_sources, permission_leve
     }
 
     # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = os.environ['OBJECT_ACCESS_API_ENDPOINT']
+    permissions_endpoint = os.environ['API_BASE_URL'] + '/utilities/can_access_objects'
 
     try:
         response = requests.post(
@@ -154,7 +154,7 @@ def simulate_can_access_objects(access_token, object_ids, permission_levels=["re
     }
 
     # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = os.environ['OBJECT_SIMULATE_ACCESS_API_ENDPOINT']
+    permissions_endpoint = os.environ['API_BASE_URL'] +  "/utilities/simulate_access_to_objects"
 
     try:
         response = requests.post(

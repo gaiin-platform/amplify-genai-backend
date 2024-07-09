@@ -101,143 +101,148 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
 
         console.log("Assistant found by alias: ", assistant);
 
-        const userDefinedAssistant = {
-            name: assistant.name,
-            displayName: assistant.name,
-            handlesDataSources: (ds) => {
-                return true;
-            },
-            handlesModel: (model) => {
-                return true;
-            },
-            description: assistant.description,
-
-            disclaimer: assistant.disclaimer,
-
-            handler: async (llm, params, body, ds, responseStream) => {
-
-
-                if(assistant.skipRag) {
-                    params = {
-                        ...params,
-                    options:{...params.options, skipRag: true}
-                    }
-                }
-
-                if(assistant.ragOnly) {
-                    params = {
-                        ...params,
-                        options:{...params.options, ragOnly: true}
-                    }
-                }
-
-                const dataSourceOptions = {};
-                if(assistant.data && assistant.data.dataSourceOptions) {
-                    dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
-                }
-
-                const extraMessages = [];
-                if(assistant.data && assistant.data.dataSourceOptions) {
-
-                    const dataSourceMetadataForInsertion = [];
-                    const available = await getDataSourcesByUse(params, body, ds);
-
-                    if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
-                        dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
-                    }
-                    if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
-                        dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
-                    }
-
-                    if(dataSourceMetadataForInsertion.length > 0) {
-
-                        const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
-                            return {id: ds.id, name: ds.name, type:ds.type};
-                        });
-
-                        extraMessages.push({
-                            role: "user",
-                            content:
-`You have the following data sources and documents available:
--------------                        
-${JSON.stringify(dataSourceSummaries)}
--------------
-`,
-                        });
-                    }
-                }
-
-                const messagesWithoutSystem = body.messages.filter(
-                    (message) => message.role !== "system"
-                );
-
-                const instructions = await fillInTemplate(
-                    llm,
-                    params,
-                    body,
-                    ds,
-                    assistant.instructions,
-                    {
-                        assistant: assistant,
-                    }
-                );
-
-                const updatedBody = {
-                    ...body,
-                    messages: [
-                        ...messagesWithoutSystem.slice(0,-1),
-                        {
-                            role: "user",
-                            content: "Pay close attention to any provided information. Unless told otherwise, " +
-                                "cite the information you are provided with quotations supporting your analysis " +
-                                "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                            data: {dataSources: assistant.dataSources}
-                        },
-                        {
-                            role: 'system',
-                            content: instructions,
-                        },
-                        ...extraMessages,
-                        body.messages.slice(-1)[0]
-                    ],
-                    options: {
-                        ...body.options,
-                        ...dataSourceOptions,
-                        prompt: instructions,
-                    }
-                };
-
-                await assistantBase.handler(
-                    llm,
-                    params,
-                    updatedBody,
-                    ds,
-                    responseStream);
-
-                try {
-                    if (assistant.data && assistant.data.logChats) {
-                        const user = assistant.data.logAnonymously ?
-                            "anonymous" : params.account.user;
-
-                        await saveChatToS3(
-                            assistant,
-                            user,
-                            body,
-                            {
-                                user: params.account.user,
-                                assistant: assistant,
-                                dataSources: ds,
-                            }
-                        );
-                    }
-                } catch (e) {
-                    console.error('Error logging assistant chat to S3:', e);
-                }
-            }
-        };
+        const userDefinedAssistant =  fillInAssistant(assistant, assistantBase)
         console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
         return userDefinedAssistant;
     }
 
     return null;
 };
+
+
+export const fillInAssistant = (assistant, assistantBase) => {
+    return {
+        name: assistant.name,
+        displayName: assistant.name,
+        handlesDataSources: (ds) => {
+            return true;
+        },
+        handlesModel: (model) => {
+            return true;
+        },
+        description: assistant.description,
+
+        disclaimer: assistant.disclaimer ?? '',
+
+        handler: async (llm, params, body, ds, responseStream) => {
+
+
+            if(assistant.skipRag) {
+                params = {
+                    ...params,
+                options:{...params.options, skipRag: true}
+                }
+            }
+
+            if(assistant.ragOnly) {
+                params = {
+                    ...params,
+                    options:{...params.options, ragOnly: true}
+                }
+            }
+
+            const dataSourceOptions = {};
+            if(assistant.data && assistant.data.dataSourceOptions) {
+                dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
+            }
+
+            const extraMessages = [];
+            if(assistant.data && assistant.data.dataSourceOptions) {
+
+                const dataSourceMetadataForInsertion = [];
+                const available = await getDataSourcesByUse(params, body, ds);
+
+                if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
+                    dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
+                }
+                if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
+                    dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
+                }
+
+                if(dataSourceMetadataForInsertion.length > 0) {
+
+                    const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
+                        return {id: ds.id, name: ds.name, type:ds.type};
+                    });
+
+                    extraMessages.push({
+                        role: "user",
+                        content:
+                    `You have the following data sources and documents available:
+                    -------------                        
+                    ${JSON.stringify(dataSourceSummaries)}
+                    -------------
+                    `,
+                    });
+                }
+            }
+
+            const messagesWithoutSystem = body.messages.filter(
+                (message) => message.role !== "system"
+            );
+
+            const instructions = await fillInTemplate(
+                llm,
+                params,
+                body,
+                ds,
+                assistant.instructions,
+                {
+                    assistant: assistant,
+                }
+            );
+
+            const updatedBody = {
+                ...body,
+                messages: [
+                    ...messagesWithoutSystem.slice(0,-1),
+                    {
+                        role: "user",
+                        content: "Pay close attention to any provided information. Unless told otherwise, " +
+                            "cite the information you are provided with quotations supporting your analysis " +
+                            "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
+                        data: {dataSources: assistant.dataSources}
+                    },
+                    {
+                        role: 'system',
+                        content: instructions,
+                    },
+                    ...extraMessages,
+                    body.messages.slice(-1)[0]
+                ],
+                options: {
+                    ...body.options,
+                    ...dataSourceOptions,
+                    prompt: instructions,
+                }
+            };
+
+            await assistantBase.handler(
+                llm,
+                params,
+                updatedBody,
+                ds,
+                responseStream);
+
+            try {
+                if (assistant.data && assistant.data.logChats) {
+                    const user = assistant.data.logAnonymously ?
+                        "anonymous" : params.account.user;
+
+                    await saveChatToS3(
+                        assistant,
+                        user,
+                        body,
+                        {
+                            user: params.account.user,
+                            assistant: assistant,
+                            dataSources: ds,
+                        }
+                    );
+                }
+            } catch (e) {
+                console.error('Error logging assistant chat to S3:', e);
+            }
+        }
+    };
+}

@@ -57,9 +57,6 @@ export const extractParams = async (event) => {
 
         ////// api path  if token prefix amp- ////// 
         if (token.startsWith("amp-")) return api_authenticator(token, event);
-        // if (true) return api_authenticator("amp-ea9b082c-247e-4692-969f-52a10d611528", event);
-
-
 
         let payload = null;
         try {
@@ -150,7 +147,7 @@ const api_authenticator = async (apiKey, event) => {
 
         const access = apiData.accessTypes.flat()
 
-        if (!(access && (access.includes('chat') || access.includes('Full Access')))) {
+        if (!(access && (access.includes('chat') || access.includes('full_access')))) {
             console.log("API doesn't have access to chat");
             return {
                 statusCode: 403,
@@ -174,47 +171,6 @@ const api_authenticator = async (apiKey, event) => {
        const currentUser = determine_api_user(apiData);
        if (currentUser.statusCode) return currentUser; // means error
 
-
-       /*
-            {
-            "model": "anthropic.claude-3-haiku-20240307-v1:0",
-            "temperature": 1,
-            "max_tokens": 1000,
-            "stream": true,
-            "dataSources": [],
-            "messages": [
-                {
-                "role": "system",
-                "content": "Follow the user's instructions carefully. Respond using markdown. If you are asked to draw a diagram, you can use Mermaid diagrams using mermaid.js syntax in a ```mermaid code block. If you are asked to visualize something, you can use a ```vega code block with Vega-lite. Don't draw a diagram or visualize anything unless explicitly asked to do so. Be concise in your responses unless told otherwise."
-                },
-                {
-                "role": "user",
-                "content": "hi!",
-                "type": "prompt",
-                "data": {},
-                "id": "11b14f5f-b321-48f8-b581-fdb46f81627a"
-                }
-            ],
-            "options": {
-                "accountId": ---
-                "requestId": "heh4f",
-                "model": {
-                "id": "anthropic.claude-3-haiku-20240307-v1:0",
-                "name": "Claude-3-Haiku (bedrock)",
-                "maxLength": 24000,
-                "tokenLimit": 4000,
-                "actualTokenLimit": 4096,
-                "inputCost": 0.00025,
-                "outputCost": 0.00125,
-                "description": "Consider for high-velocity tasks with near-instant responsiveness and emphasis on security and robustness through minimized risk of harmful outputs. Features speeds 3 times faster than its Claude peer models while being the most economical choice. Best for simple queries, lightweight conversation, rapid analysis of large volumes of data, and handling of much longer prompts. Trained on information available through August 2023."
-                },
-                "prompt": "Follow the user's instructions carefully. Respond using markdown. If you are asked to draw a diagram, you can use Mermaid diagrams using mermaid.js syntax in a ```mermaid code block. If you are asked to visualize something, you can use a ```vega code block with Vega-lite. Don't draw a diagram or visualize anything unless explicitly asked to do so. Be concise in your responses unless told otherwise.",
-                "maxTokens": 1000
-            }
-            }
-
-
-       */
         // we add the accountId 
         let requestBody;
         try {
@@ -227,7 +183,7 @@ const api_authenticator = async (apiKey, event) => {
             requestBody = JSON.parse(event.body);
 
             // this is the coa string to be recorded in the usage table 
-            requestBody.options.accountId = apiData.account;
+            requestBody.options.accountId = apiData.account.id;
             requestBody.options.requestId = Math.random().toString(36).substring(7);
         } catch (e) {
             const error = (e.code === 1001) ? "API key data does not have a valid account attached" : "Invalid JSON in request body"

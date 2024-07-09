@@ -64,8 +64,22 @@ create_api_keys_schema = {
             "description": "The owner of the API key"
         },
         "account": {
-            "type": "string",
-            "description": "COA string"
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "A unique identifier for the account."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the account."
+                    },
+                    "isDefault": {
+                        "type": "boolean",
+                        "description": "Indicates if this is the default account."
+                    }
+                },
+                "required": ["id", "name"]
         },
         "delegate": {
             "oneOf": [
@@ -134,22 +148,36 @@ validators = {
     }, 
     "apiKeys/create_keys": {
         "create": create_api_keys_schema
-    }
+    },
+    "/apiKeys/get_keys": {
+        "read": {}
+    },
+    "/apiKeys/get_key": {
+        "read": {}
+    },
+}
+
+api_validators = {
+
 }
 
 
-def validate_data(name, op, data):
-    if name in validators and op in validators[name]:
-        schema = validators[name][op]
+def validate_data(name, op, data, api_accessed):
+    validator = api_validators if api_accessed else validators
+    if name in validator and op in validator[name]:
+        schema = validator[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
         except ValidationError as e:
             print(e)
             raise ValidationError(f"Invalid data: {e.message}")
         print("Data validated")
+    else:
+        print(f"Invalid data or path: {name} - op:{op} - data: {data}")
+        raise Exception("Invalid data or path")
 
 
-def parse_and_validate(current_user, event, op, validate_body=True):
+def parse_and_validate(current_user, event, op, api_accessed, validate_body=True):
     data = {}
     if validate_body:
         try:
@@ -164,7 +192,7 @@ def parse_and_validate(current_user, event, op, validate_body=True):
 
     try:
         if validate_body:
-            validate_data(name, op, data)
+            validate_data(name, op, data, api_accessed)
     except ValidationError as e:
         raise BadRequest(e.message)
 
@@ -191,11 +219,11 @@ def validated(op, validate_body=True):
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
-                [name, data] = parse_and_validate(current_user, event, op, validate_body)
+                [name, data] = parse_and_validate(current_user, event, op, api_accessed, validate_body)
                 
                 data['access_token'] = token
                 data['account'] = claims['account']
-                print("Default account: ", claims['account'])
+                data['allowed_access'] = claims['allowed_access']
 
                 result = f(event, context, current_user, name, data)
 
@@ -276,6 +304,10 @@ def get_claims(event, context, token):
 
         payload['account'] = account
         payload['username'] = user
+        # Here we can established the allowed access according to the feature flags in the future
+        # For now it is set to full_access, which says they can do the operation upon entry of the validated function
+        # current access types include: asssistants, share, dual_embedding, chat, file_upload
+        payload['allowed_access'] =  ['full_access']
         return payload
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
@@ -343,7 +375,8 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('api_key' not in access and 'Full Access' not in access):
+        if ('api_key' not in access ):
+            # and 'full_access' not in access
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")
 
@@ -358,7 +391,7 @@ def api_claims(event, context, token):
         # Determine API user
         current_user = determine_api_user(item)
 
-        return {'username': current_user, 'account': item['account']}
+        return {'username': current_user, 'account': item['account'], 'allowed_access': access}
 
     except Exception as e:
         print("Error during DynamoDB operation:", str(e))

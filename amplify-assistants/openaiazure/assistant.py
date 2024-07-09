@@ -1,6 +1,7 @@
 from common.validate import validated
 from . import assistant_api as assistants
-
+import random
+import string
 
 
 @validated(op="chat") 
@@ -8,8 +9,10 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
   print("Chat_with_code_interpreter validated")
   assistant_id = data['data'].get('id')
   messages = data['data'].get('messages')
-  account_id = data['data'].get('accountId')
-  request_id = data['data'].get('requestId')
+  account_id = data['data'].get('accountId', None)
+  if (not account_id): account_id = data['account']
+  request_id = data['data'].get('requestId', None)
+  if (not request_id): request_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
 
   return assistants.chat_with_code_interpreter(
     current_user,
