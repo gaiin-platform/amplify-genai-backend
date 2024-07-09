@@ -48,9 +48,21 @@ report_generator_schema = {
     "required": ["emails"],
 }
 
+get_mtd_cost_schema = {
+    "type": "object",
+    "properties": {
+        "email": {
+            "type": "string",
+            "description": "The email you determine month to date cost for.",
+        },
+    },
+    "required": ["email"],
+}
+
 
 validators = {
     "/billing": {"report_generator": report_generator_schema},
+    "/usage": {"get_mtd_cost": get_mtd_cost_schema},
 }
 
 
