@@ -240,12 +240,11 @@ const isUserDefinedAssistant = (assistantId) => {
 }
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
-    const api_accessed = params.account.accessToken.startsWith("amp-");
     logger.info(`Choose Assistant for Request `);
 
     // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
     const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
-    if (body.options && body.options.skipCodeInterpreter || api_accessed) {
+    if (body.options && body.options.skipCodeInterpreter || body.api_accessed) {
         if (index !== -1) assistants.splice(index, 1);
     } else {
         if (index === -1) assistants.push(codeInterpreterAssistant);
@@ -261,7 +260,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         selectedAssistant = isSystemAssistant(clientSelectedAssistant) ? getSystemAssistant(defaultAssistant, clientSelectedAssistant) 
                                              : await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
 
-    } else if (body.options.codeInterpreterOnly && !api_accessed) {
+    } else if (body.options.codeInterpreterOnly && ('api_accessed' in body && !body.api_accessed)) {
         selectedAssistant = codeInterpreterAssistant;
     }
 

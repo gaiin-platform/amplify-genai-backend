@@ -239,6 +239,9 @@ def update_object_permissions(event, context, current_user, name, data, username
 
 @validated("create_cognito_group")
 def create_cognito_group(event, context, current_user, name, data, username):
+    if ( not username ):
+        print('Access from API, no need to continue fuction')
+        return None
     """
     Create a Cognito user group in the specified user pool and add the current user to it.
 

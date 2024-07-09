@@ -194,7 +194,7 @@ const api_authenticator = async (apiKey, event) => {
         }
 
         // Return the validated user and additional data
-        return {user: currentUser, body: requestBody, accessToken: apiKey};
+        return {user: currentUser, body: {...requestBody, api_accessed: true}, accessToken: apiKey};
 
     } catch (error) {
         console.error("Error during DynamoDB operation:", error);

@@ -119,11 +119,11 @@ create_api_keys_schema = {
             "description": "Types of access permitted by this API key"
         },
         "systemUse": {
-            "type": "booelan",
+            "type": "boolean",
             "description": "For system use"
         }
     },
-    "required": ["owner", "applicationName", "account", "rateLimit", "accessTypes", "systemUse", "delegate"]
+    "required": ["owner", "appName", "account", "rateLimit", "accessTypes", "systemUse", "delegate"]
 }
 
 deactivate_api_key_schema = {
@@ -143,10 +143,10 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "apiKeys/deactivate_key": {
+    "/apiKeys/deactivate_key": {
         "deactivate": deactivate_api_key_schema
     }, 
-    "apiKeys/create_keys": {
+    "/apiKeys/create_keys": {
         "create": create_api_keys_schema
     },
     "/apiKeys/get_keys": {
@@ -163,6 +163,11 @@ api_validators = {
 
 
 def validate_data(name, op, data, api_accessed):
+    print(data)
+    print(op)
+    print(name)
+
+
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
         schema = validator[name][op]
