@@ -46,12 +46,143 @@ class NotFound(HTTPException):
 export_schema = {
     "type": "object",
     "properties": {
-        "version": {"type": "number"},
-        "history": {"type": "array"},
-        "folders": {"type": "array"},
-        "prompts": {"type": "array"},
-    },
-    "required": ["history", "folders", "prompts"]
+        "version": {
+            "type": "number"
+        },
+        "history": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "messages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                            #  You need to define the specific structure of "Message" objects as needed here
+                        }
+                    },
+                    "compressedMessages": {
+                        "type": ["array", "null"],
+                        "items": {
+                            "type": "number"
+                        }
+                    },
+                    "model": {
+                        "type": "string"
+                        #  If OpenAIModel is an enum of specific strings, use the "enum" constraint
+                    },
+                    "prompt": {
+                        "type": ["string", "null"]
+                    },
+                    "temperature": {
+                        "type": ["number", "null"]
+                    },
+                    "folderId": {
+                        "type": ["string", "null"]
+                    },
+                    "promptTemplate": {
+                        "type": ["object", "null"]
+                        #  You need to define the structure of Prompt object if necessary here
+                    },
+                    "tags": {
+                        "type": ["array", "null"],
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "maxTokens": {
+                        "type": ["number", "null"]
+                    },
+                    "workflowDefinition": {
+                        "type": ["object", "null"]
+                        #  Define the structure of WorkflowDefinition, if there's a specific schema
+                    },
+                    "data": {
+                        "type": ["object", "null"],
+                        "additionalProperties": True
+                    },
+                    "codeInterpreterAssistantId": {
+                        "type": ["string", "null"]
+                    },
+                    "isLocal": {
+                        "type": ["boolean", "null"]
+                    }
+                },
+                "required": ["id", "name", "messages", "model", "folderId"]
+            }
+        },
+        "folders": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": ["string", "null"]
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string", # Assuming FolderType is directly translatable to a string in JSON schema.
+                        "enum": ["personal", "shared", "archived"] # Replace with actual folder types if they differ.
+                    }
+                },
+                "required": ["id", "name", "type"]
+            }
+        },
+        "prompts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "model": {
+                        "type": ["string", "null"]
+                    },
+                    "folderId": {
+                        "type": ["string", "null"]
+                    },
+                    "type": {
+                        "type": ["string", "null"]
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "rootPromptId": {
+                                "type": ["string", "null"]
+                            },
+                            "code": {
+                                "type": ["string", "null"]
+                            }
+                        },
+                        "additionalProperties": True
+                    }
+                },
+                "required": ["id", "name", "description", "content", "folderId", "type"]
+            },
+            "required": ["version", "history", "folders", "prompts"]
+        }    
+    }
 }
 
 share_schema = {

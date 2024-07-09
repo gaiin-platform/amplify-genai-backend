@@ -93,33 +93,6 @@ paths:
         - bearerAuth: []
 # amplify-lambda
   /state/share:
-    post:
-      summary: Share state data.
-      operationId: shareState
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/shareSchema'
-      responses:
-        '200':
-          description: State data successfully shared.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  error:
-                    type: string
-                    nullable: true
-        '401':
-          description: User does not have access to the share functionality.
-        '400':
-          description: Bad request, missing or invalid parameters.
-      security:
-        - bearerAuth: []
     get:
       summary: Retrieve shared state data.
       operationId: getSharedState
@@ -571,35 +544,129 @@ components:
         history:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              messages:
+                type: array
+                items:
+                  type: object
+              compressedMessages:
+                type: array
+                items:
+                  type: number
+                nullable: true
+              model:
+                type: string
+              prompt:
+                type: string
+                nullable: true
+              temperature:
+                type: number
+                nullable: true
+              folderId:
+                type: string
+                nullable: true
+              promptTemplate:
+                type: object
+                nullable: true
+              tags:
+                type: array
+                items:
+                  type: string
+                nullable: true
+              maxTokens:
+                type: number
+                nullable: true
+              workflowDefinition:
+                type: object
+                nullable: true
+              data:
+                type: object
+                additionalProperties: true
+                nullable: true
+              codeInterpreterAssistantId:
+                type: string
+                nullable: true
+              isLocal:
+                type: boolean
+                nullable: true
+            required:
+              - id
+              - name
+              - messages
+              - model
+              - folderId
         folders:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              id:
+                type: string
+              date:
+                type: string
+                nullable: true
+              name:
+                type: string
+              type:
+                type: string
+                enum:
+                  - personal
+                  - shared
+                  - archived
+            required:
+              - id
+              - name
+              - type
         prompts:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              description:
+                type: string
+              content:
+                type: string
+              model:
+                type: string
+                nullable: true
+              folderId:
+                type: string
+                nullable: true
+              type:
+                type: string
+                nullable: true
+              data:
+                type: object
+                properties:
+                  rootPromptId:
+                    type: string
+                    nullable: true
+                  code:
+                    type: string
+                    nullable: true
+                additionalProperties: true
+            required:
+              - id
+              - name
+              - description
+              - content
+              - folderId
+              - type
       required:
+        - version
         - history
         - folders
         - prompts
 
-    shareSchema:
-      type: object
-      properties:
-        note:
-          type: string
-        sharedWith:
-          type: array
-          items:
-            type: string
-        sharedData:
-          $ref: '#/components/schemas/exportSchema'
-      required:
-        - sharedWith
-        - sharedData
-        - note
 
     shareLoadSchema:
       type: object
