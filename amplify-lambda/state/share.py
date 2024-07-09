@@ -283,11 +283,6 @@ def remove_code_interpreter_details(conversations):
 
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
-    access = data['allowed_access']
-    if ('share' not in access and 'full_access' not in access):
-        print("User does not have access to the share functionality")
-        return None
-
     tableName = os.environ['DYNAMODB_TABLE']
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(tableName)

@@ -624,7 +624,6 @@ validators = {
 
 api_validators = {
     "/state/share": {
-        "append": share_schema,
         "create": {}
     },
     "/state/share/load": {
