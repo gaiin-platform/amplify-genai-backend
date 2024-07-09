@@ -5,8 +5,14 @@ const dynamodbClient = new DynamoDBClient({ });
 
 async function getDatasourceRegistryConfig(type) {
 
+    if(process.env.DATASOURCE_REGISTRY_DYNAMO_TABLE === undefined) {
+        console.error('DATASOURCE_REGISTRY_DYNAMO_TABLE environment variable not set');
+        return null;
+    }
+
+
     const params = {
-        TableName: process.env.DATASOURCE_REGISTRY_DYNAMODB_TABLE,
+        TableName: process.env.DATASOURCE_REGISTRY_DYNAMO_TABLE,
         Key: {
             type: { S: type }
         }

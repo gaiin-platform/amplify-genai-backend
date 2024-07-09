@@ -387,7 +387,7 @@ def create_assistant(event, context, current_user, name, data):
     tags = [tag for tag in tags if not tag.startswith("amplify:") and tag not in RESERVED_TAGS]
 
     instructions = extracted_data['instructions']
-    disclaimer = extracted_data['disclaimer']
+    disclaimer = extracted_data.get("disclaimer", "")
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
@@ -407,7 +407,8 @@ def create_assistant(event, context, current_user, name, data):
 
         for i in range(len(filtered_ds)):
             source = filtered_ds[i]
-            if (not source['id'].startswith("s3://")): filtered_ds[i]['id'] = source['key']
+            if "://" not in source['id']:
+                filtered_ds[i]['id'] = source['key']
         
         print(f"Final data sources before translation: {filtered_ds}")
 

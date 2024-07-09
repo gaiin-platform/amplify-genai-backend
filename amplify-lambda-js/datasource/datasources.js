@@ -93,6 +93,8 @@ export const isDocument = ds =>
  */
 export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
 
+    logger.debug("Getting data sources by use", dataSources);
+
     if((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
@@ -165,9 +167,13 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if(params.options.dataSourceOptions) {
+    if(params.options.dataSourceOptions || chatRequestOrig.options.dataSourceOptions) {
 
-        const dataSourceOptions = params.options.dataSourceOptions;
+        const dataSourceOptions = {
+        ...(chatRequestOrig.options.dataSourceOptions || {}),
+        ...(params.options.dataSourceOptions || {})};
+
+        logger.debug("Applying data source options", dataSourceOptions);
 
         const insertList = [];
         const ragList = [];
@@ -191,8 +197,8 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             }
         }
 
-        ragDataSources = ragList;
-        dataSources = insertList;
+        ragDataSources = uniqueDataSources(ragList);
+        dataSources = uniqueDataSources(insertList);
     }
 
     return {
@@ -326,6 +332,8 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
  * @returns {Promise<(Awaited<any>|Awaited<unknown>)[]>}
  */
 export const resolveDataSources = async (params, body, dataSources) => {
+    logger.info("Resolving data sources", {dataSources: dataSources});
+
     dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
@@ -546,7 +554,10 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                 if (Item) {
                     // Convert the returned item from DynamoDB's format to a regular JavaScript object
                     const item = unmarshall(Item);
-                    const result = {...ds, id: "s3://" + item.textLocationKey};
+                    const result = {
+                        ...ds,
+                        metadata: {...ds.metadata, userDataSourceId: ds.id},
+                        id: "s3://" + item.textLocationKey};
                     hashDataSourcesCache.set(key, result);
                     return result;
                 } else {

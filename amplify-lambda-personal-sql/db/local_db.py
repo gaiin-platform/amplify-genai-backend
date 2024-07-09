@@ -9,6 +9,7 @@ import uuid
 import time
 import os
 
+from common.errors import ActionError
 from common.object_permissions import can_access_objects
 from db.query import query_db, describe_schemas_from_db
 from db.registry import register_db, get_db_metadata, db_handler
@@ -45,26 +46,33 @@ def load_csv_from_s3_to_db(current_user, access_token, s3_bucket, key_table_list
     key_table_list (list): List of dictionaries with 'table' and 'key'
     conn: Database connection
     """
-
+    print(f"Loading CSVs from S3 to database tables")
     # Create a list of all the keys from the list of items in key_table_list
     data_sources = [{'id': item['key']} for item in key_table_list]
     if not can_access_objects(current_user, access_token, data_sources):
-        raise ValueError("Access denied to the data sources.")
+        raise ActionError("The user is not allowed to access the specified data sources to create the database.")
 
     for item in key_table_list:
         table_name = item['table']
         s3_key = item['key']
+        s3_key = s3_key.replace('s3://', '')
 
-        # Fetch the object from S3
-        print(f"Loading {s3_key} from S3 to {table_name}")
-        response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
-        csv_content = response['Body'].read().decode('utf-8')
+        try:
+            # Fetch the object from S3
+            print(f"Loading {s3_bucket}/{s3_key} from S3 to {table_name}")
+            response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
+            print(f"Reading data from {s3_bucket}/{s3_key}")
+            csv_content = response['Body'].read().decode('utf-8')
 
-        # Read CSV content into DataFrame
-        df = pd.read_csv(StringIO(csv_content))
+            # Read CSV content into DataFrame
+            df = pd.read_csv(StringIO(csv_content))
+            print(f"Loaded {len(df)} rows from {s3_bucket}/{s3_key} to {table_name}")
 
-        # Load DataFrame into the database
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
+            # Load DataFrame into the database
+            df.to_sql(table_name, conn, if_exists='replace', index=False)
+        except Exception as e:
+            print(f"Failed to load {s3_bucket}/{s3_key} to {table_name}: {str(e)}")
+            raise ActionError(f"Failed to load the data into {table_name}")
 
 
 def save_db_to_s3(conn, s3_bucket, s3_key):
@@ -97,7 +105,7 @@ def pdbs_handler(current_user, db_id, metadata, data):
 
     if creator != current_user:
         print(f"Database with id {db_id} does not belong to user {current_user}")
-        raise ValueError(f"Database with id {db_id} does not belong to user {current_user}")
+        raise ActionError(f"Database with id {db_id} does not belong to user {current_user}")
 
     # Extract the S3 key from the metadata
     s3_key = metadata.get('data').get('s3Key')

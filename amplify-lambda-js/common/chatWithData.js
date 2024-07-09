@@ -150,6 +150,9 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // 3. Is the document done processing wtih RAG, if not, run against the whole document.
 
     const allSources = await getDataSourcesByUse(params, chatRequestOrig, dataSources);
+
+    logger.debug("All datasources for chatWithData: ", allSources);
+
     // These data sources are the ones that will be completely inserted into the
     // conversation
     dataSources = allSources.dataSources;

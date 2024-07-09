@@ -93,6 +93,7 @@ provider:
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
     OBJECT_ACCESS_TABLE: vu-amplify-object-access-${sls:stage}-object-access
+    ACCOUNTS_DYNAMO_TABLE: ${self:custom.stageVariables.ACCOUNTS_DYNAMO_TABLE}
    
 
   iam:
@@ -118,10 +119,11 @@ provider:
             - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-user-files"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-embedding-progress"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-object-access-table"
-            - "arn:aws:sqs:${self:provider.region}:*:amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-embedding-chunks-index-queue"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
+            - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             
 
 functions:

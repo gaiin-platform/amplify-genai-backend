@@ -12,6 +12,7 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
+import { mapReduceAssistant } from "./mapReduceAssistant.js";
 
 const logger = getLogger("assistants");
 
@@ -107,8 +108,9 @@ export const defaultAssistants = [
     //batchAssistant,
     //documentAssistant,
     //reportWriterAssistant,
-    // csvAssistant,
+    csvAssistant,
     //documentSearchAssistant
+    //mapReduceAssistant
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {
@@ -241,11 +243,11 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
     const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
-    if (body.options && body.options.skipCodeInterpreter) {
-        if (index !== -1) assistants.splice(index, 1);
-    } else {
-        if (index === -1) assistants.push(codeInterpreterAssistant);
-    }
+    // if (body.options && body.options.skipCodeInterpreter) {
+    //     if (index !== -1) assistants.splice(index, 1);
+    // } else {
+    //     if (index === -1) assistants.push(codeInterpreterAssistant);
+    // }
 
     let selected = defaultAssistant;
 

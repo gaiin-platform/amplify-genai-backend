@@ -112,8 +112,12 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             //delete body.options;
 
             try {
-
+                logger.info("Request data sources", dataSources);
                 dataSources = await resolveDataSources(params, body, dataSources);
+
+                for(const ds of dataSources) {
+                    console.debug("Resolved data source", ds.id, ds);
+                }
 
             } catch (e) {
                 logger.error("Unauthorized access on data sources: " + e);

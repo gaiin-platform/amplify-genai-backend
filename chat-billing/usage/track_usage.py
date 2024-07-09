@@ -17,8 +17,8 @@ def handler(event, context):
         if time_range in ("monthly", "daily"):
             track_usage(time_range)
         # for local testing
-        # elif time_range == "chat-billing-dev-trackUsage":
-        #     track_usage("daily")
+        elif time_range == "chat-billing-dev-trackUsage":
+            track_usage("daily")
         else:
             error_message = f"Unexpected track usage trigger: {time_range}"
             print(error_message)

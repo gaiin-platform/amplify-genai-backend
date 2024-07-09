@@ -1,60 +1,16 @@
 import os
-
+import boto3
 import requests
 import json
 
-
-def update_object_permissions(access_token,
-                              shared_with_users,
-                              keys,
-                              object_type,
-                              principal_type="user",
-                              permission_level="read",
-                              policy=""):
-    permissions_endpoint = os.environ['OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT']
-    request = {
-        "data": {
-            "emailList": shared_with_users,
-            "dataSources": keys,
-            "objectType": object_type,
-            "principalType": principal_type,
-            "permissionLevel": permission_level,
-            "policy": policy
-        }
-    }
-
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {access_token}'
-    }
-
-    try:
-        response = requests.post(
-            permissions_endpoint,
-            headers=headers,
-            data=json.dumps(request)
-        )
-
-        response_content = response.json() # to adhere to object access return response dict
-
-        if response.status_code != 200 or response_content.get('statusCode', None) != 200:
-            return False
-        elif response.status_code == 200 and response_content.get('statusCode', None) == 200:
-            return True
-
-    except Exception as e:
-        print(f"Error updating permissions: {e}")
-        return False
-
-
-def can_access_objects(access_token, data_sources, permission_level="read"):
+def can_access_objects(current_user, access_token, data_sources, permission_level="read"):
     print(f"Checking access on data sources: {data_sources}")
 
-    # If there is a protocol on the ID, we need to strip it off
-    access_levels = {
-        ds['id'].split('://')[-1]: permission_level
-        for ds in data_sources
-    }
+    # Check if the id of all the data_sources starts with the current_user
+    if current_user and all([ds['id'].startswith(current_user+"/") for ds in data_sources]):
+        return True
+
+    access_levels = {ds['id']: permission_level for ds in data_sources}
 
     print(f"With access levels: {access_levels}")
 
@@ -80,6 +36,8 @@ def can_access_objects(access_token, data_sources, permission_level="read"):
         )
 
         response_content = response.json() # to adhere to object access return response dict
+
+        print(f"Response: {response_content}")
 
         if response.status_code != 200 or response_content.get('statusCode', None) != 200:
             print(f"User does not have access to data sources: {response.status_code}")
