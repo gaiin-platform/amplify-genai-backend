@@ -34,6 +34,7 @@ provider:
     PERSONAL_SQL_DYNAMO_TABLE: ${self:service}-${sls:stage}-personal-sql
     PERSONAL_SQL_S3_BUCKET: ${self:service}-${sls:stage}-personal-sql
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
+    S3_FILE_TEXT_BUCKET_NAME: ${self:custom.stageVariables.S3_FILE_TEXT_BUCKET_NAME}
     PERSONAL_SQL_METADATA_TABLE: ${self:service}-${sls:stage}-personal-sql-metadata
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
@@ -96,6 +97,7 @@ provider:
             - s3:GetObject
           Resource:
             - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
         - Effect: Allow
           Action:
             - ssm:GetParameter

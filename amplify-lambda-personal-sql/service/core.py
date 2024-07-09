@@ -4,6 +4,7 @@ import datetime
 import boto3
 import requests
 
+from common.errors import ActionError
 # Don't remove, required for the registry to work
 from db.postgres import postgres_handler
 
@@ -66,6 +67,7 @@ def llm_query_db(event, context, current_user, name, data):
         print(f"Database schema created in text")
 
         final_query = None
+        final_thought = None
 
         while result is None and tries > 0:
             try:
@@ -78,6 +80,7 @@ def llm_query_db(event, context, current_user, name, data):
 
                 result = query_db(conn, sql)
                 final_query = sql
+                final_thought = thought
 
             except requests.exceptions.HTTPError as err:
                 print(f'HTTP error occurred: {err}')
@@ -93,7 +96,14 @@ def llm_query_db(event, context, current_user, name, data):
         return {
             'success': True,
             'data': result,
-            'location': {"sql_query": final_query}
+            'location': {"sql_query": final_query, "thought": final_thought}
+        }
+
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
 
     except Exception as e:
@@ -143,6 +153,12 @@ def register_db(event, context, current_user, name, data):
             'success': False,
             'message': f"Database with name {e.db_name} already exists for user {e.user}"
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         print(e)
         return {
@@ -179,6 +195,12 @@ def create_db(event, context, current_user, name, data):
             'success': True,
             'id': db_id
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         print(e)
         return {
@@ -210,6 +232,12 @@ def get_user_dbs(event, context, current_user, name, data):
         return {
             'success': False,
             'message': "Failed to get list of databases for the user"
+        }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
     except Exception as e:
         print("Error in get_user_dbs {e}")
@@ -247,6 +275,12 @@ def describe_personal_db_schema(event, context, current_user, name, data):
         return {
             'success': False,
             'message': "Failed to describe schemas from DB"
+        }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
     except Exception as e:
         print("Error in describe_personal_db_schema")
@@ -287,6 +321,12 @@ def describe_db_schema(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to describe schemas from DB"
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         return {
             'success': False,
@@ -324,6 +364,12 @@ def query_personal_db(event, context, current_user, name, data):
         return {
             'success': False,
             'message': "Failed to query DB"
+        }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
     except Exception as e:
         print("Error in query_personal_db")

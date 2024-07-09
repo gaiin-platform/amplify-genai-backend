@@ -152,18 +152,28 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 const dataSourceMetadataForInsertion = [];
                 const available = await getDataSourcesByUse(params, body, ds);
 
-                if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
-                    dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
-                }
-                if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
-                    dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
-                }
+                    if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
+                        dataSourceMetadataForInsertion.push(...(assistant.dataSources || []));
+                        dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
+                    }
+                    if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
+                        dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
+                    }
 
                 if(dataSourceMetadataForInsertion.length > 0) {
 
-                    const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
-                        return {id: ds.id, name: ds.name, type:ds.type};
-                    });
+                        const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
+
+                            // If we have a userDataSourceId, use that, otherwise use the id.
+                            // This is important if we need the original file text for any reason.
+                            // The hash data source id can't be used to get the file text, but the
+                            // user data source id can. The user data source id can also be translated
+                            // back to the hash data source id if needed.
+                            const dsid =  (ds.metadata && ds.metadata.userDataSourceId) ?
+                                ds.metadata.userDataSourceId : ds.id;
+
+                            return {id: dsid, name: ds.name, type:ds.type};
+                        });
 
                     extraMessages.push({
                         role: "user",

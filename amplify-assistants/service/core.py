@@ -210,7 +210,8 @@ def create_assistant(event, context, current_user, name, data):
 
         for i in range(len(filtered_ds)):
             source = filtered_ds[i]
-            if (not source['id'].startswith("s3://")): filtered_ds[i]['id'] = source['key']
+            if "://" not in source['id']:
+                filtered_ds[i]['id'] = source['key']
         
         print(f"Final data sources before translation: {filtered_ds}")
 
