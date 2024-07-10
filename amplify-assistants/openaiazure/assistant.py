@@ -39,7 +39,6 @@ def create_code_interpreter_assistant (event, context, current_user, name, data)
   tags = extracted_data.get('tags', [])
   instructions = extracted_data['instructions']
   file_keys = extracted_data.get('dataSources', [])
-  tools = extracted_data.get('tools', [])
 
   # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
   return assistants.create_new_assistant(
@@ -49,7 +48,6 @@ def create_code_interpreter_assistant (event, context, current_user, name, data)
     instructions=instructions,
     tags=tags,
     file_keys=file_keys,
-    tools=tools
   )
 
 @validated(op="delete")
@@ -64,7 +62,7 @@ def delete_assistant(event, context, current_user, name, data):
 def get_presigned_url_code_interpreter(event, context, current_user, name, data):
   data = data['data']
   key = data['key']
-  file_name = data.get('file_name', None)
+  file_name = data.get('fileName', None)
 
   return assistants.get_presigned_download_url(key, current_user, file_name)
 

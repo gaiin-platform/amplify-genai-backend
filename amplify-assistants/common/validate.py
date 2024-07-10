@@ -244,6 +244,10 @@ download_ci_files_schema = {
         "key": {
             "type": "string",
             "description": "Key."
+        },
+        "fileName": {
+            "type": "string",
+            "description": "optional file name"
         }
     },
     "required": ["key"]
