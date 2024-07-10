@@ -142,6 +142,7 @@ functions:
   mtdCost:
     handler: usage/report_generator.get_mtd_cost
     memorySize: 128
+    timeout: 15 # seconds
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
