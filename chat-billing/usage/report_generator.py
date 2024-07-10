@@ -273,18 +273,26 @@ def get_mtd_cost(event, context, current_user, name, data):
         today_date_string = current_time.strftime("%Y-%m-%d")
         chat_records = []
 
-        # TODO: change from scan to GSI query
-        scan_kwargs = {
-            "FilterExpression": Key("time").begins_with(today_date_string)
-            & Attr("user").eq(email)
+        query_kwargs = {
+            "IndexName": "UserUsageTimeIndex",
+            "KeyConditionExpression": "#user = :email AND begins_with(#time, :today)",
+            "ExpressionAttributeNames": {
+                "#user": "user",
+                "#time": "time"
+            },
+            "ExpressionAttributeValues": {
+                ":email": email,
+                ":today": today_date_string
+            }
         }
+        
         done = False
         start_key = None
 
         while not done:
             if start_key:
-                scan_kwargs["ExclusiveStartKey"] = start_key
-            response = chat_table.scan(**scan_kwargs)
+                query_kwargs["ExclusiveStartKey"] = start_key
+            response = chat_table.query(**query_kwargs)
             chat_records.extend(response.get("Items", []))
             start_key = response.get("LastEvaluatedKey", None)
             done = start_key is None
