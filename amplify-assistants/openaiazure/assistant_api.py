@@ -181,7 +181,9 @@ def get_presigned_download_url(key, current_user, download_filename = None):
     bucket_name = os.environ['ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME']
     
     print(f"Getting presigned download URL for {key} for user {current_user}")
-
+    if (not (current_user in key)):
+        return {'success': False, 'message': 'User is noyt authorized to code interpreter files' }
+    
     response_headers = {
         'ResponseContentDisposition': f'attachment; filename="{download_filename}"'} if download_filename else {}
 
