@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 from botocore.exceptions import ClientError
 import re
-from cognito_user_groups import get_user_amplify_groups
+# from cognito_user_groups import get_user_cognito_amplify_groups
 
 load_dotenv(dotenv_path=".env.local")
 
@@ -108,21 +108,8 @@ create_assistant_schema = {
                 }
             }
         },
-        "tools": {
-            "type": "array",
-            "description": "A list of tools associated with the item",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "description": "The type of tool"
-                    }
-                }
-            }
-        }
     },
-    "required": ["name", "description", "tags", "instructions", "dataSources", "tools"]
+    "required": ["name", "description", "tags", "instructions", "dataSources"]
 }
 
 
@@ -155,21 +142,9 @@ create_code_interpreter_assistant_schema = {
                 "type": "string"
             }
         },
-        "tools": {
-            "type": "array",
-            "description": "A list of tools associated with the item",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "description": "The type of tool"
-                    }
-                }
-            }
-        }
+    
     },
-    "required": ["name", "description", "tags", "instructions", "fileKeys", "tools"]
+    "required": ["name", "description", "tags", "instructions", "fileKeys"]
 }
 
 share_assistant_schema = {
@@ -179,9 +154,10 @@ share_assistant_schema = {
         "recipientUsers": {"type": "array", "items": {"type": "string"}},
         "accessType": {"type": "string"},
         "dataSources": {"type": "array", "items": {"type": "string"}},
-        "policy": {"type": "string", "default": ""}
+        "policy": {"type": "string", "default": ""},
+        "note": {"type": "string"},
     },
-    "required": ["assistantId", "recipientUsers", "accessType"],
+    "required": ["assistantId", "recipientUsers"],
     "additionalProperties": False
 }
 
@@ -596,5 +572,6 @@ def determine_api_user(data):
 
 
 def get_groups(user, token):
-    amplify_groups = get_user_amplify_groups(token)
-    return amplify_groups
+    return ['Amplify_Dev_Api']
+    # amplify_groups = get_user_cognito_amplify_groups(token)
+    # return amplify_groups

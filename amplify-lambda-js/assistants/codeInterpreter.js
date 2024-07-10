@@ -64,7 +64,6 @@ const invokeCodeIterpreterAction =
                 tags: [],
                 instructions:  options.prompt + additionalPrompt,
                 fileKeys: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
-                tools: [{"type": "code_interpreter"}], 
             }
 
             try {

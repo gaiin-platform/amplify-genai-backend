@@ -23,6 +23,7 @@ dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
 
 model = "gpt-4o"
+tools = [{"type": "code_interpreter"}]
 
 def get(dictionary, *keys):
     return reduce(lambda d, key: d.get(key, None) if isinstance(d, dict) else None, keys, dictionary)
@@ -399,7 +400,7 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
                                     content= content,
                                     attachments= [{
                                                 "file_id": file_id,
-                                                "tools": [{"type": "code_interpreter"}]
+                                                "tools": tools
                                                 } for file_id in message['file_ids']
                                                 ])
         
@@ -837,8 +838,7 @@ def delete_thread_by_id(thread_id, user_id):
 def create_new_openai_assistant(
         assistant_name,
         instructions,
-        file_keys,
-        tools
+        file_keys
 ):
     print("Creating assistant with ", openai_provider)
     # Create a new assistant using the OpenAI Client
@@ -848,7 +848,6 @@ def create_new_openai_assistant(
     print("File keys: ", recent_file_keys)
 
     file_ids = file_keys_to_file_ids(recent_file_keys)
-
     assistant = (
                 client.beta.assistants.create(
                     name=assistant_name,
@@ -889,8 +888,7 @@ def create_new_assistant(
         description,
         instructions,
         tags,
-        file_keys,
-        tools
+        file_keys
 ):
     dynamodb = boto3.resource('dynamodb') 
     assistants_table = dynamodb.Table(os.environ['ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE'])
@@ -901,7 +899,7 @@ def create_new_assistant(
         if ('@' not in file_key_user) or len(file_key_user) < 6 or (user_id not in file_key_user):
             return {'success': False, 'error': 'You are not authorized to access the referenced files'}
 
-    assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys, tools)
+    assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys)
     if (not assistant_info['success']):
         return assistant_info
 
