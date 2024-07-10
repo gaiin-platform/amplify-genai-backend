@@ -48,7 +48,7 @@ provider:
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
     BILLING_DYNAMODB_TABLE: ${self:custom.stageVariables.BILLING_DYNAMODB_TABLE}
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
-    ACCOUNTS_DYNAMO_TABLE: ${self:custom.stageVariables.ACCOUNTS_DYNAMO_TABLE}
+    ACCOUNTS_DYNAMO_TABLE: "vu-amplify-${sls:stage}-accounts"
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
