@@ -6,6 +6,7 @@ import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {getOps} from "./ops/ops.js";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
+import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -116,6 +117,7 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
 
             handler: async (llm, params, body, ds, responseStream) => {
 
+                const references = {};
 
                 if(assistant.skipRag) {
                     params = {
@@ -165,12 +167,18 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                             return {id: dsid, name: ds.name, type:ds.type};
                         });
 
+                        addAllReferences(references, DATASOURCE_TYPE, dataSourceSummaries);
+                        const dsR = getReferencesByType(references, DATASOURCE_TYPE);
+
+                        const dataSourceText = "ID,NAME,TYPE\n" + dsR.map(
+                            r => r.type+r.id +","+r.object.name+","+r.object.type).join("\n");
+
                         extraMessages.push({
                             role: "user",
                             content:
 `You have the following data sources and documents available:
 -------------                        
-${JSON.stringify(dataSourceSummaries)}
+${dataSourceText}
 -------------
 `,
                         });
@@ -191,6 +199,20 @@ ${JSON.stringify(dataSourceSummaries)}
                         assistant: assistant,
                     }
                 );
+
+
+                llm.sendStateEventToStream({
+                    references: getReferences(references),
+                    opsConfig: {
+                        opFormat: {
+                            name: "functionCalling",
+                            type: "regex",
+                            opPattern: "(\\w+)\\s*\\((.*)\\)\\s*$",
+                            opIdGroup: 1,
+                            opArgsGroup: 2,
+                        },
+                    }
+                })
 
                 const updatedBody = {
                     ...body,
