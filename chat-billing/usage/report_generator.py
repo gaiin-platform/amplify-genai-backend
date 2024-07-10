@@ -236,6 +236,7 @@ def get_mtd_cost(event, context, current_user, name, data):
         history_table = dynamodb.Table(history_usage_table_name)
         history_records = []
         # TODO: change from scan to GSI query
+        # THIS IS VERY FAST
         resp = history_table.scan(
             FilterExpression=Key("userDateComposite").begins_with(email)
             & Key("date").between(first_day_of_month, current_time.strftime("%Y-%m-%d"))
@@ -273,6 +274,7 @@ def get_mtd_cost(event, context, current_user, name, data):
         today_date_string = current_time.strftime("%Y-%m-%d")
         chat_records = []
 
+        # THIS TAKES A LOT OF TIME
         query_kwargs = {
             "IndexName": "UserUsageTimeIndex",
             "KeyConditionExpression": "#user = :email AND begins_with(#time, :today)",
