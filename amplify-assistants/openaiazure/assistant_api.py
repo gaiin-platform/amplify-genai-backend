@@ -182,7 +182,7 @@ def get_presigned_download_url(key, current_user, download_filename = None):
     
     print(f"Getting presigned download URL for {key} for user {current_user}")
     if (not (current_user in key)):
-        return {'success': False, 'message': 'User is noyt authorized to code interpreter files' }
+        return {'success': False, 'message': 'User is not authorized to code interpreter files' }
     
     response_headers = {
         'ResponseContentDisposition': f'attachment; filename="{download_filename}"'} if download_filename else {}
