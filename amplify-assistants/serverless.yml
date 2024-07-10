@@ -164,6 +164,15 @@ functions:
           method: post
           cors: true
   
+  chat_code_interpreter_assistant:
+    handler: openaiazure/assistant.chat_with_code_interpreter
+    timeout: 30
+
+    events:
+      - http:
+          path: assistant/chat_with_code_interpreter
+          method: post
+          cors: true
 
   chat_code_interpreter_assistant_url: 
     handler: openaiazure/assistant.chat_with_code_interpreter
