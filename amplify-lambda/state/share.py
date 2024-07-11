@@ -7,9 +7,8 @@ import uuid
 
 from boto3.dynamodb.conditions import Key
 from common.object_permissions import update_object_permissions
-from common.data_sources import extract_key, translate_user_data_sources_to_hash_data_sources
+from common.data_sources import get_data_source_keys
 from common.share_assistants import share_assistant
-import copy
 import boto3
 
 from common.validate import HTTPException, validated
@@ -92,34 +91,6 @@ def get_base_prompts(event, context, current_user, name, data):
     }
 
 
-def get_data_source_keys(data_sources):
-    print("Get keys from data sources")
-    data_sources_keys = []
-    for i in range(len(data_sources)):
-        ds = data_sources[i]
-        # print("current datasource: ", ds)
-        key = ''
-        if (ds['id'].startswith("global/")):
-            key = ds['id']
-        else:
-            if (ds["id"].startswith("s3://global/")):
-                key = extract_key(ds['id'])
-            else:
-                ds_copy = copy.deepcopy(ds)
-                # Assistant attached data sources tends to have id vals of uuids vs they key we need
-                if ('key' in ds):
-                    ds_copy['id'] = ds["key"]
-
-                key = translate_user_data_sources_to_hash_data_sources([ds_copy])[0]['id']  # cant
-
-            print("Updated Key: ", key)
-
-        if (not key): return {'success': False, 'error': 'Could not extract key'}
-        data_sources_keys.append(key)
-
-    print("Datasource Keys: ", data_sources_keys)
-    return data_sources_keys
-
 
 def handle_conversation_datasource_permissions(access_token, recipient_users, conversations):
     print('Enter handle shared datasources in conversations')
@@ -152,17 +123,10 @@ def handle_share_assistant(access_token, prompts, recipient_users):
     for prompt in prompts:
         try:
             if ('data' in prompt and 'assistant' in prompt['data'] and 'definition' in prompt['data']['assistant']):
-                assistant_data = prompt['data']['assistant']['definition']
-
-                data_sources = assistant_data['dataSources']
-                print("Datasources: ", data_sources, " for assistant id: ", prompt['id'])
-                data_sources_keys = get_data_source_keys(data_sources)
-
                 data = {
                     'assistantId': prompt['id'],
                     'recipientUsers': recipient_users,
                     'accessType': 'read',
-                    'dataSources': data_sources_keys,
                     'policy': '',
                 }
 

@@ -153,7 +153,6 @@ share_assistant_schema = {
         "assistantId": {"type": "string", "description": "Code interpreter Assistant Id",},
         "recipientUsers": {"type": "array", "items": {"type": "string"}},
         "accessType": {"type": "string"},
-        "dataSources": {"type": "array", "items": {"type": "string"}},
         "policy": {"type": "string", "default": ""},
         "note": {"type": "string"},
     },

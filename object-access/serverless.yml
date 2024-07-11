@@ -87,14 +87,14 @@ functions:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
 
-  get_in_cognito_group:
-    handler: cognito_users.get_in_cognito_group
+  get_cognito_amplify_groups:
+    handler: cognito_users.get_user_groups
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30   
     events:
       - http:
-          path: /utilities/in_cognito_group
+          path: /utilities/get_user_groups
           method: get
     environment: 
       COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users

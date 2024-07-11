@@ -1,3 +1,4 @@
+from datetime import datetime
 import hashlib
 import os
 import time
@@ -7,13 +8,14 @@ import uuid
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
-from common.data_sources import translate_user_data_sources_to_hash_data_sources
+from common.data_sources import get_data_source_keys, translate_user_data_sources_to_hash_data_sources
 from common.encoders import CombinedEncoder
 from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
 
 from common.validate import validated
 
 from assistants.system_assistants.system_assistants import RESERVED_TAGS, get_system_assistants
+from decimal import Decimal
 
 
 def check_user_can_share_assistant(assistant, user_id):
@@ -249,8 +251,9 @@ def share_assistant(event, context, current_user, name, data):
     extracted_data = data['data']
     assistant_key = extracted_data['assistantId']
     recipient_users = extracted_data['recipientUsers']
-    access_type = extracted_data['accessType']
-    data_sources = extracted_data['dataSources']
+    access_type = extracted_data.get('accessType', 'read')
+    note = extracted_data.get('note', 'Shared via API')
+
     policy = extracted_data.get('policy', '')
 
     return share_assistant_with(
@@ -259,18 +262,20 @@ def share_assistant(event, context, current_user, name, data):
         assistant_key=assistant_key,
         recipient_users=recipient_users,
         access_type=access_type,
-        data_sources=data_sources,
+        note=note,
+        name=name,
         policy=policy
-
     )
 
 
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, data_sources, policy=''):
-    dynamodb = boto3.resource('dynamodb')
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, name, policy=''): # data_sources, 
     assistant_entry = get_assistant(assistant_key)
 
     if not assistant_entry:
         return {'success': False, 'message': 'Assistant not found'}
+    
+    data_sources = get_data_source_keys(assistant_entry['dataSources'])
+    print("DS: ", data_sources)
 
     if not can_access_objects(
             access_token=access_token,
@@ -301,6 +306,7 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
             permission_level='read',
             policy='')
 
+        failed_shares = []
         for user in recipient_users:     
 
             print(f"Creating alias for user {user} for assistant {assistant_public_id}")
@@ -308,8 +314,113 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
                                    'latest')
             print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
+            # if api accessed  
+            if (access_token.startswith("amp")):
+                print("API_accessed, sending to s3...")
+                result = assistant_share_save(current_user, user, note, name, assistant_entry)
+                if (not result['success']):
+                    print("Failed share for: ", user)
+                    failed_shares.append(user)
+
         print(f"Successfully updated permissions for assistant {assistant_public_id}")
-        return {'success': True, 'message': 'Permissions updated'}
+        if (len(failed_shares) > 0):
+            return {'success': False, 'message': 'Unable to share with some users', 'failedShares': failed_shares}
+        
+        return {'success': True, 'message': f"Assistants shared with users: {recipient_users}" }
+
+
+def assistant_share_save(current_user, shared_with, note, name, assistant):
+    try:
+        # Generate a unique file key for each user
+        dt_string = datetime.now().strftime('%Y-%m-%d')
+        s3_key = '{}/{}/{}/{}.json'.format(shared_with, current_user, dt_string, str(uuid.uuid4()))
+        
+        ast_id = assistant['id']
+
+        keys_to_copy = ['id', 'name', 'description', 'instructions', 'disclaimer', 
+                        'tags', 'dataSources', 'provider', 'uri', 'version', 'data',]
+        ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
+        ast['tools'] = []
+        ast['assistantId'] = ast_id
+        ast['fileKeys'] = []
+        #match frontend prompt data 
+        ast_prompt =  {
+                'id': ast_id,
+                'type': 'root_prompt',
+                'name': assistant['name'],
+                'description': assistant['description'],
+                'content': assistant['instructions'],
+                'folderId': "assistants",
+                'data': {
+                    'assistant': {'id': ast_id, 'definition': ast},
+                    **(assistant.get('data', {})),
+                    'noCopy': True,
+                    'noEdit': True,
+                    'noDelete': True,
+                    'noShare':True,
+                }
+            }
+        shared_data = {
+            'version': 1,
+            'history':[],
+            'prompts': ast_prompt,
+            'folders':[]
+        }
+        bucket_name = os.environ['S3_SHARE_BUCKET_NAME']
+        s3_client = boto3.client('s3')
+
+        print('Put assistant in s3')
+        s3_client.put_object(Body=json.dumps(shared_data, default=decimal_to_float).encode(), Bucket=bucket_name, Key=s3_key)
+
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(os.environ['SHARES_DYNAMODB_TABLE'])
+
+        response = table.query(
+            IndexName="UserNameIndex",
+            KeyConditionExpression=Key('user').eq(shared_with) & Key('name').eq(name)
+        )
+
+        items = response.get('Items')
+        timestamp = int(time.time() * 1000)
+
+        if not items:
+            # No item found with user and name, create a new item
+            id_key = '{}/{}'.format(shared_with, str(uuid.uuid4()))  # add the user's name to the key in DynamoDB
+            new_item = {
+                'id': id_key,
+                'user': shared_with,
+                'name': name,
+                'data': [{'sharedBy': current_user, 'note': note, 'sharedAt': timestamp, 'key': s3_key}],
+                'createdAt': timestamp,
+                'updatedAt': timestamp
+            }
+            table.put_item(Item=new_item)
+
+        else:
+            # Otherwise, update the existing item
+            item = items[0]
+
+            result = table.update_item(
+                Key={'id': item['id']},
+                ExpressionAttributeNames={'#data': 'data'},
+                ExpressionAttributeValues={
+                    ':data': [{'sharedBy': current_user, 'note': note, 'sharedAt': timestamp, 'key': s3_key}],
+                    ':updatedAt': timestamp},
+                UpdateExpression='SET #data = list_append(#data, :data), updatedAt = :updatedAt',
+                ReturnValues='ALL_NEW',
+            )
+        print('Added to table')
+
+        return {'success': True}
+
+    except Exception as e:
+        print(e)
+        return {'success': False}
+
+def decimal_to_float(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError("Object of type 'Decimal' is not JSON serializable")
 
 
 def get_most_recent_assistant_version(assistants_table,
@@ -784,3 +895,4 @@ def save_assistant_for_rag(assistant):
         print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
     except Exception as e:
         print(f"Error saving assistant for RAG: {e}")
+

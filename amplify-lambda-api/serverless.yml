@@ -83,7 +83,7 @@ functions:
           cors: true
 
   update_api_key:
-    handler: service/code:update_api_key_for_user
+    handler: service/core.update_api_keys_for_user
     events:
       - http:
           path: apiKeys/update_key
@@ -98,3 +98,10 @@ functions:
           method: put
           cors: true
 
+  get_system_ids:
+    handler: service/core.get_system_ids
+    events:
+      - http:
+          path: apiKeys/get_system_ids
+          method: post
+          cors: true

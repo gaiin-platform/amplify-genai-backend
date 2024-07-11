@@ -136,7 +136,7 @@ validators = {
     "/utilities/create_cognito_group": {
         "create_cognito_group": create_cognito_group
     },
-    "/utilities/in_cognito_group": {
+    "/utilities/get_user_groups": {
         "read": {}
     },
     "/utilities/emails": {
