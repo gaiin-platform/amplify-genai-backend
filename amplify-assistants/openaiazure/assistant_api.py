@@ -300,7 +300,7 @@ def create_new_thread_for_chat(client, messages, info):
         record_thread_usage(op_details, info) ## record when you create 
         
         print(f"Created thread: {thread_id}")
-        message_catch_up_on_thread(client, messages, info)
+        if (messages): message_catch_up_on_thread(client, messages, info)
     except Exception as e:
         print(e)
         return {'success': False, 'error': 'Failed to create new thread with the client.'}  
@@ -427,7 +427,11 @@ def chat(current_user, provider_assistant_id, messages, assistant_key, account_i
     'account_id': account_id
     }
 
-    thread_id_data = get_active_thread_id_for_chat(client, messages, info)
+    thread_id_data = None
+    if (messages == None):
+        thread_id_data = create_new_thread_for_chat(client, None, info)
+    else:
+        thread_id_data = get_active_thread_id_for_chat(client, messages, info)
     
     if (not thread_id_data['success']):
         return thread_id_data

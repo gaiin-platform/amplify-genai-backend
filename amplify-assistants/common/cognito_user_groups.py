@@ -2,10 +2,10 @@ import os
 import requests
 import json
 
-def get_user_amplify_groups(access_token):
+def get_user_cognito_amplify_groups(access_token):
     print("Initiate amplify groups call")
 
-    amplify_group_endpoint = os.environ['API_BASE_URL'] + '/utilities/in_amplify_group'
+    amplify_group_endpoint = os.environ['API_BASE_URL'] + '/utilities/get_user_groups'
 
     headers = {
         'Content-Type': 'application/json',
@@ -24,7 +24,7 @@ def get_user_amplify_groups(access_token):
             print("Error calling get user amplify groups: ",  response_content['body'].get("error", response.text))
             return []
         elif response.status_code == 200:
-            return body["amplifyGroups"]
+            return body["amplifyGroups"] + body["cognitoGroups"]
 
     except Exception as e:
         print(f"Error getting user amplify groups: {e}")

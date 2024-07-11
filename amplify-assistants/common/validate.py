@@ -316,6 +316,12 @@ api_validators = {
     "/assistant/files/download/codeinterpreter": {
         "download": download_ci_files_schema
     },
+     "/assistant/openai/thread/delete": {
+        "delete" :{}
+    },
+    "/assistant/openai/delete": {
+        "delete" :{}
+    }
 }
 
 

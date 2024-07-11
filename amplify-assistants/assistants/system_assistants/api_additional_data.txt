@@ -1,7 +1,6 @@
 Amplify endpoints:
 
 /chat - POST: Send a chat message and receive a response stream.
-/state/share - POST: Share state data.
 /state/share - GET: Retrieve shared state data.
 /state/share/load - POST: Load shared state data from storage.
 /assistant/files/upload - POST: Upload a file to Amplfy.
@@ -17,5 +16,8 @@ Amplify endpoints:
 /assistant/share - POST: Share an assistant with other users.
 /assistant/delete - POST: Delete an assistant by its ID.
 /assistant/files/download/codeinterpreter - POST: Download files for the Code Interpreter.
+
 /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes.
 /assistant/chat/codeinterpreter - POST: Start a chat session with a Code Interpreter assistant.
+/assistant/openai/thread/delete - DELETE: delete a code interpreter chat produced thread Id 
+assistant/openai/delete - DELETE: delete a code interpreter assistant produced assistnat Id 
