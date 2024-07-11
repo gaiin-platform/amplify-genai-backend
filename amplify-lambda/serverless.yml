@@ -74,6 +74,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVariables.API_KEYS_DYNAMODB_TABLE}
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
 
   iam:
     role:
@@ -158,6 +159,12 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
 
 functions:
+
+  chat:
+  handler: chat/service.chat_endpoint
+  events:
+    - http:
+      path: chat
 
   upload_conversation:
     handler: state/conversation.upload_conversation
