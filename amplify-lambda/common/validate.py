@@ -64,7 +64,6 @@ export_schema = {
                         "type": "array",
                         "items": {
                             "type": "object"
-                            #  You need to define the specific structure of "Message" objects as needed here
                         }
                     },
                     "compressedMessages": {
@@ -74,8 +73,7 @@ export_schema = {
                         }
                     },
                     "model": {
-                        "type": "string"
-                        #  If OpenAIModel is an enum of specific strings, use the "enum" constraint
+                        "type": "object"
                     },
                     "prompt": {
                         "type": ["string", "null"]
@@ -88,7 +86,6 @@ export_schema = {
                     },
                     "promptTemplate": {
                         "type": ["object", "null"]
-                        #  You need to define the structure of Prompt object if necessary here
                     },
                     "tags": {
                         "type": ["array", "null"],
@@ -101,7 +98,6 @@ export_schema = {
                     },
                     "workflowDefinition": {
                         "type": ["object", "null"]
-                        #  Define the structure of WorkflowDefinition, if there's a specific schema
                     },
                     "data": {
                         "type": ["object", "null"],
@@ -132,8 +128,8 @@ export_schema = {
                         "type": "string"
                     },
                     "type": {
-                        "type": "string", # Assuming FolderType is directly translatable to a string in JSON schema.
-                        "enum": ["personal", "shared", "archived"] # Replace with actual folder types if they differ.
+                        "type": "string", 
+                        "enum": ["chat", "workflow", "prompt"] 
                     }
                 },
                 "required": ["id", "name", "type"]
@@ -157,7 +153,7 @@ export_schema = {
                         "type": "string"
                     },
                     "model": {
-                        "type": ["string", "null"]
+                        "type": ["object", "null"]
                     },
                     "folderId": {
                         "type": ["string", "null"]
@@ -662,7 +658,7 @@ set_metdata_schema = {
 validators = {
     "/state/share": {
         "append": share_schema,
-        "create": {}
+        "read": {}
     },
     "/state/base-prompts/get": {
         "get": {}
@@ -754,9 +750,6 @@ validators = {
 }
 
 api_validators = {
-    "/state/share": {
-        "create": {}
-    },
     "/state/share/load": {
         "load": share_load_schema
     },
