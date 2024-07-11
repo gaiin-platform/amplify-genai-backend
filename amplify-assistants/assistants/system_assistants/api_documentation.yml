@@ -823,15 +823,34 @@ components:
               id:
                 type: string
                 description: "The key of the data source"
-        tools:
-          type: array
-          description: "A list of tools associated with the item"
-          items:
+        data:
+          type: object
+          properties:
             type: object
-            properties:
-              type:
-                type: string
-                description: "The type of tool"
+            dataSourceOptions:
+              type: object
+              properties:
+                insertAttachedDocumentsMetadata:
+                  type: boolean
+                  default: false
+                insertAttachedDocuments:
+                  type: boolean
+                  default: true
+                insertConversationDocuments:
+                  type: boolean
+                  default: false
+                disableDataSources:
+                  type: boolean
+                  default: false
+                insertConversationDocumentsMetadata:
+                  type: boolean
+                  default: false
+                ragConversationDocuments:
+                  type: boolean
+                  default: true
+                ragAttachedDocuments:
+                  type: boolean
+                  default: false
       required:
         - name
         - description

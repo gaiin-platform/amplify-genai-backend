@@ -24,6 +24,9 @@ def can_read_share(user, data):
 def can_read(user, data):
   return True
 
+def can_chat(user, data):
+  return True
+
 def get_permission_checker(user, type, op, data):
   print("Checking permissions for user: {} and type: {} and op: {}".format(user, type, op))
   return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
@@ -126,4 +129,7 @@ permissions_by_state_type = {
   "/state/conversation/delete_multiple": {
     "delete_multiple_conversations": can_delete_item
   },
+  "/chat": {
+    "chat": can_chat
+  }
 }

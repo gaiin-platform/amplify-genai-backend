@@ -71,7 +71,7 @@ provider:
     OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
-    API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVariables.API_KEYS_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
@@ -160,11 +160,13 @@ provider:
 
 functions:
 
-  chat:
-  handler: chat/service.chat_endpoint
-  events:
-    - http:
-      path: chat
+  chat_endpoint:
+    handler: chat/service.chat_endpoint
+    events:
+      - http:
+          path: chat
+          method: post
+          cors: true
 
   upload_conversation:
     handler: state/conversation.upload_conversation

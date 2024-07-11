@@ -42,6 +42,111 @@ class NotFound(HTTPException):
     def __init__(self, message="Not Found"):
         super().__init__(404, message)
 
+chat_input_schema = {
+  "type": "object",
+  "required": [
+    "model",
+    "temperature",
+    "max_tokens",
+    "messages"
+  ],
+  "properties": {
+    "model": {
+      "type": "string",
+      "enum": [
+        "gpt-35-turbo",
+        "gpt-4o",
+        "gpt-4-1106-Preview",
+        "anthropic.claude-3-haiku-20240307-v1:0",
+        "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "anthropic.claude-3-opus-20240229-v1:0",
+        "mistral.mistral-7b-instruct-v0:2",
+        "mistral.mixtral-8x7b-instruct-v0:1",
+        "mistral.mistral-large-2402-v1:0"
+      ]
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "max_tokens": {
+      "type": "integer"
+    },
+    "dataSources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "assistant",
+              "user"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "prompt"
+            ]
+          }
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "dataSourceOptions": {
+          "type": "object"
+        },
+        "ragOnly": {
+          "type": "boolean"
+        },
+        "skipRag": {
+          "type": "boolean"
+        },
+        "assistantId": {
+          "type": "string"
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "enum": [
+                "gpt-35-turbo",
+                "gpt-4o",
+                "gpt-4-1106-Preview",
+                "anthropic.claude-3-haiku-20240307-v1:0",
+                "anthropic.claude-3-5-sonnet-20240620-v1:0",
+                "anthropic.claude-3-opus-20240229-v1:0",
+                "mistral.mistral-7b-instruct-v0:2",
+                "mistral.mixtral-8x7b-instruct-v0:1",
+                "mistral.mistral-large-2402-v1:0"
+              ]
+            }
+          }
+        },
+        "prompt": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
 
 export_schema = {
     "type": "object",
@@ -747,6 +852,9 @@ validators = {
     "/state/conversation/delete": {
         "delete" : {}
     },
+    "/chat": {
+        "chat": chat_input_schema
+    }
 }
 
 api_validators = {
@@ -774,11 +882,15 @@ api_validators = {
     "/assistant/create": {
         "create": create_assistant_schema
     },
+    "/chat": {
+        "chat": chat_input_schema
+    }
 }
 
 def validate_data(name, op, data, api_accessed):
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
+        print(f"Name: {name} and Op: {op} and Data: {data}")
         schema = validator[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
