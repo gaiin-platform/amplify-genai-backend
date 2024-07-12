@@ -528,6 +528,29 @@ paths:
       security:
         - bearerAuth: []
 
+  /assistant/openai/thread/delete:
+    delete:
+      summary: Delete an OpenAI thread
+      operationId: deleteOpenAiThread
+      parameters:
+        - name: threadId
+          in: query
+          required: true
+          schema:
+            type: string
+
+  /assistant/openai/delete:
+    delete:
+      summary: Delete an OpenAI assistant
+      operationId: deleteOpenAiAssistant
+      parameters:
+        - name: assistantId
+          in: query
+          required: true
+          schema:
+            type: string
+  
+
 components:
   securitySchemes:
     bearerAuth:

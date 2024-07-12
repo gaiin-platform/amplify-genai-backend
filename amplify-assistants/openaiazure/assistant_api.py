@@ -958,7 +958,7 @@ def delete_assistant_by_id(assistant_id, user_id):
         return {'success': False, 'message': 'Not authorized to delete this assistant'}
 
     # Retrieve the OpenAI assistant ID
-    openai_assistant_id = item['data']['openai']['assistantId']  # Or use your `get` utility function
+    openai_assistant_id = item['data']['assistantId']  # Or use your `get` utility function
 
     # Delete the assistant from OpenAI
     try:

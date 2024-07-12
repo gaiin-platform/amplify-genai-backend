@@ -104,7 +104,15 @@ instructions (string): Required.
 disclaimer (string)
 uri (string or null)
 dataSources (array of objects): Required.
- - id(string)","200: Assistant creation response.
+ - id(string)
+dataSourceOptions (array of objects):
+ - insertAttachedDocumentsMetadata (boolean) Include Attached Data Source Metadata in Prompt
+ - insertAttachedDocuments (boolean) Include Attached Documents in Prompt
+ - insertConversationDocuments (boolean) Include Conversation Documents in Prompt
+ - disableDataSources (boolean) Disable Data Source Insertion
+ - insertConversationDocumentsMetadata (boolean) Include Conversation Data Source Metadata in Prompt
+ - ragConversationDocuments (boolean) Include Conversation Documents in RAG
+ - ragAttachedDocuments (boolean) Include Attached Documents in RAG","200: Assistant creation response.
 Content: application/json
 success (boolean)
 message (string)
@@ -116,8 +124,7 @@ message (string)
 data (array)",bearerAuth
 /assistant/share,POST,Share an assistant with other users.,"assistantId (string): Required.
 recipientUsers (array of strings): Required.
-note(string)
-policy (string): Default is an empty string.","200: Assistant sharing response.
+note (string)","200: Assistant sharing response.
 Content: application/json
 success (boolean)
 message (string)",bearerAuth
@@ -159,3 +166,9 @@ data (object):
                - file_key_low_res (string)
                - presigned_url_low_res (string)
                - file_size (int)",bearerAuth
+assistant/openai/delete,DELETE,,?hreadId = (Query Parameter),"200:
+success (boolean)
+message (string)",bearerAuth
+assistant/openai/thread/delete,DELETE,,?assistantId= (Querey Parameter),"200:
+success (boolean)
+message (string)",bearerAuth
