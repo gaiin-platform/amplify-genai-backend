@@ -224,6 +224,7 @@ def validated(op, validate_body=True):
                 
                 data['access_token'] = token
                 data['account'] = claims['account']
+                data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
                 result = f(event, context, current_user, name, data, None if api_accessed else claims['full_username'] )
 

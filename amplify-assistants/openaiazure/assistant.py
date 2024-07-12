@@ -7,27 +7,31 @@ import re
 
 @validated(op="chat") 
 def chat_with_code_interpreter(event, context, current_user, name, data):
-  # accessed through API   
-  if (data['access_token'].startswith('amp')):
-     account_id = data['account']
-     request_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
-
-  # accessed through amplify 
+  access = data['allowed_access']
+  if ('assistants' not in access and 'full_access' not in access):
+      return {'success': False, 'message': 'API key does not have access to assistant functionality'}
+  
   print("Chat_with_code_interpreter validated")
-  assistant_id = data['data'].get('id')
-  messages = data['data'].get('messages')
-  account_id = data['data'].get('accountId')
-  request_id = data['data'].get('requestId')
+  assistant_id = data['data']['assistantId']
+  messages = data['data']['messages']
+  
+  api_accessed =  data['api_accessed']
+  account_id = data['account'] if api_accessed else data['data']['accountId']
+  request_id = generate_req_id() if api_accessed else data['data']['requestId']
+  thread_id = data['data'].get('threadId', None)
 
   return assistants.chat_with_code_interpreter(
     current_user,
     assistant_id,
+    thread_id,
     messages,
     account_id,
-    request_id
+    request_id,
+    api_accessed
   )
 
-
+def generate_req_id():
+   return ''.join(random.choices(string.ascii_lowercase + string.digits, k=7)) 
 
 @validated(op="create")
 def create_code_interpreter_assistant (event, context, current_user, name, data):
@@ -66,7 +70,7 @@ def delete_assistant_thread(event, context, current_user, name, data):
   query_params = event.get('queryStringParameters', {})
   print("Query params: ", query_params)
   thread_id = query_params.get('threadId', '')
-  if (not thread_id or not is_valid_query_param_id(thread_id), current_user, 'thr'):
+  if (not thread_id or not is_valid_query_param_id(thread_id, current_user, 'thr')):
       return {
               'success': False,
               'message': 'Invalid or missing thread id parameter'

@@ -392,7 +392,7 @@ file_upload_schema = {
             "type": "object"
         }
     },
-    "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
+    "required": ["type", "name", "knowledgeBase", "tags", "data"],
 }
 
 file_set_tags_schema = {
@@ -951,6 +951,7 @@ def validated(op, validate_body=True):
                 
                 data['access_token'] = token
                 data['account'] = claims['account']
+                data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
 
                 result = f(event, context, current_user, name, data)
@@ -1103,8 +1104,8 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('file_upload' not in access and 'share' not in access
-                                        and 'full_access' not in access):
+        if ('file_upload' not in access and 'share' not in access 
+                                        and'full_access' not in access):
             print("API key doesn't have access to the functionality")
             raise PermissionError("API key does not have access to the required functionality")
 

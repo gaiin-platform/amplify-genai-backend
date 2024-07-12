@@ -63,7 +63,7 @@ const invokeCodeIterpreterAction =
                 description: description, 
                 tags: [],
                 instructions:  options.prompt + additionalPrompt,
-                fileKeys: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
+                dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
             }
 
             try {
@@ -87,7 +87,7 @@ const invokeCodeIterpreterAction =
         if (assistantId) {
             messages.at(-1)['content'] += "\nAlways include any code you write in your response inside code blocks in markdown. Do not include mock download links. Always generate files when asked. Always attach your generated files to your response."
             const chat_data = {
-                id: assistantId,
+                assistantId: assistantId,
                 messages: messages.slice(1),
                 accountId: account.accountId || 'general_account',
                 requestId: options.requestId

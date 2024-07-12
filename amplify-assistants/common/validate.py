@@ -135,7 +135,7 @@ create_code_interpreter_assistant_schema = {
             "type": "string",
             "description": "Instructions related to the item"
         },
-        "fileKeys": {
+        "dataSources": {
             "type": "array",
             "description": "A list of data sources keys",
             "items": {
@@ -144,7 +144,7 @@ create_code_interpreter_assistant_schema = {
         },
     
     },
-    "required": ["name", "description", "tags", "instructions", "fileKeys"]
+    "required": ["name", "description", "tags", "instructions", "dataSources"]
 }
 
 share_assistant_schema = {
@@ -164,7 +164,7 @@ share_assistant_schema = {
 chat_assistant_schema = {
     "type": "object",
     "properties": {
-        "id": {
+        "assistantId": {
             "type": "string"
         },
         "accountId": {
@@ -173,66 +173,99 @@ chat_assistant_schema = {
         "requestId": {
             "type": "string"
         },
+        "threadId" : {
+            "type": ["string", 'null']
+        },
         "messages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "content": {
-                        "type": "string"
-                    },
-                    "role": {
-                        "type": "string"
-                    },
-                    "type": {
-                        "type": "string"
-                    },
-                    "data": {
-                        "type": "object",
-                        "additionalProperties": True
-                    },
-                    "codeInterpreterMessageData": {
+            "oneOf": [
+                { # Messages through amplify 
+                    "type": "array",
+                    "items": {
                         "type": "object",
                         "properties": {
-                            "threadId": {"type": "string"},
-                            "role": {"type": "string"},
-                            "textContent": {"type": "string"},
+                            "id": {
+                                "type": "string"
+                            },
                             "content": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "type": {
-                                            "enum": ["image_file", "file", "application/pdf", "text/csv", "image/png"]
-                                        },
-                                        "values": {
+                                "type": "string"
+                            },
+                            "role": {
+                                "type": "string"
+                            },
+                            "type": {
+                                "type": "string"
+                            },
+                            "data": {
+                                "type": "object",
+                                "additionalProperties": True
+                            },
+                            "codeInterpreterMessageData": {
+                                "type": "object",
+                                "properties": {
+                                    "threadId": {"type": "string"},
+                                    "role": {"type": "string"},
+                                    "textContent": {"type": "string"},
+                                    "content": {
+                                        "type": "array",
+                                        "items": {
                                             "type": "object",
                                             "properties": {
-                                                "file_key": {"type": "string"},
-                                                "presigned_url": {"type": "string"},
-                                                "file_key_low_res": {"type": "string"},
-                                                "presigned_url_low_res": {"type": "string"},
-                                                "file_size": {"type": "integer"}
+                                                "type": {
+                                                    "enum": ["image_file", "file", "application/pdf", "text/csv", "image/png"]
+                                                },
+                                                "values": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "file_key": {"type": "string"},
+                                                        "presigned_url": {"type": "string"},
+                                                        "file_key_low_res": {"type": "string"},
+                                                        "presigned_url_low_res": {"type": "string"},
+                                                        "file_size": {"type": "integer"}
+                                                    },
+                                                    "required": ["file_key", "presigned_url"],
+                                                    "additionalProperties": False
+                                                }
                                             },
-                                            "required": ["file_key", "presigned_url"],
-                                            "additionalProperties": False
+                                            "required": ["type", "values"]
                                         }
-                                    },
-                                    "required": ["type", "values"]
-                                }
+                                    }
+                                },
+                                "required": []
                             }
                         },
-                        "required": []
+                        "required": ["id", "content", "role"]
                     }
-                },
-                "required": ["id", "content", "role"]
-            }
-        }
+                }, 
+                { # messages from API 
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {
+                                "type": "string"
+                            },
+                            "role": {
+                                "type": "string",
+                                "enum": ["user", "assistant"]
+                
+                            },
+                            "dataSourceIds" : {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                            
+                        },
+                        "required": ["content", "role"]
+                    }
+                }
+            ]
+        },
+
+    
     },
-    "required": ["id", "messages"]
+    "required": ["assistantId", "messages"]
 }
 
 
@@ -388,7 +421,9 @@ def validated(op, validate_body=True):
                 data['access_token'] = token
                 data['account'] = claims['account']
                 data['allowed_access'] = claims['allowed_access']
+                data['api_accessed'] = api_accessed
                 data['groups'] = get_groups(current_user, token)
+            
 
                 result = f(event, context, current_user, name, data)
 
@@ -541,7 +576,8 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('assistants' not in access and 'full_access' not in access):
+        if ('assistants' not in access and 'share' not in access
+                                       and 'full_access' not in access):
             print("API doesn't have access to assistants")
             raise PermissionError("API key does not have access to assistants functionality")
 

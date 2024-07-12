@@ -160,6 +160,7 @@ def validated(op, validate_body=True):
 
                 data['access_token'] = token
                 data['account'] = claims['account']
+                data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
                 
                 result = f(event, context, current_user, name, data)
@@ -244,7 +245,7 @@ def get_claims(event, context, token):
         # Here we can established the allowed access according to the feature flags in the future
         # For now it is set to full_access, which says they can do the operation upon entry of the validated function
         # current access types include: asssistants, share, dual_embedding, chat, file_upload
-        payload['allowed_access'] =  ['full_access']
+        payload['allowed_access'] = ['full_access']
         return payload
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
@@ -313,8 +314,7 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('file_upload' not in access and 'dual_embedding' not in access
-                                        and 'full_access' not in access):
+        if ('dual_embedding' not in access and 'full_access' not in access):
             print("API doesn't have access to file uploads")
             raise PermissionError("API key does not have access to file upload functionality")
 
@@ -329,7 +329,7 @@ def api_claims(event, context, token):
         # Determine API user
         current_user = determine_api_user(item)
 
-        return {'username': current_user, 'account': item['account']['id']}
+        return {'username': current_user, 'account': item['account']['id'], "allowed_access": access}
 
     except Exception as e:
         print("Error during DynamoDB operation:", str(e))

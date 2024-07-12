@@ -143,11 +143,6 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
-    access = data['allowed_access']
-    if ('share' not in access and 'full_access' not in access):
-        print("User does not have access to the share functionality")
-        return {'success': False, 'error': 'Error: User does not have access to the share functionality'}
-
     access_token = data['access_token']
 
     users = data['data']['sharedWith']
@@ -247,6 +242,10 @@ def remove_code_interpreter_details(conversations):
 
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to share functionality'}
+    
     tableName = os.environ['DYNAMODB_TABLE']
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(tableName)

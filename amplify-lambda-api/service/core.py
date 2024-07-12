@@ -10,7 +10,6 @@ import uuid
 import random
 import boto3
 import json
-from botocore.exceptions import ClientError
 import re
 
 
@@ -217,24 +216,47 @@ def create_api_key_for_user(user, api_key) :
         }
 
 @validated("update")
-def update_api_key_for_user(event, context, user, name, data):
-    #ensure key is not expired and is active to perform updates
-    data = data['data']
-    #update field needs to be one of the following 
-    item_id = data["id"]
-    updatable_fields = {
-       'rateLimit', 'expirationDate'
-    }
+def update_api_keys_for_user(event, context, user, name, data):
+    failed = []
+    for item in data['data']:
+        response = update_api_key(item["apiKeyId"], item["updates"])
+        if (not response['success']):
+            failed.append(response['key_name'])
+
+    return {"success": len(failed) == 0, "failedKeys": failed}
+
+
+@validated("update")
+def update_api_key(item_id, updates):
+    # Fetch the current state of the API key to ensure it is active and not expired
+    key_name = 'unknown'
+    try:
+        current_key = table.get_item(Key={'api_owner_id': item_id})
+        key_data = current_key['Item']
+        key_name = key_data["applicationName"]
+        if 'Item' not in current_key or not key_data['active'] or is_expired(key_data['expirationDate']):
+            return {'success': False, 'error': 'API key is inactive or expired or does not exist', "id": key_name}
+    except ClientError as e:
+        return {'success': False, 'error': str(e),  "id": key_name}
+
+    updatable_fields = {'rateLimit', 'expirationDate', 'account', 'accessTypes'}
     update_expression = []
     expression_attribute_values = {}
-    for field, value in data.items():
+    expression_attribute_names = {}
+
+    for field, value in updates.items():
         if field in updatable_fields:
-            update_expression.append(f"{field} = :{field}")
-            expression_attribute_values[f":{field}"] = value
+            # Use attribute names to avoid conflicts with DynamoDB reserved keywords
+            placeholder = f"#{field}"
+            value_placeholder = f":{field}"
+            update_expression.append(f"{placeholder} = {value_placeholder}")
+            expression_attribute_names[placeholder] = field
+            expression_attribute_values[value_placeholder] = value
+
 
     # Join the update expression and check if it's empty
     if not update_expression:
-        return {'success': False, 'error': 'No valid fields provided for update'}
+        return {'success': False, 'error': 'No valid fields provided for update', "id": key_name}
 
     # Construct the full update expression
     final_update_expression = "SET " + ", ".join(update_expression)
@@ -242,26 +264,27 @@ def update_api_key_for_user(event, context, user, name, data):
     try:
         response = table.update_item(
             Key={
-                'id': item_id
+                'api_owner_id': item_id
             },
             UpdateExpression=final_update_expression,
             ExpressionAttributeValues=expression_attribute_values,
+            ExpressionAttributeNames=expression_attribute_names,
             ReturnValues='UPDATED_NEW'
         )
         return {'success': True, 'updated_attributes': response['Attributes']}
     except ClientError as e:
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': str(e), "id": key_name}
 
 
 @validated("deactivate")
 def deactivate_key(event, context, user, name, data):
-    item_id = data['data']["id"]
+    item_id = data['data']["apiKeyId"]
     if not is_valid_id_format(item_id):
         return {
             'statusCode': 400,
             'body': json.dumps({'success': False, 'error': 'Invalid or missing API key ID parameter'})
         }
-    deactivate_key_in_dynamo(user, item_id)
+    return deactivate_key_in_dynamo(user, item_id)
 
 
 def deactivate_key_in_dynamo(user, key_id):
@@ -275,6 +298,7 @@ def deactivate_key_in_dynamo(user, key_id):
             item = response['Item']
 
             if (item['owner'] == user or item['delegate'] == user):
+                print("updating key")
                 update_response = table.update_item(
                     Key={
                         'api_owner_id': key_id
@@ -287,38 +311,20 @@ def deactivate_key_in_dynamo(user, key_id):
                 )
 
                 # Check if the item was successfully updated
-                if update_response['Attributes']['active'] == False:
-                    return {
-                        'statusCode': 200,
-                        'body': json.dumps({'success': True, 'message': 'API key successfully deactivated.'})
-                    }
+                if not update_response['Attributes']['active']:
+                    print("successfully deactivated")
+                    return {'success': True, 'message': 'API key successfully deactivated.'}
                 else:
-                    return {
-                        'statusCode': 400,
-                        'body': json.dumps({'success': False, 'error': 'Unable to update value to False.'})
-                    }
+                    return {'success': False, 'error': 'Unable to update value to False.'}
             else:
-                return {
-                    'statusCode': 403,
-                    'body': json.dumps({'success': False, 'error': 'Unauthorized to deactivate this API key'})
-                }
+                return {'success': False, 'error': 'Unauthorized to deactivate this API key'}
         else:
-            return {
-                'statusCode': 404,
-                'body': json.dumps({'success': False, 'error': 'API key not found'})
-            }
-    except ClientError as e:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'success': False, 'error': str(e)})
-        }
+            return {'success': False, 'error': 'API key not found'}
+
     except Exception as e:
         # Handle potential errors
         print(f"An error occurred: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'success': False, 'error': 'Failed to deactivate API key'})
-        }
+        return {'success': False, 'error': 'Failed to deactivate API key'}
 
 
 def is_valid_id_format(id):
@@ -328,5 +334,38 @@ def is_valid_id_format(id):
     return bool(match)
 
 def is_expired(date_str):
+    if (not date_str): return True
     date = datetime.strptime(date_str, '%Y-%m-%d')
     return date <= datetime.now()
+
+
+
+
+
+
+@validated("read")
+def get_system_ids(event, context, current_user, name, data): 
+    print("Getting system-specific API keys from DynamoDB")
+    try:
+        # Use a Scan operation with a FilterExpression to find items where the user is the owner and systemId is not null
+        response = table.scan(
+            FilterExpression="#owner = :user and attribute_exists(systemId)",
+            ExpressionAttributeNames={
+                "#owner": "owner"  # Use '#owner' to avoid reserved keyword conflicts
+            },
+            ExpressionAttributeValues={
+                ':user': current_user
+            },
+            ProjectionExpression="api_owner_id, #owner, delegate, applicationName, applicationDescription, createdAt, lastAccessed, rateLimit, expirationDate, accessTypes, active, account, systemId"
+        )
+        # Check if any items were found
+        if 'Items' in response and response['Items']:
+            print(f"System API keys found for owner {current_user}")
+            return {'success': True, 'data': response['Items']}
+        else:
+            print(f"No system API keys found for owner {current_user}")
+            return {'success': False, 'data': [], 'message': "No system API keys found."}
+    except Exception as e:
+        # Handle potential errors
+        print(f"An error occurred while retrieving system API keys for owner {current_user}: {e}")
+        return {'success': False, 'data': [], 'message': str(e)}

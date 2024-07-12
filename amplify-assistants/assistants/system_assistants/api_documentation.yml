@@ -946,7 +946,7 @@ components:
         instructions:
           type: string
           description: "Instructions related to the item"
-        fileKeys:
+        dataSources:
           type: array
           description: "A list of data sources keys"
           items:
@@ -965,7 +965,7 @@ components:
         - description
         - tags
         - instructions
-        - fileKeys
+        - dataSources
         - tools
 
     CodeInterpreterCreationError:

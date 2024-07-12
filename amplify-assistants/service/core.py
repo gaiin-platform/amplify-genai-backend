@@ -38,6 +38,9 @@ def check_user_can_update_assistant(assistant, user_id):
 
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('assistants' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to assistant functionality'}
     """
     Deletes an assistant from the DynamoDB table based on the assistant's public ID.
 
@@ -78,6 +81,9 @@ def delete_assistant(event, context, current_user, name, data):
 
 @validated(op="list")
 def list_assistants(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('assistants' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to assistant functionality'}
     """
     Retrieves all assistants associated with the current user.
 
@@ -178,6 +184,10 @@ def get_assistant(assistant_id):
 
 @validated(op="create")
 def create_assistant(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('assistants' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to assistant functionality'}
+    
     print(f"Creating assistant with data: {data}")
 
     extracted_data = data['data']
@@ -248,6 +258,11 @@ def create_assistant(event, context, current_user, name, data):
 
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to share functionality'}
+
+        
     extracted_data = data['data']
     assistant_key = extracted_data['assistantId']
     recipient_users = extracted_data['recipientUsers']
@@ -261,14 +276,14 @@ def share_assistant(event, context, current_user, name, data):
         current_user=current_user,
         assistant_key=assistant_key,
         recipient_users=recipient_users,
-        access_type=access_type,
         note=note,
-        name=name,
-        policy=policy
+        api_accessed=data['api_accessed'],
+        policy=policy,
+        
     )
 
 
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, name, policy=''): # data_sources, 
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, note, api_accessed, policy=''): # data_sources, 
     assistant_entry = get_assistant(assistant_key)
 
     if not assistant_entry:
@@ -285,39 +300,41 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
 
     assistant_public_id = assistant_entry['assistantId']
 
-    if not update_object_permissions(
-            access_token=access_token,
-            shared_with_users=recipient_users,
-            keys=[assistant_public_id],
-            object_type='assistant',
-            principal_type='user',
-            permission_level=access_type,
-            policy=policy):
-        print(f"Error updating permissions for assistant {assistant_public_id}")
-        return {'success': False, 'message': 'Error updating permissions'}
+    if False:
+        print("eh")
+    # not update_object_permissions(
+    #         access_token=access_token,
+    #         shared_with_users=recipient_users,
+    #         keys=[assistant_public_id],
+    #         object_type='assistant',
+    #         principal_type='user',
+    #         permission_level=access_type,
+    #         policy=policy):
+    #     print(f"Error updating permissions for assistant {assistant_public_id}")
+    #     return {'success': False, 'message': 'Error updating permissions'}
     else:
         print (f"Update data sources object access permissions for users {recipient_users} for assistant {assistant_public_id}")
-        update_object_permissions(
-            access_token=access_token,
-            shared_with_users=recipient_users,
-            keys=data_sources,
-            object_type='datasource',
-            principal_type='user',
-            permission_level='read',
-            policy='')
+        # update_object_permissions(
+        #     access_token=access_token,
+        #     shared_with_users=recipient_users,
+        #     keys=data_sources,
+        #     object_type='datasource',
+        #     principal_type='user',
+        #     permission_level='read',
+        #     policy='')
 
         failed_shares = []
         for user in recipient_users:     
 
-            print(f"Creating alias for user {user} for assistant {assistant_public_id}")
-            create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
-                                   'latest')
-            print(f"Created alias for user {user} for assistant {assistant_public_id}")
+            # print(f"Creating alias for user {user} for assistant {assistant_public_id}")
+            # create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
+            #                        'latest')
+            # print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
             # if api accessed  
-            if (access_token.startswith("amp")):
+            if (api_accessed):
                 print("API_accessed, sending to s3...")
-                result = assistant_share_save(current_user, user, note, name, assistant_entry)
+                result = assistant_share_save(current_user, user, note, assistant_entry)
                 if (not result['success']):
                     print("Failed share for: ", user)
                     failed_shares.append(user)
@@ -329,7 +346,7 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
         return {'success': True, 'message': f"Assistants shared with users: {recipient_users}" }
 
 
-def assistant_share_save(current_user, shared_with, note, name, assistant):
+def assistant_share_save(current_user, shared_with, note, assistant):
     try:
         # Generate a unique file key for each user
         dt_string = datetime.now().strftime('%Y-%m-%d')
@@ -337,9 +354,10 @@ def assistant_share_save(current_user, shared_with, note, name, assistant):
         
         ast_id = assistant['id']
 
-        keys_to_copy = ['id', 'name', 'description', 'instructions', 'disclaimer', 
-                        'tags', 'dataSources', 'provider', 'uri', 'version', 'data',]
-        ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
+        # keys_to_copy = ['id', 'name', 'description', 'instructions', 'disclaimer', 
+        #                 'tags', 'dataSources', 'provider', 'uri', 'version', 'data',]
+        # ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
+        ast = assistant
         ast['tools'] = []
         ast['assistantId'] = ast_id
         ast['fileKeys'] = []
@@ -360,21 +378,24 @@ def assistant_share_save(current_user, shared_with, note, name, assistant):
                     'noShare':True,
                 }
             }
+        ast_prompt['data']['access']['write'] = False
         shared_data = {
             'version': 1,
             'history':[],
-            'prompts': ast_prompt,
-            'folders':[]
+            'prompts': [ast_prompt],
+            'folders':[],
+            'sharedBy': current_user
         }
         bucket_name = os.environ['S3_SHARE_BUCKET_NAME']
         s3_client = boto3.client('s3')
 
         print('Put assistant in s3')
-        s3_client.put_object(Body=json.dumps(shared_data, default=decimal_to_float).encode(), Bucket=bucket_name, Key=s3_key)
+        s3_client.put_object(Body=json.dumps(shared_data, default=str).encode(), Bucket=bucket_name, Key=s3_key)
 
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table(os.environ['SHARES_DYNAMODB_TABLE'])
 
+        name = '/state/share'
         response = table.query(
             IndexName="UserNameIndex",
             KeyConditionExpression=Key('user').eq(shared_with) & Key('name').eq(name)

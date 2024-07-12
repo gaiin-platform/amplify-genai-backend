@@ -3,20 +3,23 @@ Amplify endpoints:
 /chat - POST: Send a chat message and receive a response stream.
 /state/share - GET: Retrieve shared state data.
 /state/share/load - POST: Load shared state data from storage.
+
 /assistant/files/upload - POST: Upload a file to Amplfy.
 /assistant/files/query - POST: view uploaded files.
 /assistant/tags/list - POST: List all tags.
 /assistant/tags/create - POST: Create new tags.
 /assistant/tags/delete - POST: Delete a tag.
 /assistant/files/set_tags - POST: Associate tags with a file.
+
 /embedding-dual-retrieval - POST: Retrieve related documents based on user input through the dual retrieval method.
 /embedding-retrieval - POST: Retrieve related documents based on user input.
+
 /assistant/create - POST: Create a new assistant with specified attributes.
 /assistant/list - GET: Retrieve a list of all assistants.
 /assistant/share - POST: Share an assistant with other users.
 /assistant/delete - POST: Delete an assistant by its ID.
-/assistant/files/download/codeinterpreter - POST: Download files for the Code Interpreter.
 
+/assistant/files/download/codeinterpreter - POST: Download files for the Code Interpreter.
 /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes.
 /assistant/chat/codeinterpreter - POST: Start a chat session with a Code Interpreter assistant.
 /assistant/openai/thread/delete - DELETE: delete a code interpreter chat produced thread Id 

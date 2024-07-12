@@ -95,7 +95,7 @@ functions:
     events:
       - http:
           path: apiKeys/deactivate_key
-          method: put
+          method: post
           cors: true
 
   get_system_ids:
