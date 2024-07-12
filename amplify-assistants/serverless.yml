@@ -46,7 +46,7 @@ provider:
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
-    BILLING_DYNAMODB_TABLE: ${self:custom.stageVariables.BILLING_DYNAMODB_TABLE}
+    BILLING_DYNAMODB_TABLE: chat-billing-${sls:stage}-additional-charges
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
     S3_SHARE_BUCKET_NAME: vu-amplify-${sls:stage}-share
     SHARES_DYNAMODB_TABLE: vu-amplify-${sls:stage}

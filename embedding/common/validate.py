@@ -83,9 +83,6 @@ dual_retrieval_schema = {
 }
 
 validators = {
-    "/embedding-retrieval": {
-        "retrieval": process_input_schema 
-    },
     "/embedding-dual-retrieval": {
         "dual-retrieval": dual_retrieval_schema
         }
@@ -93,7 +90,9 @@ validators = {
 
 
 api_validators = {
-
+    "/embedding-dual-retrieval": {
+        "dual-retrieval": dual_retrieval_schema
+        }
 }
 
 
