@@ -1,4 +1,4 @@
-Path,Method,Summary,Expected Data,Responses,Security
+Path,Method,Summary,Expected Data,Responses,Security,Example Body,Notes
 /chat,POST,Send a chat message and receive a response.,"model (string): Required. Options include gpt-35-turbo, gpt-4o, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0
 temperature (number)
 max_tokens (integer)
@@ -20,18 +20,41 @@ data (string)
 400: Bad request, invalid or missing fields.
 401: Unauthorized, invalid authentication credentials.
 403: Forbidden, request refused.
-404: Not found, resource not found.",bearerAuth
+404: Not found, resource not found.",bearerAuth,"{
+    ""data"":{
+        ""model"": ""gpt-4o"",
+        ""temperature"": 0.7,
+        ""max_tokens"": 150,
+        ""dataSources"": [],
+        ""messages"": [
+            {
+            ""role"": ""user"",
+            ""content"": ""What is the capital of France?""
+            }
+        ],
+        ""options"": {
+            ""ragOnly"": false,
+            ""skipRag"": true,
+            ""model"": [""gpt-4o""],
+            ""prompt"": ""What is the capital of France?""
+        }
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Chat completed successfully"",
+    ""data"": ""The capital of France is Paris.""
+}"
 /state/share,GET,Retrieve shared state data.,,"200: List of shared data records.
 Content: application/json
 sharedBy (string)
 note (string)
 sharedAt (string, date-time)
-key (string)",bearerAuth
+key (string)",bearerAuth,,
 /state/share/load,POST,Load shared state data from storage.,key (string): Required.,"200: Shared data loaded successfully.
 Content: application/json
 exportSchema
 401: User does not have access to the share functionality.
-404: Data not found.",
+404: Data not found.",,,
 /assistant/files/upload,POST,Upload a file to the assistant.,"actions (array of objects): Required.
 name (string): Required. Options include saveAsData, createChunks, etc.
 params (object)
@@ -48,25 +71,25 @@ contentUrl (string, nullable)
 metadataUrl (string, nullable)
 key (string, nullable)
 400: Bad request, incorrect or missing parameters.
-401: User does not have access to the file upload functionality.",bearerAuth
+401: User does not have access to the file upload functionality.",bearerAuth,,
 /assistant/tags/list,POST,List all tags.,,"200: A list of tags.
 Content: application/json
 success (boolean)
 data (object)
-tags (array of strings)",bearerAuth
+tags (array of strings)",bearerAuth,,
 /assistant/tags/create,POST,Create new tags.,tags (array of strings): Default is an empty array.,"200: Result of tag creation.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth
+message (string)",bearerAuth,,
 /assistant/tags/delete,POST,Delete a tag.,tag (string): Required.,"200: Result of tag deletion.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth
+message (string)",bearerAuth,,
 /assistant/files/set_tags,POST,Associate tags with a file.,"id (string): Required.
 tags (array of strings): Default is an empty array.","200: Result of setting file tags.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth
+message (string)",bearerAuth,,
 /assistant/files/query,POST,Query files based on various filter criteria.,"startDate (string, date-time): Default is 2021-01-01T00:00:00Z.
 pageSize (integer): Default is 10.
 pageKey (object):
@@ -85,17 +108,17 @@ Content: application/json
 success (boolean)
 data (object)
 items (array of objects)
-pageKey (object): Key to retrieve the next page of results",bearerAuth
+pageKey (object): Key to retrieve the next page of results",bearerAuth,,
 /embedding-dual-retrieval,POST,Retrieve related documents based on user input through dual retrieval method.,"userInput (string): Required.
 dataSources (array of strings): Required.
 limit (integer)","200: A list of documents related to the user input.
 Content: application/json
-result (array)",
+result (array)",bearerAuth,,
 /embedding-retrieval,POST,Retrieve related documents based on user input.,"userInput (string): Required.
 dataSources (array of strings): Required.
 limit (integer)","200: A list of documents related to the user input.
 Content: application/json
-result (array)",
+result (array)",bearerAuth,,
 /assistant/create,POST,Create a new assistant with specified attributes.,"name (string): Required.
 description (string): Required.
 assistantId (string): Needed if updating an existing assistant. Will provide you with one if creating a new assitant
@@ -116,22 +139,22 @@ dataSourceOptions (array of objects):
 Content: application/json
 success (boolean)
 message (string)
-data (object)",bearerAuth
+data (object)",bearerAuth,,
 /assistant/list,GET,Retrieve a list of all assistants.,,"200: List of assistants retrieved successfully.
 Content: application/json
 success (boolean)
 message (string)
-data (array)",bearerAuth
+data (array)",bearerAuth,,
 /assistant/share,POST,Share an assistant with other users.,"assistantId (string): Required.
 recipientUsers (array of strings): Required.
 note (string)","200: Assistant sharing response.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth
+message (string)",bearerAuth,,
 /assistant/delete,POST,Delete an assistant by its ID.,assistantId (string): Required.,"200: Assistant deletion response.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth
+message (string)",bearerAuth,,
 /assistant/create/codeinterpreter,POST,Create a new Code Interpreter Assistant,"name (string): Required.
 description (string): Required.
 tags (array of strings): Required.
@@ -143,13 +166,13 @@ message (boolean)
 data (object):
  - assitantId (string)
  - provider (string)
-",bearerAuth
+",bearerAuth,,
 /assistant/files/download/codeinterpreter,POST,Download files for the Code Interpreter,"key (string): Required.
 fileName (string): Not required, will automatically download if given the specific file name","200: File download for Code Interpreter.
 Content: application/json
 oneOf:
 FileNotFoundResponse
-FileDownloadResponse",bearerAuth
+FileDownloadResponse",bearerAuth,,
 /assistant/chat/codeinterpreter,POST,Chat with Code Interpreter,,"200: Returns the chat response from the Code Interpreter assistant.
 success (boolean)
 message (string)
@@ -165,10 +188,22 @@ data (object):
                - presigned_url (string)
                - file_key_low_res (string)
                - presigned_url_low_res (string)
-               - file_size (int)",bearerAuth
-assistant/openai/delete,DELETE,,?hreadId = (Query Parameter),"200:
+               - file_size (int)",bearerAuth,"{   ""data"": {
+        ""assistantId"": ""kyle.j.shepherd@vanderbilt.edu/ast/5aad8273-787c-4810-9255-9991d72b2936"",
+        ""messages"": [
+            { ""role"": ""user"",
+              ""content"" : ""Can you tell me something about the data analytics and what you are able to do?"",
+              ""dataSourceIds"" : []
+            }
+        ]
+    }
+}","{
+    ""success"": false,
+    ""error"": ""Failed to create new thread with the client.""
+}"
+/assistant/openai/delete,DELETE,,?hreadId = (Query Parameter),"200:
 success (boolean)
-message (string)",bearerAuth
-assistant/openai/thread/delete,DELETE,,?assistantId= (Querey Parameter),"200:
+message (string)",bearerAuth,,
+/assistant/openai/thread/delete,DELETE,,?assistantId= (Querey Parameter),"200:
 success (boolean)
-message (string)",bearerAuth
+message (string)",bearerAuth,,
