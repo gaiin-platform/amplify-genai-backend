@@ -66,10 +66,10 @@ export const getFileText = async (key) => {
 }
 
 export const isDocument = ds =>
-    (ds.id && ds.id.indexOf("://") < 0) ||
-    (ds.key && ds.key.indexOf("://") < 0) ||
-    (ds.id && ds.id.startsWith("s3://")) ||
-    (ds.key && ds.key.startsWith("s3://"));
+    (ds && ds.id && ds.id.indexOf("://") < 0) ||
+    (ds && ds.key && ds.key.indexOf("://") < 0) ||
+    (ds && ds.id && ds.id.startsWith("s3://")) ||
+    (ds && ds.key && ds.key.startsWith("s3://"));
 
 
 
@@ -411,6 +411,7 @@ const getChunkAggregator = (maxTokens, options) => {
             // If the current chunk is too big, push it to the chunks array and start a new one
             if (currentChunk.length > 0) {
                 chunks.push({
+                    dataSource,
                     id: dataSource.id + "?chunk=" + chunks.length,
                     context: formattedSourceName + currentChunk,
                     tokens: currentTokenCount,
