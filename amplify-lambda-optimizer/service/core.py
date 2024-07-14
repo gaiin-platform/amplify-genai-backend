@@ -48,8 +48,9 @@ def optimize(event, context, current_user, name, data):
 
         data = data['data']
         datasource = data.get('dataSource', None)
-        query = data['query']
+        query = data.get('prompt', data.get('query', None))
         account = data.get('account', 'default')
+        max_placeholders = data.get('maxPlaceholders', 3)
 
         # If you specified additionalParams, you could also extract them here from data.
         # This is an example with a default value in case it isn't configured.
@@ -69,7 +70,7 @@ def optimize(event, context, current_user, name, data):
         chat_url = os.getenv('CHAT_ENDPOINT')
         model = os.getenv('DEFAULT_LLM_QUERY_MODEL')
 
-        idea = PromptInput(task=query)
+        idea = PromptInput(task=query, max_placeholders=max_placeholders)
         result = prompt_generator(
             task=idea,
             model=model,
@@ -109,6 +110,7 @@ def optimize(event, context, current_user, name, data):
 
 class PromptInput(BaseModel):
     task: str = Field(description="The task to generate a prompt template for.")
+    max_placeholders: int = Field(description="The maximum number of placeholders to use in the prompt template.")
 
 class PromptTemplateOutput(BaseModel):
     prompt_template: str = Field(description="The template for a useful prompt.")
@@ -140,13 +142,36 @@ def prompt_generator(task: PromptInput) -> PromptTemplateOutput:
     outside information, etc. If the prompt relies on a lot of information (e.g., more than a sentence or two),
     separate it like this:
     ----------------
-    {{INSERT TEXT}}
+    {{2-3 Word Description of the Information Needed}}
     ----------------
+
+    Examples:
+    ----------------
+    {{Name of the Company}}
+    {{Description of the Company}}
+    {{Industry of the Company}}
+    ----------------
+
+    If the information that is needed is a file, you can suffix the placeholder with the file type like this:
+    {{Some File You Need:file}}
+
+    Examples:
+    ----------------
+    {{Company Financials:file}}
+    {{Company Description:file}}
+    ----------------
+
+    The only allowed suffix is file. Otherwise, it should have no suffix.
+
+    If there is no additional information that is needed, you can just create the prompt template with no
+    placeholders.
+
     Be thoughtful and detailed in creating a really useful prompt that can be reused and are very detailed.
     If there is a specific domain that the prompt is for, make sure to include a detailed "Act as ..." with
     a detailed description of the role that the LLM is supposed to take on.
 
-    You may ask for AT MOST 3-4 pieces of information. Everything else must be inferred by the LLM.
+    Unless told otherwise, you may ask for AT MOST 3-4 pieces of information with placeholders.
+    Everything else must be inferred by the LLM.
 
     If you are creating a specific format in markdown for the LLM to fill in, you can leave placeholders for
     the LLM to fill in with the format <Insert XYZ>. For example, you might have a template like:

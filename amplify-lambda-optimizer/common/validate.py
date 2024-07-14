@@ -45,14 +45,16 @@ optimize_schema = {
     "title": "Data Schema",
     "type": "object",
     "properties": {
-        "input": {
+        "prompt": {
             "type": "string"
         },
-        "output": {
+        "query": {
             "type": "string"
         },
+        "maxPlaceholders": {
+            "type": "integer"
+        }
     },
-    "required": ["input", "output"],
     "additionalProperties": True
 }
 
@@ -62,9 +64,7 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/optimizer/prompt": {
-        "query": optimize_schema
-    },
+
 }
 
 
