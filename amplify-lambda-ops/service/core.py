@@ -3,10 +3,20 @@ import boto3
 
 from boto3.dynamodb.types import TypeDeserializer
 from common.validate import validated
+from common.ops import op
 
 dynamodb = boto3.client('dynamodb')
 
 
+@op(
+    path="/ops/get",
+    tags=["ops", "default"],
+    name="getOperations",
+    description="Get a list of available operations for an assistant.",
+    params={
+        "tag": "The optional tag to search for.",
+    }
+)
 @validated(op="get")
 def get_ops(event, context, current_user, name, data):
     data = data['data']

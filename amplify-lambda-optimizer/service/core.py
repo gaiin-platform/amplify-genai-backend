@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 @op(
     path="/optimizer/prompt",
-    name="optimize",
+    name="generateOptimizedPrompt",
+    tags=["prompts"],
     description="Generate an optimized prompt for a task.",
     params={
         "prompt": "The task to generate a prompt template for.",
