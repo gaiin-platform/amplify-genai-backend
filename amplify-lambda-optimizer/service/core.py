@@ -1,11 +1,21 @@
 import os
 import uuid
 
+from common.ops import op
 from common.validate import validated
 from llm.chat import chat, prompt
 from pydantic import BaseModel, Field
 
 
+@op(
+    path="/optimizer/prompt",
+    name="optimize",
+    description="Generate an optimized prompt for a task.",
+    params={
+        "prompt": "The task to generate a prompt template for.",
+        "maxPlaceholders": "The maximum number of placeholders to use in the prompt template."
+    }
+)
 @validated(op="optimize")
 def optimize(event, context, current_user, name, data):
     try:
@@ -132,7 +142,16 @@ def prompt_generator(task: PromptInput) -> PromptTemplateOutput:
     5. Aiding in summarization, drafting of plans, identification of
     supporting quotations or evidence, identification of assumptions, in 3-5 pages of text. Provide one
     approach to using ChatGPT to perform the following and one specific prompt that would be used for this.
-    6. Extracting structured information from unstructured text by having the LLM extract and reformat
+    6. Prompts that walk the user through a step-by-step diagnosis process by instructing the LLM to ask
+    the user questions one at a time,
+    waiting for the answer, and then asking the next question based on the answer to the previous question until
+    the diagnosis is complete, enough information is collected for the LLM to perform a task, the user has learned something
+    an analysis is complete, etc. These prompts should include a specific instruction to tell the LLM to ask the user a question or
+    do something one at a time, wait for the answer, and then have the LLM ask the next question, etc. The LAST statement in these
+    prompts must be exactly "Ask the first question" or "Tell me the first step". The LLM can also ask the user to run
+    a command, run code that it writes in python, etc. to collect information or perform a task in a computer
+    system (e.g., run a query on a database, run a bash command to collect diagnostic info, etc.).
+    7. Extracting structured information from unstructured text by having the LLM extract and reformat
     the information into a new structured format.
 
     First, think about the inputs that the user would need to provide to the prompt to make sure it has
