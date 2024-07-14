@@ -108,7 +108,7 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
 
                             operation = OperationModel(
                                 description=op_kwargs['description'].s,
-                                id=node.name,
+                                id=op_kwargs['name'].s,
                                 includeAccessToken=True,  # Assuming ops will include access token
                                 method="POST",  # Default method
                                 name=op_kwargs['name'].s,

@@ -494,22 +494,31 @@ def update_file_tags(current_user, item_id, tags):
 
 
 @op(
-    path="/assistant/tags/query",
-    name="queryFiles",
+    path="/assistant/files/query",
+    name="queryFilesByNameAndType",
     tags=["files"],
     description="Search a user's list of files with a query.",
     params={
-        "sortIndex": "The index to sort the results by. Default is 'createdAt'."
-                     " Possible values are 'createdAt', 'name', and 'type'.",
-        "pageSize": "The number of items to return per page. Default is 10.",
-        "pageKey": "The key to start the query from.",
         "namePrefix": "The prefix to search for in the file names.",
-        "createdAtPrefix": "The prefix to search for in the created dates.",
-        "typePrefix": "The prefix to search for in the file types.",
-        "types": "A list of file types to filter by.",
-        "tags": "A tag to search for in the file tags.",
-        "pageIndex": "The index of the page to return. Default is 0.",
-        "forwardScan": "Whether to scan forward or backward. Default is False."
+        "types": "A list of file mime types (e.g., 'application/pdf', 'text/plain', etc.) and must not be empty.",
+    }
+)
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByName",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "namePrefix": "The prefix to search for in the file names."
+    }
+)
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByTags",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "tags": "A list of tags to search for or an empty list.",
     }
 )
 @validated(op="query")
