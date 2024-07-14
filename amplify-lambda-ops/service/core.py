@@ -20,14 +20,14 @@ dynamodb = boto3.client('dynamodb')
 @validated(op="get")
 def get_ops(event, context, current_user, name, data):
     data = data['data']
-
-    # Get the DynamoDB table name from the environment variable
-    table_name = os.environ.get('OPS_DYNAMODB_TABLE')
-
-    # Create a DynamoDB client
-
     # Get the 'tag' parameter from the request data
     tag = data.get('tag', 'default')
+    return fetch_user_ops(current_user, tag)
+
+
+def fetch_user_ops(current_user, tag):
+    # Get the DynamoDB table name from the environment variable
+    table_name = os.environ.get('OPS_DYNAMODB_TABLE')
 
     print(f"Finding operations for user {current_user} with tag {tag}")
 
@@ -53,6 +53,15 @@ def get_ops(event, context, current_user, name, data):
     data_from_dynamo = [op for sublist in data_from_dynamo for op in sublist]
 
     print(f"Found operations {data_from_dynamo} for user {current_user} with tag {tag}")
+
+    if current_user != "system":
+        try:
+            system_ops = fetch_user_ops("system", tag)
+            print(f"System operations: {system_ops}")
+            system_ops = system_ops['data']
+            data_from_dynamo.extend(system_ops)
+        except Exception as e:
+            print(f"Failed to retrieve system operations: {e}")
 
     return {
         "success": True,
