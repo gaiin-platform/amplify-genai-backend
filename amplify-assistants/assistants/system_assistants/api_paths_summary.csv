@@ -1,4 +1,4 @@
-Path,Method,Summary,Expected Data,Responses,Security,Example Body,Notes
+Path,Method,Summary,Expected Data,Responses,Security,Example Body,Notes,
 /chat,POST,Send a chat message and receive a response.,"model (string): Required. Options include gpt-35-turbo, gpt-4o, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0
 temperature (number)
 max_tokens (integer)
@@ -43,18 +43,27 @@ data (string)
     ""success"": true,
     ""message"": ""Chat completed successfully"",
     ""data"": ""The capital of France is Paris.""
-}"
+}",
 /state/share,GET,Retrieve shared state data.,,"200: List of shared data records.
 Content: application/json
 sharedBy (string)
 note (string)
 sharedAt (string, date-time)
-key (string)",bearerAuth,,
+key (string)",bearerAuth,,"[{
+        ""note"": ""testing share wit a doc "",
+        ""sharedAt"": 1720714099836,
+        ""key"": ""yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932804035837948202934805-24382.json"",
+        ""sharedBy"": ""sharedByEmail@vanderbilt.edu""
+    }],",
 /state/share/load,POST,Load shared state data from storage.,key (string): Required.,"200: Shared data loaded successfully.
 Content: application/json
 exportSchema
 401: User does not have access to the share functionality.
-404: Data not found.",,,
+404: Data not found.",,"{
+    ""data"": {
+        ""key"": ""yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932804035837948202934805-24382.json""
+    }
+}",Too big of example,
 /assistant/files/upload,POST,Upload a file to the assistant.,"actions (array of objects): Required.
 name (string): Required. Options include saveAsData, createChunks, etc.
 params (object)
@@ -71,25 +80,83 @@ contentUrl (string, nullable)
 metadataUrl (string, nullable)
 key (string, nullable)
 400: Bad request, incorrect or missing parameters.
-401: User does not have access to the file upload functionality.",bearerAuth,,
+401: User does not have access to the file upload functionality.",bearerAuth,"{
+    ""data"":{
+        ""actions"": [
+            {""name"": ""saveAsData"",
+            ""params"": {}},
+            {""name"": ""createChunks"",
+            ""params"": {}},
+            {""name"": ""ingestRag"",
+            ""params"": {}},
+            {""name"": ""makeDownloadable"",
+            ""params"": {}},
+            {""name"": ""extractText"",
+            ""params"": {}}
+        ],
+        ""type"": ""application/fileExtension"",
+        ""name"": ""fileName.pdf"",
+        ""knowledgeBase"": ""default"",
+        ""tags"": [],
+        ""data"": {}
+    }
+}","{
+    ""success"": true,
+    ""uploadUrl"": ""<uploadUrl>"",
+    ""statusUrl"": ""<statusUrl>"",
+    ""contentUrl"": ""<contentUrl>"",
+    ""metadataUrl"": ""<metadataUrl>"",
+    ""key"": ""yourEmail@vanderbilt.edu/date/2930497329-490823.json""
+}",
 /assistant/tags/list,POST,List all tags.,,"200: A list of tags.
 Content: application/json
 success (boolean)
 data (object)
-tags (array of strings)",bearerAuth,,
+tags (array of strings)",bearerAuth,"{
+    ""data"": {}
+}","{
+    ""success"": true,
+    ""data"": {
+        ""tags"": [
+            ""NewTag""
+        ]
+    }
+}",
 /assistant/tags/create,POST,Create new tags.,tags (array of strings): Default is an empty array.,"200: Result of tag creation.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth,,
+message (string)",bearerAuth,"{
+    ""data"": {
+        ""tags"": [""NewTag""]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Tags added successfully""
+}",
 /assistant/tags/delete,POST,Delete a tag.,tag (string): Required.,"200: Result of tag deletion.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth,,
+message (string)",bearerAuth,"{
+    ""data"":{
+        ""tag"": ""NewTag""
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Tag deleted successfully""
+}",
 /assistant/files/set_tags,POST,Associate tags with a file.,"id (string): Required.
 tags (array of strings): Default is an empty array.","200: Result of setting file tags.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth,,
+message (string)",bearerAuth,"{
+    ""data"":{
+        ""id"": ""yourEmail@vanderbilt.edu/date23094023573924890-208.json"",
+        ""tags"": [""NewTag""]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Tags updated and added to user""
+}",
 /assistant/files/query,POST,Query files based on various filter criteria.,"startDate (string, date-time): Default is 2021-01-01T00:00:00Z.
 pageSize (integer): Default is 10.
 pageKey (object):
@@ -102,23 +169,63 @@ typePrefix (string or null)
 types (array of strings): Default is an empty array.
 tags (array of strings): Default is an empty array.
 pageIndex (integer): Default is 0.
-forwardScan (boolean): Default is true.
+forwardScan (boolean): Default is false.
 sortIndex (string): Default is createdAt.","200: Returns a list of files that match the query criteria.
 Content: application/json
 success (boolean)
 data (object)
 items (array of objects)
-pageKey (object): Key to retrieve the next page of results",bearerAuth,,
+pageKey (object): Key to retrieve the next page of results",bearerAuth,"{
+    ""data"":{
+        ""pageSize"": 2,
+        ""sortIndex"": """",
+        ""forwardScan"": false
+        }
+}","{
+    ""success"": true,
+    ""data"": {
+        ""items"": [
+            {
+                ""createdAt"": ""2024-07-15T17:12:45.046682"",
+                ""updatedBy"": ""yourEmail@vanderbilt.edu"",
+                ""createdBy"": ""yourEmail@vanderbilt.edu"",
+                ""name"": ""fileName.doc"",
+                ""knowledgeBase"": ""default"",
+                ""data"": {},
+                ""updatedAt"": ""2024-07-15T17:12:45.046700"",
+                ""totalTokens"": 12644,
+                ""dochash"": ""25ef6a3e472d8d90a3784d1df9abe0ae390cf4da2c2f9a4f82d91cbe501915c1"",
+                ""id"": ""yourEmail@vanderbilt.edu/date/238904934298030943.json"",
+                ""tags"": [],
+                ""totalItems"": 1025,
+                ""type"": ""application/fileExtension""
+            },",
 /embedding-dual-retrieval,POST,Retrieve related documents based on user input through dual retrieval method.,"userInput (string): Required.
 dataSources (array of strings): Required.
 limit (integer)","200: A list of documents related to the user input.
 Content: application/json
-result (array)",bearerAuth,,
-/embedding-retrieval,POST,Retrieve related documents based on user input.,"userInput (string): Required.
-dataSources (array of strings): Required.
-limit (integer)","200: A list of documents related to the user input.
-Content: application/json
-result (array)",bearerAuth,,
+result (array)",bearerAuth,"{
+    ""data"" : {
+        ""userInput"":""Can you describe the policies outlined in the document?"",
+        ""dataSources"": [""global/09342587234089234890.content.json""],
+        ""limit"": 10
+    }
+}","{
+  ""result"": [
+    {
+      ""content"": ""xmlns:w=3D'urn:schemas-microsoft-com:office:word' ..."",
+      ""file"": ""global/2405939845893094580341.content.json"",
+      ""line_numbers"": [15-30],
+      ""score"": 0.7489801645278931
+    },
+    {
+      ""content"": ""Date: Wed, 8 May 2024 17:45:21 +0000 (UTC) ..."",
+      ""file"": ""global/093442892398492349.content.json"",
+      ""line_numbers"": [1-11],
+      ""score"": 0.7464098930358887
+    },
+  ]
+}",
 /assistant/create,POST,Create a new assistant with specified attributes.,"name (string): Required.
 description (string): Required.
 assistantId (string): Needed if updating an existing assistant. Will provide you with one if creating a new assitant
@@ -139,22 +246,60 @@ dataSourceOptions (array of objects):
 Content: application/json
 success (boolean)
 message (string)
-data (object)",bearerAuth,,
+data (object)",bearerAuth,"{
+    ""data"": {
+        ""name"": ""Sample Assistant 3"",
+        ""description"": ""This is a sample assistant for demonstration purposes"",
+        ""assistantId"": """",
+        ""tags"": [""test""],
+        ""instructions"": ""Respond to user queries about general knowledge topics"",
+        ""disclaimer"": ""This assistant's responses are for informational purposes only"",
+        ""dataSources"": [],
+        ""tools"": []
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Assistant created successfully"",
+    ""data"": {
+        ""assistantId"": ""astp/3io4u5ipy34jkelkdfweiorwur"",
+        ""id"": ""ast/03uio3904583049859482"",
+        ""version"": 1
+    }
+}",
 /assistant/list,GET,Retrieve a list of all assistants.,,"200: List of assistants retrieved successfully.
 Content: application/json
 success (boolean)
 message (string)
-data (array)",bearerAuth,,
+data (array)",bearerAuth,,Example too long,
 /assistant/share,POST,Share an assistant with other users.,"assistantId (string): Required.
 recipientUsers (array of strings): Required.
 note (string)","200: Assistant sharing response.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth,,
+message (string)",bearerAuth,"{
+    ""data"":{
+        ""assistantId"": ""ast/8934572093982034020-9"",
+        ""recipientUsers"": [""yourEmail@vanderbilt.edu""],
+        ""accessType"": ""read""
+    }
+}","{
+    ""success"": false,
+    ""message"": ""Unable to share with some users"",
+    ""failedShares"": [
+        ""yourEmail@vanderbilt.edu""
+    ]
+}",
 /assistant/delete,POST,Delete an assistant by its ID.,assistantId (string): Required.,"200: Assistant deletion response.
 Content: application/json
 success (boolean)
-message (string)",bearerAuth,,
+message (string)",bearerAuth,"{
+    ""data"":{
+        ""assistantId"": ""astp/3209457834985793094""
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Assistant deleted successfully.""
+}",
 /assistant/create/codeinterpreter,POST,Create a new Code Interpreter Assistant,"name (string): Required.
 description (string): Required.
 tags (array of strings): Required.
@@ -166,13 +311,36 @@ message (boolean)
 data (object):
  - assitantId (string)
  - provider (string)
-",bearerAuth,,
+",bearerAuth,"{
+    ""data"":{
+        ""name"": ""Data Analysis Assistant"",
+        ""description"": ""An AI assistant specialized in data analysis and visualization"",
+        ""tags"": [""data analysis""],
+        ""instructions"": ""Analyze data files, perform statistical operations, and create visualizations as requested by the user"",
+        ""dataSources"": [],
+        ""fileKeys"": [],
+        ""tools"": [{""type"": ""code_interpreter""}]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Assistant created successfully"",
+    ""data"": {
+        ""assistantId"": ""yourEmail@vanderbilt.edu/ast/39408573849029843""
+    }
+}",
 /assistant/files/download/codeinterpreter,POST,Download files for the Code Interpreter,"key (string): Required.
 fileName (string): Not required, will automatically download if given the specific file name","200: File download for Code Interpreter.
 Content: application/json
 oneOf:
 FileNotFoundResponse
-FileDownloadResponse",bearerAuth,,
+FileDownloadResponse",bearerAuth,"{
+    ""data"": {
+        ""key"": ""yourEmail@vanderbilt.edu/ast/3498523804729""
+    }
+}","{
+    ""success"": true,
+    ""downloadUrl"": ""<Download URL>""
+}",
 /assistant/chat/codeinterpreter,POST,Chat with Code Interpreter,,"200: Returns the chat response from the Code Interpreter assistant.
 success (boolean)
 message (string)
@@ -189,7 +357,7 @@ data (object):
                - file_key_low_res (string)
                - presigned_url_low_res (string)
                - file_size (int)",bearerAuth,"{   ""data"": {
-        ""assistantId"": ""kyle.j.shepherd@vanderbilt.edu/ast/5aad8273-787c-4810-9255-9991d72b2936"",
+        ""assistantId"": ""yourEmail@vanderbilt.edu/ast/43985037429849290398"",
         ""messages"": [
             { ""role"": ""user"",
               ""content"" : ""Can you tell me something about the data analytics and what you are able to do?"",
@@ -198,12 +366,44 @@ data (object):
         ]
     }
 }","{
-    ""success"": false,
-    ""error"": ""Failed to create new thread with the client.""
+    ""success"": true,
+    ""message"": ""Chat completed successfully"",
+    ""data"": {
+        ""data"": {
+            ""threadId"": ""yourEmail@vanderbilt.edu/thr/892345790239402934234"",
+            ""role"": ""assistant"",
+            ""textContent"": ""<Text Content>"",
+            ""content"": []
+        }
+    }
+}","{
+  ""success"": true,
+  ""message"": ""Chat completed successfully"",
+  ""data"": {
+    ""threadId"": ""karely.rodriguez@vanderbilt.edu/thr/442309eb-0772-42d0-b6ef-34e20ee2355e"",
+    ""role"": ""assistant"",
+    ""textContent"": ""I've saved the generated pie chart as a PNG file. You can download it using the link below:\n\n[Download Ice Cream Preferences Pie Chart](sandbox:/mnt/data/ice_cream_preferences_pie_chart.png)\n"",
+    ""content"": [
+      {
+        ""type"": ""image/png"",
+        ""values"": {
+          ""file_key"": ""s3://karely.rodriguez@vanderbilt.edu/msg_P0lpFUEY1EvRdiWMMKn7Rd0O-assistant-fS9RAGpbUa4A8ufKXnS2wSNh-FN-ice_cream_preferences_pie_chart.png"",
+          ""presigned_url"": ""https://vu-amplify-assistants-dev-code-interpreter-files.s3.amazonaws.com/..."",
+          ""file_size"": 149878
+        }
+      }
+    ]
+  }
 }"
-/assistant/openai/delete,DELETE,,?threadId = (Query Parameter),"200:
+/assistant/openai/thread/delete,DELETE,,?hreadId = (Query Parameter),"200:
 success (boolean)
-message (string)",bearerAuth,,
-/assistant/openai/thread/delete,DELETE,,?assistantId= (Querey Parameter),"200:
+message (string)",bearerAuth,?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093,"{
+    ""success"": true,
+    ""message"": ""Thread deleted successfully""
+}",
+/assistant/openai/delete,DELETE,,?assistantId= (Querey Parameter),"200:
 success (boolean)
-message (string)",bearerAuth,,
+message (string)",bearerAuth,?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823,"{
+    ""success"": true,
+    ""message"": ""Assistant deleted successfully""
+}",

@@ -858,6 +858,9 @@ validators = {
 }
 
 api_validators = {
+    "/state/share": {
+        "read": {}
+    },
     "/state/share/load": {
         "load": share_load_schema
     },
@@ -888,6 +891,7 @@ api_validators = {
 }
 
 def validate_data(name, op, data, api_accessed):
+    print(f"Name: {name} and Op: {op} and Data: {data}")
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
         print(f"Name: {name} and Op: {op} and Data: {data}")
