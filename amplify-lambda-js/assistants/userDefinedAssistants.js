@@ -6,6 +6,7 @@ import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {getOps} from "./ops/ops.js";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
+import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -126,6 +127,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
         handler: async (llm, params, body, ds, responseStream) => {
 
+                const references = {};
 
             if(assistant.skipRag) {
                 params = {
@@ -175,17 +177,23 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             return {id: dsid, name: ds.name, type:ds.type};
                         });
 
-                    extraMessages.push({
-                        role: "user",
-                        content:
-                    `You have the following data sources and documents available:
-                    -------------                        
-                    ${JSON.stringify(dataSourceSummaries)}
-                    -------------
-                    `,
-                    });
+                        addAllReferences(references, DATASOURCE_TYPE, dataSourceSummaries);
+                        const dsR = getReferencesByType(references, DATASOURCE_TYPE);
+
+                        const dataSourceText = "ID,NAME,TYPE\n" + dsR.map(
+                            r => r.type+r.id +","+r.object.name+","+r.object.type).join("\n");
+
+                        extraMessages.push({
+                            role: "user",
+                            content:
+`You have the following data sources and documents available:
+-------------                        
+${dataSourceText}
+-------------
+`,
+                        });
+                    }
                 }
-            }
 
             const messagesWithoutSystem = body.messages.filter(
                 (message) => message.role !== "system"
@@ -202,30 +210,44 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             );
 
-            const updatedBody = {
-                ...body,
-                messages: [
-                    ...messagesWithoutSystem.slice(0,-1),
-                    {
-                        role: "user",
-                        content: "Pay close attention to any provided information. Unless told otherwise, " +
-                            "cite the information you are provided with quotations supporting your analysis " +
-                            "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                        data: {dataSources: assistant.dataSources}
-                    },
-                    {
-                        role: 'system',
-                        content: instructions,
-                    },
-                    ...extraMessages,
-                    body.messages.slice(-1)[0]
-                ],
-                options: {
-                    ...body.options,
-                    ...dataSourceOptions,
-                    prompt: instructions,
-                }
-            };
+
+                llm.sendStateEventToStream({
+                    references: getReferences(references),
+                    opsConfig: {
+                        opFormat: {
+                            name: "functionCalling",
+                            type: "regex",
+                            opPattern: "(\\w+)\\s*\\((.*)\\)\\s*$",
+                            opIdGroup: 1,
+                            opArgsGroup: 2,
+                        },
+                    }
+                })
+
+                const updatedBody = {
+                    ...body,
+                    messages: [
+                        ...messagesWithoutSystem.slice(0,-1),
+                        {
+                            role: "user",
+                            content: "Pay close attention to any provided information. Unless told otherwise, " +
+                                "cite the information you are provided with quotations supporting your analysis " +
+                                "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
+                            data: {dataSources: assistant.dataSources}
+                        },
+                        {
+                            role: 'system',
+                            content: instructions,
+                        },
+                        ...extraMessages,
+                        body.messages.slice(-1)[0]
+                    ],
+                    options: {
+                        ...body.options,
+                        ...dataSourceOptions,
+                        prompt: instructions,
+                    }
+                };
 
             await assistantBase.handler(
                 llm,
