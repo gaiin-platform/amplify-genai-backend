@@ -195,6 +195,10 @@ ${dataSourceText}
                     }
                 }
 
+            if (body.options.addMsgContent) {
+                body.messages[body.messages.length - 1].content += body.options.addMsgContent;
+            }
+
             const messagesWithoutSystem = body.messages.filter(
                 (message) => message.role !== "system"
             );

@@ -103,5 +103,5 @@ functions:
     events:
       - http:
           path: apiKeys/get_system_ids
-          method: post
+          method: get
           cors: true

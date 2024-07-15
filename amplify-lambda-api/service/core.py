@@ -349,23 +349,26 @@ def get_system_ids(event, context, current_user, name, data):
     try:
         # Use a Scan operation with a FilterExpression to find items where the user is the owner and systemId is not null
         response = table.scan(
-            FilterExpression="#owner = :user and attribute_exists(systemId)",
+            FilterExpression="#owner = :user and attribute_type(systemId, :type) and active = :active",
             ExpressionAttributeNames={
                 "#owner": "owner"  # Use '#owner' to avoid reserved keyword conflicts
             },
             ExpressionAttributeValues={
-                ':user': current_user
+                ':user': current_user,
+                ':type': 'S',  # Assuming systemId is a string attribute
+                ':active': True
             },
-            ProjectionExpression="api_owner_id, #owner, delegate, applicationName, applicationDescription, createdAt, lastAccessed, rateLimit, expirationDate, accessTypes, active, account, systemId"
+            ProjectionExpression="#owner, applicationName, lastAccessed, rateLimit, expirationDate, accessTypes, systemId"
         )
         # Check if any items were found
         if 'Items' in response and response['Items']:
             print(f"System API keys found for owner {current_user}")
+            print(f"items {response['Items']}")
             return {'success': True, 'data': response['Items']}
         else:
-            print(f"No system API keys found for owner {current_user}")
-            return {'success': False, 'data': [], 'message': "No system API keys found."}
+            print(f"No active system API keys found for owner {current_user}")
+            return {'success': True, 'data': [], 'message': "No active system API keys found."}
     except Exception as e:
         # Handle potential errors
         print(f"An error occurred while retrieving system API keys for owner {current_user}: {e}")
-        return {'success': False, 'data': [], 'message': str(e)}
+        return {'success': False, 'message': str(e)}

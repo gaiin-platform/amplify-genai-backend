@@ -276,6 +276,7 @@ def share_assistant(event, context, current_user, name, data):
         current_user=current_user,
         assistant_key=assistant_key,
         recipient_users=recipient_users,
+        access_type=access_type,
         note=note,
         api_accessed=data['api_accessed'],
         policy=policy,
@@ -283,7 +284,7 @@ def share_assistant(event, context, current_user, name, data):
     )
 
 
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, note, api_accessed, policy=''): # data_sources, 
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, api_accessed, policy=''): # data_sources, 
     assistant_entry = get_assistant(assistant_key)
 
     if not assistant_entry:
@@ -300,36 +301,34 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
 
     assistant_public_id = assistant_entry['assistantId']
 
-    if False:
-        print("eh")
-    # not update_object_permissions(
-    #         access_token=access_token,
-    #         shared_with_users=recipient_users,
-    #         keys=[assistant_public_id],
-    #         object_type='assistant',
-    #         principal_type='user',
-    #         permission_level=access_type,
-    #         policy=policy):
-    #     print(f"Error updating permissions for assistant {assistant_public_id}")
-    #     return {'success': False, 'message': 'Error updating permissions'}
+    if not update_object_permissions(
+            access_token=access_token,
+            shared_with_users=recipient_users,
+            keys=[assistant_public_id],
+            object_type='assistant',
+            principal_type='user',
+            permission_level=access_type,
+            policy=policy):
+        print(f"Error updating permissions for assistant {assistant_public_id}")
+        return {'success': False, 'message': 'Error updating permissions'}
     else:
         print (f"Update data sources object access permissions for users {recipient_users} for assistant {assistant_public_id}")
-        # update_object_permissions(
-        #     access_token=access_token,
-        #     shared_with_users=recipient_users,
-        #     keys=data_sources,
-        #     object_type='datasource',
-        #     principal_type='user',
-        #     permission_level='read',
-        #     policy='')
+        update_object_permissions(
+            access_token=access_token,
+            shared_with_users=recipient_users,
+            keys=data_sources,
+            object_type='datasource',
+            principal_type='user',
+            permission_level='read',
+            policy='')
 
         failed_shares = []
         for user in recipient_users:     
 
-            # print(f"Creating alias for user {user} for assistant {assistant_public_id}")
-            # create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
-            #                        'latest')
-            # print(f"Created alias for user {user} for assistant {assistant_public_id}")
+            print(f"Creating alias for user {user} for assistant {assistant_public_id}")
+            create_assistant_alias(user, assistant_public_id, assistant_entry['id'], assistant_entry['version'],
+                                   'latest')
+            print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
             # if api accessed  
             if (api_accessed):
@@ -359,7 +358,6 @@ def assistant_share_save(current_user, shared_with, note, assistant):
         # ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
         ast = assistant
         ast['tools'] = []
-        ast['assistantId'] = ast_id
         ast['fileKeys'] = []
         #match frontend prompt data 
         ast_prompt =  {

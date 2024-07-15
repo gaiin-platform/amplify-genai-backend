@@ -50,7 +50,7 @@ provider:
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
     S3_SHARE_BUCKET_NAME: vu-amplify-${sls:stage}-share
     SHARES_DYNAMODB_TABLE: vu-amplify-${sls:stage}
-    ACCOUNTS_DYNAMO_TABLE: "vu-amplify-${sls:stage}-accounts"
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 

@@ -201,7 +201,7 @@ data (object):
     ""success"": false,
     ""error"": ""Failed to create new thread with the client.""
 }"
-/assistant/openai/delete,DELETE,,?hreadId = (Query Parameter),"200:
+/assistant/openai/delete,DELETE,,?threadId = (Query Parameter),"200:
 success (boolean)
 message (string)",bearerAuth,,
 /assistant/openai/thread/delete,DELETE,,?assistantId= (Querey Parameter),"200:

@@ -137,7 +137,7 @@ const systemAssistantIds = {
                         - owner, applicationName, applicationDescription, createdAt, lastAccessed, rateLimit, expirationDate, accessTypes, active
                 - Always list ALL the keys
                 - any null values can be labeled "N/A"
-                - any true/false values should be a check/x emojis instead.
+                - any true/false values should be a green check/ red x emojis instead.
                 - When you list the access types to the user outside of the block ensure you format the types like this: ('Full Access', 'Chat', 'Assistants', 'Upload File', 'Share', Dual Embedding)
 
             2. Create API Key - OP CREATE
@@ -204,7 +204,8 @@ const systemAssistantIds = {
                         - the Current User is the the key's delegate. Only delegates can see the key that was delegated to them.
                        * In other words, DO NOT allow owners who have a delegate listed see the key.
                     If the Current User is authorized, add the API key to the DATA list; otherwise, notify them of unauthorized access by reffering to the key by its ApplicationName.
-                    - the Get operation is to show them the actual API key, which you can assume is handled by giving an APIkey block
+                    - the GET operation is to show them the actual API key, which you can assume is handled by giving an APIkey block
+                    - GET is the only OP allowed to be performed on inactive keys
                 - for Dactivate Key: if the key is not active (active: false) then let them know it is already inactive. You will not need to return an APIkey block for this instance
 
             Examples:
@@ -252,6 +253,7 @@ const systemAssistantIds = {
                 - Always ensure you are reiterating what operation is being preformed in your responses if applicable.
                 - If any new API keys are created or existing ones are modified, make sure to list the updated data afterwards to show the user the current state.
                 - Ensure, when reffering to an account, you say "Account <account.name> - <account.id>"
+                - keys CANNOT be re-activated!
 
             This structured approach should guide your API key manager assistant to effectively support api key operations while interacting comprehensively with the user.
 
