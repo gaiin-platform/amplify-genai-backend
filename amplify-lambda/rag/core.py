@@ -611,7 +611,7 @@ def queue_document_for_rag_chunking(event, context):
     return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
 
 
-def update_embedding_status(object_id, chunk_index, total_chunks, status):
+def update_embedding_status(original_creator, object_id, chunk_index, total_chunks, status):
     try:
         progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
         print(f"Updating chunk count status for embedding {progress_table}/{object_id} "
@@ -622,6 +622,8 @@ def update_embedding_status(object_id, chunk_index, total_chunks, status):
             Item={
                 'object_id': object_id,
                 'timestamp': datetime.now().isoformat(),
+                'originalCreator': original_creator,
+                'terminated': False,
                 'data': {
                     'chunkIndex': chunk_index,
                     'totalChunks': total_chunks or 0,
@@ -634,6 +636,37 @@ def update_embedding_status(object_id, chunk_index, total_chunks, status):
     except Exception as e:
         print("Failed to create or update item in DynamoDB table.")
         print(e)
+
+
+def get_original_creator(key):
+    original_creator = 'unknown'
+    try:
+        dynamodb = boto3.resource('dynamodb')
+        # Get the original creator of the file
+        # by extracting the hash from the key
+        # and looking up the original creator in the hash_files table
+        hash = key
+        parts = key.split('/')
+        if len(parts) == 2:
+            filename = parts[1]
+            hash = filename.split('.')[0]
+        hash_files = dynamodb.Table(os.environ['HASH_FILES_DYNAMO_TABLE'])
+        response = hash_files.get_item(
+            Key={
+                'id': hash
+            }
+        )
+        item = response.get('Item', None)
+        if item:
+            print(f"Found hash entry for {key}: {item}")
+            original_creator = item.get('originalCreator', 'unknown')
+            print(f"Original uploader: {original_creator}")
+        else:
+            print(f"Hash entry not found for {key}")
+    except Exception as e:
+        print(f"Error getting hash entry for {key} to determine original_creator: {str(e)}")
+
+    return original_creator
 
 
 def chunk_document_for_rag(event, context):
@@ -664,9 +697,13 @@ def chunk_document_for_rag(event, context):
 
             print(f"Bucket / Key {bucket} / {key}")
 
+            # Figure out who uploaded this file, even though it's a shared
+            # global entry
+            original_creator = get_original_creator(key)
+
             chunks = chunk_s3_file_content(bucket, key)
 
-            update_embedding_status(key, 0, chunks, "starting")
+            update_embedding_status(original_creator, key, 0, chunks, "starting")
 
             receipt_handle = record['receiptHandle']
             print(f"Deleting message {receipt_handle} from queue")
