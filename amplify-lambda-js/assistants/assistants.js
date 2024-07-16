@@ -103,14 +103,17 @@ const batchAssistant = {
     }
 };
 
+// These assistants should NOT be in the list
+// right now
+//documentSearchAssistant
+//mapReduceAssistant
+//batchAssistant,
+//documentAssistant,
+//reportWriterAssistant,
+//csvAssistant,
+
 export const defaultAssistants = [
     defaultAssistant,
-    //batchAssistant,
-    //documentAssistant,
-    //reportWriterAssistant,
-    csvAssistant,
-    //documentSearchAssistant
-    mapReduceAssistant
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {
@@ -243,11 +246,11 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
     const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
-    if (body.options && body.options.skipCodeInterpreter) {
-        if (index !== -1) assistants.splice(index, 1);
-    } else {
-        if (index === -1) assistants.push(codeInterpreterAssistant);
-    }
+    // if (body.options && body.options.skipCodeInterpreter) {
+    //     if (index !== -1) assistants.splice(index, 1);
+    // } else {
+    //     if (index === -1) assistants.push(codeInterpreterAssistant);
+    // }
 
     let selected = defaultAssistant;
 
