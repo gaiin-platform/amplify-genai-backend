@@ -12,9 +12,7 @@ from jose import jwt
 from dotenv import load_dotenv
 
 import boto3
-import json
 from datetime import datetime
-from botocore.exceptions import ClientError
 import re
 
 load_dotenv(dotenv_path=".env.local")
@@ -1108,8 +1106,8 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('file_upload' not in access and 'share' not in access 
-                                        and'full_access' not in access):
+        if (('file_upload' not in access or 'share' not in access) 
+                                   and'full_access' not in access):
             print("API key doesn't have access to the functionality")
             raise PermissionError("API key does not have access to the required functionality")
 
@@ -1144,6 +1142,8 @@ def determine_api_user(data):
     else:
         print("Unknown or missing key type in api_owner_id:", key_type)
         raise Exception("Invalid or unrecognized key type.")
+    
+
     
 
     
