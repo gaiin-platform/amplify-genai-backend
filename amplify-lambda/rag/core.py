@@ -14,6 +14,7 @@ from rag.handlers.powerpoint import PPTXHandler
 from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
 from rag.util import get_text_content_location, get_text_metadata_location, get_text_hash_content_location
+import traceback
 
 s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
@@ -149,7 +150,7 @@ def chunk_content(key, text_content, split_params):
     min_chunk_size = split_params.get('min_chunk_size', 512)
 
     total_chunks = 0
-    max_chunks = os.environ.get('MAX_CHUNKS', 1000)
+    max_chunks = int(os.environ.get('MAX_CHUNKS', '1000'))
 
     parts = [split_text(sent_tokenize, item) for item in text_content['content']]
     flattened_list = [item for sublist in parts for item in sublist]
@@ -227,6 +228,7 @@ def chunk_content(key, text_content, split_params):
 def chunk_s3_file_content(bucket, key):
     try:
         # Download the file from S3
+        print(f"Fetching text from {bucket}/{key}")
         s3_object = s3.get_object(Bucket=bucket, Key=key)
         data = s3_object["Body"].read()
         print(f"Fetched text from {bucket}/{key}")
@@ -240,6 +242,7 @@ def chunk_s3_file_content(bucket, key):
         return chunks
 
     except Exception as e:
+        traceback.print_exc()
         print(f"Error getting object {key} from bucket {bucket}: {str(e)}")
         return None
 
@@ -521,6 +524,7 @@ def process_document_for_rag(event, context):
 
                             hash_file_data = {
                                 'id': dochash,
+                                'originalCreator': user,
                                 'textLocationBucket': file_text_content_bucket_name,
                                 'textLocationKey': text_content_key,
                                 'createdAt': creation_time,
@@ -638,6 +642,7 @@ def chunk_document_for_rag(event, context):
 
     dynamodb = boto3.resource('dynamodb')
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+
 
     for record in event['Records']:
         try:
