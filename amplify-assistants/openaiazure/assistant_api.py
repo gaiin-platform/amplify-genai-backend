@@ -57,7 +57,7 @@ def file_keys_to_file_ids(file_keys):
 
     updated_keys = []
     for file_key in file_keys:
-        file_key_user = file_key.split('//')[1]
+        file_key_user = file_key.split('//')[1] if ('//' in file_key) else file_key
         if '@' not in file_key_user or len(file_key_user) <= 6:
             return []
         updated_keys.append(file_key_user)
@@ -544,7 +544,7 @@ def chat(current_user, provider_assistant_id, info):
                     created_file_id = annotation.file_path.file_id
                     file_obj = client.files.retrieve(created_file_id)
                     file_name = file_obj.filename[file_obj.filename.rfind('/') + 1:]  
-                    s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}-FN-{file_name}"
+                    s3_file_key = f"{current_user}/{message_id}-{created_file_id}-FN-{file_name}"
                     file_content = client.files.content(file_obj.id)
 
                     # only csv and pdf are currently supported 
@@ -560,7 +560,7 @@ def chat(current_user, provider_assistant_id, info):
             continue
             created_file_id = item.image_file.file_id
             #send file to s3 ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME 
-            s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}"
+            s3_file_key = f"{current_user}/{message_id}-{created_file_id}"
             file_content = client.files.content(created_file_id)
 
             content_values = get_response_values(file_content, 'image/png', s3_file_key, current_user, "Generate_File")
@@ -919,7 +919,7 @@ def create_new_assistant(
     timestamp = int(time.time() * 1000)
 
     for file_key in file_keys:
-        file_key_user = file_key.split('//')[1]
+        file_key_user = file_key.split('//')[1] if ('//' in file_key) else file_key
         if ('@' not in file_key_user) or len(file_key_user) < 6 or (user_id not in file_key_user):
             return {'success': False, 'error': 'You are not authorized to access the referenced files'}
 
