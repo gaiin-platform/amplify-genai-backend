@@ -148,6 +148,9 @@ def chunk_content(key, text_content, split_params):
     content_index = 0
     min_chunk_size = split_params.get('min_chunk_size', 512)
 
+    total_chunks = 0
+    max_chunks = os.environ.get('MAX_CHUNKS', 1000)
+
     parts = [split_text(sent_tokenize, item) for item in text_content['content']]
     flattened_list = [item for sublist in parts for item in sublist]
 
@@ -164,6 +167,10 @@ def chunk_content(key, text_content, split_params):
         location = content_part['location']
         sentence_length = len(sentence)
 
+        if total_chunks >= max_chunks:
+            print(f"Reached maximum chunks {max_chunks} for {key}")
+            break
+
         # Check if adding this sentence would exceed the chunk size.
         if current_chunk and (current_chunk_size + sentence_length + 1) >= min_chunk_size:
             # Join the current chunk with space and create the chunk object.
@@ -173,6 +180,8 @@ def chunk_content(key, text_content, split_params):
                            'locations': locations,
                            'indexes': indexes,
                            'char_index': char_index})
+
+            total_chunks += 1
 
             if len(chunks) == split_increment:
                 split_count += 1
@@ -187,6 +196,7 @@ def chunk_content(key, text_content, split_params):
             current_chunk_size = sentence_length
             content_index += 1  # Increment the content index.
         else:
+            total_chunks += 1
             locations.append(location)
             indexes.append(index)
             index = index + 1
