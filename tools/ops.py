@@ -100,7 +100,7 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 for decorator in node.decorator_list:
-                    if isinstance(decorator, ast.Call) and getattr(decorator.func, 'id', None) == 'op':
+                    if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
                         op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
                         if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and 'params' in op_kwargs:
                             params_dict = extract_dict(op_kwargs['params'])
@@ -120,6 +120,7 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
                             ops_found.append(operation)
         return ops_found
     except Exception as e:
+        print(e)
         print(f"Skipping {file_path} due to unparseable AST")
         return []
 

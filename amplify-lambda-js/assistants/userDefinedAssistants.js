@@ -180,7 +180,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         addAllReferences(references, DATASOURCE_TYPE, dataSourceSummaries);
                         const dsR = getReferencesByType(references, DATASOURCE_TYPE);
 
-                        const dataSourceText = "ID,NAME,TYPE\n" + dsR.map(
+                        const dataSourceText = "Short_ID,NAME,TYPE\n" + dsR.map(
                             r => r.type+r.id +","+r.object.name+","+r.object.type).join("\n");
 
                         extraMessages.push({
@@ -190,6 +190,10 @@ export const fillInAssistant = (assistant, assistantBase) => {
 -------------                        
 ${dataSourceText}
 -------------
+Any operation that asks for an ID or Key should be supplied with the Short_ID from the list above
+of the corresponding data source or document. Avoid discussing these IDs, keys, etc. with the user
+as they can't see them. If they ask you about them, it is OK to tell them and use them for operations, 
+but otherwise don't describe them in your answers as it might confuse the user.
 `,
                         });
                     }

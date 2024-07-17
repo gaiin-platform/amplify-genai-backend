@@ -75,6 +75,7 @@ provider:
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
+    MAX_CHUNKS: 1000
 
   iam:
     role:

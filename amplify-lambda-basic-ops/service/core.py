@@ -1,10 +1,23 @@
 import os
 import uuid
 
+from pydantic import BaseModel, Field, ValidationError
+
+from common.ops import op, vop
 from common.validate import validated
-from llm.chat import chat
+from llm.chat import chat, prompt
 
 
+@op(
+    path="/llm/query",
+    tags=["llm", "default"],
+    name="llmQueryDatasource",
+    description="Query a datasource using the LLM.",
+    params={
+        "id": "The ID of the datasource to use for the query.",
+        "query": "The 'query' or 'task' to use for the query.",
+    }
+)
 @validated(op="query")
 def llm_prompt_datasource(event, context, current_user, name, data):
     try:
@@ -169,3 +182,83 @@ def prompt_llm(access_token, model, datasource, custom_instructions, query, rag_
 
     return response, meta_events
 
+
+class QAInput(BaseModel):
+    input: str = Field(description="The input to perform the quality assurance on.")
+    qa_guidelines: str = Field(description="The guidelines for quality assurance. Ensure that each guideline is followed carefully")
+
+
+class QAOutput(BaseModel):
+    qa_checks_passed: bool = Field(description="The QA result of True|False.")
+    qa_reason: str = Field(description="The reason for the QA result.")
+
+
+@prompt(system_prompt="Follow the instructions very carefully.")
+def qa(input: QAInput) -> QAOutput:
+    """
+    Follow the instructions very carefully and ensure that each guideline is followed.
+    If each guidelines is met, then output qa_pass_or_fail=True, otherwise qa_pass_or_fail=False.
+    """
+    pass
+
+
+@vop(
+    path="/llm/qa_check",
+    tags=["llm", "default"],
+    name="qaCheck",
+    description="Perform a quality assurance check on a given input.",
+    params={
+        "input": "The input to perform the quality assurance on.",
+        "qa_guidelines": "The guidelines for quality assurance."
+    }
+)
+@validated(op="qa_check")
+def llm_qa_check(event, context, current_user, name, data):
+    try:
+        """
+
+        """
+        # This must be configured in the registry entry as described above
+        access_token = data['accessToken']
+        data = data['data']
+
+        try:
+            # Step 2: Create an instance of the model using the dictionary
+            input = QAInput(**data)
+            output = qa(input=input, access_token=access_token, model=os.getenv('DEFAULT_LLM_QUERY_MODEL'))
+
+            return {
+                'success': True,
+                'data': output.model_dump(),
+            }
+
+        except ValidationError as e:
+            print(e)
+            return {
+                'success': False,
+                'message': "Invalid parameters {e}"
+            }
+
+    except Exception as e:
+        print(e)
+        return {
+            'success': False,
+            'message': "Failed to execute the operation"
+        }
+
+
+# Example usage:
+#
+# result = qa(QAInput(
+#     input="data: { 'id': '1234', 'name': 'John Doe' }"
+#           "original_input: John Doe was walking by aisle 1234 when a box fell on him.",
+#     qa_guidelines=("1. The data must include an id that is also a valid id in the original input. "
+#                    "2. The name in data must correspond to the person's name in the original_input.")),
+#     model="gpt-4o")
+#
+# if not result.qa_pass_or_fail:
+#     print(f"QA failed: {result.qa_reason}")
+# else:
+#     print("QA passed")
+
+"data: { 'id': '1234', 'name': 'John Doe' }\noriginal_input: John Doe was walking by aisle 1234 when a box fell on him.",
