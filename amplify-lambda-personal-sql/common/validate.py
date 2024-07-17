@@ -343,11 +343,12 @@ def get_claims(event, context, token):
                 if acct['isDefault']:
                     account = acct['id']
                     
-            if (not account):
-                raise ValueError("No default account found.")
         except Exception as e:
             print(f"Error retrieving default account: {e}")
-            raise
+
+        if (not account):
+            print("setting account to general_account")
+            account = 'general_account'   
 
         payload['account'] = account
         payload['username'] = user

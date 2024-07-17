@@ -11,8 +11,9 @@ def update_object_permissions(access_token,
                               principal_type="user",
                               permission_level="read",
                               policy=""):
-    permissions_endpoint = "http://localhost:3017/dev/utilities/update_object_permissions"
-    #os.environ['API_BASE_URL'] + '/utilities/update_object_permissions'
+    permissions_endpoint = os.environ['API_BASE_URL'] + '/utilities/update_object_permissions'
+    #"http://localhost:3017/dev/utilities/update_object_permissions"
+    
     request = {
         "data": {
             "emailList": shared_with_users,
@@ -71,8 +72,9 @@ def can_access_objects(access_token, data_sources, permission_level="read"):
     }
 
     # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = 'http://localhost:3017/dev/utilities/can_access_objects'
-    #os.environ['API_BASE_URL'] + '/utilities/can_access_objects'
+    permissions_endpoint = os.environ['API_BASE_URL'] + '/utilities/can_access_objects'
+    #'http://localhost:3017/dev/utilities/can_access_objects'
+    
 
     try:
         response = requests.post(
@@ -118,8 +120,8 @@ def simulate_can_access_objects(access_token, object_ids, permission_levels=["re
     }
 
     # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = 'http://localhost:3017/dev/utilities/simulate_access_to_objects'
-    #os.environ['API_BASE_URL'] + "/utilities/simulate_access_to_objects"
+    permissions_endpoint = os.environ['API_BASE_URL'] + "/utilities/simulate_access_to_objects"
+    #'http://localhost:3017/dev/utilities/simulate_access_to_objects'
 
     try:
         response = requests.post(

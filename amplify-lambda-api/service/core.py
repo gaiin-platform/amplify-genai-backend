@@ -378,44 +378,36 @@ def get_system_ids(event, context, current_user, name, data):
 
 @validated("read")
 def get_documentation(event, context, current_user, name, data): 
-    s3 = boto3.client('s3')
-    bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
-    
     print(f"Getting presigned download URL for user {current_user}")
-
-    try:
-        doc = 'Amplify_API_Documentation.pdf'
-        doc_presigned_url = s3.generate_presigned_url(
-            ClientMethod='get_object',
-            Params={
-                'Bucket': bucket_name,
-                'Key': doc,
-                'ResponseContentDisposition': "inline"
-            },
-            ExpiresIn=7200  # Expires in 3 hrs 
-        )
-
-        csv = 'Amplify_API_Documentation.csv'
-        csv_presigned_url = s3.generate_presigned_url(
-            ClientMethod='get_object',
-            Params={
-                'Bucket': bucket_name,
-                'Key': csv,
-                'ResponseContentDisposition': "inline"
-
-            },
-            ExpiresIn=7200  # Expires in 3 hrs 
-        )
-    except ClientError as e:
-        print(f"Error generating presigned download URL: {e}")
-        return {'success': False, 'message': "Files not found"}
+    
+    doc_presigned_url = generate_presigned_url('Amplify_API_Documentation.pdf')
+    csv_presigned_url =  generate_presigned_url('Amplify_API_Documentation.csv')
+    postman_presigned_url = generate_presigned_url('Postman_Amplify_API_Collection.json')
 
     res = {'success': True}
     if doc_presigned_url : res['doc_url'] =  doc_presigned_url
     if csv_presigned_url : res['csv_url'] =  csv_presigned_url
+    if postman_presigned_url : res['postman_url'] =  postman_presigned_url
+
     if len(res) > 1:
         return res
     else:
         print("Failed to retrieve a new presigned url")
         return {'success': False, 'message': 'Files not found' }
     
+def generate_presigned_url(file):
+    s3 = boto3.client('s3')
+    bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
+    try:
+        return s3.generate_presigned_url(
+                ClientMethod='get_object',
+                Params={
+                    'Bucket': bucket_name,
+                    'Key': file,
+                    'ResponseContentDisposition': f"attachment; filename={file}"
+                },
+                ExpiresIn=7200  # Expires in 3 hrs 
+            )
+    except ClientError as e:
+        print(f"Error generating presigned download URL for file {file}: {e}")
+        return None

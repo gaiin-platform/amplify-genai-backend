@@ -325,7 +325,25 @@ const systemAssistantIds = {
         /assistant/openai/delete - DELETE: Delete a code interpreter assistant
     `,
     description: "This assistant will guide you through the process of making HTTP calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents.",
-    dataSources: ["global/a0e1f36591a8ce3cf35487d7896c5aeea65f4793bdb83096aef3a09c711e63bb.content.json"],
+    dataSources: [
+        //obtained from file query (listing our files) and reformatting
+        {
+            "metadata": {
+              "totalItems": 249,
+              "name": "API_documentation.docx",
+              "totalTokens": 3963,
+              "tags": [],
+              "props": {},
+            },
+            "data": {},
+            "name": "API_documentation.docx",
+            "id": "global/d1704ae0e2562fd569dfead42972b285b2850ff55ef47e8e139c9583e63bffe9.content.json",
+            "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "key": "Amplify_System_Assistants/2024-07-17/78854d49-109c-4411-ab86-98fa5b3531e3.json"
+          }
+          
+    ],
+
     tags: [AMPLIFY_API_DOC_HELPER_TAG, SYSTEM_TAG],
     tools: [],
     data: {
