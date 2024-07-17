@@ -219,33 +219,34 @@ def create_api_key_for_user(user, api_key) :
 def update_api_keys_for_user(event, context, user, name, data):
     failed = []
     for item in data['data']:
-        response = update_api_key(item["apiKeyId"], item["updates"])
+        response = update_api_key(item["apiKeyId"], item["updates"], user)
         if (not response['success']):
             failed.append(response['key_name'])
 
     return {"success": len(failed) == 0, "failedKeys": failed}
 
 
-@validated("update")
-def update_api_key(item_id, updates):
+def update_api_key(item_id, updates, user):
     # Fetch the current state of the API key to ensure it is active and not expired
     key_name = 'unknown'
     try:
         current_key = table.get_item(Key={'api_owner_id': item_id})
-        key_data = current_key['Item']
+        key_data = current_key.get('Item', None)
         key_name = key_data["applicationName"]
-        if 'Item' not in current_key or not key_data['active'] or is_expired(key_data['expirationDate']):
-            return {'success': False, 'error': 'API key is inactive or expired or does not exist', "id": key_name}
+        if 'Item' not in current_key or not key_data['active'] or is_expired(key_data['expirationDate']) or user != key_data['owner']:
+            print("Failed at initial screening")
+            return {'success': False, 'error': 'API key is inactive or expired or does not exist or you are unauthorized to make updates', "key_name": key_name}
     except ClientError as e:
-        return {'success': False, 'error': str(e),  "id": key_name}
+        return {'success': False, 'error': str(e),  "key_name": key_name}
 
     updatable_fields = {'rateLimit', 'expirationDate', 'account', 'accessTypes'}
     update_expression = []
     expression_attribute_values = {}
     expression_attribute_names = {}
-
+    print("Updates performed on key: ", key_name)
     for field, value in updates.items():
         if field in updatable_fields:
+            print("updates: ", field, "-", value)
             # Use attribute names to avoid conflicts with DynamoDB reserved keywords
             placeholder = f"#{field}"
             value_placeholder = f":{field}"
@@ -256,7 +257,7 @@ def update_api_key(item_id, updates):
 
     # Join the update expression and check if it's empty
     if not update_expression:
-        return {'success': False, 'error': 'No valid fields provided for update', "id": key_name}
+        return {'success': False, 'error': 'No valid fields provided for update', "key_name": key_name}
 
     # Construct the full update expression
     final_update_expression = "SET " + ", ".join(update_expression)
@@ -273,7 +274,7 @@ def update_api_key(item_id, updates):
         )
         return {'success': True, 'updated_attributes': response['Attributes']}
     except ClientError as e:
-        return {'success': False, 'error': str(e), "id": key_name}
+        return {'success': False, 'error': str(e), "key_name": key_name}
 
 
 @validated("deactivate")
@@ -334,7 +335,7 @@ def is_valid_id_format(id):
     return bool(match)
 
 def is_expired(date_str):
-    if (not date_str): return True
+    if (not date_str): return False
     date = datetime.strptime(date_str, '%Y-%m-%d')
     return date <= datetime.now()
 
@@ -372,3 +373,49 @@ def get_system_ids(event, context, current_user, name, data):
         # Handle potential errors
         print(f"An error occurred while retrieving system API keys for owner {current_user}: {e}")
         return {'success': False, 'message': str(e)}
+
+
+
+@validated("read")
+def get_documentation(event, context, current_user, name, data): 
+    s3 = boto3.client('s3')
+    bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
+    
+    print(f"Getting presigned download URL for user {current_user}")
+
+    try:
+        doc = 'Amplify_API_Documentation.pdf'
+        doc_presigned_url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': doc,
+                'ResponseContentDisposition': "inline"
+            },
+            ExpiresIn=7200  # Expires in 3 hrs 
+        )
+
+        csv = 'Amplify_API_Documentation.csv'
+        csv_presigned_url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': csv,
+                'ResponseContentDisposition': "inline"
+
+            },
+            ExpiresIn=7200  # Expires in 3 hrs 
+        )
+    except ClientError as e:
+        print(f"Error generating presigned download URL: {e}")
+        return {'success': False, 'message': "Files not found"}
+
+    res = {'success': True}
+    if doc_presigned_url : res['doc_url'] =  doc_presigned_url
+    if csv_presigned_url : res['csv_url'] =  csv_presigned_url
+    if len(res) > 1:
+        return res
+    else:
+        print("Failed to retrieve a new presigned url")
+        return {'success': False, 'message': 'Files not found' }
+    

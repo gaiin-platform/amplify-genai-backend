@@ -62,6 +62,8 @@ provider:
     OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
     # LLM_ENDPOINTS_SECRETS_NAME_ARN IS NEW
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
 
   iam:
     role:
@@ -69,8 +71,13 @@ provider:
         - Effect: Allow
           Action:
             - secretsmanager:GetSecretValue
+            - dynamodb:Query
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
           Resource:
             - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
 
 functions:
   execute_rename:

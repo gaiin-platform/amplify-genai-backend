@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 import boto3
 import json
 from datetime import datetime
-from botocore.exceptions import ClientError
 import re
 
 load_dotenv(dotenv_path=".env.local")
@@ -85,14 +84,17 @@ dual_retrieval_schema = {
 validators = {
     "/embedding-dual-retrieval": {
         "dual-retrieval": dual_retrieval_schema
-        }
+    },
+    "/embedding-retrieval": {
+        "retrieval": process_input_schema
+  },
 }
 
 
 api_validators = {
     "/embedding-dual-retrieval": {
         "dual-retrieval": dual_retrieval_schema
-        }
+    }
 }
 
 

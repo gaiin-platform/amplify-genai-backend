@@ -14,7 +14,7 @@ from common.object_permissions import update_object_permissions, can_access_obje
 
 from common.validate import validated
 
-from assistants.system_assistants.system_assistants import RESERVED_TAGS, get_system_assistants
+from assistants.system_assistants import RESERVED_TAGS, get_system_assistants
 from decimal import Decimal
 
 
@@ -99,7 +99,7 @@ def list_assistants(event, context, current_user, name, data):
     """
     assistants = list_user_assistants(current_user)
     # Add the system assistants
-    assistants += get_system_assistants(data['groups'])
+    assistants += get_system_assistants(data['groups'], current_user)
 
     assistant_ids = [assistant['id'] for assistant in assistants]
 

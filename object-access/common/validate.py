@@ -12,7 +12,6 @@ from jose import jwt
 from dotenv import load_dotenv
 import boto3
 from datetime import datetime
-from botocore.exceptions import ClientError
 import re
 
 load_dotenv(dotenv_path=".env.local")

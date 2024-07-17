@@ -5,6 +5,7 @@ const ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
 const ASSISTANT_TAG = "amplify:assistant"
 const AMPLIFY_AUTOMATION_TAG = "amplify:automation"
 const AMPLIFY_API_KEYS_TAG = "amplify:api-key-manager"
+const AMPLIFY_API_DOC_HELPER_TAG = "amplify:api-doc-helper"
 
 export function isSystemAssistant(assistantId) {
     return Object.keys(systemAssistantIds).includes(assistantId);
@@ -155,7 +156,7 @@ const systemAssistantIds = {
                         "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                         "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
                     },
-                    "expiration?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
+                    "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
                     "accessTypes": [
                         <LIST ALL ACCESS TYPES ('full_access', 'chat', 'assistants', 'upload_file', 'share', dual_embedding) SELECTED> - NOT PROVIDED DEFAULT: 'full_access'
                     ],
@@ -173,7 +174,7 @@ const systemAssistantIds = {
                     
             3. Update API Key - OP UPDATE
                 - Ensure you have identified which Api Key the user is wanting to update. Ask if you do not know by listing the supplied API Keys in markdown
-                - The only eligible fields for updates include [rateLimit, expiration, accessTypes, account]. Let the user know any other fields are not allowed to be updated and advice them to potentially deactive it and create a new one instead
+                - The only eligible fields for updates include [rateLimit, expirationDate, accessTypes, account]. Let the user know any other fields are not allowed to be updated and advice them to potentially deactive it and create a new one instead
                 - For accounts ensure you have identified which API Key the user is wanting to update. Ask if you do not know by listing the supplied Accounts in markdown
                 -  What we need to define as DATA is:
                     [{  "id": <owner_api_id FROM IDENTIFIED KEY>,
@@ -182,7 +183,7 @@ const systemAssistantIds = {
                             "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                             "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
                         },
-                        "expiration?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
+                        "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
                         "accessTypes": [
                             <LIST ALL ACCESS TYPES ('full_access', 'chat', 'assistants', 'upload_file', 'share', dual_embedding) SELECTED> - NOT PROVIDED DEFAULT: 'full_access'
                         ],
@@ -191,7 +192,7 @@ const systemAssistantIds = {
                 - for any field that is requesting an update, show  the user what the value was before and what it is being changed to outside the APIkey block
                 - the Data attributes listed should only be the ones that the user is asking to modify, omit any others.
                 - each index are the updates to a particular key, we support updating multiple keys are once.
-                - Only owners can update the account. ensure the Current User is the owner of the key, if not let them know they cannot update the account and suggest to reach out to the owner. 
+                - Only owners can update the Api key. Ensure the Current User is the owner of the key, if not let them know they cannot make updates to the key and suggest to reach out to the owner. 
                 - Only active keys (active: true) can be updated, let the user know if they try to update a deactivated key and do not add this key to the APIkey block DATA
 
             4. Get an API Key - OP GET     and     5. Deactivate API Key - OP DEACTIVATE
@@ -223,9 +224,9 @@ const systemAssistantIds = {
                     "name:" "sample_name",
                     "rateLimit": {
                                 "period": "Hourly",
-                                "rate": "0.00"
+                                "rate": 0.00
                             },
-                    "expiration": "12-25-2025",
+                    "expirationDate": "12-25-2025",
                     }, 
                     {
                     "id": "sample_owner_api_id_value_2",
@@ -268,5 +269,70 @@ const systemAssistantIds = {
             conversationTags: [AMPLIFY_API_KEYS_TAG],
         }
     },
+    "ast/assistant-api-doc-helper": {
+    id: "ast/assistant-api-doc-helper",
+    name: "Amplify API Assistant",
+    displayName: "Amplify API Assistant",
+    instructions: `
+        You will provide example code snippets and requests data, outline expected responses and error messages accurately, and list all available endpoints with HTTP methods upon request, including categories like states, tags, files, assistants, embeddings, code interpreter, and delete endpoints. 
+        Assumes the audience has basic HTTP knowledge but no prior document familiarity and provide complete information from the document. 
+        When creating a Postman or any request payload body, you base it on the example body provided in the document but modify variables to fit the user's request. The assistant always strives for clarity, accuracy, and completeness in its responses.
+
+        Guiding Questions
+        1. What is the user trying to achieve in relation to the API endpoints?
+        2. Would the user benefit from example code?
+        3. What tools are being used to interact with these endpoints?
+        4. How can the user handle and parse the response data effectively?
+        5. Is there any prerequisite knowledge or setup required before interacting with this endpoint?
+        Instructions:
+        Think about how to address the user's queries step by step, using thought patterns based on these guiding questions (if applicable) to help you form a comprehensive response. You can create your own guiding questions if needed to best address the user's query. 
+        Keep these thoughts to yourself, and then use them to respond effectively and accurately to the user's query.
+
+        By reflecting on these questions, you can ensure your responses are clear, accurate, and tailored to the user's needs.
+
+        When the user asks to see the API documentation, you will provide a 'APIdoc block'. Assume, by providing this block, you have shown the user the documentation. 
+        The format of these doc blocks MUST BE EXACTLY:
+        \`\`\` APIdoc
+            {}
+        \`\`\`
+
+        Always responsd with a APIdoc when asked to see documents/documentations
+
+        List all 19 paths/endpoints when specifically asked what the are the available paths/endpoints:
+        Amplify Endpoints:
+        /chat - POST: Send a chat message and receive a response stream
+        /state/share - GET: Retrieve Amplify shared data
+        /state/share/load - POST: Load Amplify shared data
+
+        /assistant/files/upload - POST: Receive pre-signed URL to upload file to Amplify
+        /assistant/files/query - POST: View uploaded files
+        /assistant/tags/list - POST: List all tags
+        /assistant/tags/create - POST: Create new tag
+        /assistant/tags/delete - POST: Delete a tag
+        /assistant/files/set_tags - POST: Associate tags with a file
+
+        /embedding-dual-retrieval - POST: Retrieve embeddings based on user input through the dual retrieval method
+
+        /assistant/create - POST: Create or update an Amplify assistant
+        /assistant/list - GET: Retrieve a list of all Amplify assistants
+        /assistant/share - POST: Share an Amplify assistant with other Amplify users
+        /assistant/delete - POST: Delete an Amplify assistant
+
+        /assistant/files/download/codeinterpreter - POST: Get presigned URLs to download the Code Interpreter-generated files
+        /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes
+        /assistant/chat/codeinterpreter - POST: Establishes a conversation with Code Interpreter, returning a unique thread ID that contains your ongoing conversation. Subsequent API calls will only need new messages
+        /assistant/openai/thread/delete - DELETE: Delete a code interpreter thread, deleting your existing conversation with code interpreter
+        /assistant/openai/delete - DELETE: Delete a code interpreter assistant
+    `,
+    description: "This assistant will guide you through the process of making HTTP calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents.",
+    dataSources: ["global/a0e1f36591a8ce3cf35487d7896c5aeea65f4793bdb83096aef3a09c711e63bb.content.json"],
+    tags: [AMPLIFY_API_DOC_HELPER_TAG, SYSTEM_TAG],
+    tools: [],
+    data: {
+        provider: "amplify",
+        conversationTags: [AMPLIFY_API_DOC_HELPER_TAG],
+    }
+}
+
 
 }

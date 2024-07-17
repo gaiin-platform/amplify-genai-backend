@@ -11,9 +11,7 @@ from jose import jwt
 from dotenv import load_dotenv
 
 import boto3
-import json
 from datetime import datetime
-from botocore.exceptions import ClientError
 import re
 # from cognito_user_groups import get_user_cognito_amplify_groups
 

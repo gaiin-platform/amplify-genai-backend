@@ -1,6 +1,5 @@
 service: vu-amplify-object-access
 
-
 frameworkVersion: '3'
 
 package:
@@ -133,6 +132,7 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
       API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-dev-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
 
     iamRoleStatements:
           - Effect: Allow

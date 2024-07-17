@@ -35,10 +35,13 @@ permissions_by_state_type = {
     "/apiKeys/deactivate_key": {
         "deactivate": can_deactivate
     },
-     "/apiKeys/update_key" : {
+     "/apiKeys/update_keys" : {
         "update": can_save
     },
     "/apiKeys/get_system_ids": {
         "read": can_read
     },
+    "/apiKeys/api_documentation": {
+        "read": can_read
+    }
 }

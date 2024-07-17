@@ -10,9 +10,7 @@ from jose import jwt
 
 from dotenv import load_dotenv
 import boto3
-import json
 from datetime import datetime
-from botocore.exceptions import ClientError
 import re
 
 load_dotenv(dotenv_path=".env.local")
@@ -125,18 +123,19 @@ create_api_keys_schema = {
     },
     "required": ["owner", "appName", "account", "rateLimit", "accessTypes", "systemUse", "delegate"]
 }
-
 update_key_schema = {
-    "type": "object",
-    "properties": {
-        "apiKeyId": {
-                "type":  "string",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "apiKeyId": {
+                "type": "string",
                 "description": "API key id string"
             },
-        "updates": {
-            "type": "object",
-            "properties": {
-                "account": {
+            "updates": {
+                "type": "object",
+                "properties": {
+                    "account": {
                         "type": "object",
                         "properties": {
                             "id": {
@@ -153,29 +152,30 @@ update_key_schema = {
                             }
                         },
                         "required": ["id", "name"]
-                },
-                "rateLimit": {
-                    "type": "object",
-                    "properties": {
-                        "rate": { "type": ["number", "null"] },
-                        "period": { "type": "string" } 
                     },
-                    "description": "Cost restriction using the API key"
+                    "rateLimit": {
+                        "type": "object",
+                        "properties": {
+                            "rate": { "type": ["number", "null"] },
+                            "period": { "type": "string" }
+                        },
+                        "description": "Cost restriction using the API key"
+                    },
+                    "expirationDate": {
+                        "type": ["string", "null"],
+                        "description": "The expiration date of the API key"
+                    },
+                    "accessTypes": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Types of access permitted by this API key"
+                    }
                 },
-                "expirationDate": {
-                    "type":  ["string", "null"],
-                    "description": "The expiration date of the API key"
-                },
-                "accessTypes": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Types of access permitted by this API key"
-                },
-            },
-            "required": []
-        }
-    },
-    "required": ["apiKeyId", "updates"]
+                "required": []
+            }
+        },
+        "required": ["apiKeyId", "updates"]
+    }
 }
 
 deactivate_api_key_schema = {
@@ -207,12 +207,15 @@ validators = {
     "/apiKeys/get_key": {
         "read": {}
     },
-    "/apiKeys/update_key" : {
+    "/apiKeys/update_keys" : {
         "update": update_key_schema
     },
     "/apiKeys/get_system_ids": {
         "read": {}
     },
+    "/apiKeys/api_documentation": {
+        "read": {}
+    }
 }
 
 api_validators = {
@@ -221,11 +224,6 @@ api_validators = {
 
 
 def validate_data(name, op, data, api_accessed):
-    print(data)
-    print(op)
-    print(name)
-
-
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
         schema = validator[name][op]

@@ -3,7 +3,6 @@ import time
 import os
 import boto3
 import json
-from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 SYSTEM_TAG = "amplify:system"
@@ -18,21 +17,95 @@ RESERVED_TAGS = [
     ASSISTANT_BUILDER_TAG,
     ASSISTANT_TAG,
     AMPLIFY_AUTOMATION_TAG,
-    AMPLIFY_API_KEY_MANAGER_TAG
+    AMPLIFY_API_KEY_MANAGER_TAG,
+    AMPLIFY_API_DOC_HELPER_TAG
 ]
 
-def get_system_assistants(groups):
+def get_system_assistants(groups, current_user):
     sys_assistants = []
     sys_assistants.append(get_assistant_builder_assistant())
     # sys_assistants.append(get_amplify_automation_assistant())
 
-
     # logic to handle who gets what assistants according to the groups
-    if ('Amplify_Dev_Api' in groups):
-        sys_assistants.append(get_api_key_manager_assistant())
-        #API Doc Helper 
+    # if ('Amplify_Dev_Api' in groups):  GROUPS are in progress
+    sys_assistants.append(get_api_key_manager_assistant())
+
+    #API Doc Helper update permissions:
+    api_doc_helper = get_api_doc_helper_assistant()
+    print("Updating permissions for data sources in: ", api_doc_helper["name"])
+    result = update_object_permissions(api_doc_helper["dataSources"], current_user)
+    if (result["success"]):
+        print(api_doc_helper["name"] , " added to the sys_assistants list")
+        sys_assistants.append(api_doc_helper)
+        
     
     return sys_assistants
+
+
+# object access for system assistant documents
+# This is assuming you have already sent them through the rag pipeline 
+# I did so by using my system api key where I changed the name to Amplify_System_Assistants
+# so we can simply just update permissions
+def update_object_permissions(data_sources, current_user):
+    dynamodb = boto3.resource('dynamodb')
+    table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+    try:
+        # Get the DynamoDB table
+        table = dynamodb.Table(table_name)
+        
+        # data_sources must be global keys 
+        for object_id in data_sources:
+            print("Current object Id: ", object_id)
+        
+            # Check if any permissions already exist for the object_id
+            query_response = table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('object_id').eq(object_id)
+            )
+            items = query_response.get('Items')
+
+            if not items:
+                print(" no permissions, create the initial item with the Amplify_System_Assistants as the owner")
+                table.put_item(Item={
+                    'object_id': object_id,
+                    'principal_id': "Amplify_System_Assistants",
+                    'principal_type': 'user',
+                    'object_type': "datasource",
+                    'permission_level': 'owner',  
+                    'policy': None
+                })
+
+            # We dont need to check if we are allowed to do this, we need to for every user prescreen by groups to have the documents
+            print("Object ID: ", object_id, " for user: ", current_user)
+            # Create or update the permission level for each principal_id
+            principal_key = {
+                'object_id': object_id,
+                'principal_id': current_user
+            }
+            # Use the provided permission level for other users
+            update_expression = "SET principal_type = :principal_type, object_type = :object_type, permission_level = :permission_level, policy = :policy"
+            expression_attribute_values = {
+                ':principal_type': 'user',
+                ':object_type': "datasource",
+                ':permission_level': 'read', 
+                ':policy': None
+            }
+            table.update_item(
+                Key=principal_key,
+                UpdateExpression=update_expression,
+                ExpressionAttributeValues=expression_attribute_values
+            )
+
+    except ClientError as e:
+        print(f"Error accessing/updating DynamoDB: {e.response['Error']['Message']}")
+        return {"success": False}
+    except Exception as e:
+        print(f"Error processing request: {str(e)}")
+        return {"success": False}
+    
+    print("Permissions updated successfully")
+    return {"success": True}
+
+
 
 def get_amplify_automation_assistant():
     instructions = """
@@ -212,7 +285,7 @@ def get_api_key_manager_assistant():
                 "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                 "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
             },
-            "expiration?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
+            "expirationDate": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
             "accessTypes": [
                 <LIST ALL ACCESS TYPES ('full_access', 'chat', 'assistants', 'upload_file', 'share', dual_embedding) SELECTED> - NOT PROVIDED DEFAULT: 'full_access'
             ],
@@ -230,7 +303,7 @@ def get_api_key_manager_assistant():
         
      3. Update API Key - OP UPDATE
         - Ensure you have identified which Api Key the user is wanting to update. Ask if you do not know by listing the supplied API Keys in markdown
-        - The only eligible fields for updates include [rateLimit, expiration, accessTypes, account]. Let the user know any other fields are not allowed to be updated and advice them to potentially deactive it and create a new one instead
+        - The only eligible fields for updates include [rateLimit, expirationDate, accessTypes, account]. Let the user know any other fields are not allowed to be updated and advice them to potentially deactive it and create a new one instead
         - For accounts ensure you have identified which API Key the user is wanting to update. Ask if you do not know by listing the supplied Accounts in markdown
         -  What we need to define as DATA is:
          [{  "id": <owner_api_id FROM IDENTIFIED KEY>,
@@ -239,7 +312,7 @@ def get_api_key_manager_assistant():
                 "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                 "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
             },
-            "expiration?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
+            "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
             "accessTypes": [
                 <LIST ALL ACCESS TYPES ('full_access', 'chat', 'assistants', 'upload_file', 'share', dual_embedding) SELECTED> - NOT PROVIDED DEFAULT: 'full_access'
             ],
@@ -248,7 +321,7 @@ def get_api_key_manager_assistant():
         - for any field that is requesting an update, show  the user what the value was before and what it is being changed to outside the APIkey block
         - the Data attributes listed should only be the ones that the user is asking to modify, omit any others.
         - each index are the updates to a particular key, we support updating multiple keys are once.
-        - Only owners can update the account. ensure the Current User is the owner of the key, if not let them know they cannot update the account and suggest to reach out to the owner. 
+        - Only owners can update the Api key. Ensure the Current User is the owner of the key, if not let them know they cannot make updates to the key and suggest to reach out to the owner. 
         - Only active keys (active: true) can be updated, let the user know if they try to update a deactivated key and do not add this key to the APIkey block DATA
 
     4. Get an API Key - OP GET     and     5. Deactivate API Key - OP DEACTIVATE
@@ -281,9 +354,9 @@ def get_api_key_manager_assistant():
        "name:" "sample_name",
        "rateLimit": {
                 "period": "Hourly",
-                "rate": "80.00"
+                "rate": 0.00
             },
-        "expiration": "12-25-2025",
+        "expirationDate": "12-25-2025",
        }, {
        "id": "sample_owner_api_id_value_2",
        "name:" "sample_name_2",
@@ -349,3 +422,88 @@ def get_api_key_manager_assistant():
         'user': 'amplify'
     }
 
+
+# assistant fails to list all the endpoints when solely relying on the documentation 
+def get_api_doc_helper_assistant():
+    instructions = """
+    You will provide example code snippets and requests data, outline expected responses and error messages accurately, and lists all available endpoints with HTTP methods upon request, including categories like states, tags, files, assistants, embeddings, code interpreter, and delete endpoints. 
+    Assumes the audience has basic HTTP knowledge but no prior document familiarity and provide complete information from the document. 
+    When creating a Postman or any requests payload body, you base it on the example body provided in the document but modifies variables to fit the user's request. The assistant always strives for clarity, accuracy, and completeness in its responses.
+
+    Guiding Questions
+    1. What is the user trying to achieve in relation to the API endpoints?
+    2. Would the user benefit from example code?
+    3. What tools are being used to interact with these endpoints?
+    4. How can the user handle and parse the response data effectively?
+    5. Is there any prerequisite knowledge or setup required before interacting with this endpoint?
+    Instructions:
+    Think about how to address the user's queries step by step, using thought patterns based on these guiding questions (if applicable) to help you form a comprehensive response. You can create your own guiding questions if needed to best address the users query. 
+    Keep these thoughts to yourself, and then use them to respond effectively and accurately to the user's query.
+
+    By reflecting on these questions, you can ensure your responses are clear, accurate, and tailored to the user's needs.
+
+    When user asks to see the api documentation, you will provide a 'APIdoc block'. Assume, by providing this block, you have shown the user the documentation. 
+    The format of these doc blocks MUST BE EXACTLY:
+    ``` APIdoc
+        {}
+    ```
+    Always responsd with a APIdoc when asked to see documents/documentations
+
+    List all 19 paths/endpoints when specifically asked what the are the available paths/endpoints:
+        Amplify Endpoints:
+        /chat - POST: Send a chat message and receive a response stream
+        /state/share - GET: Retrieve Amplify shared data
+        /state/share/load - POST: Load Amplidy shared data
+
+        /assistant/files/upload - POST: Recieve pre-signed url to upload file to Amplify
+        /assistant/files/query - POST: view uploaded files
+        /assistant/tags/list - POST: List all tags
+        /assistant/tags/create - POST: Create new tag
+        /assistant/tags/delete - POST: Delete a tag
+        /assistant/files/set_tags - POST: Associate tags with a file
+
+        /embedding-dual-retrieval - POST: Retrieve embeddings based on user input through the dual retrieval method
+
+        /assistant/create - POST: Create or update a Amplify assistant
+        /assistant/list - GET: Retrieve a list of all Amplify assistants
+        /assistant/share - POST: Share an Amplify assistant with other Amplify users
+        /assistant/delete - POST: Delete an Amplify assistant
+
+        /assistant/files/download/codeinterpreter - POST: Get presigned urls to download the Code Interpreter-generated files
+        /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes.
+        /assistant/chat/codeinterpreter - POST: Establishes a conversation with Code Interpreter, returning a unique thread id that contains your ongoing conversation. Subsequent API calls will only need new messages.
+        /assistant/openai/thread/delete - DELETE: Delete a code interpreter thread, deleting your existing conversation with code interpreter
+        /assistant/openai/delete - DELETE: delete a code interpreter assistant 
+    """
+
+    description = "This assistant will guide you through the process of making http calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents."
+    id = "ast/assistant-api-doc-helper"
+    name = "Amplify API Assistant"
+    datasources = ["global/a0e1f36591a8ce3cf35487d7896c5aeea65f4793bdb83096aef3a09c711e63bb.content.json"]
+    tags = [AMPLIFY_API_DOC_HELPER_TAG, SYSTEM_TAG]
+    created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
+    updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
+    tools = []
+    data = {
+        "provider": "amplify",
+        "conversationTags": [AMPLIFY_API_DOC_HELPER_TAG],
+    }
+
+    return {
+        'id': id,
+        'coreHash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'hash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'instructionsHash': hashlib.sha256(instructions.encode()).hexdigest(),
+        'dataSourcesHash': hashlib.sha256(json.dumps(datasources).encode()).hexdigest(),
+        'version': 1,
+        'name': name,
+        'description': description,
+        'instructions': instructions,
+        'tags': tags,
+        'createdAt': created_at,
+        'updatedAt': updated_at,
+        'dataSources': datasources,
+        'data': data,
+        'tools': tools,
+        'user': 'amplify'
+    }

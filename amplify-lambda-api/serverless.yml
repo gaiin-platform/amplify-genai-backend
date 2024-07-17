@@ -34,6 +34,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     COGNITO_USERS_TABLE:  vu-amplify-object-access-${sls:stage}-cognito-users
+    S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
 
 
   iam:
@@ -47,14 +48,12 @@ provider:
             - dynamodb:PutItem
             - dynamodb:UpdateItem
             - s3:GetObject
-            - s3:PutObject
-            - s3:HeadObject
-            - s3:ListBucket
           Resource:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
-
+            - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/"
+            - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"
 
 functions:
 
@@ -86,7 +85,7 @@ functions:
     handler: service/core.update_api_keys_for_user
     events:
       - http:
-          path: apiKeys/update_key
+          path: apiKeys/update_keys
           method: post
           cors: true
       
@@ -105,3 +104,29 @@ functions:
           path: apiKeys/get_system_ids
           method: get
           cors: true
+
+  get_api_doc:
+    handler: service/core.get_documentation
+    events:
+      - http:
+          path: apiKeys/api_documentation
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    APIDocumentBucket:
+        Type: 'AWS::S3::Bucket'
+        Properties:
+          BucketName: ${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000     
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256        
