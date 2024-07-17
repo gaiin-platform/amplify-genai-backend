@@ -103,18 +103,6 @@ key (string, nullable)
 400: Bad request, incorrect or missing parameters.
 401: User does not have access to the file upload functionality.","{
     ""data"":{
-        ""actions"": [
-            {""name"": ""saveAsData"",
-            ""params"": {}},
-            {""name"": ""createChunks"",
-            ""params"": {}},
-            {""name"": ""ingestRag"",
-            ""params"": {}},
-            {""name"": ""makeDownloadable"",
-            ""params"": {}},
-            {""name"": ""extractText"",
-            ""params"": {}}
-        ],
         ""type"": ""application/fileExtension"",
         ""name"": ""fileName.pdf"",
         ""knowledgeBase"": ""default"",
@@ -276,7 +264,7 @@ data (object)","{
         ""tags"": [""test""],
         ""instructions"": ""Respond to user queries about general knowledge topics"",
         ""disclaimer"": ""This assistant's responses are for informational purposes only"",
-        ""dataSources"": [{'id': 'e48759073324384kjsf', 'name': 'api_paths_summary.csv', 'type': 'text/csv', 'raw': '', 'data': '', 'key': 'yourEmail@vanderbilt.edu/date/w3ou009we3.json', 'metadata': {'name': 'api_paths_summary.csv', 'totalItems': 20, 'locationProperties': ['row_number'], 'contentKey': 'yourEmail@vanderbilt.edu/date/w3ou009we3.json.content.json', 'createdAt': '2024-07-15T18:58:24.912235', 'totalTokens': 3750, 'tags': [], 'props': {}}}],
+        ""dataSources"": [{""id"": ""e48759073324384kjsf"", ""name"": ""api_paths_summary.csv"", ""type"": ""text/csv"", ""raw"": """", ""data"": """", ""key"": ""yourEmail@vanderbilt.edu/date/w3ou009we3.json"", ""metadata"": {""name"": ""api_paths_summary.csv"", ""totalItems"": 20, ""locationProperties"": [""row_number""], ""contentKey"": ""yourEmail@vanderbilt.edu/date/w3ou009we3.json.content.json"", ""createdAt"": ""2024-07-15T18:58:24.912235"", ""totalTokens"": 3750, ""tags"": [], ""props"": {}}}],
         ""tools"": []
     }
 }","{
@@ -406,7 +394,8 @@ data (object):
                - presigned_url (string)
                - file_key_low_res (string)
                - presigned_url_low_res (string)
-               - file_size (int)","{   ""data"": {
+               - file_size (int)","{   
+    ""data"": {
         ""assistantId"": ""yourEmail@vanderbilt.edu/ast/43985037429849290398"",
         ""messages"": [
             { ""role"": ""user"",
