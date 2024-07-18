@@ -1011,7 +1011,6 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        print(access)
         if ('file_upload' not in access and 'share' not in access 
                                         and'full_access' not in access):
             print("API key doesn't have access to the functionality")

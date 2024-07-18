@@ -108,8 +108,8 @@ def get_api_keys_for_user(event, context, user, name, data):
            
             return {'success': True, 'data': response['Items']}
         else:
-            print(f"No API keys found for user {user}")
-            return {'success': False, 'data': [], 'message': "No API keys found."}
+            print(f"User {user} has no API keys. ")
+            return {'success': True, 'data': [], 'message': "User has no API keys."}
     except Exception as e:
         # Handle potential errors
         print(f"An error occurred while retrieving API keys for user {user}: {e}")

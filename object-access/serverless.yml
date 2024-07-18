@@ -87,8 +87,11 @@ functions:
             Resource:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
-
-  get_cognito_amplify_groups:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+  
+  get_cognito_amp_groups:
     handler: cognito_users.get_user_groups
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -112,7 +115,11 @@ functions:
               - dynamodb:GetItem
 
             Resource:
-              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"      
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"  
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"    
 
   share_src_ids:
     runtime: python3.10
@@ -146,6 +153,10 @@ functions:
 
             Resource:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
   update_ojbect_perms:
     runtime: python3.10
@@ -178,6 +189,10 @@ functions:
 
             Resource:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
 
   can_access_objects:
@@ -207,6 +222,10 @@ functions:
               - dynamodb:GetItem
             Resource:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
   simulate_access:
      runtime: python3.10
@@ -235,6 +254,10 @@ functions:
                - dynamodb:GetItem
              Resource:
                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
 
   create_cognito_group:
@@ -263,6 +286,10 @@ functions:
             - cognito-idp:AdminAddUserToGroup
           Resource:
             - arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+            - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
   sync_cognito_users:
     runtime: python3.11

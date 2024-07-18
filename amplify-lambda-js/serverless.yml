@@ -75,6 +75,8 @@ provider:
             - s3:ListBucket
             - dynamodb:GetItem
             - dynamodb:PutItem
+            - dynamodb:Query 
+            - dynamodb:UpdateItem
             - sqs:SendMessage
             - sqs:DeleteMessage
             - bedrock:InvokeModelWithResponseStream
@@ -90,6 +92,7 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'

@@ -1,4 +1,4 @@
-import {DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, DeleteItemCommand,ScanCommand, UpdateItemCommand} from "@aws-sdk/client-dynamodb";
+import {DynamoDBClient, QueryCommand, UpdateItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
