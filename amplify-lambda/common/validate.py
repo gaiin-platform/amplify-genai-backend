@@ -507,16 +507,6 @@ file_query_schema = {
 }
 
 
-id_request_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "Id."
-        }
-    },
-    "required": ["id"]
-}
 
 key_request_schema = {
     "type": "object",
@@ -529,35 +519,7 @@ key_request_schema = {
     "required": ["key"]
 }
 
-id_and_category_request_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "Id."
-        },
-        "category": {
-            "type": "string",
-            "description": "Category."
-        }
-    },
-    "required": ["id", "category"]
-}
 
-task_and_category_request_schema = {
-    "type": "object",
-    "properties": {
-        "task": {
-            "type": "string",
-            "description": "Id."
-        },
-        "category": {
-            "type": "string",
-            "description": "Category."
-        }
-    },
-    "required": ["id", "category"]
-}
 
 add_charge = {
     "type": "object",
@@ -570,33 +532,6 @@ add_charge = {
     "required": ["accountId", "charge", "description", "details"]
 }
 
-
-publish_item_schema = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string",
-            "description": "The name of the item"
-        },
-        "description": {
-            "type": "string",
-            "description": "A detailed description of the item"
-        },
-        "tags": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "description": "Tags related to the item"
-        },
-        "category": {
-            "type": "string",
-            "description": "The category of the item"
-        },
-        "content": export_schema,
-    },
-    "required": ["name", "description", "tags", "category", "content"]
-}
 
 save_accounts_schema = {
     "type": "object",
@@ -654,16 +589,6 @@ convert_schema = {
     "required": ["format", "content"]
 }
 
-get_category_schema = {
-    "type": "object",
-    "properties": {
-        "category": {
-            "type": "string",
-            "description": "The category to fetch"
-        }
-    },
-    "required": ["category"]
-}
 
 conversation_ids_schema = {
     "type": "object",
@@ -798,27 +723,6 @@ validators = {
     },
     "/assistant/delete": {
     "delete": {}
-    },
-    "/market/item/publish": {
-        "publish_item": publish_item_schema
-    },
-    "/market/item/delete": {
-        "delete_item": id_request_schema
-    },
-    "/market/ideate": {
-        "ideate": task_and_category_request_schema
-    },
-    "/market/category/get": {
-        "get_category": get_category_schema
-    },
-    "/market/item/get": {
-        "get_item": id_request_schema
-    },
-    "/market/item/examples/get": {
-        "get_examples": id_and_category_request_schema
-    },
-    "/market/category/list" : {
-    "list_categories": {}
     },
     "/chat/convert": {
         "convert": convert_schema

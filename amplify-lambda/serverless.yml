@@ -41,9 +41,6 @@ provider:
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
-    MARKET_CATEGORIES_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-categories
-    MARKET_ITEMS_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-items
-    THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
@@ -51,7 +48,6 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
-    S3_MARKET_INDEX_BUCKET_NAME: ${self:service}-${sls:stage}-market-index
     S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
@@ -119,12 +115,6 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
@@ -142,8 +132,6 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
             - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}/*"  # access to your s3 bucket
             - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"  # access to your s3 bucket
             - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
@@ -291,62 +279,6 @@ functions:
           method: post
           cors: true
 
-  market_publish_item:
-    handler: market/market.publish_item
-    events:
-      - http:
-          path: market/item/publish
-          method: post
-          cors: true
-
-  market_delete_item:
-    handler: market/market.delete_item
-    events:
-      - http:
-          path: market/item/delete
-          method: post
-          cors: true
-
-  market_get_category:
-    handler: market/market.get_category
-    events:
-      - http:
-          path: market/category/get
-          method: post
-          cors: true
-
-  market_item_examples:
-    handler: market/market.get_item_examples
-    events:
-      - http:
-          path: market/item/examples/get
-          method: post
-          cors: true
-
-  market_get_item:
-    handler: market/market.get_item
-    events:
-      - http:
-          path: market/item/get
-          method: post
-          cors: true
-
-  market_list_categories:
-    handler: market/market.list_categories
-    events:
-      - http:
-          path: market/category/list
-          method: post
-          cors: true
-
-  market_ideate:
-    handler: market/market.ideate
-    events:
-      - http:
-          path: market/ideate
-          method: post
-          cors: true
-
   user_base_prompts:
     handler: state/share.get_base_prompts
     timeout: 30
@@ -407,31 +339,6 @@ functions:
           path: state/accounts/save
           method: post
 
-
-  index_market_item:
-    handler: market/market.index_item
-    reservedConcurrency: 1
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - MarketItemsDynamoDbTable
-              - StreamArn
-          batchSize: 1
-          batchWindow: 60
-
-  index_market_category:
-    handler: market/market.index_category
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - MarketCategoriesDynamoDbTable
-              - StreamArn
-          batchSize: 1
-          batchWindow: 60
 
   convert:
     handler: converters/docconverter.handler
@@ -639,98 +546,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.DYNAMODB_TABLE}
 
-    AssistantThreadRunsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}
-
-    MarketItemsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        StreamSpecification:
-            StreamViewType: NEW_AND_OLD_IMAGES
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: category
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: type
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        BillingMode: PAY_PER_REQUEST
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: CategoryIndex
-            KeySchema:
-              - AttributeName: category
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: CategoryTypeIndex
-            KeySchema:
-              - AttributeName: category
-                KeyType: HASH
-              - AttributeName: type
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}
-
-    MarketCategoriesDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        StreamSpecification:
-            StreamViewType: NEW_IMAGE
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        TableName: ${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}
 
     UserFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -901,17 +716,6 @@ resources:
         StreamSpecification:  # enable streaming
           StreamViewType: NEW_AND_OLD_IMAGES
 
-
-    MarketIndexBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
 
 
     ConversionInputBucket:

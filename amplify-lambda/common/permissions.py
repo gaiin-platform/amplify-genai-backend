@@ -78,27 +78,6 @@ permissions_by_state_type = {
   "/assistant/delete": {
     "delete": can_create_assistant
   },
-  "/market/item/publish" : {
-    "publish_item": can_publish_item
-  },
-  "/market/item/delete" : {
-    "delete_item": can_delete_item
-  },
-  "/market/ideate": {
-    "ideate": can_publish_item
-  },
-  "/market/category/get" : {
-    "get_category": can_publish_item
-  },
-  "/market/category/list" : {
-    "list_categories": can_publish_item
-  },
-  "/market/item/get" : {
-    "get_item": can_publish_item
-  },
-  "/market/item/examples/get" : {
-    "get_examples": can_publish_item
-  },
   "/chat/convert": {
     "convert": can_publish_item
   },
