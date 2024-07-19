@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, ValidationError
 from common.ops import op, vop
 from common.validate import validated
 from llm.chat import chat, prompt
-
+from work.session import create_session
 
 @op(
     path="/llm/query",
@@ -136,6 +136,19 @@ def llm_prompt_datasource(event, context, current_user, name, data):
         }
 
 
+@vop(
+    path="/session/create",
+    tags=["session", "default"],
+    name="createSession",
+    description="Create a new session for the current user.",
+    params={
+        "conversation_id": "Optional ID of the conversation this session belongs to.",
+        "tags": "Optional list of tags for the session.",
+        "metadata": "Optional dictionary of metadata for the session."
+    }
+)
+
+
 def prompt_llm(access_token, model, datasource, custom_instructions, query, rag_only=False):
 
     # the datasource as a list or an empty list if it is None
@@ -247,6 +260,8 @@ def llm_qa_check(event, context, current_user, name, data):
         }
 
 
+
+
 # Example usage:
 #
 # result = qa(QAInput(
@@ -261,4 +276,4 @@ def llm_qa_check(event, context, current_user, name, data):
 # else:
 #     print("QA passed")
 
-"data: { 'id': '1234', 'name': 'John Doe' }\noriginal_input: John Doe was walking by aisle 1234 when a box fell on him.",
+# "data: { 'id': '1234', 'name': 'John Doe' }\noriginal_input: John Doe was walking by aisle 1234 when a box fell on him.",

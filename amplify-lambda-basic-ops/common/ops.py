@@ -32,8 +32,11 @@ def vop(tags=None, path="", name="", description="", params=None, model=BaseMode
             print(f"Params: {params}")
 
             if not permissions.permissions_by_state_type.get(path, None):
+
+                operation = path.split("/")[-1]
+
                 permissions.permissions_by_state_type[path] = {
-                    'qa_check': lambda user, data: True
+                    operation: lambda user, data: True
                 }
 
             # Call the actual function
