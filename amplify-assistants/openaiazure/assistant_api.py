@@ -244,7 +244,7 @@ def chat_with_code_interpreter(current_user, assistant_id, thread_id, messages, 
         # only api access will have the option of ending here because we dont manage thread conversation messages for the user, they do 
         # so we need to check if it is still good, if it is not then we dont automatically create one because the user will not be on a thread that has their messages 
         info['thread_key'] = thread_id
-        info['thread_id'] = get_thread(thread_id, current_user)['openai_thread_id']
+        info['thread_id'] = get_thread(thread_id, current_user).get('openai_thread_id', None)
         thread_check = check_last_known_thread(info)
         if (not thread_check['success']):
             return {'success': False, 'message': "Provided thread id is no longer active. Check again later or omit the thread id in the request to create a new one, you will have to send the entire conversation if creating a new thread."}
@@ -258,6 +258,7 @@ def chat_with_code_interpreter(current_user, assistant_id, thread_id, messages, 
 
 def check_last_known_thread(info):
     thread_id = info['thread_id']
+    if (not thread_id): return {'success': False, 'error': 'Failed to check last known threads status.'}
     print("Checking if the thread is still good. ThreadId: ", thread_id)
     timestamp = int(time.time() * 1000)
     try:
