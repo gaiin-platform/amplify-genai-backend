@@ -15,6 +15,7 @@ plugins:
 custom:
   pythonRequirements:
     dockerizePip: non-linux
+    layer: true
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -40,10 +41,6 @@ provider:
   environment:
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
-    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
-    MARKET_CATEGORIES_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-categories
-    MARKET_ITEMS_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-items
-    THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
@@ -51,7 +48,6 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
-    S3_MARKET_INDEX_BUCKET_NAME: ${self:service}-${sls:stage}-market-index
     S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
@@ -69,10 +65,12 @@ provider:
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
     PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
     OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
-    SHARE_ASSISTANTS_ENDPOINT: ${self:custom.stageVariables.SHARE_ASSISTANTS_ENDPOINT}
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
 
   iam:
@@ -111,17 +109,12 @@ provider:
           Resource:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:OPENAI_API_KEY-REUULJ'
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
@@ -139,8 +132,6 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
             - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}/*"  # access to your s3 bucket
             - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"  # access to your s3 bucket
             - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
@@ -158,8 +149,21 @@ provider:
 
 functions:
 
+  chat_endpoint:
+    handler: chat/service.chat_endpoint
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: chat
+          method: post
+          cors: true
+    
+
   upload_conversation:
     handler: state/conversation.upload_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/upload
@@ -168,6 +172,8 @@ functions:
 
   delete_conversation:
     handler: state/conversation.delete_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/delete
@@ -176,6 +182,8 @@ functions:
 
   delete_multiple_conversations:
     handler: state/conversation.delete_multiple_conversations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/delete_multiple
@@ -184,6 +192,8 @@ functions:
 
   get_conversation:
     handler: state/conversation.get_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/get
@@ -192,6 +202,8 @@ functions:
 
   get_multiple_conversations:
     handler: state/conversation.get_multiple_conversations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/get_multiple
@@ -200,6 +212,8 @@ functions:
 
   get_all_conversation:
     handler: state/conversation.get_all_conversations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/conversation/get_all
@@ -208,6 +222,8 @@ functions:
 
   upload_file:
     handler: assistant/assistant.get_presigned_url
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: assistant/files/upload
@@ -216,6 +232,8 @@ functions:
 
   download_file:
     handler: assistant/assistant.get_presigned_download_url
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: assistant/files/download
@@ -224,6 +242,8 @@ functions:
 
   list_tags_user:
     handler: assistant/assistant.list_tags_for_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: assistant/tags/list
@@ -232,6 +252,8 @@ functions:
 
   create_tags_user:
     handler: assistant/assistant.create_tags
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: assistant/tags/create
@@ -240,6 +262,8 @@ functions:
 
   delete_tag_user:
     handler: assistant/assistant.delete_tag_from_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: assistant/tags/delete
@@ -248,6 +272,8 @@ functions:
 
   set_tags_user_files:
     handler: assistant/assistant.update_item_tags
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: assistant/files/set_tags
@@ -256,6 +282,8 @@ functions:
 
   query_user_files:
     handler: assistant/assistant.query_user_files
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -265,6 +293,8 @@ functions:
 
   set_datasource_metadata:
     handler: assistant/assistant.set_datasource_metadata_entry
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -274,70 +304,18 @@ functions:
 
   create:
     handler: state/create.create
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state
           method: post
           cors: true
 
-  market_publish_item:
-    handler: market/market.publish_item
-    events:
-      - http:
-          path: market/item/publish
-          method: post
-          cors: true
-
-  market_delete_item:
-    handler: market/market.delete_item
-    events:
-      - http:
-          path: market/item/delete
-          method: post
-          cors: true
-
-  market_get_category:
-    handler: market/market.get_category
-    events:
-      - http:
-          path: market/category/get
-          method: post
-          cors: true
-
-  market_item_examples:
-    handler: market/market.get_item_examples
-    events:
-      - http:
-          path: market/item/examples/get
-          method: post
-          cors: true
-
-  market_get_item:
-    handler: market/market.get_item
-    events:
-      - http:
-          path: market/item/get
-          method: post
-          cors: true
-
-  market_list_categories:
-    handler: market/market.list_categories
-    events:
-      - http:
-          path: market/category/list
-          method: post
-          cors: true
-
-  market_ideate:
-    handler: market/market.ideate
-    events:
-      - http:
-          path: market/ideate
-          method: post
-          cors: true
-
   user_base_prompts:
     handler: state/share.get_base_prompts
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -346,6 +324,8 @@ functions:
 
   user_share_with_users:
     handler: state/share.share_with_users
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -354,6 +334,8 @@ functions:
 
   user_share_load:
     handler: state/share.load_data_from_s3
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/share/load
@@ -361,6 +343,8 @@ functions:
 
   user_get_shares:
     handler: state/share.get_share_data_for_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -369,6 +353,8 @@ functions:
 
   chat_convert:
     handler: converters/docconverter.submit_conversion_job
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -377,6 +363,8 @@ functions:
 
   accounts_charge:
     handler: accounts/accounts.charge_request
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/accounts/charge
@@ -384,6 +372,8 @@ functions:
 
   accounts_get:
     handler: accounts/accounts.get_accounts
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/accounts/get
@@ -391,36 +381,13 @@ functions:
 
   accounts_save:
     handler: accounts/accounts.save_accounts
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/accounts/save
           method: post
 
-
-  index_market_item:
-    handler: market/market.index_item
-    reservedConcurrency: 1
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - MarketItemsDynamoDbTable
-              - StreamArn
-          batchSize: 1
-          batchWindow: 60
-
-  index_market_category:
-    handler: market/market.index_category
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - MarketCategoriesDynamoDbTable
-              - StreamArn
-          batchSize: 1
-          batchWindow: 60
 
   convert:
     handler: converters/docconverter.handler
@@ -436,6 +403,8 @@ functions:
 
   queue_document_for_rag:
     handler: rag/core.queue_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
@@ -447,6 +416,8 @@ functions:
 
   process_document_for_rag:
     handler: rag/core.process_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -460,6 +431,8 @@ functions:
 
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
@@ -471,6 +444,8 @@ functions:
 
   process_document_for_chunking:
     handler: rag/core.chunk_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -484,6 +459,8 @@ functions:
 
   email_assistant:
     handler: personal/assistant.process_email
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
@@ -552,43 +529,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}
 
-    AssistantThreadsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: name
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: UserNameIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: name
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}
 
     UserStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -628,98 +568,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.DYNAMODB_TABLE}
 
-    AssistantThreadRunsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}
-
-    MarketItemsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        StreamSpecification:
-            StreamViewType: NEW_AND_OLD_IMAGES
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: category
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: type
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        BillingMode: PAY_PER_REQUEST
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: CategoryIndex
-            KeySchema:
-              - AttributeName: category
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: CategoryTypeIndex
-            KeySchema:
-              - AttributeName: category
-                KeyType: HASH
-              - AttributeName: type
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}
-
-    MarketCategoriesDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        StreamSpecification:
-            StreamViewType: NEW_IMAGE
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        TableName: ${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}
 
     UserFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -891,17 +739,6 @@ resources:
           StreamViewType: NEW_AND_OLD_IMAGES
 
 
-    MarketIndexBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
-
 
     ConversionInputBucket:
          Type: AWS::S3::Bucket
@@ -1002,4 +839,4 @@ resources:
               AllowedMethods: ['GET','PUT','POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
-           
+  

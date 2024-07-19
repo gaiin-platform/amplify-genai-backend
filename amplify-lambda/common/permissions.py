@@ -24,6 +24,9 @@ def can_read_share(user, data):
 def can_read(user, data):
   return True
 
+def can_chat(user, data):
+  return True
+
 def get_permission_checker(user, type, op, data):
   print("Checking permissions for user: {} and type: {} and op: {}".format(user, type, op))
   return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
@@ -75,27 +78,6 @@ permissions_by_state_type = {
   "/assistant/delete": {
     "delete": can_create_assistant
   },
-  "/market/item/publish" : {
-    "publish_item": can_publish_item
-  },
-  "/market/item/delete" : {
-    "delete_item": can_delete_item
-  },
-  "/market/ideate": {
-    "ideate": can_publish_item
-  },
-  "/market/category/get" : {
-    "get_category": can_publish_item
-  },
-  "/market/category/list" : {
-    "list_categories": can_publish_item
-  },
-  "/market/item/get" : {
-    "get_item": can_publish_item
-  },
-  "/market/item/examples/get" : {
-    "get_examples": can_publish_item
-  },
   "/chat/convert": {
     "convert": can_publish_item
   },
@@ -121,9 +103,12 @@ permissions_by_state_type = {
     "read": can_read
   },
   "/state/conversation/delete": {
-    "read": can_delete_item
+    "delete": can_delete_item
   },
   "/state/conversation/delete_multiple": {
     "delete_multiple_conversations": can_delete_item
   },
+  "/chat": {
+    "chat": can_chat
+  }
 }

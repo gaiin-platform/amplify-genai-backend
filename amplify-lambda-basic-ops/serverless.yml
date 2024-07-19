@@ -39,13 +39,14 @@ provider:
     USER_SESSIONS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-sessions
     USER_RECORDS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-records
     ATTACHMENT_STORAGE_S3_BUCKET_NAME: ${self:service}-${sls:stage}-work-record-attachments
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
 
   apiGateway:
     restApiId:
       ${self:custom.stageVariables.REST_API_ID}
     restApiRootResourceId:
       ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-
 
   iam:
     role:
@@ -60,12 +61,19 @@ provider:
           Resource:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
         - Effect: Allow
           Action:
             - s3:PutObject
             - s3:GetObject
             - s3:DeleteObject
           Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
+            - dynamodb:Query
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
 
 
 functions:

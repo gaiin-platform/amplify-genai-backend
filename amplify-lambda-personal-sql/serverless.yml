@@ -41,10 +41,11 @@ provider:
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
     OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
-    OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
-    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
     DATASOURCE_REGISTRY_ENDPOINT: ${self:custom.stageVariables.DATASOURCE_REGISTRY_ENDPOINT}
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
 
   apiGateway:
     restApiId:
@@ -73,6 +74,10 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}/index/CreatorIndex"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
         - Effect: Allow
           Action:
             - dynamodb:PutItem

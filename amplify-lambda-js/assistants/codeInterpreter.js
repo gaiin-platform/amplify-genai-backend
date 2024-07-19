@@ -63,8 +63,7 @@ const invokeCodeIterpreterAction =
                 description: description, 
                 tags: [],
                 instructions:  options.prompt + additionalPrompt,
-                fileKeys: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
-                tools: [{"type": "code_interpreter"}], 
+                dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
             }
 
             try {
@@ -88,7 +87,7 @@ const invokeCodeIterpreterAction =
         if (assistantId) {
             messages.at(-1)['content'] += "\nAlways include any code you write in your response inside code blocks in markdown. Do not include mock download links. Always generate files when asked. Always attach your generated files to your response."
             const chat_data = {
-                id: assistantId,
+                assistantId: assistantId,
                 messages: messages.slice(1),
                 accountId: account.accountId || 'general_account',
                 requestId: options.requestId
@@ -339,15 +338,20 @@ const States = {
        
         (llm, context, dataSources) => { 
             context.data['isCodeInterpreterDone'] = false; // add a flag to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
-            context.data['hasEntertainmentStopped'] = false;
-            let entertainmentTypes = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
-            let entertainmentHistory = {};
-            entertainmentTypes.forEach((type) => {
-                entertainmentHistory[type] = [];
-            });
-            context.data['entertainmentTypes'] = entertainmentTypes;
-            context.data['entertainmentHistory'] = entertainmentHistory;
-            
+            if (!context.params.account.accessToken.startsWith("amp-")) {
+                context.data['hasEntertainmentStopped'] = false;
+                let entertainmentTypes = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
+                let entertainmentHistory = {};
+                entertainmentTypes.forEach((type) => {
+                    entertainmentHistory[type] = [];
+                });
+                context.data['entertainmentTypes'] = entertainmentTypes;
+                context.data['entertainmentHistory'] = entertainmentHistory;
+                States.invokeCodeInterpreter.addTransition(States.randomEntertainment.name, "Choose a random next state!");
+            } else {
+                context.data['hasEntertainmentStopped'] = true;
+                States.invokeCodeInterpreter.addTransition(States.wait.name, "Wait for codeInterpreter to finish");
+            }
         }, sleepAction(3)
     ]), false,
     ),
@@ -412,10 +416,16 @@ const States = {
     ),
     
 
-    iRatherWait:  new AssistantState("iRatherWait",
+    wait:  new AssistantState("wait",
         "Just wait for code interpreter to finish up",
         chainActions([ sleepAction(25), codeInterpreterStatusUpdate,
             updateStatus("invokeCodeInterpreter", {inProgress: true}, 'codeInterpreterCurStatusSummary'),
+            (llm, context, dataSources) => {
+                if (context.data['isCodeInterpreterDone']) {
+                    States.wait.addTransition(States.finalWait.name, "Code Interpreter is finishing up");
+                    // console.log("To waiting state")
+                } 
+            }
         ]),
         false, {extraInstructions: {postInstructions: 
                 `Is Code Interpreter done? If not, we need to continue to wait until it is done.
@@ -440,15 +450,15 @@ const current = States.initialState;
 // We add transitions to the state machine to define the state machine.
 States.initialState.addTransition(States.invokeCodeInterpreter.name, "Start by calling Code Interpreter");
 
-States.invokeCodeInterpreter.addTransition(States.randomEntertainment.name, "Choose a random next state!");
-
 States.todayInHistory.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.onTopicPun.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.roastMyPrompt.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.guessTheRiddle.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.lifeHacks.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 
+States.wait.addTransition(States.wait.name, "Continue to wait");
 States.finalWait.addTransition(States.finalWait.name, "Wait for code interpreter data to come through");
+
 
 // We create the assistant with the state machine and the current state.
 export const codeInterpreterAssistant = new StateBasedAssistant(

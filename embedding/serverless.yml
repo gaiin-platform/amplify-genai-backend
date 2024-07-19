@@ -72,8 +72,10 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
-    RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
+    RAG_POSTGRES_DB_WRITE_ENDPOINT: dev-rag-cluster.cluster-chyilp474xua.us-east-1.rds.amazonaws.com
+    #!GetAtt RagPostgresDbCluster.Endpoint.Address
+    RAG_POSTGRES_DB_READ_ENDPOINT: dev-rag-cluster.cluster-ro-chyilp474xua.us-east-1.rds.amazonaws.com
+    #!GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     KEYWORD_MODEL_NAME: ${self:custom.stageVariables.KEYWORD_MODEL_NAME}
     QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
@@ -82,7 +84,8 @@ provider:
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
     OBJECT_ACCESS_TABLE: vu-amplify-object-access-${sls:stage}-object-access
-    ACCOUNTS_DYNAMO_TABLE: ${self:custom.stageVariables.ACCOUNTS_DYNAMO_TABLE}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
    
 
   iam:
@@ -109,10 +112,14 @@ provider:
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
             - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            
             
 
 functions:
