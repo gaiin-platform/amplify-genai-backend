@@ -96,6 +96,14 @@ functions:
             method: post
             cors: true
 
+  echo:
+    handler: service/work.echo
+    events:
+      - http:
+          path: /work/echo
+          method: post
+          cors: true
+
   create_user_session:
     handler: service/work.create_user_session
     timeout: 30

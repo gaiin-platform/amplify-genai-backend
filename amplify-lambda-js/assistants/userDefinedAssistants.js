@@ -149,6 +149,23 @@ export const fillInAssistant = (assistant, assistantBase) => {
             }
 
             const extraMessages = [];
+
+            if(assistant.data && assistant.data.messageOptions) {
+                if(assistant.data.messageOptions.includeMessageIds){
+                    body.messages = body.messages.map((m, i) => {
+                        return {...m, content: "MsgID: " + i + "\n\n" + m.content};
+                    });
+
+                    extraMessages.push({
+                        role: "user",
+                        content:"You can references or have prior messages inserted into your response by " +
+                            "referencing the MsgId like this %^MsgID. Examples %^0, %^1, etc. The reference" +
+                            "will be replaced with the content of that message."
+                    });
+                }
+            }
+
+
             if(assistant.data && assistant.data.dataSourceOptions) {
 
                 const dataSourceMetadataForInsertion = [];

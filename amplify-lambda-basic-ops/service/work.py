@@ -200,6 +200,38 @@ def delete_user_record(event, context, current_user, name, data):
 
 
 @vop(
+    path="/work/echo",
+    tags=["work", "default", "simple"],
+    name="echoMessage",
+    description="Echo a message back to the user as a pause.",
+    params={
+        "message": "The message to be echoed back."
+    }
+)
+@validated(op="echo")
+def echo(event, context, current_user, name, data):
+    try:
+        # Extract the message from the request data
+        message = data['data'].get('message', '')
+
+        return {
+            'success': True,
+            'data': {
+                'pause': {
+                    'message': message
+                }
+            }
+        }
+
+    except Exception as e:
+        print(f"Error in echo function: {str(e)}")
+        return {
+            'success': False,
+            'message': f"Failed to echo message: {str(e)}"
+        }
+
+
+@vop(
     path="/work/session/stitch_records",
     tags=["work", "default"],
     name="stitchWorkProductRecords",
