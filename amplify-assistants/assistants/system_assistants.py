@@ -448,32 +448,37 @@ def get_api_doc_helper_assistant():
         {}
     ```
     Always responsd with a APIdoc when asked to see documents/documentations
-
+    """ +  f"""
     List all 19 paths/endpoints when specifically asked what the are the available paths/endpoints:
         Amplify Endpoints:
-        /chat - POST: Send a chat message and receive a response stream
-        /state/share - GET: Retrieve Amplify shared data
-        /state/share/load - POST: Load Amplidy shared data
+        {os.environ['API_BASE_URL']}
+            /chat - POST: Send a chat message to AMPLIFY and receive a response stream
+            /state/share - GET: Retrieve Amplify shared data
+            /state/share/load - POST: Load Amplidy shared data
 
-        /assistant/files/upload - POST: Recieve pre-signed url to upload file to Amplify
-        /assistant/files/query - POST: view uploaded files
-        /assistant/tags/list - POST: List all tags
-        /assistant/tags/create - POST: Create new tag
-        /assistant/tags/delete - POST: Delete a tag
-        /assistant/files/set_tags - POST: Associate tags with a file
+            /assistant/files/upload - POST: Recieve pre-signed url to upload file to Amplify
+            /assistant/files/query - POST: view uploaded files
+            /assistant/tags/list - POST: List all tags
+            /assistant/tags/create - POST: Create new tag
+            /assistant/tags/delete - POST: Delete a tag
+            /assistant/files/set_tags - POST: Associate tags with a file
 
-        /embedding-dual-retrieval - POST: Retrieve embeddings based on user input through the dual retrieval method
+            /embedding-dual-retrieval - POST: Retrieve embeddings based on user input through the dual retrieval method
+        ________________________________
+        {os.environ['ASSISTANTS_API_BASE_URL']}
+            /assistant/create - POST: Create or update a Amplify assistant
+            /assistant/list - GET: Retrieve a list of all Amplify assistants
+            /assistant/share - POST: Share an Amplify assistant with other Amplify users
+            /assistant/delete - POST: Delete an Amplify assistant
 
-        /assistant/create - POST: Create or update a Amplify assistant
-        /assistant/list - GET: Retrieve a list of all Amplify assistants
-        /assistant/share - POST: Share an Amplify assistant with other Amplify users
-        /assistant/delete - POST: Delete an Amplify assistant
+            /assistant/files/download/codeinterpreter - POST: Get presigned urls to download the Code Interpreter-generated files
+            /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes.
+            /assistant/openai/thread/delete - DELETE: Delete a code interpreter thread, deleting your existing conversation with code interpreter
+            /assistant/openai/delete - DELETE: delete a code interpreter assistant 
 
-        /assistant/files/download/codeinterpreter - POST: Get presigned urls to download the Code Interpreter-generated files
-        /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes.
-        /assistant/chat/codeinterpreter - POST: Establishes a conversation with Code Interpreter, returning a unique thread id that contains your ongoing conversation. Subsequent API calls will only need new messages.
-        /assistant/openai/thread/delete - DELETE: Delete a code interpreter thread, deleting your existing conversation with code interpreter
-        /assistant/openai/delete - DELETE: delete a code interpreter assistant 
+        ________________________________
+        {os.environ['ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT']}
+            /assistant/chat/codeinterpreter - POST: Establishes a conversation with Code Interpreter (not AMPLIFY), returning a unique thread id that contains your ongoing conversation. Subsequent API calls will only need new messages.
     """
 
     description = "This assistant will guide you through the process of making http calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents."

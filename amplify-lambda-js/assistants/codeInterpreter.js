@@ -67,7 +67,7 @@ const invokeCodeIterpreterAction =
             }
 
             try {
-                const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT); 
+                const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_API_BASE_URL + '/assistant/create/codeinterpreter'); 
 
                 if (responseData && responseData && responseData.success) {
                     assistantId = responseData.data.assistantId

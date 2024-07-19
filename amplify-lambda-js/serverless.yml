@@ -60,8 +60,9 @@ provider:
     TRACING_ENABLED: false
     DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
-    ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT}
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     
 
   iam:

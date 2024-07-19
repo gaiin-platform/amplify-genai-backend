@@ -300,29 +300,34 @@ const systemAssistantIds = {
 
         List all 19 paths/endpoints when specifically asked what the are the available paths/endpoints:
         Amplify Endpoints:
-        /chat - POST: Send a chat message and receive a response stream
-        /state/share - GET: Retrieve Amplify shared data
-        /state/share/load - POST: Load Amplify shared data
+        ${process.env.API_BASE_URL}
+            /chat - POST: Send a chat message to AMPLIFY and receive a response stream
+            /state/share - GET: Retrieve Amplify shared data
+            /state/share/load - POST: Load Amplify shared data
 
-        /assistant/files/upload - POST: Receive pre-signed URL to upload file to Amplify
-        /assistant/files/query - POST: View uploaded files
-        /assistant/tags/list - POST: List all tags
-        /assistant/tags/create - POST: Create new tag
-        /assistant/tags/delete - POST: Delete a tag
-        /assistant/files/set_tags - POST: Associate tags with a file
+            /assistant/files/upload - POST: Receive pre-signed URL to upload file to Amplify
+            /assistant/files/query - POST: View uploaded files
+            /assistant/tags/list - POST: List all tags
+            /assistant/tags/create - POST: Create new tag
+            /assistant/tags/delete - POST: Delete a tag
+            /assistant/files/set_tags - POST: Associate tags with a file
 
-        /embedding-dual-retrieval - POST: Retrieve embeddings based on user input through the dual retrieval method
+            /embedding-dual-retrieval - POST: Retrieve embeddings based on user input through the dual retrieval method
+        ____________________________________
+        ${process.env.ASSISTANTS_API_BASE_URL}
+            /assistant/create - POST: Create or update an Amplify assistant
+            /assistant/list - GET: Retrieve a list of all Amplify assistants
+            /assistant/share - POST: Share an Amplify assistant with other Amplify users
+            /assistant/delete - POST: Delete an Amplify assistant
 
-        /assistant/create - POST: Create or update an Amplify assistant
-        /assistant/list - GET: Retrieve a list of all Amplify assistants
-        /assistant/share - POST: Share an Amplify assistant with other Amplify users
-        /assistant/delete - POST: Delete an Amplify assistant
+            /assistant/files/download/codeinterpreter - POST: Get presigned URLs to download the Code Interpreter-generated files
+            /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes
+            /assistant/openai/thread/delete - DELETE: Delete a code interpreter thread, deleting your existing conversation with code interpreter
+            /assistant/openai/delete - DELETE: Delete a code interpreter assistant
+        ____________________________________
+        ${process.env.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
+            /assistant/chat/codeinterpreter - POST: Establishes a conversation with Code Interpreter (not AMPLIFY), returning a unique thread ID that contains your ongoing conversation. Subsequent API calls will only need new messages
 
-        /assistant/files/download/codeinterpreter - POST: Get presigned URLs to download the Code Interpreter-generated files
-        /assistant/create/codeinterpreter - POST: Create a new Code Interpreter assistant with specified attributes
-        /assistant/chat/codeinterpreter - POST: Establishes a conversation with Code Interpreter, returning a unique thread ID that contains your ongoing conversation. Subsequent API calls will only need new messages
-        /assistant/openai/thread/delete - DELETE: Delete a code interpreter thread, deleting your existing conversation with code interpreter
-        /assistant/openai/delete - DELETE: Delete a code interpreter assistant
     `,
     description: "This assistant will guide you through the process of making HTTP calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents.",
     dataSources: [
