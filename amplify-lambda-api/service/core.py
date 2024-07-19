@@ -189,7 +189,7 @@ def create_api_key_for_user(user, api_key) :
                 'createdAt': timestamp, 
                 'lastAccessed': timestamp,
                 'rateLimit': api_key["rateLimit"], # format {rate: , time: }
-                'expirationDate': api_key["expiration"],
+                'expirationDate': api_key["expirationDate"],
                 'accessTypes' :  api_key["accessTypes"]
             }
         )

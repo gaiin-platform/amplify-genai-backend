@@ -107,7 +107,7 @@ create_api_keys_schema = {
             },
             "description": "Cost restriction using the API key"
         },
-        "expiration": {
+        "expirationDate": {
             "type":  ["string", "null"],
             "description": "The expiration date of the API key"
         },
