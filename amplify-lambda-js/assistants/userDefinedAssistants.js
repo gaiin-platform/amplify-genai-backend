@@ -152,15 +152,29 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             if(assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
+
+                    const messageIdMapping = {};
+
                     body.messages = body.messages.map((m, i) => {
-                        return {...m, content: "MsgID: " + i + "\n\n" + m.content};
+
+                        messageIdMapping[i] = m.id;
+
+                        return {
+                            ...m,
+                            content: "MsgID: " + i + "\n\n" + m.content
+                        };
+                    });
+
+                    llm.sendStateEventToStream({
+                       messageIdMapping
                     });
 
                     extraMessages.push({
                         role: "user",
                         content:"You can references or have prior messages inserted into your response by " +
                             "referencing the MsgId like this %^MsgID. Examples %^0, %^1, etc. The reference" +
-                            "will be replaced with the content of that message."
+                            "will be replaced with the content of that message. DO NOT OUTPUT OR TALK ABOUT " +
+                            "THESE IDS TO THE USER."
                     });
                 }
             }

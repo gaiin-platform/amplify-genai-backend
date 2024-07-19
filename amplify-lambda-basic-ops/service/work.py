@@ -5,6 +5,7 @@ from datetime import datetime
 from common.ops import vop
 from common.validate import validated
 from work.session import create_session, delete_record, list_records, add_record
+from work.util import extract_sections
 
 
 @vop(
@@ -205,7 +206,7 @@ def delete_user_record(event, context, current_user, name, data):
     name="echoMessage",
     description="Echo a message back to the user as a pause.",
     params={
-        "message": "The message to be echoed back."
+        "message": "The message to be echoed back with new lines escaped as \\n."
     }
 )
 @validated(op="echo")
@@ -214,11 +215,17 @@ def echo(event, context, current_user, name, data):
         # Extract the message from the request data
         message = data['data'].get('message', '')
 
+        # Sections
+        prefixes = ["Thought:", "Content:", "Follow-up:"]
+        sections = extract_sections(prefixes, message)
+        content_sections = [section for section in sections if section["key"] == "Content:"]
+        content_section_combined_value = " ".join([section["value"] for section in content_sections])
+
         return {
             'success': True,
             'data': {
                 'pause': {
-                    'message': message
+                    'message': content_section_combined_value
                 }
             }
         }
