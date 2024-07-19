@@ -1,4 +1,3 @@
-from pydantic import BaseModel
 
 from common import permissions
 
@@ -20,7 +19,7 @@ def op(tags=None, path="", name="", description="", params=None):
         return wrapper
     return decorator
 
-def vop(tags=None, path="", name="", description="", params=None, model=BaseModel):
+def vop(tags=None, path="", name="", description="", params=None):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
