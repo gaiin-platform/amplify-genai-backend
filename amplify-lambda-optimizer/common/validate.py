@@ -68,7 +68,7 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-     "/optimizer/prompt": {
+    "/optimizer/prompt": {
         "optimize": optimize_schema
     },
 }
@@ -76,7 +76,9 @@ validators = {
 
 
 api_validators = {
-
+    "/optimizer/prompt": {
+        "optimize": optimize_schema
+    },
 }
 
 

@@ -219,7 +219,27 @@ validators = {
 }
 
 api_validators = {
-
+    "/apiKeys/deactivate_key": {
+        "deactivate": deactivate_api_key_schema
+    }, 
+    "/apiKeys/create_keys": {
+        "create": create_api_keys_schema
+    },
+    "/apiKeys/get_keys": {
+        "read": {}
+    },
+    "/apiKeys/get_key": {
+        "read": {}
+    },
+    "/apiKeys/update_keys" : {
+        "update": update_key_schema
+    },
+    "/apiKeys/get_system_ids": {
+        "read": {}
+    },
+    "/apiKeys/api_documentation": {
+        "read": {}
+    }
 }
 
 

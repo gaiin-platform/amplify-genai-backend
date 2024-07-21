@@ -72,7 +72,9 @@ validators = {
 
 
 api_validators = {
-
+     "/customdatasource/query": {
+        "query": query_schema
+    },
 }
 
 

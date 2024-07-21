@@ -119,7 +119,9 @@ validators = {
 }
 
 api_validators = {
-
+    "/qi/upload/conversation": {
+        "conversation_upload": conversation_schema
+    },
 }
 
 

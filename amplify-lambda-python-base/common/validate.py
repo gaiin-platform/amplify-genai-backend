@@ -285,7 +285,7 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('sample_python-base' not in access):
+        if ('sample_python_base' not in access):
             # and 'full_access' not in access
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")

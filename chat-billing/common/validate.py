@@ -57,7 +57,7 @@ validators = {
 }
 
 api_validators = {
-
+    "/billing": {"report_generator": report_generator_schema},
 }
 
 

@@ -154,6 +154,9 @@ api_validators = {
     "/utilities/simulate_access_to_objects": {
         "simulate_access_to_objects": simulate_access_to_objects
     },
+    "/utilities/emails": {
+        "read": {}
+    }
 }
 
 def validate_data(name, op, data, api_accessed):

@@ -122,7 +122,18 @@ validators = {
 
 
 api_validators = {
-
+    "/personal/db/create": {
+        "create_db": create_schema
+    },
+    "/personal/db/list": {
+        "list_dbs": {}
+    },
+    "/personal/db/items/insert": {
+        "insert_db_row": insert_db_row_schema
+    },
+    "/personal/db/items/list": {
+        "list_items": list_items_schema
+    },
 }
 
 

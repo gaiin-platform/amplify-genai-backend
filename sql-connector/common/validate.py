@@ -63,7 +63,7 @@ validators = {"/dar/execute_sql_query": {"execute_sql": task_schema}}
 
 
 api_validators = {
-
+    {"/dar/execute_sql_query": {"execute_sql": task_schema}}
 }
 
 

@@ -44,30 +44,23 @@ class NotFound(HTTPException):
 Every service must define a schema each operation here. The schema is applied to the data field of the request
 body. You do NOT need to include the top-level "data" key in the schema.
 """
-sample_schema = {
-    "type": "object",
-    "properties": {
-        "msg": {
-            "type": "string",
-            "description": "The msg to echo"
-        }
-    },
-    "required": ["msg"]
-}
+
 
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/someservice/sample": {
-        "sample": sample_schema
+    "/ops/get": {
+        "get": {}
     },
 }
 
 
 api_validators = {
-
+     "/ops/get": {
+        "get": {}
+    },
 }
 
 

@@ -273,7 +273,6 @@ id_and_category_request_schema = {
 
 
 validators = {
-    
     "/market/item/publish": {
         "publish_item": publish_item_schema
     },
@@ -299,7 +298,27 @@ validators = {
 
 
 api_validators = {
-
+    "/market/item/publish": {
+        "publish_item": publish_item_schema
+    },
+    "/market/item/delete": {
+        "delete_item": id_request_schema
+    },
+    "/market/ideate": {
+        "ideate": task_and_category_request_schema
+    },
+    "/market/category/get": {
+        "get_category": get_category_schema
+    },
+    "/market/item/get": {
+        "get_item": id_request_schema
+    },
+    "/market/item/examples/get": {
+        "get_examples": id_and_category_request_schema
+    },
+    "/market/category/list" : {
+    "list_categories": {}
+    },
 }
 
 
