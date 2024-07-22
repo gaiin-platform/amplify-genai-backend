@@ -282,7 +282,7 @@ function sleepAction(wait) {
                             content: `Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
                         }], actionType, { appendMessages: appendMessages, ragOnly: false, skipRag:true, streamResults: false, retries: 2, isEntertainment: true}
                     ), sleepAction(2), 
-                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(20), 
+                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(15), 
                     ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
                     (llm, context, dataSources) => { States.randomEntertainment.removeTransitions();
                         context.data['entertainmentHistory'][actionType].push(context.data[actionType]); },

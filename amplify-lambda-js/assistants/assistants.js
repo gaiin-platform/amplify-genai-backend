@@ -260,7 +260,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         selectedAssistant = isSystemAssistant(clientSelectedAssistant) ? getSystemAssistant(defaultAssistant, clientSelectedAssistant) 
                                              : await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
 
-    } else if (body.options.codeInterpreterOnly && ('api_accessed' in body.options && !body.options.api_accessed)) {
+    } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = codeInterpreterAssistant;
     }
 

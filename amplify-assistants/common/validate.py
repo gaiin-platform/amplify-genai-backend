@@ -359,9 +359,6 @@ api_validators = {
 
 
 def validate_data(name, op, data, api_accessed):
-    print(data)
-    print("-------")
-
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
         schema = validator[name][op]
