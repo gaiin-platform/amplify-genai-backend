@@ -175,11 +175,12 @@ chat_assistant_schema = {
             "type": ["string", 'null']
         },
         "messages": {
-            "oneOf": [
+            "anyOf": [
                 { # Messages through amplify 
                     "type": "array",
                     "items": {
                         "type": "object",
+                        "additionalProperties": True,
                         "properties": {
                             "id": {
                                 "type": "string"
@@ -233,7 +234,8 @@ chat_assistant_schema = {
                         },
                         "required": ["id", "content", "role"]
                     }
-                }, 
+                }
+                , 
                 { # messages from API 
                     "type": "array",
                     "items": {
@@ -338,9 +340,9 @@ api_validators = {
     "/assistant/chat_with_code_interpreter": {
         "chat": chat_assistant_schema
     },
-    "/": {
-        "chat": chat_assistant_schema
-    },
+    # "/": {
+    #     "chat": chat_assistant_schema
+    # },
     "/assistant/create/codeinterpreter": {
         "create": create_code_interpreter_assistant_schema
     },
@@ -357,6 +359,9 @@ api_validators = {
 
 
 def validate_data(name, op, data, api_accessed):
+    print(data)
+    print("-------")
+
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
         schema = validator[name][op]
