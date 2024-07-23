@@ -19,6 +19,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
     try {
         const accountId = account.accountId || 'general_account';
 
+        if (account.accessToken.startsWith("amp-")) details = {...details, api_key: account.accessToken};
+
         const item = {
             id: { S: `${uuidv4()}` },
             requestId: { S: requestId },

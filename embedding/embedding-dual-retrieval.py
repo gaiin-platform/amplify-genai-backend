@@ -212,7 +212,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     data = data['data']
     content = data['userInput']
     raw_src_ids = data['dataSources']
-    limit = data['limit']
+    limit = data.get('limit', 10)
 
     accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
     src_ids = accessible_src_ids

@@ -14,6 +14,7 @@ from rag.handlers.powerpoint import PPTXHandler
 from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
 from rag.util import get_text_content_location, get_text_metadata_location, get_text_hash_content_location
+import traceback
 
 s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
@@ -148,6 +149,9 @@ def chunk_content(key, text_content, split_params):
     content_index = 0
     min_chunk_size = split_params.get('min_chunk_size', 512)
 
+    total_chunks = 0
+    max_chunks = int(os.environ.get('MAX_CHUNKS', '1000'))
+
     parts = [split_text(sent_tokenize, item) for item in text_content['content']]
     flattened_list = [item for sublist in parts for item in sublist]
 
@@ -164,6 +168,10 @@ def chunk_content(key, text_content, split_params):
         location = content_part['location']
         sentence_length = len(sentence)
 
+        if total_chunks >= max_chunks:
+            print(f"Reached maximum chunks {max_chunks} for {key}")
+            break
+
         # Check if adding this sentence would exceed the chunk size.
         if current_chunk and (current_chunk_size + sentence_length + 1) >= min_chunk_size:
             # Join the current chunk with space and create the chunk object.
@@ -173,6 +181,8 @@ def chunk_content(key, text_content, split_params):
                            'locations': locations,
                            'indexes': indexes,
                            'char_index': char_index})
+
+            total_chunks += 1
 
             if len(chunks) == split_increment:
                 split_count += 1
@@ -187,6 +197,7 @@ def chunk_content(key, text_content, split_params):
             current_chunk_size = sentence_length
             content_index += 1  # Increment the content index.
         else:
+            total_chunks += 1
             locations.append(location)
             indexes.append(index)
             index = index + 1
@@ -217,6 +228,7 @@ def chunk_content(key, text_content, split_params):
 def chunk_s3_file_content(bucket, key):
     try:
         # Download the file from S3
+        print(f"Fetching text from {bucket}/{key}")
         s3_object = s3.get_object(Bucket=bucket, Key=key)
         data = s3_object["Body"].read()
         print(f"Fetched text from {bucket}/{key}")
@@ -230,6 +242,7 @@ def chunk_s3_file_content(bucket, key):
         return chunks
 
     except Exception as e:
+        traceback.print_exc()
         print(f"Error getting object {key} from bucket {bucket}: {str(e)}")
         return None
 
@@ -511,6 +524,7 @@ def process_document_for_rag(event, context):
 
                             hash_file_data = {
                                 'id': dochash,
+                                'originalCreator': user,
                                 'textLocationBucket': file_text_content_bucket_name,
                                 'textLocationKey': text_content_key,
                                 'createdAt': creation_time,
@@ -597,7 +611,7 @@ def queue_document_for_rag_chunking(event, context):
     return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
 
 
-def update_embedding_status(object_id, chunk_index, total_chunks, status):
+def update_embedding_status(original_creator, object_id, chunk_index, total_chunks, status):
     try:
         progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
         print(f"Updating chunk count status for embedding {progress_table}/{object_id} "
@@ -608,6 +622,8 @@ def update_embedding_status(object_id, chunk_index, total_chunks, status):
             Item={
                 'object_id': object_id,
                 'timestamp': datetime.now().isoformat(),
+                'originalCreator': original_creator,
+                'terminated': False,
                 'data': {
                     'chunkIndex': chunk_index,
                     'totalChunks': total_chunks or 0,
@@ -622,12 +638,44 @@ def update_embedding_status(object_id, chunk_index, total_chunks, status):
         print(e)
 
 
+def get_original_creator(key):
+    original_creator = 'unknown'
+    try:
+        dynamodb = boto3.resource('dynamodb')
+        # Get the original creator of the file
+        # by extracting the hash from the key
+        # and looking up the original creator in the hash_files table
+        hash = key
+        parts = key.split('/')
+        if len(parts) == 2:
+            filename = parts[1]
+            hash = filename.split('.')[0]
+        hash_files = dynamodb.Table(os.environ['HASH_FILES_DYNAMO_TABLE'])
+        response = hash_files.get_item(
+            Key={
+                'id': hash
+            }
+        )
+        item = response.get('Item', None)
+        if item:
+            print(f"Found hash entry for {key}: {item}")
+            original_creator = item.get('originalCreator', 'unknown')
+            print(f"Original uploader: {original_creator}")
+        else:
+            print(f"Hash entry not found for {key}")
+    except Exception as e:
+        print(f"Error getting hash entry for {key} to determine original_creator: {str(e)}")
+
+    return original_creator
+
+
 def chunk_document_for_rag(event, context):
     print(f"Received event: {event}")
     queue_url = os.environ['rag_chunk_document_queue_url']
 
     dynamodb = boto3.resource('dynamodb')
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+
 
     for record in event['Records']:
         try:
@@ -649,9 +697,13 @@ def chunk_document_for_rag(event, context):
 
             print(f"Bucket / Key {bucket} / {key}")
 
+            # Figure out who uploaded this file, even though it's a shared
+            # global entry
+            original_creator = get_original_creator(key)
+
             chunks = chunk_s3_file_content(bucket, key)
 
-            update_embedding_status(key, 0, chunks, "starting")
+            update_embedding_status(original_creator, key, 0, chunks, "starting")
 
             receipt_handle = record['receiptHandle']
             print(f"Deleting message {receipt_handle} from queue")

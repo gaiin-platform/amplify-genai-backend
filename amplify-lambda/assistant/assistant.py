@@ -2,12 +2,23 @@ import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
+
+from common.ops import op
 from common.validate import validated
 import os
 import boto3
 import rag.util
 
 
+@op(
+    path="/assistant/files/download",
+    name="getDownloadUrl",
+    tags=["files"],
+    description="Get a url to download the file associated with a datasource key / ID.",
+    params={
+        "key": "The key or ID of the datasource to download.",
+    }
+)
 @validated(op="download")
 def get_presigned_download_url(event, context, current_user, name, data):
     data = data['data']
@@ -177,8 +188,27 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
     return key
 
 
+@op(
+    path="/assistant/files/upload",
+    name="getUploadUrl",
+    tags=["files"],
+    description="Get a url to upload a file to.",
+    params={
+        "name": "The name of the file to upload.",
+        "type": "The mime type of the file to upload as a string.",
+        "tags": "The tags associated with the file as a list of strings.",
+        "data": "The data associated with the file or an empty dictionary.",
+        "knowledgeBase": "The knowledge base associated with the file. You can put 'default' if you don't have a "
+                         "specific knowledge base. "
+    }
+)
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('file_upload' not in access and 'full_access' not in access):
+        print("User does not have access to the file_upload functionality")
+        return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
+    
     print(f"Data is {data}")
     data = data['data']
 
@@ -254,6 +284,14 @@ def get_presigned_url(event, context, current_user, name, data):
         return {'success': False}
 
 
+@op(
+    path="/assistant/tags/list",
+    name="listTagsForUser",
+    tags=["files"],
+    description="Get a list of all tags that can be added to files or used to search for groups of files.",
+    params={
+    }
+)
 @validated(op="list")
 def list_tags_for_user(event, context, current_user, name, data):
     dynamodb = boto3.resource('dynamodb')
@@ -286,6 +324,15 @@ def list_tags_for_user(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/assistant/tags/delete",
+    name="deleteTagForUser",
+    tags=["files"],
+    description="Delete a tag from the list of the user's tags.",
+    params={
+        "tag": "The tag to delete."
+    }
+)
 @validated(op="delete")
 def delete_tag_from_user(event, context, current_user, name, data):
     data = data['data']
@@ -329,6 +376,15 @@ def delete_tag_from_user(event, context, current_user, name, data):
             }
 
 
+@op(
+    path="/assistant/tags/create",
+    name="createTagsForUser",
+    tags=["files"],
+    description="Create one or more tags for the user that can be added to files.",
+    params={
+        "tags": "A list of string tags to create for the user."
+    }
+)
 @validated(op="create")
 def create_tags(event, context, current_user, name, data):
     data = data['data']
@@ -383,6 +439,17 @@ def add_tags_to_user(current_user, tags_to_add):
                 'message': e.response['Error']['Message']
             }
 
+
+@op(
+    path="/assistant/tags/set_tags",
+    name="setTagsForFile",
+    tags=["files"],
+    description="Set a file's list of tags.",
+    params={
+        "id": "The ID of the file to set tags for.",
+        "tags": "A list of string tags to set for the file."
+    }
+)
 @validated(op="set_tags")
 def update_item_tags(event, context, current_user, name, data):
     data = data['data']
@@ -431,6 +498,34 @@ def update_file_tags(current_user, item_id, tags):
         return False, "Unable to update tags"
 
 
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByNameAndType",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "namePrefix": "The prefix to search for in the file names.",
+        "types": "A list of file mime types (e.g., 'application/pdf', 'text/plain', etc.) and must not be empty.",
+    }
+)
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByName",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "namePrefix": "The prefix to search for in the file names."
+    }
+)
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByTags",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "tags": "A list of tags to search for or an empty list.",
+    }
+)
 @validated(op="query")
 def query_user_files(event, context, current_user, name, data):
     print(f"Querying user files for {current_user}")

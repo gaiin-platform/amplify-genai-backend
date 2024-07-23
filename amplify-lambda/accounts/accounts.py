@@ -1,3 +1,4 @@
+from common.ops import op
 from common.validate import validated
 from decimal import Decimal
 import boto3
@@ -114,6 +115,14 @@ def charge_request(event, context, user, name, data):
     return create_charge(account_id, charge, description, user, details)
 
 
+@op(
+    path="/state/accounts/get",
+    name="getUserAccounts",
+    tags=["accounts"],
+    description="Get a list of the user's accounts that costs are charged to.",
+    params={
+    }
+)
 @validated("get")
 def get_accounts(event, context, user, name, data):
     # accounts/get

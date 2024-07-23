@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 import boto3
 import json
 from datetime import datetime
-from botocore.exceptions import ClientError
 import re
 
 load_dotenv(dotenv_path=".env.local")
@@ -41,376 +40,6 @@ class NotFound(HTTPException):
     def __init__(self, message="Not Found"):
         super().__init__(404, message)
 
-
-export_schema = {
-    "type": "object",
-    "properties": {
-        "version": {"type": "number"},
-        "history": {"type": "array"},
-        "folders": {"type": "array"},
-        "prompts": {"type": "array"},
-    },
-    "required": ["version", "history", "folders", "prompts"]
-}
-
-share_schema = {
-    "type": "object",
-    "properties": {
-        "note": {"type": "string"},
-        "sharedWith": {"type": "array", "items": {"type": "string"}},
-        "sharedData": export_schema
-    },
-    "required": ["sharedWith", "sharedData", "note"]
-}
-
-share_load_schema = {
-    "type": "object",
-    "properties": {
-        "key": {
-            "type": "string"
-        }
-    },
-    "required": ["key"]
-}
-
-create_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string",
-            "description": "The name of the item"
-        },
-        "description": {
-            "type": "string",
-            "description": "A brief description of the item"
-        },
-        "tags": {
-            "type": "array",
-            "description": "A list of tags associated with the item",
-            "items": {
-                "type": "string"
-            }
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions related to the item"
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of file keys associated with the item",
-            "items": {
-                "type": "string"
-            }
-        },
-        "tools": {
-            "type": "array",
-            "description": "A list of tools associated with the item",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "description": "The type of tool"
-                    }
-                }
-            }
-        }
-    },
-    "required": ["name", "description", "tags", "instructions", "fileKeys", "tools"]
-}
-
-file_upload_schema = {
-    "type": "object",
-    "properties": {
-        "actions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "enum": ["saveAsData", "createChunks", "ingestRag", "makeDownloadable", "extractText"]
-                    },
-                    "params": {
-                        "type": "object",
-                        "additionalProperties": True
-                    }
-                },
-                "required": ["name"],
-                "additionalProperties": False
-            }
-        },
-        "type": {
-            "type": "string"
-        },
-        "name": {
-            "type": "string"
-        },
-        "knowledgeBase": {
-            "type": "string"
-        },
-        "tags": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
-        },
-        "data": {
-            "type": "object"
-        }
-    },
-    "required": ["actions", "type", "name", "knowledgeBase", "tags", "data"],
-}
-
-run_thread_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "The identifier of the thread."
-        },
-        "assistantId": {
-            "type": "string",
-            "description": "The identifier of the assistant."
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions for the assistant (optional).",
-            "default": "",
-            "minLength": 0
-        }
-    },
-    "required": ["id", "assistantId"]
-}
-
-id_request_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "Id."
-        }
-    },
-    "required": ["id"]
-}
-
-key_request_schema = {
-    "type": "object",
-    "properties": {
-        "key": {
-            "type": "string",
-            "description": "Key."
-        }
-    },
-    "required": ["key"]
-}
-
-id_and_category_request_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "Id."
-        },
-        "category": {
-            "type": "string",
-            "description": "Category."
-        }
-    },
-    "required": ["id", "category"]
-}
-
-task_and_category_request_schema = {
-    "type": "object",
-    "properties": {
-        "task": {
-            "type": "string",
-            "description": "Id."
-        },
-        "category": {
-            "type": "string",
-            "description": "Category."
-        }
-    },
-    "required": ["id", "category"]
-}
-
-add_charge = {
-    "type": "object",
-    "properties": {
-        "accountId": { "type": "string" },
-        "charge": { "type": "number" },
-        "description": { "type": "string" },
-        "details": { "type": "object" },
-    },
-    "required": ["accountId", "charge", "description", "details"]
-}
-
-add_message_schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string",
-            "description": "A unique identifier for the object."
-        },
-        "role": {
-            "type": "string",
-            "description": "The role of the user or assistant in the conversation."
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of keys associated with files.",
-            "items": {
-                "type": "string"
-            }
-        },
-        "content": {
-            "type": "string",
-            "description": "The textual content of the message."
-        },
-        "messageId": {
-            "type": "string",
-            "description": "The ID of the message."
-        },
-        "data": {
-            "type": "object",
-            "description": "Optional data as a dictionary with string keys and string values.",
-            "additionalProperties": {
-                "type": "string"
-            }
-        }
-    },
-    "required": ["id", "role", "content", "messageId"],
-}
-
-chat_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "id": {
-            "type": "string"
-        },
-        "fileKeys": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
-        },
-        "messages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "content": {
-                        "type": "string"
-                    },
-                    "role": {
-                        "type": "string"
-                    }
-                },
-                "required": ["id", "content"]
-            }
-        }
-    },
-    "required": ["id", "fileKeys", "messages"]
-}
-
-publish_item_schema = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string",
-            "description": "The name of the item"
-        },
-        "description": {
-            "type": "string",
-            "description": "A detailed description of the item"
-        },
-        "tags": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "description": "Tags related to the item"
-        },
-        "category": {
-            "type": "string",
-            "description": "The category of the item"
-        },
-        "content": export_schema,
-    },
-    "required": ["name", "description", "tags", "category", "content"]
-}
-
-save_accounts_schema = {
-    "type": "object",
-    "properties": {
-        "accounts": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "A unique identifier for the account."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "The name of the account."
-                    },
-                    "isDefault": {
-                        "type": "boolean",
-                        "description": "Indicates if this is the default account."
-                    }
-                },
-                "required": ["id", "name"]
-            }
-        }
-    },
-    "required": ["accounts"]
-};
-
-convert_schema = {
-    "type": "object",
-    "properties": {
-        "format": {
-            "type": "string",
-            "description": "The format to convert to docx|pptx"
-        },
-        "conversationHeader": {
-            "type": "string",
-            "description": "A markdown header to use for each conversation"
-        },
-        "messageHeader": {
-            "type": "string",
-            "description": "A markdown header to use for each message"
-        },
-        "userHeader": {
-            "type": "string",
-            "description": "A markdown header to use for each user message"
-        },
-        "assistantHeader": {
-            "type": "string",
-            "description": "A markdown header to use for each assistant message"
-        },
-        "content": export_schema,
-    },
-    "required": ["format", "content"]
-}
-
-get_category_schema = {
-    "type": "object",
-    "properties": {
-        "category": {
-            "type": "string",
-            "description": "The category to fetch"
-        }
-    },
-    "required": ["category"]
-}
 
 process_input_schema = {
     "type": "object",
@@ -453,91 +82,39 @@ dual_retrieval_schema = {
 }
 
 validators = {
-    "/state/share": {
-        "append": share_schema,
-        "create": {}
-    },
-    "/state/base-prompts/get": {
-        "get": {}
-    },
-    "/state/share/load": {
-        "load": share_load_schema
-    },
-    "/assistant/files/upload": {
-        "upload": file_upload_schema
-    },
-    "/assistant/files/download": {
-        "download": key_request_schema
-    },
-    "/assistant/create": {
-        "create": create_assistant_schema
-    },
-    "/assistant/thread/create": {
-        "create": {}
-    },
-    "/assistant/thread/message/create": {
-        "add_message": add_message_schema
-    },
-    "/assistant/thread/message/list": {
-        "get_messages": id_request_schema
-    },
-    "/assistant/thread/run": {
-        "run": run_thread_schema
-    },
-    "/assistant/thread/run/status": {
-        "run_status": id_request_schema
-    },
-    "/assistant/chat": {
-        "chat": chat_assistant_schema
-    },
-    "/market/item/publish": {
-        "publish_item": publish_item_schema
-    },
-    "/market/item/delete": {
-        "delete_item": id_request_schema
-    },
-    "/market/ideate": {
-        "ideate": task_and_category_request_schema
-    },
-    "/market/category/get": {
-        "get_category": get_category_schema
-    },
-    "/market/item/get": {
-        "get_item": id_request_schema
-    },
-    "/market/item/examples/get": {
-        "get_examples": id_and_category_request_schema
-    },
-    "/chat/convert": {
-        "convert": convert_schema
-    },
-    "/state/accounts/charge": {
-        "create_charge": add_charge
-    },
-    "/state/accounts/save": {
-        "save": save_accounts_schema
-    },
-    "/embedding-retrieval": {
-        "retrieval": process_input_schema 
-    },
     "/embedding-dual-retrieval": {
         "dual-retrieval": dual_retrieval_schema
-        }
+    },
+    "/embedding-retrieval": {
+        "retrieval": process_input_schema
+  },
 }
 
 
-def validate_data(name, op, data):
-    if name in validators and op in validators[name]:
-        schema = validators[name][op]
+api_validators = {
+    "/embedding-dual-retrieval": {
+        "dual-retrieval": dual_retrieval_schema
+    }
+}
+
+
+
+def validate_data(name, op, data, api_accessed):
+    validator = api_validators if api_accessed else validators
+    if name in validator and op in validator[name]:
+        schema = validator[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
         except ValidationError as e:
             print(e)
             raise ValidationError(f"Invalid data: {e.message}")
         print("Data validated")
+    else:
+        print(f"Invalid data or path: {name} - op:{op} - data: {data}")
+        raise Exception("Invalid data or path")
 
 
-def parse_and_validate(current_user, event, op, validate_body=True):
+def parse_and_validate(current_user, event, op, api_accessed, validate_body=True):
     data = {}
     if validate_body:
         try:
@@ -552,7 +129,7 @@ def parse_and_validate(current_user, event, op, validate_body=True):
 
     try:
         if validate_body:
-            validate_data(name, op, data)
+            validate_data(name, op, data, api_accessed)
     except ValidationError as e:
         raise BadRequest(e.message)
 
@@ -580,11 +157,12 @@ def validated(op, validate_body=True):
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
-                [name, data] = parse_and_validate(current_user, event, op, validate_body)
+                [name, data] = parse_and_validate(current_user, event, op, api_accessed, validate_body)
 
                 data['access_token'] = token
                 data['account'] = claims['account']
-                print("Default account: ", claims['account']) 
+                data['api_accessed'] = api_accessed
+                data['allowed_access'] = claims['allowed_access']
                 
                 result = f(event, context, current_user, name, data)
 
@@ -657,14 +235,19 @@ def get_claims(event, context, token):
                 if acct['isDefault']:
                     account = acct['id']
                     
-            if (not account):
-                raise ValueError("No default account found.")
         except Exception as e:
             print(f"Error retrieving default account: {e}")
-            raise
+
+        if (not account):
+            print("setting account to general_account")
+            account = 'general_account'   
 
         payload['account'] = account
         payload['username'] = user
+        # Here we can established the allowed access according to the feature flags in the future
+        # For now it is set to full_access, which says they can do the operation upon entry of the validated function
+        # current access types include: asssistants, share, dual_embedding, chat, file_upload
+        payload['allowed_access'] = ['full_access']
         return payload
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
@@ -733,7 +316,7 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('file_upload' not in access and 'Full Access' not in access):
+        if ('dual_embedding' not in access and 'full_access' not in access):
             print("API doesn't have access to file uploads")
             raise PermissionError("API key does not have access to file upload functionality")
 
@@ -748,7 +331,7 @@ def api_claims(event, context, token):
         # Determine API user
         current_user = determine_api_user(item)
 
-        return {'username': current_user, 'account': item['account']}
+        return {'username': current_user, 'account': item['account']['id'], "allowed_access": access}
 
     except Exception as e:
         print("Error during DynamoDB operation:", str(e))

@@ -23,6 +23,7 @@ dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
 
 model = "gpt-4o"
+tools = [{"type": "code_interpreter"}]
 
 def get(dictionary, *keys):
     return reduce(lambda d, key: d.get(key, None) if isinstance(d, dict) else None, keys, dictionary)
@@ -50,11 +51,13 @@ def get_openai_client():
 client = get_openai_client()
 
 def file_keys_to_file_ids(file_keys):
+    if (len(file_keys) == 0): return []
+
     bucket_name = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
 
     updated_keys = []
     for file_key in file_keys:
-        file_key_user = file_key.split('//')[1]
+        file_key_user = file_key.split('//')[1] if ('//' in file_key) else file_key
         if '@' not in file_key_user or len(file_key_user) <= 6:
             return []
         updated_keys.append(file_key_user)
@@ -180,7 +183,9 @@ def get_presigned_download_url(key, current_user, download_filename = None):
     bucket_name = os.environ['ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME']
     
     print(f"Getting presigned download URL for {key} for user {current_user}")
-
+    if (not (current_user in key)):
+        return {'success': False, 'message': 'User is not authorized to code interpreter files' }
+    
     response_headers = {
         'ResponseContentDisposition': f'attachment; filename="{download_filename}"'} if download_filename else {}
 
@@ -207,37 +212,54 @@ def get_presigned_download_url(key, current_user, download_filename = None):
         return {'success': False, 'message': 'File not found' }
 
 
-def chat_with_code_interpreter(current_user, assistant_id, messages, account_id, request_id):
+def chat_with_code_interpreter(current_user, assistant_id, thread_id, messages, account_id, request_id, api_accessed):
     print("Entered Chat_with_code_interpreter")
-    print("Creating assistant with ", openai_provider)
+
+    # getting assistant id
+    print("Assistant with ", openai_provider)
     assistant_existence = check_assistant_exists(assistant_id, current_user)
     if (not assistant_existence['success']):
         return assistant_existence
     
-    azure_assistant_id = assistant_existence['provider_assistant_id']
-    print("Initiating chat function")
-    return chat(current_user, azure_assistant_id, messages, assistant_id, account_id, request_id)
+    provider_assistant_id = assistant_existence['provider_assistant_id']
 
+    # initializing info will be used to record data to various tables including billing 
+    info = {
+    'assistant_key': assistant_id,
+    'assistant_id': provider_assistant_id,
+    'current_user': current_user,
+    'request_id': request_id,
+    'account_id': account_id
+    }
 
-def get_active_thread_id_for_chat(client, messages, info): 
-    print("Initiate getting active thread")
-    updated_info, new_messages_to_last_known = get_last_known_thread_id(client, messages, info)
-
-    if (updated_info.get('thread_id') is None):
-       return create_new_thread_for_chat(client, messages, info)
+    if (not thread_id):
+        # from amplify, we have the entire conversation so if the thread is not good then we can make a new one with it caught up on the conversation
+        # if the user doesnt have a thread id then we assume it is the start of the conversation and can create one they can you for future messages
+        thread_id_data = create_new_thread_for_chat(sanitize_messages(messages, amplify_messages=False), info) if api_accessed else get_active_thread_id_amplify_chat(messages, info)
+        if (not thread_id_data['success']):
+            return thread_id_data
+        info = thread_id_data['data']
+    else:
+        print("thread key provided: ", thread_id)
+        # only api access will have the option of ending here because we dont manage thread conversation messages for the user, they do 
+        # so we need to check if it is still good, if it is not then we dont automatically create one because the user will not be on a thread that has their messages 
+        info['thread_key'] = thread_id
+        info['thread_id'] = get_thread(thread_id, current_user).get('openai_thread_id', None)
+        thread_check = check_last_known_thread(info)
+        if (not thread_check['success']):
+            return {'success': False, 'message': "Provided thread id is no longer active. Check again later or omit the thread id in the request to create a new one, you will have to send the entire conversation if creating a new thread."}
+        sanitized_messages = sanitize_messages(messages, amplify_messages= not api_accessed)
+        # turn any file_id to the providers file ids
+        message_catch_up_on_thread(sanitized_messages, info)
     
-    updated_last_known_thread = message_catch_up_on_thread(client, new_messages_to_last_known, info)
-    if (not updated_last_known_thread['success']):
-        return updated_last_known_thread
-
-    return {'success': True, 
-            'message': 'Successfully retrieved the last known thread and verified it is active.',
-            'data': updated_info}
+    print("Initiating chat function") #, messages, assistant_key, account_id, request_id
+    return chat(current_user, provider_assistant_id, info)
 
 
-def check_last_known_thread(client, info):
+def check_last_known_thread(info):
     thread_id = info['thread_id']
-    print("Checking if the last known thread is still good. ThreadId: ", thread_id)
+    if (not thread_id): return {'success': False, 'error': 'Failed to check last known threads status.'}
+    print("Checking if the thread is still good. ThreadId: ", thread_id)
     timestamp = int(time.time() * 1000)
     try:
         thread_info = client.beta.threads.retrieve(thread_id)
@@ -251,9 +273,28 @@ def check_last_known_thread(client, info):
     except Exception as e:
         print(e)
         return {'success': False, 'error': 'Failed to check last known threads status.'}
-            
 
-def get_last_known_thread_id(client, messages, info):
+
+def get_active_thread_id_amplify_chat(messages, info): 
+    print("Initiate getting active thread")
+    updated_info, new_messages_to_last_known = get_last_known_thread_id(messages, info)
+
+    sanitized_messages = sanitize_messages(new_messages_to_last_known)
+
+    if (updated_info.get('thread_id') is None):
+       return create_new_thread_for_chat(sanitized_messages, info)
+    
+    updated_last_known_thread = message_catch_up_on_thread(sanitized_messages, info)
+    if (not updated_last_known_thread['success']):
+        return updated_last_known_thread
+
+    return {'success': True, 
+            'message': 'Successfully retrieved the last known thread and verified it is active.',
+            'data': updated_info}
+
+
+
+def get_last_known_thread_id(messages, info):
     if (len(messages) == 0 ):
         return info, messages
     
@@ -270,14 +311,14 @@ def get_last_known_thread_id(client, messages, info):
             if (thread_info['success']):
                 info['thread_key'] = thread_key
                 info['thread_id'] = thread_info['openai_thread_id']
-                thread_info = check_last_known_thread(client, info)
+                thread_info = check_last_known_thread(info)
                 if (thread_info['success']):
                     return info, messages[index + 1:]
     
     return info, messages # occurs when code interpreter hasnt been used in a conversation or thread id wasnt found, we need to create a new one
 
 
-def create_new_thread_for_chat(client, messages, info):
+def create_new_thread_for_chat(messages, info):
     user_id = info['current_user']
     print("Creating a new thread")
     dynamodb = boto3.resource('dynamodb')
@@ -297,7 +338,7 @@ def create_new_thread_for_chat(client, messages, info):
         record_thread_usage(op_details, info) ## record when you create 
         
         print(f"Created thread: {thread_id}")
-        message_catch_up_on_thread(client, messages, info)
+        if (messages): message_catch_up_on_thread(messages, info)
     except Exception as e:
         print(e)
         return {'success': False, 'error': 'Failed to create new thread with the client.'}  
@@ -319,7 +360,7 @@ def create_new_thread_for_chat(client, messages, info):
             'data': info }
 
 
-def sanitize_messages(messages):
+def sanitize_messages(messages, amplify_messages=True):
     print("Entered sanitize_mssages")
     sanitized_messages = []
     i = 0
@@ -334,8 +375,10 @@ def sanitize_messages(messages):
             "content": content,
             "file_ids": []
         }
-       
-        if (message.get('data') and ('dataSources' in message['data']) and (len(message['data']['dataSources']))):
+
+        if (not amplify_messages):
+            sanitized_message['file_ids'] = file_keys_to_file_ids(message['dataSourceIds'])
+        elif (message.get('data') and ('dataSources' in message['data']) and (len(message['data']['dataSources']))):
             file_ids = file_keys_to_file_ids([source['id'] for source in message['data']['dataSources']])
             sanitized_message['file_ids'] = file_ids
             
@@ -348,15 +391,14 @@ def sanitize_messages(messages):
 # since we dont always using code interpreter in the conversation, there may be messages that the thread
 # is missing , so lets add it by combining their content 
 # note this will also add the lastest user message
-def message_catch_up_on_thread(client, missing_messages, info): ## needs help
+def message_catch_up_on_thread(missing_messages, info): 
+    if (len(missing_messages) == 0): return {'success': False, 'message': 'No messages to add'}
     print("Get any missing messages on the thread")
-    sanitized_messages = sanitize_messages(missing_messages)
     messages_to_send = []
-
     current_content = ""
     current_file_ids = []
-    for i in range(0, len(sanitized_messages)):
-        msg = sanitized_messages[i]
+    for i in range(0, len(missing_messages)):
+        msg = missing_messages[i]
         if (len(current_file_ids) + len(msg['file_ids']) > 10): # we want message content and files to stay together even 
             if current_content: messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
 
@@ -385,52 +427,36 @@ def message_catch_up_on_thread(client, missing_messages, info): ## needs help
     if current_content: messages_to_send.append({'content': current_content, 'file_ids': current_file_ids})
 
     print("Total messages in to send list: ", len(messages_to_send))
-    # print("Messages to send list: ", messages_to_send)
-
     try:
         print("Adding missing messages to thread.")
         for message in messages_to_send:
-            timestamp = int(time.time() * 1000)
             content = message['content']
+            add_message_to_thread(info, content, message['file_ids'])
 
-            messageResponse =  client.beta.threads.messages.create(
-                                    thread_id= info['thread_id'],
-                                    role= "user",
-                                    content= content,
-                                    attachments= [{
-                                                "file_id": file_id,
-                                                "tools": [{"type": "code_interpreter"}]
-                                                } for file_id in message['file_ids']
-                                                ])
-        
-            # print(f"Result: {messageResponse}")
-             
-            op_details = {'type': "ADD_MESSAGE", 'timestamp':  timestamp, 'messageID': messageResponse.id, #would cause an exception if raises a KeyError
-                          "inputTokens": count_tokens(content)}
-            record_thread_usage(op_details, info) #record every message added 
         return {'success': True, 'message': 'Successfully added missing messages to the thread.'}
     except Exception as e:
         print(e)
     return {'success': False, 'error': 'Failed to sync messages to the thread.'}
 
 
-def chat(current_user, provider_assistant_id, messages, assistant_key, account_id, request_id):
+def add_message_to_thread(info, content, file_ids):
+    timestamp = int(time.time() * 1000)
 
-    info = {
-    'assistant_key': assistant_key,
-    'assistant_id': provider_assistant_id,
-    'current_user': current_user,
-    'request_id': request_id,
-    'account_id': account_id
-    }
+    messageResponse = client.beta.threads.messages.create(
+                                    thread_id= info['thread_id'],
+                                    role= "user",
+                                    content= content,
+                                    attachments= [{
+                                                "file_id": file_id,
+                                                "tools": tools
+                                                } for file_id in file_ids
+                                                ])
+    op_details = {'type': "ADD_MESSAGE", 'timestamp':  timestamp, 'messageID': messageResponse.id, #would cause an exception if raises a KeyError
+                          "inputTokens": count_tokens(content)}
+    record_thread_usage(op_details, info) #record every message added 
 
-    thread_id_data = get_active_thread_id_for_chat(client, messages, info)
-    
-    if (not thread_id_data['success']):
-        return thread_id_data
-    
-    info = thread_id_data['data']
-   
+
+def chat(current_user, provider_assistant_id, info):
     openai_thread_id = info['thread_id']
 
     try:
@@ -439,7 +465,7 @@ def chat(current_user, provider_assistant_id, messages, assistant_key, account_i
             thread_id=openai_thread_id,
             assistant_id=provider_assistant_id
         )
-        # print(f"Run created: {run}")
+        print(f"Run created: {run}")
 
         tries = 28
         while tries > 0:
@@ -519,7 +545,7 @@ def chat(current_user, provider_assistant_id, messages, assistant_key, account_i
                     created_file_id = annotation.file_path.file_id
                     file_obj = client.files.retrieve(created_file_id)
                     file_name = file_obj.filename[file_obj.filename.rfind('/') + 1:]  
-                    s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}-FN-{file_name}"
+                    s3_file_key = f"{current_user}/{message_id}-{created_file_id}-FN-{file_name}"
                     file_content = client.files.content(file_obj.id)
 
                     # only csv and pdf are currently supported 
@@ -535,7 +561,7 @@ def chat(current_user, provider_assistant_id, messages, assistant_key, account_i
             continue
             created_file_id = item.image_file.file_id
             #send file to s3 ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME 
-            s3_file_key = f"s3://{current_user}/{message_id}-{created_file_id}"
+            s3_file_key = f"{current_user}/{message_id}-{created_file_id}"
             file_content = client.files.content(created_file_id)
 
             content_values = get_response_values(file_content, 'image/png', s3_file_key, current_user, "Generate_File")
@@ -815,10 +841,10 @@ def delete_thread_by_id(thread_id, user_id):
     if item['user'] != user_id:
         return {'success': False, 'message': 'You are not authorized to delete this thread'}
 
-    openai_thread_id = get(item, 'data', 'openai', 'threadId')
+    openai_thread_id = get(item, 'data', openai_provider, 'threadId')
 
     # Ensure thread_id is valid
-    print(f"Deleting thread: {thread_id}=>openai=>{openai_thread_id}")
+    print(f"Deleting thread: {thread_id} - {openai_provider}: {openai_thread_id}")
     if not openai_thread_id:
         return {'success': False, 'message': 'Thread not found'}
 
@@ -837,8 +863,7 @@ def delete_thread_by_id(thread_id, user_id):
 def create_new_openai_assistant(
         assistant_name,
         instructions,
-        file_keys,
-        tools
+        file_keys
 ):
     print("Creating assistant with ", openai_provider)
     # Create a new assistant using the OpenAI Client
@@ -848,7 +873,6 @@ def create_new_openai_assistant(
     print("File keys: ", recent_file_keys)
 
     file_ids = file_keys_to_file_ids(recent_file_keys)
-
     assistant = (
                 client.beta.assistants.create(
                     name=assistant_name,
@@ -889,19 +913,18 @@ def create_new_assistant(
         description,
         instructions,
         tags,
-        file_keys,
-        tools
+        file_keys
 ):
     dynamodb = boto3.resource('dynamodb') 
     assistants_table = dynamodb.Table(os.environ['ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE'])
     timestamp = int(time.time() * 1000)
 
     for file_key in file_keys:
-        file_key_user = file_key.split('//')[1]
-        if ('@' not in file_key_user)or len(file_key_user) < 6 or (user_id not in file_key_user):
+        file_key_user = file_key.split('//')[1] if ('//' in file_key) else file_key
+        if ('@' not in file_key_user) or len(file_key_user) < 6 or (user_id not in file_key_user):
             return {'success': False, 'error': 'You are not authorized to access the referenced files'}
 
-    assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys, tools)
+    assistant_info = create_new_openai_assistant(assistant_name, instructions, file_keys)
     if (not assistant_info['success']):
         return assistant_info
 
@@ -954,7 +977,7 @@ def delete_assistant_by_id(assistant_id, user_id):
         return {'success': False, 'message': 'Not authorized to delete this assistant'}
 
     # Retrieve the OpenAI assistant ID
-    openai_assistant_id = item['data']['openai']['assistantId']  # Or use your `get` utility function
+    openai_assistant_id = item['data']['assistantId']  # Or use your `get` utility function
 
     # Delete the assistant from OpenAI
     try:

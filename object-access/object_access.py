@@ -190,7 +190,7 @@ def update_object_permissions(event, context, current_user, name, data, username
             print("check if the current_user has 'owner' or 'write' permissions for the object_id")
             if owner_item and owner_item.get('permission_level') in ['owner', 'write']:
                 # If current_user is the owner or has write permission, proceed with updates
-                print("current_user foes have permissions to proceed with updates")
+                print("current_user does have permissions to proceed with updates")
                 for principal_id in email_list:
                     if (current_user != principal_id):  # edge case
                         print("Object ID: ", object_id, " for user: ", principal_id)
@@ -239,6 +239,9 @@ def update_object_permissions(event, context, current_user, name, data, username
 
 @validated("create_cognito_group")
 def create_cognito_group(event, context, current_user, name, data, username):
+    if ( not username ):
+        print('Access from API, no need to continue fuction')
+        return None
     """
     Create a Cognito user group in the specified user pool and add the current user to it.
 

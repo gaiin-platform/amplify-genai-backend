@@ -102,47 +102,88 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
 
         console.log("Assistant found by alias: ", assistant);
 
-        const userDefinedAssistant = {
-            name: assistant.name,
-            displayName: assistant.name,
-            handlesDataSources: (ds) => {
-                return true;
-            },
-            handlesModel: (model) => {
-                return true;
-            },
-            description: assistant.description,
+        const userDefinedAssistant =  fillInAssistant(assistant, assistantBase)
+        console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
+        return userDefinedAssistant;
+    }
 
-            disclaimer: assistant.disclaimer,
+    return null;
+};
 
-            handler: async (llm, params, body, ds, responseStream) => {
+
+export const fillInAssistant = (assistant, assistantBase) => {
+    return {
+        name: assistant.name,
+        displayName: assistant.name,
+        handlesDataSources: (ds) => {
+            return true;
+        },
+        handlesModel: (model) => {
+            return true;
+        },
+        description: assistant.description,
+
+        disclaimer: assistant.disclaimer ?? '',
+
+        handler: async (llm, params, body, ds, responseStream) => {
 
                 const references = {};
 
-                if(assistant.skipRag) {
-                    params = {
-                        ...params,
-                    options:{...params.options, skipRag: true}
-                    }
+            if(assistant.skipRag) {
+                params = {
+                    ...params,
+                options:{...params.options, skipRag: true}
                 }
+            }
 
-                if(assistant.ragOnly) {
-                    params = {
-                        ...params,
-                        options:{...params.options, ragOnly: true}
-                    }
+            if(assistant.ragOnly) {
+                params = {
+                    ...params,
+                    options:{...params.options, ragOnly: true}
                 }
+            }
 
-                const dataSourceOptions = {};
-                if(assistant.data && assistant.data.dataSourceOptions) {
-                    dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
+            const dataSourceOptions = {};
+            if(assistant.data && assistant.data.dataSourceOptions) {
+                dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
+            }
+
+            const extraMessages = [];
+
+            if(assistant.data && assistant.data.messageOptions) {
+                if(assistant.data.messageOptions.includeMessageIds){
+
+                    const messageIdMapping = {};
+
+                    body.messages = body.messages.map((m, i) => {
+
+                        messageIdMapping[i] = m.id;
+
+                        return {
+                            ...m,
+                            content: "MsgID: " + i + "\n\n" + m.content
+                        };
+                    });
+
+                    llm.sendStateEventToStream({
+                       messageIdMapping
+                    });
+
+                    extraMessages.push({
+                        role: "user",
+                        content:"You can references or have prior messages inserted into your response by " +
+                            "referencing the MsgId like this %^MsgID. Examples %^0, %^1, etc. The reference" +
+                            "will be replaced with the content of that message. DO NOT OUTPUT OR TALK ABOUT " +
+                            "THESE IDS TO THE USER."
+                    });
                 }
+            }
 
-                const extraMessages = [];
-                if(assistant.data && assistant.data.dataSourceOptions) {
 
-                    const dataSourceMetadataForInsertion = [];
-                    const available = await getDataSourcesByUse(params, body, ds);
+            if(assistant.data && assistant.data.dataSourceOptions) {
+
+                const dataSourceMetadataForInsertion = [];
+                const available = await getDataSourcesByUse(params, body, ds);
 
                     if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
                         dataSourceMetadataForInsertion.push(...(assistant.dataSources || []));
@@ -152,7 +193,7 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                         dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
                     }
 
-                    if(dataSourceMetadataForInsertion.length > 0) {
+                if(dataSourceMetadataForInsertion.length > 0) {
 
                         const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
 
@@ -170,7 +211,7 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
                         addAllReferences(references, DATASOURCE_TYPE, dataSourceSummaries);
                         const dsR = getReferencesByType(references, DATASOURCE_TYPE);
 
-                        const dataSourceText = "ID,NAME,TYPE\n" + dsR.map(
+                        const dataSourceText = "Short_ID,NAME,TYPE\n" + dsR.map(
                             r => r.type+r.id +","+r.object.name+","+r.object.type).join("\n");
 
                         extraMessages.push({
@@ -180,25 +221,33 @@ export const getUserDefinedAssistant = async (assistantBase, user, assistantPubl
 -------------                        
 ${dataSourceText}
 -------------
+Any operation that asks for an ID or Key should be supplied with the Short_ID from the list above
+of the corresponding data source or document. Avoid discussing these IDs, keys, etc. with the user
+as they can't see them. If they ask you about them, it is OK to tell them and use them for operations, 
+but otherwise don't describe them in your answers as it might confuse the user.
 `,
                         });
                     }
                 }
 
-                const messagesWithoutSystem = body.messages.filter(
-                    (message) => message.role !== "system"
-                );
+            if (body.options.addMsgContent) {
+                body.messages[body.messages.length - 1].content += body.options.addMsgContent;
+            }
 
-                const instructions = await fillInTemplate(
-                    llm,
-                    params,
-                    body,
-                    ds,
-                    assistant.instructions,
-                    {
-                        assistant: assistant,
-                    }
-                );
+            const messagesWithoutSystem = body.messages.filter(
+                (message) => message.role !== "system"
+            );
+
+            const instructions = await fillInTemplate(
+                llm,
+                params,
+                body,
+                ds,
+                assistant.instructions,
+                {
+                    assistant: assistant,
+                }
+            );
 
 
                 llm.sendStateEventToStream({
@@ -239,37 +288,32 @@ ${dataSourceText}
                     }
                 };
 
-                await assistantBase.handler(
-                    llm,
-                    params,
-                    updatedBody,
-                    ds,
-                    responseStream);
+            await assistantBase.handler(
+                llm,
+                params,
+                updatedBody,
+                ds,
+                responseStream);
 
-                try {
-                    if (assistant.data && assistant.data.logChats) {
-                        const user = assistant.data.logAnonymously ?
-                            "anonymous" : params.account.user;
+            try {
+                if (assistant.data && assistant.data.logChats) {
+                    const user = assistant.data.logAnonymously ?
+                        "anonymous" : params.account.user;
 
-                        await saveChatToS3(
-                            assistant,
-                            user,
-                            body,
-                            {
-                                user: params.account.user,
-                                assistant: assistant,
-                                dataSources: ds,
-                            }
-                        );
-                    }
-                } catch (e) {
-                    console.error('Error logging assistant chat to S3:', e);
+                    await saveChatToS3(
+                        assistant,
+                        user,
+                        body,
+                        {
+                            user: params.account.user,
+                            assistant: assistant,
+                            dataSources: ds,
+                        }
+                    );
                 }
+            } catch (e) {
+                console.error('Error logging assistant chat to S3:', e);
             }
-        };
-        console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
-        return userDefinedAssistant;
-    }
-
-    return null;
-};
+        }
+    };
+}
