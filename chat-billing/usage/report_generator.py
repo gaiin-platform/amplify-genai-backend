@@ -7,6 +7,7 @@ import io
 from decimal import Decimal, ROUND_UP
 from common.validate import validated
 import json
+import time
 
 # Initialize the DynamoDB client
 dynamodb = boto3.resource("dynamodb")
@@ -134,6 +135,7 @@ def calculate_and_record_todays_usage_costs(chat_records, model_rate_table):
     return list(aggregated_costs.values())
 
 
+# outdated, replaced with get_mtd_cost
 @validated(op="report_generator")
 def report_generator(event, context, current_user, name, data):
     try:
@@ -210,14 +212,10 @@ def report_generator(event, context, current_user, name, data):
 
 @validated(op="get_mtd_cost")
 def get_mtd_cost(event, context, current_user, name, data):
-    try:
-        body = json.loads(event["body"])
-    except json.JSONDecodeError:
-        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
+    start_time = time.time()
+    
+    email = data.get("data", {}).get("email")
 
-    email = body.get("email")
-
-    # check to make sure this is only 1 email and no additional records are included
     if not isinstance(email, str):
         return {
             "statusCode": 400,
@@ -229,22 +227,20 @@ def get_mtd_cost(event, context, current_user, name, data):
     mtd_cost = Decimal(0)
 
     try:
-        # Get the current month
+        history_start = time.time()
         current_time = datetime.now(timezone.utc)
         first_day_of_month = current_time.replace(day=1).strftime("%Y-%m-%d")
 
         history_table = dynamodb.Table(history_usage_table_name)
         history_records = []
-        # TODO: change from scan to GSI query
-        # THIS IS VERY FAST
         resp = history_table.scan(
             FilterExpression=Key("userDateComposite").begins_with(email)
             & Key("date").between(first_day_of_month, current_time.strftime("%Y-%m-%d"))
             & Attr("dailyCost").exists()
             & Attr("monthlyCost").not_exists()
         )
-        # print("Response:", resp)
         history_records.extend(resp.get("Items", []))
+        print(f"History table scan took {time.time() - history_start:.2f} seconds")
     except Exception as e:
         print(f"Error accessing history table: {e}")
         return {
@@ -253,14 +249,14 @@ def get_mtd_cost(event, context, current_user, name, data):
         }
 
     try:
-        # Sum all month-to-date costs
+        calc_start = time.time()
         mtd_cost = sum(
             Decimal(record["dailyCost"])
             for record in history_records
             if "dailyCost" in record
         )
-
         print("Month's Cost (Excluding Today):", mtd_cost)
+        print(f"MTD cost calculation took {time.time() - calc_start:.2f} seconds")
     except Exception as e:
         print(f"Error calculating MTD cost from history records: {e}")
         return {
@@ -269,25 +265,18 @@ def get_mtd_cost(event, context, current_user, name, data):
         }
 
     try:
-        # Query DynamoDB to get chat usage records for today
+        chat_query_start = time.time()
         chat_table = dynamodb.Table(chat_usage_table_name)
         today_date_string = current_time.strftime("%Y-%m-%d")
         chat_records = []
 
-        # THIS TAKES A LOT OF TIME
         query_kwargs = {
             "IndexName": "UserUsageTimeIndex",
             "KeyConditionExpression": "#user = :email AND begins_with(#time, :today)",
-            "ExpressionAttributeNames": {
-                "#user": "user",
-                "#time": "time"
-            },
-            "ExpressionAttributeValues": {
-                ":email": email,
-                ":today": today_date_string
-            }
+            "ExpressionAttributeNames": {"#user": "user", "#time": "time"},
+            "ExpressionAttributeValues": {":email": email, ":today": today_date_string},
         }
-        
+
         done = False
         start_key = None
 
@@ -299,6 +288,7 @@ def get_mtd_cost(event, context, current_user, name, data):
             start_key = response.get("LastEvaluatedKey", None)
             done = start_key is None
 
+        print(f"Chat table query took {time.time() - chat_query_start:.2f} seconds")
     except Exception as e:
         print(f"Error accessing chat table: {e}")
         return {
@@ -307,10 +297,9 @@ def get_mtd_cost(event, context, current_user, name, data):
         }
 
     try:
-        # Calculate today's usage costs
+        today_cost_start = time.time()
         model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
         today_costs = []
-        # print("Chat Records:", chat_records)
         for item in chat_records:
             total_cost = calculate_cost(item, model_rate_table)
             if total_cost is not None:
@@ -320,9 +309,14 @@ def get_mtd_cost(event, context, current_user, name, data):
         print("Today's Cost:", today_cost)
 
         mtd_cost += today_cost
-        # Round cost up and ensure there are only 2 decimal places
         mtd_cost = Decimal(mtd_cost).quantize(Decimal("0.01"), rounding=ROUND_UP)
         print("MTD Cost:", mtd_cost)
+        print(
+            f"Today's cost calculation took {time.time() - today_cost_start:.2f} seconds"
+        )
+
+        total_time = time.time() - start_time
+        print(f"Total function execution time: {total_time:.2f} seconds")
 
         return {"MTD Cost": float(mtd_cost)}
 

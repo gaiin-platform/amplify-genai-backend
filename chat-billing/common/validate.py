@@ -65,11 +65,12 @@ get_mtd_cost_schema = {
 
 validators = {
     "/billing": {"report_generator": report_generator_schema},
-    "/usage": {"get_mtd_cost": get_mtd_cost_schema},
+    "/billing/mtd-cost": {"get_mtd_cost": get_mtd_cost_schema},
 }
 
 api_validators = {
     "/billing": {"report_generator": report_generator_schema},
+    "/billing/mtd-cost": {"get_mtd_cost": get_mtd_cost_schema},
 }
 
 
