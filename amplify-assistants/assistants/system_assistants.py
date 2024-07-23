@@ -384,6 +384,7 @@ def get_api_key_manager_assistant():
         - If any new API keys are created or existing ones are modified, make sure to list the updated data afterwards to show the user the current state.
         - Ensure, when reffering to an account, you say "Account <account.name> - <account.id>"
         - keys CANNOT be re-activated!
+        - when grabbing the owner_api_id for use in a APIkey block ensure you always grab the WHOLE key (will always be in the format r'^[^/]+/(ownerKey|delegateKey|systemKey)/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 
     This structured approach should guide your API key manager assistant to effectively support api key operations while interacting comprehensively with the user.
 
