@@ -5,8 +5,10 @@ plugins:
   - serverless-offline
 
 custom:
-
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)}
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
 
   stages:
     - dev
@@ -20,24 +22,31 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
-  stackTags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
-  tags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
   environment:
-    AZURE_OPENAI_RESOURCE_NAME: openai
-    DATASOURCES_QUERY_ENDPOINT: ${self:custom.stageVariables.DATASOURCES_QUERY_ENDPOINT}
-    RAG_ENDPOINT: ${self:custom.stageVariables.RAG_ENDPOINT}
+    #Local Resources Created
+    TRACING_ENABLED: false
+    TRACE_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-chat-traces
+    #Is this in use?
+    ASSISTANT_QUEUE_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-tasks
+    ASSISTANT_TASK_RESULTS_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-results
+
+    #Reference Resource createb by other services
+    FILES_DYNAMO_TABLE: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-user-files
+    REQUEST_STATE_DYNAMO_TABLE: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-request-state
+    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-hash-files
+    CHAT_USAGE_DYNAMO_TABLE: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-chat-usage
+    S3_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-{sls:stage}-rag-chunks
+    S3_FILE_TEXT_BUCKET_NAME: ${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-file-text
+    USAGE_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/accounting/charge
+    RAG_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/embedding-dual-retrieval
+    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/utilities/simulate_access_to_objects
+   
+    #Stand Alone Vars Referenced from local vars file
+    AZURE_OPENAI_RESOURCE_NAME: ${self:custom.stageVariables.AZURE_OPENAI_RESOURCE_NAME}
+    OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
-    S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
-    S3_FILE_TEXT_BUCKET_NAME: vu-amplify-${sls:stage}-file-text
     COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     COGNITO_CLIENT_ID: ${self:custom.stageVariables.COGNITO_CLIENT_ID}
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
@@ -72,7 +81,6 @@ provider:
           Action:
             - secretsmanager:GetSecretValue
             - s3:GetObject
-            - s3:PutObject
             - s3:ListBucket
             - dynamodb:GetItem
             - dynamodb:PutItem
@@ -134,24 +142,6 @@ functions:
     url:
       cors: true
       invokeMode: RESPONSE_STREAM
-    environment:
-        assistant_task_queue_url:
-          Ref: AssistantTaskQueue
-
-  assistant_queue:
-    handler: assistantQueueRouter.handler
-    memorySize: 1024
-    timeout: 900
-    events:
-        - sqs:
-            arn:
-              Fn::GetAtt:
-                - AssistantTaskQueue
-                - Arn
-    environment:
-        assistant_task_queue_url:
-          Ref: AssistantTaskQueue
-
 
 resources:
   Resources:

@@ -4,9 +4,10 @@ from boto3.dynamodb.conditions import Key, Attr
 from datetime import datetime, timezone
 import csv
 import io
-from decimal import Decimal
+from decimal import Decimal, ROUND_UP
 from common.validate import validated
 import json
+import time
 
 # Initialize the DynamoDB client
 dynamodb = boto3.resource("dynamodb")
@@ -28,34 +29,63 @@ def generate_csv(data_list):
 
 # Function to calculate the cost per item
 def calculate_cost(item, model_rate_table):
-    model_id = item.get("modelId", "")
-    input_tokens = Decimal(item.get("inputTokens", 0))
-    output_tokens = Decimal(item.get("outputTokens", 0))
+    try:
+        # Verify that item is a dictionary
+        if not isinstance(item, dict):
+            raise ValueError("The item parameter must be a dictionary.")
 
-    # Query the model rate table for the cost per thousand tokens
-    response = model_rate_table.query(
-        KeyConditionExpression=Key("ModelID").eq(model_id)
-    )
+        model_id = item.get("modelId", "")
+        if not model_id:
+            raise ValueError(
+                "The item dictionary must contain a 'modelId' key with a non-empty value."
+            )
 
-    # If no rate is found, return None to indicate the cost couldn't be calculated
-    if not response["Items"]:
-        print(f"No model rate found for ModelID: {model_id}")
+        try:
+            input_tokens = Decimal(item.get("inputTokens", 0))
+            output_tokens = Decimal(item.get("outputTokens", 0))
+        except Exception as e:
+            raise ValueError(
+                "Tokens values should be convertible to Decimal. Details: " + str(e)
+            )
+
+        try:
+            # Query the model rate table for the cost per thousand tokens
+            response = model_rate_table.query(
+                KeyConditionExpression=Key("ModelID").eq(model_id)
+            )
+        except Exception as e:
+            raise RuntimeError("Error querying the model rate table: " + str(e))
+
+        # If no rate is found, return None to indicate the cost couldn't be calculated
+        if not response["Items"]:
+            print(f"No model rate found for ModelID: {model_id}")
+            return None
+
+        model_rate_record = response["Items"][0]
+
+        try:
+            input_cost_per_thousand_tokens = Decimal(
+                model_rate_record["InputCostPerThousandTokens"]
+            )
+            output_cost_per_thousand_tokens = Decimal(
+                model_rate_record["OutputCostPerThousandTokens"]
+            )
+        except KeyError as e:
+            raise KeyError(f"Missing expected key in model rate record: {str(e)}")
+        except (TypeError, ValueError, Decimal.InvalidOperation) as e:
+            raise ValueError(
+                "Cost values should be convertible to Decimal. Details: " + str(e)
+            )
+
+        # Calculate total cost
+        input_cost_total = (input_tokens / 1000) * input_cost_per_thousand_tokens
+        output_cost_total = (output_tokens / 1000) * output_cost_per_thousand_tokens
+        total_cost = input_cost_total + output_cost_total
+
+        return total_cost
+    except Exception as e:
+        print(f"An error occurred: {e}")
         return None
-
-    model_rate_record = response["Items"][0]
-    input_cost_per_thousand_tokens = Decimal(
-        model_rate_record["InputCostPerThousandTokens"]
-    )
-    output_cost_per_thousand_tokens = Decimal(
-        model_rate_record["OutputCostPerThousandTokens"]
-    )
-
-    # Calculate total cost
-    input_cost_total = (input_tokens / 1000) * input_cost_per_thousand_tokens
-    output_cost_total = (output_tokens / 1000) * output_cost_per_thousand_tokens
-    total_cost = input_cost_total + output_cost_total
-
-    return total_cost
 
 
 def calculate_and_record_todays_usage_costs(chat_records, model_rate_table):
@@ -105,6 +135,7 @@ def calculate_and_record_todays_usage_costs(chat_records, model_rate_table):
     return list(aggregated_costs.values())
 
 
+# outdated, replaced with get_mtd_cost
 @validated(op="report_generator")
 def report_generator(event, context, current_user, name, data):
     try:
@@ -115,7 +146,7 @@ def report_generator(event, context, current_user, name, data):
     emails = body.get("emails")
 
     print("Emails:", emails)
-    
+
     if not isinstance(emails, list):
         emails = [emails]
 
@@ -177,3 +208,121 @@ def report_generator(event, context, current_user, name, data):
     # }
 
     return all_usage
+
+
+@validated(op="get_mtd_cost")
+def get_mtd_cost(event, context, current_user, name, data):
+    start_time = time.time()
+    
+    email = data.get("data", {}).get("email")
+
+    if not isinstance(email, str):
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Email should be a single string"}),
+        }
+
+    print("Collecting MTD Cost For Email:", email)
+
+    mtd_cost = Decimal(0)
+
+    try:
+        history_start = time.time()
+        current_time = datetime.now(timezone.utc)
+        first_day_of_month = current_time.replace(day=1).strftime("%Y-%m-%d")
+
+        history_table = dynamodb.Table(history_usage_table_name)
+        history_records = []
+        resp = history_table.scan(
+            FilterExpression=Key("userDateComposite").begins_with(email)
+            & Key("date").between(first_day_of_month, current_time.strftime("%Y-%m-%d"))
+            & Attr("dailyCost").exists()
+            & Attr("monthlyCost").not_exists()
+        )
+        history_records.extend(resp.get("Items", []))
+        print(f"History table scan took {time.time() - history_start:.2f} seconds")
+    except Exception as e:
+        print(f"Error accessing history table: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Internal Server Error"}),
+        }
+
+    try:
+        calc_start = time.time()
+        mtd_cost = sum(
+            Decimal(record["dailyCost"])
+            for record in history_records
+            if "dailyCost" in record
+        )
+        print("Month's Cost (Excluding Today):", mtd_cost)
+        print(f"MTD cost calculation took {time.time() - calc_start:.2f} seconds")
+    except Exception as e:
+        print(f"Error calculating MTD cost from history records: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Internal Server Error"}),
+        }
+
+    try:
+        chat_query_start = time.time()
+        chat_table = dynamodb.Table(chat_usage_table_name)
+        today_date_string = current_time.strftime("%Y-%m-%d")
+        chat_records = []
+
+        query_kwargs = {
+            "IndexName": "UserUsageTimeIndex",
+            "KeyConditionExpression": "#user = :email AND begins_with(#time, :today)",
+            "ExpressionAttributeNames": {"#user": "user", "#time": "time"},
+            "ExpressionAttributeValues": {":email": email, ":today": today_date_string},
+        }
+
+        done = False
+        start_key = None
+
+        while not done:
+            if start_key:
+                query_kwargs["ExclusiveStartKey"] = start_key
+            response = chat_table.query(**query_kwargs)
+            chat_records.extend(response.get("Items", []))
+            start_key = response.get("LastEvaluatedKey", None)
+            done = start_key is None
+
+        print(f"Chat table query took {time.time() - chat_query_start:.2f} seconds")
+    except Exception as e:
+        print(f"Error accessing chat table: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Internal Server Error"}),
+        }
+
+    try:
+        today_cost_start = time.time()
+        model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
+        today_costs = []
+        for item in chat_records:
+            total_cost = calculate_cost(item, model_rate_table)
+            if total_cost is not None:
+                today_costs.append(total_cost)
+
+        today_cost = sum(today_costs)
+        print("Today's Cost:", today_cost)
+
+        mtd_cost += today_cost
+        mtd_cost = Decimal(mtd_cost).quantize(Decimal("0.01"), rounding=ROUND_UP)
+        print("MTD Cost:", mtd_cost)
+        print(
+            f"Today's cost calculation took {time.time() - today_cost_start:.2f} seconds"
+        )
+
+        total_time = time.time() - start_time
+        print(f"Total function execution time: {total_time:.2f} seconds")
+
+        return {"MTD Cost": float(mtd_cost)}
+
+    except Exception as e:
+        print(f"Error calculating today's cost: {e}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Internal Server Error"}),
+        }

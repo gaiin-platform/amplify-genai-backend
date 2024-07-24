@@ -144,6 +144,24 @@ functions:
       CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
       ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
+  # provides real-time month-to-date cost via API gateway
+  mtdCost:
+    handler: usage/report_generator.get_mtd_cost
+    memorySize: 128
+    timeout: 15 # seconds
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: billing/mtd-cost
+          method: post
+          cors: true
+    environment:
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+      CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+      ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+
 resources:
   Resources:
     # model rates needed for usage cost calculations

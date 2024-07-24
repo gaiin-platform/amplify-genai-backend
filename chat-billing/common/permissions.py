@@ -2,6 +2,10 @@ def can_generate_report(user, data):
     return True
 
 
+def can_get_mtd_cost(user, data):
+    return True
+
+
 def get_permission_checker(user, type, op, data):
     print(
         "Checking permissions for user: {} and type: {} and op: {}".format(
@@ -23,4 +27,5 @@ permissions_by_state_type = {
     "/billing/report-generator": {
         "report_generator": can_generate_report,
     },
+    "/billing/mtd-cost": {"get_mtd_cost": can_get_mtd_cost},
 }

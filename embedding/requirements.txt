@@ -11,7 +11,7 @@ anyio==3.7.1
 attrs==23.1.0
 beautifulsoup4==4.12.2
 boto3==1.29.1
-botocore==1.32.1
+botocore>=1.32.1
 certifi==2023.7.22
 chardet==5.2.0
 charset-normalizer==3.3.2
@@ -57,5 +57,5 @@ soupsieve==2.5
 tiktoken==0.5.2
 tqdm==4.66.1
 typing_extensions==4.8.0
-urllib3==2.0.7
+urllib3==1.26.18
 XlsxWriter==3.1.9
