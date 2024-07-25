@@ -1,4 +1,4 @@
-service: amplify-lambda
+service: vu-amplify
 
 frameworkVersion: "3"
 
@@ -11,7 +11,6 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
-  - serverless-domain-manager
 
 custom:
   pythonRequirements:
@@ -30,6 +29,15 @@ provider:
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
+  versionFunctions: false
+  stackTags:
+    "vu:environment": ${sls:stage}
+    "vu:applicationName": "amplify"
+    "vu:owner": "amplify@vanderbilt.edu"
+  tags:
+    "vu:environment": ${sls:stage}
+    "vu:applicationName": "amplify"
+    "vu:owner": "amplify@vanderbilt.edu"
   environment:
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
@@ -109,6 +117,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
@@ -117,6 +127,7 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
@@ -130,7 +141,6 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
@@ -236,7 +246,7 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/create
+          path: assistant/tags/list
           method: post
           cors: true
 
@@ -256,7 +266,7 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/delete
+          path: assistant/tags/delete
           method: post
           cors: true
 
@@ -266,7 +276,7 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/thread/message/create
+          path: assistant/files/set_tags
           method: post
           cors: true
 
@@ -277,7 +287,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: assistant/chat
+          path: assistant/files/query
           method: post
           cors: true
 
@@ -382,7 +392,7 @@ functions:
   convert:
     handler: converters/docconverter.handler
     layers:
-      - arn:aws:lambda:us-east-1:176977577112:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
+      - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
     memorySize: 1024
     timeout: 180
     events:
@@ -567,10 +577,81 @@ resources:
           -
             AttributeName: id
             AttributeType: S
+          -
+            AttributeName: createdBy
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+          -
+            AttributeName: type
+            AttributeType: S
+          -
+            AttributeName: name
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: createdBy
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndAt
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndType
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: type
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          -
+            IndexName: createdByAndName
+            KeySchema:
+              -
+                AttributeName: createdBy
+                KeyType: HASH
+              -
+                AttributeName: name
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.FILES_DYNAMO_TABLE}
+
+    UserTagsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+        TableName: ${self:provider.environment.USER_TAGS_DYNAMO_TABLE}
+
 
     HashFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -635,13 +716,27 @@ resources:
       Properties:
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          -
-            AttributeName: id
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: time
             AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: UserUsageTimeIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: time
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
+        StreamSpecification:  # enable streaming
+          StreamViewType: NEW_AND_OLD_IMAGES
 
 
 
