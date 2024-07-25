@@ -1,11 +1,14 @@
+from openai import AzureOpenAI
+import tiktoken
 import psycopg2
 from psycopg2.extras import Json
 import json
 import os
 import boto3
+import smtplib
 from email.message import EmailMessage
 import logging
-from common.credentials import get_credentials
+from common.credentials import get_credentials, get_json_credetials, get_endpoint
 from botocore.exceptions import ClientError
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions
 import urllib
@@ -19,6 +22,7 @@ pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
+sender_email = os.environ['SENDER_EMAIL']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 

@@ -11,8 +11,6 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
-  - serverless-deployment-bucket
-  - serverless-iam-roles-per-function  
 
 
 custom:
@@ -23,52 +21,19 @@ custom:
     - prod
   pythonRequirements:
     dockerizePip: non-linux
-  
-  prune:
-  automatic: true
-  includeLayers: true
-  number: 5
-
-  deploymentBucket:
-    versioning: true
-    accelerate: true
-    blockPublicAccess: true
-    tags:
-      - Key: Environment
-        Value: ${self:provider.stage}
-      
     
 provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
+  versionFunctions: false
   environment:
-    
-    #Local Resources Created
-    ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-assistant-uploads #check this var to make sure it's right?
-    ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistants
-    ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistant-aliases
-    ASSISTANT_THREADS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistant-threads
-    ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-assistant-thread-runs
-    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-code-interpreter-files
-
-
-    #Reference Resources created by other services
-    BILLING_DYNAMODB_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-billing
-    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-hash-files
-    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/utilities/simulate_access_to_objects
-    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/utilities/simulate_access_to_objects
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/update_object_permissions
-    S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-chunks
-    ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-chat-usage
- 
-    
-    #Stand Alone Vars References from local vars file
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}  # Valid values are either "openai" or "azure"
-    OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN} #  When using the OpenAI API, you need to provide the ARN of the secret that contains the API key The secret should be named OPENAI_API_KEY
+    # When using the OpenAI API, you need to provide the ARN of the secret that contains the API key
+    # The secret should be named OPENAI_API_KEY
+    OPENAI_API_KEY_ARN: ${self:custom.stageVariables.OPENAI_API_KEY_ARN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME}
     # Valid values are either "openai" or "azure"

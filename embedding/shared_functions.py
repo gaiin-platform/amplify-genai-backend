@@ -1,9 +1,11 @@
 from openai import AzureOpenAI
 import tiktoken
 import re
+import json
 import os
+import boto3
 import logging
-from common.credentials import get_endpoint
+from common.credentials import get_credentials, get_json_credetials, get_endpoint
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

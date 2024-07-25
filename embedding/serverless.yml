@@ -1,4 +1,4 @@
-service: embedding
+service: vu-amplify-embedding
 
 frameworkVersion: '3'
 
@@ -11,21 +11,16 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
-  - serverless-deployment-bucket 
-  - serverless-iam-roles-per-function
-  
+  - serverless-deployment-bucket
 custom:
   pythonRequirements:
     dockerizePip: non-linux
     layer: true
-
-  prune:
-    automatic: true
-    includeLayers: true
-    number: 5           
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)}     
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
-  
   stages:
     - dev
     - staging
@@ -44,6 +39,10 @@ provider:
   runtime: python3.10
   stage: ${opt:stage, 'dev'}
   region: us-east-1
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
 
   apiGateway:
     restApiId:
@@ -52,35 +51,25 @@ provider:
       ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}  
   
   environment:
-    #Local Resources Created
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    MIN_ACU: ${self:custom.stageVariables.MIN_ACU}
+    MAX_ACU: ${self:custom.stageVariables.MAX_ACU}
+    VPC_ID: ${self:custom.stageVariables.VPC_ID}
+    PRIVATE_SUBNET_ONE: ${self:custom.stageVariables.PRIVATE_SUBNET_ONE}
+    PRIVATE_SUBNET_TWO: ${self:custom.stageVariables.PRIVATE_SUBNET_TWO}
+    VPC_CIDR: ${self:custom.stageVariables.VPC_CIDR}
     RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-rag-cluster
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
-    RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
-    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-embedding-progress
-    EMBEDDING_CHUNKS_INDEX_QUEUE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-embedding-chunks-index-queue
-    OBJECT_ACCESS_TABLE: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-object-access-table
-
-    #Reference Resource createb by other services   
-    S3_RAG_CHUNKS_BUCKET: amplify-${self:custom.stageVariables.DEPLOYMENT_NAME}-${sls:stage}-rag-chunks
-    
-    #Stand Alone Vars Referenced from local vars file
-    API_VERSION: ${self:custom.stageVariables.API_VERSION}
-    AWS_ACCOUNT_ID: ${self:custom.stageVariables.AWS_ACCOUNT_ID}
-    COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+    SES_SECRET_NAME: aws/ses/credentials
+    OPENAI_API_KEY_ARN: arn:aws:secretsmanager:us-east-1:514391678313:secret:OPENAI_API_KEY-REUULJ
     EMBEDDING_MODEL_NAME: ${self:custom.stageVariables.EMBEDDING_MODEL_NAME}
+    S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
+    SENDER_EMAIL: ${self:custom.stageVariables.SENDER_EMAIL}
     ENDPOINTS_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    KEYWORD_MODEL_NAME: ${self:custom.stageVariables.KEYWORD_MODEL_NAME}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    MAX_ACU: ${self:custom.stageVariables.MAX_ACU}
-    MIN_ACU: ${self:custom.stageVariables.MIN_ACU}
-    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    PRIVATE_SUBNET_ONE: ${self:custom.stageVariables.PRIVATE_SUBNET_ONE}
-    PRIVATE_SUBNET_TWO: ${self:custom.stageVariables.PRIVATE_SUBNET_TWO}
-    QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
+    COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: dev-rag-cluster.cluster-chyilp474xua.us-east-1.rds.amazonaws.com
@@ -142,7 +131,7 @@ functions:
         - Ref: PythonRequirementsLambdaLayer
       events:
         - s3:
-            bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET}
+            bucket: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
             event: s3:ObjectCreated:*
             existing: true
       environment:
@@ -152,11 +141,9 @@ functions:
 
   process_chunk_for_embedding:
       runtime: python3.10
-      layers:
-        - Ref: PythonRequirementsLambdaLayer
+      layers: 
+        - arn:aws:lambda:us-east-1:514391678313:layer:pgvector:2
       handler: embedding.lambda_handler
-      dependsOn:
-      - RagPostgresDbCluster
       reservedConcurrency: 200
       vpc: 
         securityGroupIds:
@@ -172,26 +159,42 @@ functions:
                 - EmbeddingChunksIndexQueue
                 - Arn
          
-
       environment:
         RAG_POSTGRES_DB_SECRET: ${sls:stage}/rag/postgres/db-creds-2
         MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
+        SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
         ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
         EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
         KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
         QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
-        API_VERSION: ${self:provider.environment.API_VERSION} 
+        API_VERSION: ${self:provider.environment.API_VERSION}
+        USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files  
         EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
 
+  get_embeddings:
+    runtime: python3.10
+    handler: embedding-retrieval.process_input_with_retrieval
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 300
+    events:
+      - http:
+          path: /embedding-retrieval
+          method: post
+          cors: true
 
   get_dual_embeddings:
     runtime: python3.10
     handler: embedding-dual-retrieval.process_input_with_dual_retrieval
-    dependsOn:
-      - RagPostgresDbCluster
     layers:
       - Ref: PythonRequirementsLambdaLayer
     vpc: 
@@ -237,25 +240,6 @@ resources:
           - !Ref RagPostgresDbSecurityGroup
         DBSubnetGroupName: !Ref RagPostgresDbSubnetGroup
         BackupRetentionPeriod: 7
-        StorageEncrypted: true
-        KmsKeyId: !Ref MyKmsKey # Replace with an actual KMS key if you have one, or create a new KMS key resource
-
-    # If you need to create a new KMS key, add the following resource
-    MyKmsKey:
-      Type: 'AWS::KMS::Key'
-      Properties:
-        Description: "KMS key for RDS Aurora Serverless PostgreSQL database encryption"
-        KeyPolicy:
-          Version: "2012-10-17"
-          Id: "key-default-policy"
-          Statement:
-            - 
-              Sid: "Enable IAM User Permissions"
-              Effect: "Allow"
-              Principal:
-                AWS: "arn:aws:iam::${self:provider.environment.AWS_ACCOUNT_ID}:root"
-              Action: "kms:*"
-              Resource: "*"
 
     RagPostgresDbInstance1:
       Type: 'AWS::RDS::DBInstance'
@@ -273,26 +257,7 @@ resources:
         DBInstanceClass: db.serverless
         DBClusterIdentifier: !Ref RagPostgresDbCluster
 
-    WriteEndpointDNSRecord:
-      Type: 'AWS::Route53::RecordSet'
-      Properties:
-        HostedZoneId: ${self:provider.environment.HOSTED_ZONE_ID}
-        Name: write.${self:provider.environment.WRITE_POSTGRES_DOMAIN_NAME}
-        Type: A
-        AliasTarget:
-          HostedZoneId: ${self:provider.environment.RDS_HOSTED_ZONE_ID} # Use RDS Alias Hosted Zone ID for your region
-          DNSName: !GetAtt RagPostgresDbCluster.Endpoint.Address
-          EvaluateTargetHealth: false
-    ReadEndpointDNSRecord:
-      Type: 'AWS::Route53::RecordSet'
-      Properties:
-        HostedZoneId: ${self:provider.environment.HOSTED_ZONE_ID}
-        Name: read.${self:provider.environment.READ_POSTGRES_DOMAIN_NAME}
-        Type: A
-        AliasTarget:
-          HostedZoneId: ${self:provider.environment.RDS_HOSTED_ZONE_ID} # Use RDS Alias Hosted Zone ID for your region
-          DNSName: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
-          EvaluateTargetHealth: false
+      
 
     RagPostgresDbSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
