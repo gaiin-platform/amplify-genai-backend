@@ -402,11 +402,11 @@ resources:
     AmplifyGroupLogTable:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: ${self:service}-${sls:stage}-amplify-groups-logs
+        TableName: ${self:service}-${sls:stage}-amplify-group-logs
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: "groupId"
+          - AttributeName: "log_id"
             AttributeType: "S"
         KeySchema:
-          - AttributeName: "groupId"
+          - AttributeName: "log_id"
             KeyType: "HASH"      
