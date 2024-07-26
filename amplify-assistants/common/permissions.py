@@ -58,5 +58,8 @@ permissions_by_state_type = {
     },
       "/assistant/files/download/codeinterpreter": {
      "download": can_download
-  },
+    },
+    "/assistant/remove_astp_permissions" : {
+       "remove_astp_permissions":  can_delete_assistant
+    }
 }

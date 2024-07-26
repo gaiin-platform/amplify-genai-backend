@@ -12,7 +12,13 @@ def can_get_permissions(user, data):
     return True
 
 
-def can_create_cognito_group(user, data):
+def can_create(user, data):
+    return True
+
+def can_update(user, data):
+    return True
+
+def can_delete(user, data):
     return True
 
 
@@ -31,11 +37,9 @@ def get_user(event, data):
 def get_data_owner(event, data):
     return data['user']
 
-def can_read_emails(user, data):
+def can_read(user, data):
   return True
 
-def can_read_cognito_groups(user, data):
-  return True
 
 permissions_by_state_type = {
     
@@ -49,13 +53,33 @@ permissions_by_state_type = {
         "simulate_access_to_objects": can_get_permissions
     },
     "/utilities/create_cognito_group": {
-        "create_cognito_group": can_create_cognito_group
+        "create_cognito_group": can_create
     },
     "/utilities/get_user_groups": {
-        "read": can_read_cognito_groups
+        "read": can_read
     },
     "/utilities/emails": {
-        "read": can_read_emails
+        "read": can_read
+    },
+    "/groups/create": {
+        "create": can_create
+    }, "/groups/members/update" : {
+        "update": can_update
+    },
+    "/groups/members/update_permissions" : {
+        "update": can_update
+    },
+    "/groups/assistants/update" : {
+        "update": can_update
+    },
+    "/groups/delete" : {
+        "delete": can_delete
+    },
+     "/groups/list" : {
+        'list': can_read
+    },
+     "/groups/members/list" : {
+        'list': can_read
     }
 }
 

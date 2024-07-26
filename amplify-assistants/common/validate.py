@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 import boto3
 from datetime import datetime
 import re
-# from cognito_user_groups import get_user_cognito_amplify_groups
 
 load_dotenv(dotenv_path=".env.local")
 
@@ -48,6 +47,13 @@ delete_assistant_schema = {
             "type": "string",
             "description": "The public id of the assistant"
         },
+        "removePermsForUsers": {
+            "type": "array",
+            "description": "A list of user who have access to this ast",
+            "items": {
+                "type": "string"
+            }
+        }
     },
     "required": ["assistantId"]
 }
@@ -153,6 +159,7 @@ share_assistant_schema = {
         "accessType": {"type": "string"},
         "policy": {"type": "string", "default": ""},
         "note": {"type": "string"},
+        "shareToS3": {"type": "boolean"}
     },
     "required": ["assistantId", "recipientUsers"],
     "additionalProperties": False
@@ -285,6 +292,24 @@ download_ci_files_schema = {
     "required": ["key"]
 }
 
+remove_astp_perms_schema = {
+     "type": "object",
+    "properties": {
+        "assistant_public_id": {
+            "type": "string",
+            "description": "astp assistantId."
+        },
+        "users": {
+            "type": "array",
+            "description": "Remove astp permissions for each user",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "required": ["assistant_public_id", "users"]
+}
+
 
 """
 Every service must define the permissions for each operation here. 
@@ -320,6 +345,9 @@ validators = {
     },
     "/assistant/openai/delete": {
         "delete" :{}
+    },
+    "/assistant/remove_astp_permissions": {
+        "remove_astp_permissions": remove_astp_perms_schema
     }
 
 }
@@ -354,6 +382,9 @@ api_validators = {
     },
     "/assistant/openai/delete": {
         "delete" :{}
+    },
+    "/assistant/remove_astp_permissions": {
+        "remove_astp_permissions": remove_astp_perms_schema
     }
 }
 
@@ -422,7 +453,6 @@ def validated(op, validate_body=True):
                 data['account'] = claims['account']
                 data['allowed_access'] = claims['allowed_access']
                 data['api_accessed'] = api_accessed
-                data['groups'] = get_groups(current_user, token)
             
 
                 result = f(event, context, current_user, name, data)
@@ -615,9 +645,3 @@ def determine_api_user(data):
         print("Unknown or missing key type in api_owner_id:", key_type)
         raise Exception("Invalid or unrecognized key type.")
     
-
-
-def get_groups(user, token):
-    return ['Amplify_Dev_Api']
-    # amplify_groups = get_user_cognito_amplify_groups(token)
-    # return amplify_groups

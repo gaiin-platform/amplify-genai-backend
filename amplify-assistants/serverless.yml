@@ -111,6 +111,15 @@ provider:
 
 functions:
 
+  remove_astp_perms:
+    handler: service/core.remove_shared_ast_permissions
+    timeout: 30
+    events:
+      - http:
+          path: assistant/remove_astp_permissions
+          method: post
+          cors: true
+
   create_assistant:
     handler: service/core.create_assistant
     timeout: 30

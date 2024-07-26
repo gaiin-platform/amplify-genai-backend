@@ -122,6 +122,161 @@ create_cognito_group = {
     "required": ["groupName", "groupDescription"]
 }
 
+members_schema = {
+    "type": "object",
+    "patternProperties": {
+        ".*": {  # This regex matches any string as the property name
+            "type": "string",
+            "enum": ["write", "read", "admin"]
+        }
+    }
+}
+
+
+
+create_amplify_group = {
+    "type": "object",
+    "properties": {
+        "groupName": {
+            "type": "string",
+            "description": "The name of the group to be created."
+        },
+        "members": members_schema,
+        },
+    "required": ["groupName", "members"]
+}
+
+create_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "The name of the item"
+        },
+        "description": {
+            "type": "string",
+            "description": "A brief description of the item"
+        },
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
+        },
+        "tags": {
+            "type": "array",
+            "description": "A list of tags associated with the item",
+            "items": {
+                "type": "string"
+            }
+        },
+        "instructions": {
+            "type": "string",
+            "description": "Instructions related to the item"
+        },
+        "disclaimer": {
+            "type": "string",
+            "description": "Appended assistant response disclaimer related to the item"
+        },
+        "uri": {
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "The endpoint that receives requests for the assistant"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "dataSources": {
+            "type": "array",
+            "description": "A list of data sources",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The key of the data source"
+                    }
+                }
+            }
+        },
+    },
+    "required": ["name", "description", "tags", "instructions", "dataSources"]
+}
+
+update_ast_schema = {
+    "type": "object",
+    "properties": {
+        "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "update_type": {
+            "type": "string",
+            "enum": ["ADD", "REMOVE", "UPDATE"],
+            "description": "Type of update to perform on assistants."
+        },
+        "assistants": {
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": create_assistant_schema
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": "astp assistantId for REMOVE"
+                    }
+                }
+            ]
+        }
+    },
+    "required": ["group_id", "update_type", "assistants"]
+} 
+
+
+update_members_schema = {
+    "type": "object",
+    "properties": {
+        "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "update_type": {
+            "type": "string",
+            "enum": ["ADD", "REMOVE"],
+            "description": "Type of update to perform on members."
+        },
+        "members": {
+            "anyOf": [
+                members_schema,
+                {
+                   "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": "member emails to  REMOVE "
+                    } 
+                }
+            ]
+        }
+             
+    },
+    "required": ["group_id", "update_type", "members"]
+}
+
+update_members_perms_schema = {
+    "type": "object",
+    "properties": {
+        "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "affected_members": members_schema,
+    },
+    "required": ["group_id", "affected_members"]
+}
+
 validators = {
     "/utilities/update_object_permissions": {
         "update_object_permissions": update_object_permissions
@@ -140,7 +295,29 @@ validators = {
     },
     "/utilities/emails": {
         "read": {}
+    },
+    "/groups/create" : {
+        'create': create_amplify_group
+    },
+    "/groups/members/update" : {
+        "update": update_members_schema
+    },
+    "/groups/members/update_permissions" : {
+        "update": update_members_perms_schema
+    },
+    "/groups/assistants/update" : {
+        "update": update_ast_schema
+    },
+    "/groups/delete" : {
+        "delete": {}
+    },
+    "/groups/list" : {
+        'list': {}
+    },
+    "/groups/members/list" : {
+        'list': {}
     }
+    
 }
 
 
@@ -154,9 +331,28 @@ api_validators = {
     "/utilities/simulate_access_to_objects": {
         "simulate_access_to_objects": simulate_access_to_objects
     },
-    "/utilities/emails": {
-        "read": {}
-    }
+
+    # "/groups/create" : {
+    #     'create': create_amplify_group
+    # },
+    # "/groups/members/update" : {
+    #     "update": update_members_schema
+    # },
+    # "/groups/members/update_permissions" : {
+    #     "update": update_members_perms_schema
+    # },
+    # "/groups/assistants/update" : {
+    #     "update": update_ast_schema
+    # },
+    # "/groups/delete" : {
+    #     "delete": {}
+    # },
+    # "/groups/list" : {
+    #     'list': {}
+    # },
+    # "/groups/members/list" : {
+    #     'list': {}
+    # }
 }
 
 def validate_data(name, op, data, api_accessed):
@@ -228,7 +424,7 @@ def validated(op, validate_body=True):
                 data['account'] = claims['account']
                 data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
-                result = f(event, context, current_user, name, data, None if api_accessed else claims['full_username'] )
+                result = f(event, context, current_user, name, data)
 
                 print(f"Result: {result}")
 

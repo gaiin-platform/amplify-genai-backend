@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 from common.validate import validated
 
 @validated("read")
-def get_emails(event, context, current_user, name, data, username): 
+def get_emails(event, context, current_user, name, data): 
     query_params = event.get('queryStringParameters', {})
     print("Query params: ", query_params)
     email_prefix = query_params.get('emailprefix', '')
@@ -65,7 +65,7 @@ def is_valid_email_prefix(prefix):
 
 
 @validated("read")
-def get_user_groups(event, context, current_user, name, data, username): 
+def get_user_groups(event, context, current_user, name, data): 
     dynamodb = boto3.resource('dynamodb')
     cognito_user_table = dynamodb.Table(os.environ['COGNITO_USERS_TABLE'])
 
@@ -82,13 +82,11 @@ def get_user_groups(event, context, current_user, name, data, username):
                 }
 
         cognito_groups = response['Item']['custom:vu_groups']
-        amplify_groups = response['Item']['amplify_groups']
         print("cognito groups: ", cognito_groups)
-        print("amplify_groups: ", amplify_groups)
 
         return {
                 'statusCode': 200,
-                'body': json.dumps({'cognitoGroups' : cognito_groups, 'amplifyGroups' : amplify_groups})
+                'body': json.dumps({'cognitoGroups' : cognito_groups})
                 }
 
     except ClientError as e:

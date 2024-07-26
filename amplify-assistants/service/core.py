@@ -56,6 +56,8 @@ def delete_assistant(event, context, current_user, name, data):
     """
     print(f"Deleting assistant with data: {data}")
 
+    users_who_have_perms = data['data'].get('removePermsForUsers', [])
+
     assistant_public_id = data['data'].get('assistantId', None)
     if not assistant_public_id:
         print("Assistant ID is required for deletion.")
@@ -72,6 +74,9 @@ def delete_assistant(event, context, current_user, name, data):
             return {'success': False, 'message': 'You are not authorized to delete this assistant.'}
 
         delete_assistant_by_public_id(assistants_table, assistant_public_id)
+        # remove permissions 
+        delete_assistant_permissions_by_public_id(assistant_public_id, [current_user] + users_who_have_perms)
+        delete_assistant_permissions_by_id(existing_assistant['id'], current_user)
         print(f"Assistant {assistant_public_id} deleted successfully.")
         return {'success': True, 'message': 'Assistant deleted successfully.'}
     except Exception as e:
@@ -103,8 +108,9 @@ def list_assistants(event, context, current_user, name, data):
 
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
 
-     # Add the system assistants
-    assistants += get_system_assistants(data['groups'], current_user)
+    # Add the system assistants for Amplify requests only
+    if (not data['api_accessed']):
+        assistants += get_system_assistants(current_user)
 
     # Make sure each assistant has a data field and initialize it if it doesn't
     for assistant in assistants:
@@ -269,8 +275,9 @@ def share_assistant(event, context, current_user, name, data):
     recipient_users = extracted_data['recipientUsers']
     access_type = extracted_data.get('accessType', 'read')
     note = extracted_data.get('note', 'Shared via API')
-
     policy = extracted_data.get('policy', '')
+
+    share_to_s3 = extracted_data.get("shareToS3", data['api_accessed'])
 
     return share_assistant_with(
         access_token=data['access_token'],
@@ -279,13 +286,12 @@ def share_assistant(event, context, current_user, name, data):
         recipient_users=recipient_users,
         access_type=access_type,
         note=note,
-        api_accessed=data['api_accessed'],
+        share_to_S3= share_to_s3,
         policy=policy,
         
     )
 
-
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, api_accessed, policy=''): # data_sources, 
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, share_to_S3, policy=''): # data_sources, 
     assistant_entry = get_assistant(assistant_key)
 
     if not assistant_entry:
@@ -332,7 +338,7 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
             print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
             # if api accessed  
-            if (api_accessed):
+            if (share_to_S3):
                 print("API_accessed, sending to s3...")
                 result = assistant_share_save(current_user, user, note, assistant_entry)
                 if (not result['success']):
@@ -353,10 +359,6 @@ def assistant_share_save(current_user, shared_with, note, assistant):
         s3_key = '{}/{}/{}/{}.json'.format(shared_with, current_user, dt_string, str(uuid.uuid4()))
         
         ast_id = assistant['id']
-
-        # keys_to_copy = ['id', 'name', 'description', 'instructions', 'disclaimer', 
-        #                 'tags', 'dataSources', 'provider', 'uri', 'version', 'data',]
-        # ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
         ast = assistant
         ast['tools'] = []
         ast['fileKeys'] = []
@@ -562,6 +564,68 @@ def delete_assistant_by_public_id(assistants_table, assistant_public_id):
                 'id': item['id']
             }
         )
+
+@validated(op='remove_astp_permissions')
+def remove_shared_ast_permissions(event, context, current_user, name, data):
+    extracted_data = data['data']
+    ast_public_id = extracted_data['assistant_public_id']
+    users = extracted_data['users']
+
+    print(f"Removing permission for users {users}  for Astp {ast_public_id}")
+
+    return delete_assistant_permissions_by_public_id(ast_public_id, users)
+
+
+
+def delete_assistant_permissions_by_public_id(assistant_public_id, users):
+    #delete public id is not as sensitive as assistant id 
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
+    for user in users:
+        try:
+            response = table.delete_item(
+                Key={
+                    'object_id': assistant_public_id,
+                    'principal_id': user
+                }
+            )
+            print(f"Deleted permissions for user {user}")
+        except Exception as e:
+            print(f"Failed to delete permissions for user {user}. Error: {str(e)}")
+
+    return {'success': True, 'message': 'Permissions successfully deleted.'}
+
+
+
+def delete_assistant_permissions_by_id(ast_id, current_user):
+    #current user must be principal user to do this 
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
+    try:
+        response = table.get_item(
+            Key={
+                'object_id': ast_id,
+                'principal_id': current_user  
+            }
+        )
+        
+        if 'Item' in response:
+            delete_response = table.delete_item(
+                Key={
+                    'object_id': ast_id,
+                    'principal_id': current_user
+                }
+            )
+            print(f"Permissions deleted for assistant ID {ast_id}.")
+            return {'success': True, 'message': 'Permissions successfully deleted.'}
+        else:
+            # Current user is not authorized to delete the entry
+            return {'success': False, 'message': 'Not authorized to delete permissions'}
+        
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        return {'success': False, 'message': str(e)}
+
 
 
 def delete_assistant_by_id(assistants_table, assistant_id):

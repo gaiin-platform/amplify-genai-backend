@@ -34,7 +34,7 @@ def add_access_response(access_responses, object_id, access_type, response):
 
 
 @validated("simulate_access_to_objects")
-def simulate_access_to_objects(event, context, current_user, name, data, username):
+def simulate_access_to_objects(event, context, current_user, name, data):
     print("Simulating object access")
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
@@ -83,7 +83,7 @@ def simulate_access_to_objects(event, context, current_user, name, data, usernam
 
 
 @validated("can_access_objects")
-def can_access_objects(event, context, current_user, name, data, username):
+def can_access_objects(event, context, current_user, name, data):
     print("Can access objects")
 
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
@@ -143,7 +143,7 @@ def can_access_objects(event, context, current_user, name, data, username):
 
 
 @validated("update_object_permissions")
-def update_object_permissions(event, context, current_user, name, data, username):
+def update_object_permissions(event, context, current_user, name, data):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     data = data['data']
     print("Entered update object permissions")
@@ -237,47 +237,3 @@ def update_object_permissions(event, context, current_user, name, data, username
         'body': json.dumps('Permissions updated successfully.')
     }
 
-@validated("create_cognito_group")
-def create_cognito_group(event, context, current_user, name, data, username):
-    if ( not username ):
-        print('Access from API, no need to continue fuction')
-        return None
-    """
-    Create a Cognito user group in the specified user pool and add the current user to it.
-
-    :param event: AWS Lambda event object.
-    :param context: AWS Lambda context object.
-    :param current_user: The username or sub of the current user.
-    :param name: The name of the user pool (not used in this function).
-    :param data: The data containing the groupName and description.
-    :return: The response from the create_group call or None if an error occurred.
-    """
-    data = data['data']
-    user_pool_id = os.environ['COGNITO_USER_POOL_ID']
-    group_name = data['groupName']
-    description = data['groupDescription']
-
-    # Initialize a Cognito Identity Provider client
-    cognito_idp = boto3.client('cognito-idp')
-
-    try:
-        # Create the group
-        response = cognito_idp.create_group(
-            GroupName=group_name,
-            UserPoolId=user_pool_id,
-            Description=description
-        )
-        print(f"Group '{group_name}' created successfully.")
-
-        # Add the current user to the group
-        cognito_idp.admin_add_user_to_group(
-            UserPoolId=user_pool_id,
-            Username=username,
-            GroupName=group_name
-        )
-        print(f"User '{current_user}' added to group '{group_name}' successfully.")
-
-        return response
-    except ClientError as e:
-        print(f"An error occurred: {e}")
-        return None

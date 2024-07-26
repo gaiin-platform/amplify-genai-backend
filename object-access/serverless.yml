@@ -321,6 +321,274 @@ functions:
         Resource:
           - !GetAtt CognitoUsersTable.Arn
 
+
+  create_amplify_group:
+    handler: groups.create_group
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/create
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+          
+
+      
+
+  update_members:
+    handler: groups.update_members
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - http:
+          path: /groups/members/update
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+          
+
+          
+
+  update_member_permission:
+    handler: groups.update_members_permission
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - http:
+          path: /groups/members/update_permissions
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+          
+       
+
+  list_groups:
+    handler: groups.list_groups
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - http:
+          path: /groups/list
+          method: get
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+         
+
+  list_group_members:
+    handler: groups.list_group_members
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - http:
+          path: /groups/members/list
+          method: get
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+
+          
+
+
+  update_assistants:
+    handler: groups.update_assistants
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 900
+    events:
+      - http:
+          path: /groups/assistants/update
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+          
+
+          
+
+  delete_group:
+    handler: groups.delete_group
+    layers:
+        - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - http:
+          path: /groups/delete
+          method: delete
+          cors: true
+
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
+          
+
+            
+
+  
+
 resources:
   Conditions:
     IsProd:

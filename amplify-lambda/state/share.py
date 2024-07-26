@@ -8,7 +8,7 @@ import uuid
 from boto3.dynamodb.conditions import Key
 from common.object_permissions import update_object_permissions
 from common.data_sources import get_data_source_keys
-from common.share_assistants import share_assistant
+from common.assistants import share_assistant
 import boto3
 
 from common.validate import HTTPException, validated
