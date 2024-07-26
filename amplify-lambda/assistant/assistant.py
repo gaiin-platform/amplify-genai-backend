@@ -1,7 +1,10 @@
+import base64
+import json
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
+from cryptography.fernet import Fernet
 
 from common.ops import op
 from common.validate import validated
@@ -202,6 +205,42 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
                          "specific knowledge base. "
     }
 )
+
+def encrypt_account_data(data):
+    ssm_client = boto3.client('ssm')
+    parameter_name = os.getenv('ENCRYPTION_PARAMETER')
+    print("Parameter name being accessed:", parameter_name)
+    print("Enter encrypt account data")
+    try:
+        # Fetch the parameter securely, which holds the encryption key
+        response = ssm_client.get_parameter(
+            Name=parameter_name,
+            WithDecryption=True
+        )
+        # The key needs to be a URL-safe base64-encoded 32-byte key
+        key = response['Parameter']['Value'].encode()
+        # Ensure the key is in the correct format for Fernet
+        fernet = Fernet(key)
+
+        data_str = json.dumps(data)
+        # Encrypt the data
+        encrypted_data = fernet.encrypt(data_str.encode())
+        encrypted_data_b64 = base64.b64encode(encrypted_data).decode('utf-8')
+
+        print("Encrypted value:", encrypted_data_b64)
+        return {
+            'success': True,
+            'encrypted_data': encrypted_data_b64
+        }
+
+    except Exception as e:
+        print(f"Error during parameter retrieval or encryption {parameter_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Error {str(e)}"
+        }
+    
+
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
     access = data['allowed_access']
@@ -209,6 +248,15 @@ def get_presigned_url(event, context, current_user, name, data):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
     
+    account_data = { "user": current_user,
+                     "account" : data['account'],
+                     "api_key" : data['access_token'] if data['api_accessed'] else None
+                    } 
+    # encrypted data using parameter 
+    e_result = encrypt_account_data(account_data)
+    encrypted_metadata = e_result['encrypted_data'] if e_result['success'] else ""
+    
+
     print(f"Data is {data}")
     data = data['data']
 
@@ -234,7 +282,8 @@ def get_presigned_url(event, context, current_user, name, data):
         Params={
             'Bucket': bucket_name,
             'Key': key,
-            'ContentType': file_type
+            'ContentType': file_type,
+            'Metadata': {'encrypted_metadata': encrypted_metadata}
             # Add any additional parameters like ACL, ContentType, etc. if needed
         },
         ExpiresIn=3600  # Set the expiration time for the presigned URL, in seconds

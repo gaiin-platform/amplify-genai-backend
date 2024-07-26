@@ -72,6 +72,7 @@ provider:
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
+    ENCRYPTION_KEY: ${self:custom.stageVariables.ENCRYPTION_KEY}
 
   iam:
     role:
@@ -229,6 +230,14 @@ functions:
           path: assistant/files/upload
           method: post
           cors: true
+    environment:
+        ENCRYPTION_PARAMETER: !Ref SSMEncryptionParameter
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "ssm:GetParameter"  
+        Resource: 
+          - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/files/encryptionParameter"
 
   download_file:
     handler: assistant/assistant.get_presigned_download_url
@@ -426,8 +435,15 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
+        ENCRYPTION_PARAMETER: !Ref SSMEncryptionParameter
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "ssm:GetParameter"
+        Resource: 
+          - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/files/encryptionParameter"
 
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
@@ -467,6 +483,17 @@ functions:
       
 resources:
   Resources:
+
+    SSMEncryptionParameter:
+      Type: "AWS::SSM::Parameter"
+      Properties:
+        Name: !Sub "/${self:service}/${self:provider.stage}/files/encryptionParameter"
+        Type: "SecureString"
+        Value: ${self:custom.stageVariables.ENCRYPTION_KEY}
+         # Set this value securely, consider generating dynamically or fetching securely
+        KeyId: "alias/aws/ssm"
+
+
     StateBucket:
       Type: AWS::S3::Bucket
       Properties:

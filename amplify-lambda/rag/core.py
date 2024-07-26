@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import os
 import mimetypes
@@ -15,6 +16,7 @@ from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
 from rag.util import get_text_content_location, get_text_metadata_location, get_text_hash_content_location
 import traceback
+from cryptography.fernet import Fernet
 
 s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
@@ -380,8 +382,45 @@ def update_object_permissions(current_user, data):
     return True
 
 
+def decrypt_account_data(encrypted_data_b64):
+    ssm_client = boto3.client('ssm')
+    parameter_name = os.getenv('ENCRYPTION_PARAMETER')
+    print("Enter decrypt account data")
+    try:
+        # Fetch the parameter securely, which holds the encryption key
+        response = ssm_client.get_parameter(
+            Name=parameter_name,
+            WithDecryption=True
+        )
+        # The key needs to be a URL-safe base64-encoded 32-byte key
+        key = response['Parameter']['Value'].encode()
+        # Ensure the key is in the correct format for Fernet
+        fernet = Fernet(key)
+
+        encrypted_data = base64.b64decode(encrypted_data_b64)
+
+        # Decrypt the data
+        decrypted_str = fernet.decrypt(encrypted_data).decode('utf-8')
+
+        decrypted_data = json.loads(decrypted_str)
+
+        print("Decrypted value:", decrypted_data)
+        return {
+            'success': True,
+            'decrypted_data': decrypted_data
+        }
+
+    except Exception as e:
+        print(f"Error during parameter retrieval or encryption {parameter_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Error {str(e)}"
+        }
+    
+
 def process_document_for_rag(event, context):
     print(f"Received event: {event}")
+    s3 = boto3.client('s3')
     queue_url = os.environ['rag_process_document_queue_url']
 
     dynamodb = boto3.resource('dynamodb')
@@ -403,6 +442,29 @@ def process_document_for_rag(event, context):
             key = urllib.parse.unquote(key)
 
             print(f"Bucket / Key {bucket} / {key}")
+
+            #get decrypted account data 
+            account = None
+            apiKey = None
+            user = None
+            try:
+                response = s3.head_object(Bucket=bucket, Key=key)
+                encrypted_metadata_b64 = response['Metadata']['encrypted_metadata'] 
+                print("Encrypted Metadata:", encrypted_metadata_b64)
+                
+                # Decrypt the metadata
+                decryption_result = decrypt_account_data(encrypted_metadata_b64)
+                if decryption_result['success']:
+                    decrypted_data = decryption_result['decrypted_data']
+                    print("Decrypted Metadata:", decrypted_data)
+                    account = decrypted_data["account"]
+                    apiKey = decrypted_data['api_key']
+                    user = decrypted_data['user']
+                else:
+                    print("Failed to decrypt metadata:", decryption_result['error'])
+
+            except Exception as e:
+                print(f"Error fetching metadata for {key}: {str(e)}")
 
             response = files_table.get_item(
                 Key={
@@ -464,7 +526,7 @@ def process_document_for_rag(event, context):
                     }
                     hash_files_table.put_item(Item=user_key_to_hash_entry)
 
-                    user = key.split('/')[0]
+                    if not user: user = key.split('/')[0]
                     permissions_update = {
                         'dataSources': [text_content_key],
                         'emailList': [user],
@@ -528,6 +590,8 @@ def process_document_for_rag(event, context):
                                 'textLocationBucket': file_text_content_bucket_name,
                                 'textLocationKey': text_content_key,
                                 'createdAt': creation_time,
+                                'account' : account, 
+                                'apiKey' : apiKey
                             }
                             hash_files_table.put_item(Item=hash_file_data)
                             print(f"Updated hash files entry for {dochash}")
