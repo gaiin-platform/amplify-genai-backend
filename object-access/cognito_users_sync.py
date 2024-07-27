@@ -1,7 +1,3 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
-
 import boto3
 from datetime import datetime
 import os
@@ -31,9 +27,12 @@ def sync_users_to_dynamo(event, context):
                     'user_id': user_id,
                     'family_name': user_attributes.get('family_name'),
                     'given_name': user_attributes.get('given_name'),
-                    'custom:vu_groups': user_attributes.get('custom:vu_groups'),
                     'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                 }
+                
+                # Add custom:saml_groups only if it exists
+                if 'custom:saml_groups' in user_attributes:
+                    filtered_attributes['custom:saml_groups'] = user_attributes['custom:saml_groups']
                 
                 existing_user = dynamo_table.get_item(Key={'user_id': user_id}).get('Item')
                 if existing_user:
