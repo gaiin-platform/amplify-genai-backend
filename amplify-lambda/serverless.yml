@@ -73,10 +73,19 @@ provider:
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
     ENCRYPTION_KEY: ${self:custom.stageVariables.ENCRYPTION_KEY}
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
 
   iam:
     role:
       statements:
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+            - ssm:DescribeParameters
+            - ssm:PutParameter
+          Resource: 
+            - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+  
         - Effect: Allow
           Action:
             - s3:ListBucket
@@ -147,6 +156,7 @@ provider:
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
             - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
             - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
+ 
 
 functions:
 
@@ -231,13 +241,7 @@ functions:
           method: post
           cors: true
     environment:
-        ENCRYPTION_PARAMETER: !Ref SSMEncryptionParameter
-    iamRoleStatements:
-      - Effect: "Allow"
-        Action:
-          - "ssm:GetParameter"  
-        Resource: 
-          - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/files/encryptionParameter"
+        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
 
   download_file:
     handler: assistant/assistant.get_presigned_download_url
@@ -402,6 +406,7 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
+      - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
@@ -435,16 +440,10 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
-        ENCRYPTION_PARAMETER: !Ref SSMEncryptionParameter
+        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
-    iamRoleStatements:
-      - Effect: "Allow"
-        Action:
-          - "ssm:GetParameter"
-        Resource: 
-          - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/files/encryptionParameter"
-
+    
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
     layers:
@@ -484,14 +483,13 @@ functions:
 resources:
   Resources:
 
-    SSMEncryptionParameter:
-      Type: "AWS::SSM::Parameter"
-      Properties:
-        Name: !Sub "/${self:service}/${self:provider.stage}/files/encryptionParameter"
-        Type: "SecureString"
-        Value: ${self:custom.stageVariables.ENCRYPTION_KEY}
-         # Set this value securely, consider generating dynamically or fetching securely
-        KeyId: "alias/aws/ssm"
+    #SSMEncryptionParameter:
+    #  Type: "AWS::SSM::Parameter"
+    #  Properties:
+    #    Name: !Sub "/${self:service}/${self:provider.stage}/files/encryptionParameter"
+    #    Type: "SecureString"
+    #    # Value: ${self:custom.stageVariables.ENCRYPTION_KEY}
+    #     # Set this value securely, consider generating dynamically or fetching securely
 
 
     StateBucket:
