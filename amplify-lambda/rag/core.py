@@ -585,7 +585,7 @@ def process_document_for_rag(event, context):
                             print(f"Uploaded text to {file_text_content_bucket_name}/{text_content_key}")
 
                             hash_file_data = {
-                                'id': dochash,
+                                'id': key, # changed this from dochas to userkey
                                 'originalCreator': user,
                                 'textLocationBucket': file_text_content_bucket_name,
                                 'textLocationKey': text_content_key,

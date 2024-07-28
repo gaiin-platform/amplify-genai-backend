@@ -16,6 +16,7 @@ custom:
   pythonRequirements:
     dockerizePip: non-linux
     layer: true
+    slim: true
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -686,10 +687,19 @@ resources:
           -
             AttributeName: id
             AttributeType: S
+          - AttributeName: textLocationKey
+            AttributeType: S  
         KeySchema:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.HASH_FILES_DYNAMO_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: TextLocationIndex
+            KeySchema:
+              - AttributeName: textLocationKey
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
 
 
     AccountingChargesDynamoDbTable:

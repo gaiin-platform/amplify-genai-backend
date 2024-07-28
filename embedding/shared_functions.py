@@ -4,11 +4,11 @@ import re
 import json
 import os
 import boto3
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 import logging
-import os
 import uuid
 from datetime import datetime
-from botocore.exceptions import ClientError
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 
 
@@ -20,6 +20,7 @@ api_version    = os.environ['API_VERSION']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
+hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
 
 
 
@@ -140,16 +141,27 @@ def generate_questions(content):
             }
         }
 
-dynamodb = boto3.client('dynamodb')
-dynamo_table_name = os.environ.get('CHAT_USAGE_DYNAMO_TABLE')
 
-def record_usage(account,requestId, user, model, input_tokens, output_tokens, details, api_key=None):
+
+def record_usage(account, requestId, user, model, input_tokens, output_tokens, details=None, api_key=None):
+    dynamodb = boto3.client('dynamodb')
+    dynamo_table_name = os.environ.get('CHAT_USAGE_DYNAMO_TABLE')
     if not dynamo_table_name:
         logger.error("CHAT_USAGE_DYNAMO_TABLE table is not provided in the environment variables.")
         return False
 
     try:
-        account_id = account.get('accountId', 'general_account')
+        account_id = account
+
+        # Initialize details if None
+        if details is None:
+            details = {}
+
+        # Ensure input_tokens and output_tokens are not None and default to 0 if they are
+        if input_tokens is None:
+            input_tokens = 0
+        if output_tokens is None:
+            output_tokens = 0
 
         if api_key:
             details.update({'api_key': api_key})
@@ -170,47 +182,81 @@ def record_usage(account,requestId, user, model, input_tokens, output_tokens, de
             TableName=dynamo_table_name,
             Item=item
         )
+        
+        # Check the HTTPStatusCode and log accordingly
+        status_code = response['ResponseMetadata']['HTTPStatusCode']
+        if status_code == 200:
+            text_location_key = details.get('textLocationKey', 'unknown')
+            account = details.get('account', account)
+            original_creator = details.get('originalCreator', 'unknown')
+            logger.info(f"Token Usage recorded for embedding source {text_location_key}, to {account} of {original_creator}.")
+        else:
+            logger.error(f"Failed to record usage: {response}")
+    
+    except Exception as e:
+        logger.error(f"An error occurred: {e}", exc_info=True)
+        return {
+            "statusCode": 500,
+            "body": {
+                "error": f"An error occurred: {str(e)}"
+            }
+        }    
+   
 
-    except ClientError as e:
-        logger.error(f"Failed to record usage: {e}")
-        return False
-
-    return True
-
-
-
-
-import boto3
 
 def get_key_details(textLocationKey):
     # Initialize a session using Amazon DynamoDB
     session = boto3.Session()
     
     # Initialize DynamoDB resource
-    dynamodb = session.resource('dynamodb')
+    dynamodb = session.resource('dynamodb', region_name='us-east-1')
     
     # Select your DynamoDB table
-    table = dynamodb.Table('HASH_FILES_DYNAMO_TABLE')
+    table = dynamodb.Table(hash_files_dynamo_table)
     
     try:
-        # Get item from the table
-        response = table.get_item(
-            Key={
-                'textLocationKey': textLocationKey
-            }
+        # Query items from the table based on textLocationKey
+        response = table.query(                        
+            IndexName='TextLocationIndex',  # Specify the GSI name here
+            KeyConditionExpression=Key('textLocationKey').eq(textLocationKey)
         )
+        print(f"Response: {response}")
         
-        # Check if the item exists in the table
-        if 'Item' in response:
-            item = response['Item']
-            apiKey = item.get('apiKey')
-            account = item.get('account')
-            originalCreator = item.get('originalCreator')
+        # Check if the items exist in the table
+        if 'Items' in response and response['Items']:
+            # Filter items to ensure createdAt is present and valid
+            valid_items = [item for item in response['Items'] if 'createdAt' in item and item['createdAt']]
+            
+            # If there are no valid items, return None
+            if not valid_items:
+                return None
+            
+            # Sort valid items by createdAt in descending order
+            sorted_items = sorted(valid_items, key=lambda x: x['createdAt'], reverse=True)
+            most_recent_item = sorted_items[0]
+
+            if most_recent_item.get('apiKey'):
+                logging.info("Fetched apiKey: ********")
+            else: 
+                logging.info(f"Fetched apiKey has no value")
+            
+        
+            logging.info(f"Fetched account: {most_recent_item.get('account')}")
+            logging.info(f"Fetched originalCreator: {most_recent_item.get('originalCreator')}")
+            
+            apiKey = most_recent_item.get('apiKey')
+            account = most_recent_item.get('account')
+            originalCreator = most_recent_item.get('originalCreator')
+
+            
+
             return {
                 'apiKey': apiKey,
                 'account': account,
-                'originalCreator': originalCreator
+                'originalCreator': originalCreator,
+
             }
+            
         else:
             return None
     
@@ -218,5 +264,4 @@ def get_key_details(textLocationKey):
         print(f"Error retrieving item: {e}")
         return None
 
-# Replace 'your_text_location_key' with the actual key value
 
