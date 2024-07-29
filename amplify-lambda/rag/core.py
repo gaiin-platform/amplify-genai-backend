@@ -163,8 +163,10 @@ def chunk_content(key, text_content, split_params):
     chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
     split_increment = 10
     split_count = 0
-
     index = 0
+
+    total_chunks = 0  # Initialize total_chunks
+  
     for content_part in flattened_list:
         sentence = content_part['content']
         location = content_part['location']
@@ -184,26 +186,24 @@ def chunk_content(key, text_content, split_params):
                            'indexes': indexes,
                            'char_index': char_index})
 
-            total_chunks += 1
+            # Reset for the next chunk
+            locations = []
+            indexes = []
+            char_index += len(chunk_text) + 1  # Include the space that joins with the next chunk.
+            current_chunk = [sentence]  # Start the new chunk with the current sentence.
+            current_chunk_size = sentence_length
+
+            total_chunks += 1  # Increment the count after forming a chunk
 
             if len(chunks) == split_increment:
                 split_count += 1
                 save_chunks(chunks_bucket, key, split_count, chunks)
                 chunks = []
 
-            locations = []
-            indexes = []
-            # Update char_index and reset current_chunk.
-            char_index += len(chunk_text) + 1  # Include the space that joins with the next chunk.
-            current_chunk = [sentence]  # Start the new chunk with the current sentence.
-            current_chunk_size = sentence_length
-            content_index += 1  # Increment the content index.
         else:
-            total_chunks += 1
             locations.append(location)
             indexes.append(index)
-            index = index + 1
-            # If this is the first sentence, don't add a space at the start.
+            index += 1
             if current_chunk:
                 current_chunk.append(sentence)
                 current_chunk_size += sentence_length + 1
@@ -214,17 +214,19 @@ def chunk_content(key, text_content, split_params):
     # If there's remaining text in the current chunk, add it as the last chunk.
     if current_chunk:
         chunk_text = ' '.join(current_chunk)
-
         chunks.append({'content': chunk_text,
                        'locations': locations,
                        'indexes': indexes,
                        'char_index': char_index})
+        total_chunks += 1  # Increment the count for the last chunk
 
-    if len(chunks) > 0:
+    if chunks:  # If there are unfinished chunks, save them
         split_count += 1
         save_chunks(chunks_bucket, key, split_count, chunks)
-
-    return split_count * split_increment
+    
+    print(f"In Chunk Content Function")
+    print(f"Split Count: {split_count}, Split Increment: {split_increment}, Total Chunks: {total_chunks}")
+    return split_count
 
 
 def chunk_s3_file_content(bucket, key):
@@ -240,6 +242,7 @@ def chunk_s3_file_content(bucket, key):
 
         # Extract text from the file in S3
         chunks = chunk_content(key, file_content, {})
+        print(f"Chunk S3 File Content Function: Chunked content for {key} into {chunks} chunks")
 
         return chunks
 
