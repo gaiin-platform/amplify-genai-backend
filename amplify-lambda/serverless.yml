@@ -483,7 +483,7 @@ functions:
     timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
-      
+  
 resources:
   Resources:
 
@@ -773,8 +773,14 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
+          - IndexName: DateIndex
+              KeySchema:
+                - AttributeName: time
+                  KeyType: RANGE
+              Projection:
+                ProjectionType: ALL  # Or specify the attributes you want projected
         StreamSpecification:  # enable streaming
-          StreamViewType: NEW_AND_OLD_IMAGES
+          StreamViewType: NEW_AND_OLD_IMAGES        
 
     AccountingChatUsageArchiveDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -800,7 +806,12 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
-
+          - IndexName: DateIndex
+            KeySchema:
+              - AttributeName: time
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
 
 
     ConversionInputBucket:
