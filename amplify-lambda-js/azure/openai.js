@@ -26,8 +26,14 @@ const isOpenAIEndpoint = (url) => {
     return url.startsWith("https://api.openai.com");
 }
 
-async function includeImageSources(dataSources, messages) {
-    if (!dataSources || dataSources.length === 0) return messages;
+async function includeImageSources(dataSources, messages, model) {
+    if (!dataSources || dataSources.length === 0)  return messages;
+    const msgLen = messages.length - 1;
+    // does not support images
+    if (model === "gpt-35-turbo") {
+        messages[msgLen]['content'] += "\n At the end of your response, please let the user know the model GPT 3.5 does not support images. Advise them to try another GPT model.";
+        return messages;
+    }
 
     let imageMessageContent = []
     for (let i = 0; i < dataSources.length; i++) {
@@ -42,7 +48,7 @@ async function includeImageSources(dataSources, messages) {
         }
     }
 
-    const msgLen = messages.length - 1;
+    
     messages[msgLen]['content'] = [{ "type": "text",
                                      "text": additionalImageInstruction
                                     }, 
@@ -86,7 +92,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         "stream": true,
     };
 
-    data.messages = await includeImageSources(body.imageSources, data.messages);
+    data.messages = await includeImageSources(body.imageSources, data.messages, data.model);
 
     if(tools){
         data.tools = tools;
