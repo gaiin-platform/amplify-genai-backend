@@ -494,6 +494,13 @@ functions:
           bucket: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
           event: s3:ObjectCreated:*
           existing: true
+
+  archive_chat_usage:
+    handler: utilities/amplify-lambda/utilities/chat_usage_archive.archive_items
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - schedule: cron(0 0 ? * SUN *) # Run every Sunday at midnight          
   
 resources:
   Resources:
