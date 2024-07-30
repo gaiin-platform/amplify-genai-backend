@@ -159,7 +159,8 @@ def put_image_file_metadata (bucket_name, key, name, tags, image_size):
                                      'gpt': cal_total_tokens_gpt(width, height) },
                     'tags': tags,
                     'height': height,
-                    'width': width
+                    'width': width,
+                    'isImage': True
                 }
     print("Image metadata: ", image_metadata)
 
