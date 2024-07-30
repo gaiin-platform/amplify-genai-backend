@@ -10,6 +10,10 @@ from common.validate import validated
 import os
 import boto3
 import rag.util
+import images.core
+
+
+IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @op(
@@ -86,11 +90,11 @@ def get_presigned_download_url(event, context, current_user, name, data):
 
 def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
     dynamodb = boto3.resource('dynamodb')
-    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME' if (file_type in IMAGE_FILE_TYPES) else 'S3_RAG_INPUT_BUCKET_NAME' ] 
     dt_string = datetime.now().strftime('%Y-%m-%d')
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
-    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
     files_table.put_item(
         Item={
             'id': key,
@@ -294,7 +298,6 @@ def get_presigned_url(event, context, current_user, name, data):
     print(f"Data is {data}")
     data = data['data']
 
-    dynamodb = boto3.resource('dynamodb')
     s3 = boto3.client('s3')
 
     name = data['name']
@@ -304,7 +307,7 @@ def get_presigned_url(event, context, current_user, name, data):
     knowledge_base = data['knowledgeBase']
 
     print(
-        f"Getting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
+        f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
 
     # Set the S3 bucket and key
     bucket_name, key = create_file_metadata_entry(current_user, name, file_type, tags, props, knowledge_base)
@@ -322,6 +325,22 @@ def get_presigned_url(event, context, current_user, name, data):
         },
         ExpiresIn=3600  # Set the expiration time for the presigned URL, in seconds
     )
+
+    if file_type in IMAGE_FILE_TYPES:
+        print("Generating presigned urls for Image file")
+        metadata_key = key + ".metadata.json"
+        presigned_metadata_url = s3.generate_presigned_url(
+                                ClientMethod='get_object',
+                                Params={
+                                    'Bucket': bucket_name,
+                                    'Key': metadata_key
+                                },
+                                ExpiresIn=3600 
+        )
+        return {'success': True,
+                'uploadUrl': presigned_url,
+                'metadataUrl': presigned_metadata_url,
+                'key': key}
 
     [file_text_content_bucket_name, text_content_key] = rag.util.get_text_content_location(bucket_name, key)
 
@@ -365,7 +384,7 @@ def get_presigned_url(event, context, current_user, name, data):
                 'key': key}
     else:
         return {'success': False}
-
+    
 
 @op(
     path="/assistant/tags/list",

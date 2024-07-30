@@ -1,5 +1,5 @@
 import {ModelID, Models} from "../models/models.js";
-import {getDataSourcesByUse} from "../datasource/datasources.js";
+import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
@@ -287,6 +287,9 @@ but otherwise don't describe them in your answers as it might confuse the user.
                         prompt: instructions,
                     }
                 };
+            
+            // for now we will include the ds in the current message
+            updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
             await assistantBase.handler(
                 llm,

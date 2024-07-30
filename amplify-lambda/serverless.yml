@@ -54,6 +54,7 @@ provider:
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
     S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
+    S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
     S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
     S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
@@ -74,7 +75,6 @@ provider:
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
-    ENCRYPTION_KEY: ${self:custom.stageVariables.ENCRYPTION_KEY}
     FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
 
   iam:
@@ -153,6 +153,7 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
@@ -483,18 +484,19 @@ functions:
     timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
+
+  process_images_for_chat:
+    handler: images/core.process_images_for_chat
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
   
 resources:
   Resources:
-
-    #SSMEncryptionParameter:
-    #  Type: "AWS::SSM::Parameter"
-    #  Properties:
-    #    Name: !Sub "/${self:service}/${self:provider.stage}/files/encryptionParameter"
-    #    Type: "SecureString"
-    #    # Value: ${self:custom.stageVariables.ENCRYPTION_KEY}
-    #     # Set this value securely, consider generating dynamically or fetching securely
-
 
     StateBucket:
       Type: AWS::S3::Bucket
@@ -774,11 +776,11 @@ resources:
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
           - IndexName: DateIndex
-              KeySchema:
-                - AttributeName: time
-                  KeyType: RANGE
-              Projection:
-                ProjectionType: ALL  # Or specify the attributes you want projected
+            KeySchema:
+              - AttributeName: time
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
         StreamSpecification:  # enable streaming
           StreamViewType: NEW_AND_OLD_IMAGES        
 
@@ -809,7 +811,7 @@ resources:
           - IndexName: DateIndex
             KeySchema:
               - AttributeName: time
-                KeyType: RANGE
+                KeyType: HASH
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
 
@@ -851,6 +853,17 @@ resources:
          Type: AWS::S3::Bucket
          Properties:
            BucketName: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
+           CorsConfiguration:
+             CorsRules:
+               - AllowedOrigins: ['*']
+                 AllowedMethods: ['GET','PUT', 'POST']
+                 AllowedHeaders: ['*']
+                 MaxAge: 3000
+    
+    ImageInputBucket:
+         Type: AWS::S3::Bucket
+         Properties:
+           BucketName: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
            CorsConfiguration:
              CorsRules:
                - AllowedOrigins: ['*']
