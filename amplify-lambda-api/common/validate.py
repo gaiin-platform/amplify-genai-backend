@@ -121,7 +121,7 @@ create_api_keys_schema = {
             "description": "For system use"
         }
     },
-    "required": ["owner", "appName", "account", "rateLimit", "accessTypes", "systemUse", "delegate"]
+    "required": ["owner", "appName", "account", "accessTypes", "rateLimit"]
 }
 update_key_schema = {
     "type": "array",
