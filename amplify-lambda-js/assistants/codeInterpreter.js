@@ -12,10 +12,11 @@ import {trace} from "../common/trace.js";
 
 
 const logger = getLogger("codeInterpreterAssitant");
-const description = `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
-It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
-Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
-Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
+const description = "Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files."
+// `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
+// It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
+// Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
+// Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
 
 const additionalPrompt = `You have access to a sandboxed environment for writing and testing code when code is requested:
                             1. Anytime you write new code display a preview of the code to show your work.

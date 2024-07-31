@@ -289,7 +289,7 @@ but otherwise don't describe them in your answers as it might confuse the user.
                 };
             
             // for now we will include the ds in the current message
-            updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
+            if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
             await assistantBase.handler(
                 llm,
