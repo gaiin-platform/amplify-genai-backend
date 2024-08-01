@@ -155,6 +155,8 @@ def chat(chat_url, access_token, payload):
     # invoke the chat_streaming function with the provided parameters
     chat_streaming(chat_url, access_token, payload, content_handler, meta_handler)
 
+    print(f"CDD: {concatenated_d_data}")
+
     return concatenated_d_data, meta_events
 
 
@@ -352,6 +354,34 @@ def chat_llm(docstring: str,
     return result
 
 
+def chat_simple(access_token, model, system_instructions, prompt_instructions):
+
+    access_token = (access_token if access_token else os.getenv("AMPLIFY_API_KEY"))
+
+    response, meta = chat(
+        os.getenv("CHAT_ENDPOINT"),
+        access_token,
+        {
+            "model": model,
+            "temperature": 1,
+            "max_tokens": 1000,
+            "dataSources": [],
+            "messages": [
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": prompt_instructions}],
+            "options": {
+                "requestId": str(uuid.uuid4()),
+                "model": {
+                    "id": model,
+                },
+                "prompt": system_instructions,
+                "ragOnly": True,
+            }
+        }
+    )
+    return response
+
+
 def prompt(system_prompt: str = ""):
     def decorator(func: Callable):
         @wraps(func)
@@ -441,3 +471,5 @@ def prompt(system_prompt: str = ""):
             return result
         return wrapper
     return decorator
+
+
