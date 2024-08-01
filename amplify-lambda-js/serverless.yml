@@ -64,6 +64,8 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
     
 
   iam:
@@ -98,6 +100,10 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'
@@ -189,6 +195,17 @@ resources:
             AttributeName: type
             KeyType: HASH
         TableName: ${self:provider.environment.DATASOURCE_REGISTRY_DYNAMO_TABLE}
+    CostCalculationsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}
     ChatTracesBucket:
          Type: AWS::S3::Bucket
          Properties:
