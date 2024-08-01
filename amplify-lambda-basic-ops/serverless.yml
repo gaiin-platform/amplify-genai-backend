@@ -41,6 +41,8 @@ provider:
     ATTACHMENT_STORAGE_S3_BUCKET_NAME: ${self:service}-${sls:stage}-work-record-attachments
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    DYNAMO_DYNAMIC_CODE_TABLE: vu-amplify-${sls:stage}-dynamic-code
+    DYNAMIC_CODE_BUCKET: vu-amplify-${sls:stage}-dynamic-code
 
   apiGateway:
     restApiId:
@@ -65,6 +67,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
         - Effect: Allow
           Action:
             - s3:PutObject
@@ -74,9 +78,41 @@ provider:
             - dynamodb:Query
             - dynamodb:GetItem
             - dynamodb:UpdateItem
-
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+          Resource: arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
 
 functions:
+
+  create_code:
+    handler: service/dynamic.create_code
+    timeout: 30
+    events:
+      - http:
+          path: code/create
+          method: post
+          cors: true
+
+  list_code:
+    handler: service/dynamic.list_user_code
+    timeout: 30
+    events:
+      - http:
+          path: code/list
+          method: post
+          cors: true
+
+  invoke_code:
+    handler: service/dynamic.invoke_code
+    timeout: 30
+    events:
+      - http:
+          path: code/invoke
+          method: post
+          cors: true
 
   llm_prompt_datasource:
     handler: service/core.llm_prompt_datasource
@@ -183,7 +219,35 @@ resources:
             KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
 
+    DynamicCodeTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+          - AttributeName: creator
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: CreatorIndex
+            KeySchema:
+              - AttributeName: creator
+                KeyType: HASH
+              - AttributeName: uuid
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
     AttachmentStorageBucket:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}
+
+    DynamicCodeBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.DYNAMIC_CODE_BUCKET}

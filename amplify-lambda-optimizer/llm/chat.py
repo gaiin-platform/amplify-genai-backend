@@ -340,8 +340,14 @@ def chat_llm(docstring: str,
     # return output_model(prompt_template=prompt_template)
     response, meta = chat(chat_url, access_token, payload)
 
-    output_data = extract_and_parse_yaml(response)
-    result = output_model.parse_obj(output_data)
+    result = None
+    try:
+        output_data = extract_and_parse_yaml(response)
+        result = output_model.parse_obj(output_data)
+    except Exception as e:
+        print(f"Error: {e}")
+        print(f"Response: {response}")
+        raise e
 
     return result
 
@@ -420,17 +426,28 @@ def prompt(system_prompt: str = ""):
             if not output_model or not issubclass(output_model, BaseModel):
                 raise ValueError("You must specify a Pydantic BaseModel as the return type in the function annotations.")
 
-            # Call the 'chat_llm' function (assuming chat_llm is defined elsewhere)
-            result = chat_llm(
-                docstring=func.__doc__,
-                system_prompt=passed_system_prompt or system_prompt,
-                inputs=input_data,
-                input_instance=input_model_instance,
-                output_model=output_model,
-                chat_url=chat_url,
-                access_token=access_token or api_key,
-                params=kwargs
-            )
+            result = None
+            max_retries = 3
+
+            while result is None and max_retries > 0:
+                try:
+                    max_retries -= 1
+                    # Call the 'chat_llm' function (assuming chat_llm is defined elsewhere)
+                    result = chat_llm(
+                        docstring=func.__doc__,
+                        system_prompt=passed_system_prompt or system_prompt,
+                        inputs=input_data,
+                        input_instance=input_model_instance,
+                        output_model=output_model,
+                        chat_url=chat_url,
+                        access_token=access_token or api_key,
+                        params=kwargs
+                    )
+                except Exception as e:
+                    print(f"Error: {e}")
+                    print("Retrying...")
+                    continue
+
 
             return result
         return wrapper

@@ -1,10 +1,14 @@
 import os
 import uuid
+from typing import List
+
+import yaml
 
 from common.ops import op
 from common.validate import validated
 from llm.chat import chat, prompt
 from pydantic import BaseModel, Field
+
 
 
 @op(
@@ -122,6 +126,7 @@ def optimize(event, context, current_user, name, data):
 class PromptInput(BaseModel):
     task: str = Field(description="The task to generate a prompt template for.")
     max_placeholders: int = Field(description="The maximum number of placeholders to use in the prompt template.")
+
 
 class PromptTemplateOutput(BaseModel):
     prompt_template: str = Field(description="The template for a useful prompt.")

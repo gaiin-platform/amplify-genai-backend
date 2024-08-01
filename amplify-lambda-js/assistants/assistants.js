@@ -244,11 +244,11 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
     const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
-    if (body.options && body.options.skipCodeInterpreter || body.options.api_accessed) {
-        if (index !== -1) assistants.splice(index, 1);
-    } else {
-        if (index === -1) assistants.push(codeInterpreterAssistant);
-    }
+    // if (body.options && body.options.skipCodeInterpreter || body.options.api_accessed) {
+    //     if (index !== -1) assistants.splice(index, 1);
+    // } else {
+    //     if (index === -1) assistants.push(codeInterpreterAssistant);
+    // }
 
     const clientSelectedAssistant = (body.options && body.options.assistantId) ?
         body.options.assistantId : null;
