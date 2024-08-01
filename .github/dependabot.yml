@@ -10,4 +10,4 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "dev"  # Specify the branch to create pull requests against
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 20
