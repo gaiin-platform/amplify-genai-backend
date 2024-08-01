@@ -10,7 +10,7 @@ import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
-import {getDataSourcesByUse} from "../datasource/datasources.js";
+import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
 import {isSystemAssistant, getSystemAssistant} from "./systemAssistants.js";
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
@@ -39,7 +39,7 @@ const defaultAssistant = {
         const {dataSources} = await getDataSourcesByUse(params, body, ds);
 
         const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
-        const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
+        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
         const aboveLimit = requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.tokenLimit}`)
@@ -213,9 +213,14 @@ ${body.messages.slice(-1)[0].content}
     return result.bestAssistant || defaultAssistant.name;
 }
 
-const getTokenCount = (dataSource) => {
-    if(dataSource.metadata && dataSource.metadata.totalTokens && !dataSource.metadata.ragOnly){
-        return dataSource.metadata.totalTokens;
+const getTokenCount = (dataSource, model) => {
+    if (dataSource.metadata && dataSource.metadata.totalTokens ) {
+        const totalTokens = dataSource.metadata.totalTokens;
+        if (isImage(dataSource)) {
+            return model.id.includes("gpt") ? totalTokens.gpt : 
+                   model.id.includes("anthropic") ? totalTokens.claude : "";
+        }
+        if (!dataSource.metadata.ragOnly) return totalTokens;
     }
     else if(dataSource.metadata && dataSource.metadata.ragOnly){
         return 0;
@@ -260,7 +265,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         selectedAssistant = isSystemAssistant(clientSelectedAssistant) ? getSystemAssistant(defaultAssistant, clientSelectedAssistant) 
                                              : await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
 
-    } else if (body.options.codeInterpreterOnly && ('api_accessed' in body.options && !body.options.api_accessed)) {
+    } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = codeInterpreterAssistant;
     }
 

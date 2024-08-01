@@ -107,7 +107,7 @@ create_api_keys_schema = {
             },
             "description": "Cost restriction using the API key"
         },
-        "expiration": {
+        "expirationDate": {
             "type":  ["string", "null"],
             "description": "The expiration date of the API key"
         },
@@ -121,7 +121,7 @@ create_api_keys_schema = {
             "description": "For system use"
         }
     },
-    "required": ["owner", "appName", "account", "rateLimit", "accessTypes", "systemUse", "delegate"]
+    "required": ["owner", "appName", "account", "accessTypes", "rateLimit"]
 }
 update_key_schema = {
     "type": "array",
@@ -219,7 +219,27 @@ validators = {
 }
 
 api_validators = {
-
+    "/apiKeys/deactivate_key": {
+        "deactivate": deactivate_api_key_schema
+    }, 
+    "/apiKeys/create_keys": {
+        "create": create_api_keys_schema
+    },
+    "/apiKeys/get_keys": {
+        "read": {}
+    },
+    "/apiKeys/get_key": {
+        "read": {}
+    },
+    "/apiKeys/update_keys" : {
+        "update": update_key_schema
+    },
+    "/apiKeys/get_system_ids": {
+        "read": {}
+    },
+    "/apiKeys/api_documentation": {
+        "read": {}
+    }
 }
 
 

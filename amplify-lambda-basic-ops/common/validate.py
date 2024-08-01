@@ -59,6 +59,33 @@ query_schema = {
     "additionalProperties": True
 }
 
+qa_check_schema = {
+
+}
+
+echo_schema = {
+
+}
+
+create_schema = {
+
+}
+
+add_schema = {
+
+}
+
+list_schema = {
+
+}
+
+delete_schema = {
+
+}
+
+stitch_schema = {
+
+}
 
 """
 Every service must define the permissions for each operation here. 
@@ -68,10 +95,55 @@ validators = {
     "/llm/query": {
         "query": query_schema
     },
+    "/llm/qa_check": {
+        "qa_check": qa_check_schema
+    },
+    "/work/echo": {
+        "echo": echo_schema
+    },
+    "/work/session/create": {
+        "create": create_schema
+    },
+    "/work/session/add_record": {
+        "add": add_schema
+    },
+    "/work/session/list_records": {
+        "list": list_schema
+    },
+    "/work/session/delete_record": {
+        "delete": delete_schema
+    },
+    "/work/session/stitch_records": {
+        "stitch": stitch_schema
+    }
+    
 }
 
 api_validators = {
-
+    "/llm/query": {
+        "query": query_schema
+    },
+    "/llm/qa_check": {
+        "qa_check": qa_check_schema
+    },
+    "/work/echo": {
+        "echo": echo_schema
+    },
+    "/work/session/create": {
+        "create": create_schema
+    },
+    "/work/session/add_record": {
+        "add": add_schema
+    },
+    "/work/session/list_records": {
+        "list": list_schema
+    },
+    "/work/session/delete_record": {
+        "delete": delete_schema
+    },
+    "/work/session/stitch_records": {
+        "stitch": stitch_schema
+    }
 }
 
 
@@ -289,7 +361,7 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('basic-ops' not in access):
+        if ('basic_ops' not in access):
             # and 'full_access' not in access
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")

@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import os
 import mimetypes
@@ -15,6 +16,7 @@ from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
 from rag.util import get_text_content_location, get_text_metadata_location, get_text_hash_content_location
 import traceback
+from cryptography.fernet import Fernet
 
 s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
@@ -161,8 +163,10 @@ def chunk_content(key, text_content, split_params):
     chunks_bucket = os.environ['S3_RAG_CHUNKS_BUCKET_NAME']
     split_increment = 10
     split_count = 0
-
     index = 0
+
+    total_chunks = 0  # Initialize total_chunks
+  
     for content_part in flattened_list:
         sentence = content_part['content']
         location = content_part['location']
@@ -182,26 +186,24 @@ def chunk_content(key, text_content, split_params):
                            'indexes': indexes,
                            'char_index': char_index})
 
-            total_chunks += 1
+            # Reset for the next chunk
+            locations = []
+            indexes = []
+            char_index += len(chunk_text) + 1  # Include the space that joins with the next chunk.
+            current_chunk = [sentence]  # Start the new chunk with the current sentence.
+            current_chunk_size = sentence_length
+
+            total_chunks += 1  # Increment the count after forming a chunk
 
             if len(chunks) == split_increment:
                 split_count += 1
                 save_chunks(chunks_bucket, key, split_count, chunks)
                 chunks = []
 
-            locations = []
-            indexes = []
-            # Update char_index and reset current_chunk.
-            char_index += len(chunk_text) + 1  # Include the space that joins with the next chunk.
-            current_chunk = [sentence]  # Start the new chunk with the current sentence.
-            current_chunk_size = sentence_length
-            content_index += 1  # Increment the content index.
         else:
-            total_chunks += 1
             locations.append(location)
             indexes.append(index)
-            index = index + 1
-            # If this is the first sentence, don't add a space at the start.
+            index += 1
             if current_chunk:
                 current_chunk.append(sentence)
                 current_chunk_size += sentence_length + 1
@@ -212,17 +214,19 @@ def chunk_content(key, text_content, split_params):
     # If there's remaining text in the current chunk, add it as the last chunk.
     if current_chunk:
         chunk_text = ' '.join(current_chunk)
-
         chunks.append({'content': chunk_text,
                        'locations': locations,
                        'indexes': indexes,
                        'char_index': char_index})
+        total_chunks += 1  # Increment the count for the last chunk
 
-    if len(chunks) > 0:
+    if chunks:  # If there are unfinished chunks, save them
         split_count += 1
         save_chunks(chunks_bucket, key, split_count, chunks)
-
-    return split_count * split_increment
+    
+    print(f"In Chunk Content Function")
+    print(f"Split Count: {split_count}, Split Increment: {split_increment}, Total Chunks: {total_chunks}")
+    return split_count
 
 
 def chunk_s3_file_content(bucket, key):
@@ -238,6 +242,7 @@ def chunk_s3_file_content(bucket, key):
 
         # Extract text from the file in S3
         chunks = chunk_content(key, file_content, {})
+        print(f"Chunk S3 File Content Function: Chunked content for {key} into {chunks} chunks")
 
         return chunks
 
@@ -380,8 +385,45 @@ def update_object_permissions(current_user, data):
     return True
 
 
+def decrypt_account_data(encrypted_data_b64):
+    ssm_client = boto3.client('ssm')
+    parameter_name = os.getenv('ENCRYPTION_PARAMETER')
+    print("Enter decrypt account data")
+    try:
+        # Fetch the parameter securely, which holds the encryption key
+        response = ssm_client.get_parameter(
+            Name=parameter_name,
+            WithDecryption=True
+        )
+        # The key needs to be a URL-safe base64-encoded 32-byte key
+        key = response['Parameter']['Value'].encode()
+        # Ensure the key is in the correct format for Fernet
+        fernet = Fernet(key)
+
+        encrypted_data = base64.b64decode(encrypted_data_b64)
+
+        # Decrypt the data
+        decrypted_str = fernet.decrypt(encrypted_data).decode('utf-8')
+
+        decrypted_data = json.loads(decrypted_str)
+
+        print("Decrypted value:", decrypted_data)
+        return {
+            'success': True,
+            'decrypted_data': decrypted_data
+        }
+
+    except Exception as e:
+        print(f"Error during parameter retrieval or encryption {parameter_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Error {str(e)}"
+        }
+    
+
 def process_document_for_rag(event, context):
     print(f"Received event: {event}")
+    s3 = boto3.client('s3')
     queue_url = os.environ['rag_process_document_queue_url']
 
     dynamodb = boto3.resource('dynamodb')
@@ -403,6 +445,29 @@ def process_document_for_rag(event, context):
             key = urllib.parse.unquote(key)
 
             print(f"Bucket / Key {bucket} / {key}")
+
+            #get decrypted account data 
+            account = None
+            apiKey = None
+            user = None
+            try:
+                response = s3.head_object(Bucket=bucket, Key=key)
+                encrypted_metadata_b64 = response['Metadata']['encrypted_metadata'] 
+                print("Encrypted Metadata:", encrypted_metadata_b64)
+                
+                # Decrypt the metadata
+                decryption_result = decrypt_account_data(encrypted_metadata_b64)
+                if decryption_result['success']:
+                    decrypted_data = decryption_result['decrypted_data']
+                    print("Decrypted Metadata:", decrypted_data)
+                    account = decrypted_data["account"]
+                    apiKey = decrypted_data['api_key']
+                    user = decrypted_data['user']
+                else:
+                    print("Failed to decrypt metadata:", decryption_result['error'])
+
+            except Exception as e:
+                print(f"Error fetching metadata for {key}: {str(e)}")
 
             response = files_table.get_item(
                 Key={
@@ -464,7 +529,7 @@ def process_document_for_rag(event, context):
                     }
                     hash_files_table.put_item(Item=user_key_to_hash_entry)
 
-                    user = key.split('/')[0]
+                    if not user: user = key.split('/')[0]
                     permissions_update = {
                         'dataSources': [text_content_key],
                         'emailList': [user],
@@ -523,11 +588,13 @@ def process_document_for_rag(event, context):
                             print(f"Uploaded text to {file_text_content_bucket_name}/{text_content_key}")
 
                             hash_file_data = {
-                                'id': dochash,
+                                'id': key, # changed this from dochas to userkey
                                 'originalCreator': user,
                                 'textLocationBucket': file_text_content_bucket_name,
                                 'textLocationKey': text_content_key,
                                 'createdAt': creation_time,
+                                'account' : account, 
+                                'apiKey' : apiKey
                             }
                             hash_files_table.put_item(Item=hash_file_data)
                             print(f"Updated hash files entry for {dochash}")

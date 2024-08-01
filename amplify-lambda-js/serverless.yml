@@ -38,6 +38,7 @@ provider:
     FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
     S3_FILE_TEXT_BUCKET_NAME: vu-amplify-${sls:stage}-file-text
+    S3_IMAGE_INPUT_BUCKET_NAME: vu-amplify-${sls:stage}-image-input
     COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
     COGNITO_CLIENT_ID: ${self:custom.stageVariables.COGNITO_CLIENT_ID}
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
@@ -60,8 +61,9 @@ provider:
     TRACING_ENABLED: false
     DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
-    ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT}
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     
 
   iam:
@@ -85,6 +87,7 @@ provider:
             - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
             - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}/*"

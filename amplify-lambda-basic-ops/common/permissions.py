@@ -13,6 +13,15 @@ def can_prompt(user, data):
     return True
 
 
+def can_create(user, data):
+    return True
+
+def can_read(user, data):
+    return True
+
+def can_delete(user, data):
+    return True
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -25,4 +34,26 @@ permissions_by_state_type = {
     "/llm/query": {
         "query": can_prompt
     },
+    "/llm/qa_check": {
+        "qa_check":  can_read
+    },
+    "/work/echo": {
+        "echo": can_read
+    },
+    "/work/session/create": {
+        "create": can_create
+    },
+    "/work/session/add_record": {
+        "add": can_create
+    },
+    "/work/session/list_records": {
+        "list": can_read
+    },
+    "/work/session/delete_record": {
+        "delete": can_delete
+    },
+    "/work/session/stitch_records": {
+        "stitch":  can_create
+    }
+    
 }

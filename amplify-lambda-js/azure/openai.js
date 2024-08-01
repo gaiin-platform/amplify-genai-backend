@@ -2,6 +2,7 @@
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
+import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 
 const logger = getLogger("openai");
 
@@ -23,6 +24,41 @@ export const translateModelToOpenAI = (modelId) => {
 
 const isOpenAIEndpoint = (url) => {
     return url.startsWith("https://api.openai.com");
+}
+
+async function includeImageSources(dataSources, messages, model) {
+    if (!dataSources || dataSources.length === 0)  return messages;
+    const msgLen = messages.length - 1;
+    // does not support images
+    if (model === "gpt-35-turbo") {
+        messages[msgLen]['content'] += "\n At the end of your response, please let the user know the model GPT 3.5 does not support images. Advise them to try another GPT model.";
+        return messages;
+    }
+
+    let imageMessageContent = []
+    for (let i = 0; i < dataSources.length; i++) {
+        const ds = dataSources[i];
+        const encoded_image = await getImageBase64Content(ds);
+        if (encoded_image) {
+            imageMessageContent.push( 
+                { "type": "image_url",
+                  "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
+                } 
+            )
+        }
+    }
+
+    
+    messages[msgLen]['content'] = [{ "type": "text",
+                                     "text": additionalImageInstruction
+                                    }, 
+                                    ...imageMessageContent, 
+                                    { "type": "text",
+                                        "text": messages[msgLen]['content']
+                                    }
+                                  ]
+
+    return messages 
 }
 
 export const chat = async (endpointProvider, chatBody, writable) => {
@@ -56,6 +92,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         "stream": true,
     };
 
+    data.messages = await includeImageSources(body.imageSources, data.messages, data.model);
+
     if(tools){
         data.tools = tools;
     }
@@ -63,6 +101,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data.tool_choice = tool_choice;
     }
 
+    delete data.imageSources
+    
     const config = await endpointProvider(modelId);
 
     const url = config.url;

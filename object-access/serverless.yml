@@ -384,4 +384,29 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: 'ALL'          
-          
+
+
+    AmplifyGroupsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-amplify-groups
+        AttributeDefinitions:
+          - AttributeName: 'group_id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'group_id'
+            KeyType: 'HASH'   
+
+
+    AmplifyGroupLogTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${sls:stage}-amplify-group-logs
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: "log_id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "log_id"
+            KeyType: "HASH"      

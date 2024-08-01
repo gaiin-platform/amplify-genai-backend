@@ -204,7 +204,33 @@ validators = {
 
 
 api_validators = {
-
+    "/pdb/sql/create": {
+        "create": create_db_schema
+    },
+    "/pdb/sql/register": {
+        "create": register_schema
+    },
+    "/pdb/sql/query": {
+        "query": query_db_schema
+    },
+    "/pdb/sql/llmquery": {
+        "query": llmquery_schema
+    },
+    "/pdb/sql/schema": {
+        "describe": id_schema
+    },
+    "/pdb/sql/list": {
+        "list": {}
+    },
+    "/pdb/sql/row/insert": {
+        "insert": {}
+    },
+    "/pdb/sql/row/list": {
+        "list_items": {}
+    },
+    "/pdb/sql/files/schema": {
+        "describe": {}
+    },
 }
 
 
@@ -423,7 +449,7 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('personal-sql' not in access):
+        if ('personal_sql' not in access):
             # and 'full_access' not in access
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")

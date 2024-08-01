@@ -98,12 +98,13 @@ def list_assistants(event, context, current_user, name, data):
         dict: A dictionary containing the list of assistants.
     """
     assistants = list_user_assistants(current_user)
-    # Add the system assistants
-    assistants += get_system_assistants(data['groups'], current_user)
 
     assistant_ids = [assistant['id'] for assistant in assistants]
 
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
+
+     # Add the system assistants
+    assistants += get_system_assistants(data['groups'], current_user)
 
     # Make sure each assistant has a data field and initialize it if it doesn't
     for assistant in assistants:

@@ -156,7 +156,7 @@ def create_api_key_for_user(user, api_key) :
     api_keys_table_name = os.environ['API_KEYS_DYNAMODB_TABLE']
     table = dynamodb.Table(api_keys_table_name)
     delegate = api_key.get("delegate", None)
-    isSystem = api_key["systemUse"]
+    isSystem = api_key.get("systemUse", False)
 
     key_type = 'delegate' if delegate else ('system' if isSystem else 'owner') 
     id = f"{user}/{key_type}Key/{str(uuid.uuid4())}"
@@ -189,7 +189,7 @@ def create_api_key_for_user(user, api_key) :
                 'createdAt': timestamp, 
                 'lastAccessed': timestamp,
                 'rateLimit': api_key["rateLimit"], # format {rate: , time: }
-                'expirationDate': api_key["expiration"],
+                'expirationDate': api_key.get("expirationDate", None),
                 'accessTypes' :  api_key["accessTypes"]
             }
         )

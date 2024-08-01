@@ -1,7 +1,6 @@
 # set up retriever function that accepts a a query, user, and/or list of keys for where claus
 
 import os
-import json
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint

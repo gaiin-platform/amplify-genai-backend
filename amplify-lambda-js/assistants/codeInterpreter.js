@@ -12,10 +12,11 @@ import {trace} from "../common/trace.js";
 
 
 const logger = getLogger("codeInterpreterAssitant");
-const description = `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
-It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
-Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
-Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
+const description = "Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files."
+// `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
+// It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
+// Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
+// Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
 
 const additionalPrompt = `You have access to a sandboxed environment for writing and testing code when code is requested:
                             1. Anytime you write new code display a preview of the code to show your work.
@@ -67,7 +68,7 @@ const invokeCodeIterpreterAction =
             }
 
             try {
-                const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT); 
+                const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_API_BASE_URL + '/assistant/create/codeinterpreter'); 
 
                 if (responseData && responseData && responseData.success) {
                     assistantId = responseData.data.assistantId
@@ -279,10 +280,10 @@ function sleepAction(wait) {
                 chainActions([
                     new PromptAction(
                         [{  role: "user",
-                            content: `Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
+                            content: `Always be concise, Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
                         }], actionType, { appendMessages: appendMessages, ragOnly: false, skipRag:true, streamResults: false, retries: 2, isEntertainment: true}
-                    ), sleepAction(2), 
-                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(20), 
+                    ), sleepAction(1), 
+                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(15), 
                     ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
                     (llm, context, dataSources) => { States.randomEntertainment.removeTransitions();
                         context.data['entertainmentHistory'][actionType].push(context.data[actionType]); },
@@ -306,19 +307,19 @@ const selectEntertainment = (llm, context, dataSources) => {
 
         switch (entertainmentSelected) {
             case 'todayInHistory':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is today in history, go here");
+                States.randomEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
                 break;
             case 'onTopicPun':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is says puns, go here");
+                States.randomEntertainment.addTransition(States.onTopicPun.name, "The next random state is says puns, go here");
                 break;
             case 'roastMyPrompt':
                 States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is prompt roasting, go here");
                 break;
             case 'guessTheRiddle':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is riddles, go here");
+                States.randomEntertainment.addTransition(States.guessTheRiddle.name, "The next random state is riddles, go here");
                 break;
             case 'lifeHacks':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is  life hacks, go here");
+                States.randomEntertainment.addTransition(States.lifeHacks.name, "The next random state is  life hacks, go here");
                 break;
             default:
                 logger.debug("Error with entertainment states")
@@ -352,7 +353,7 @@ const States = {
                 context.data['hasEntertainmentStopped'] = true;
                 States.invokeCodeInterpreter.addTransition(States.wait.name, "Wait for codeInterpreter to finish");
             }
-        }, sleepAction(3)
+        }, sleepAction(2)
     ]), false,
     ),
 
