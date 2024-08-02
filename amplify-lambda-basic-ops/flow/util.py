@@ -19,7 +19,7 @@ def generate_example(spec):
         if type_info == 'bool':
             return random.choice([True, False])
         elif type_info == 'str':
-            return note
+            return f"{note} Either enclose it in \"\" or make sure it is a yaml | string if it has quotes or new lines."
         elif type_info == 'int':
             return random.randint(1, 100)
         elif type_info == 'float':
@@ -116,7 +116,13 @@ def fill_prompt_template(context, template):
     def replace_var(match):
         path = match.group(1).strip()
         value = resolve(context, path)
-        return str(value) if value is not None else f"{{{path}}}"
+
+        if isinstance(value, dict) or isinstance(value, list):
+            return yaml.dump(value)
+        if isinstance(value, str):
+            return value
+        else:
+            return str(value) if value is not None else f"{{{path}}}"
 
     # Find all {{...}} patterns
     paths, pattern = find_template_vars(template)

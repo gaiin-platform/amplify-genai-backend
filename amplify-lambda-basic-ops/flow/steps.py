@@ -1,11 +1,12 @@
 import copy
+import os
 from pprint import pformat
 from typing import Dict, List
 
 import yaml
 
 from flow.spec import validate_output_spec
-from flow.util import get_root_key, find_template_vars, dynamic_prompt, resolve
+from flow.util import get_root_key, find_template_vars, dynamic_prompt, resolve, fill_prompt_template
 
 
 class WorkflowValidationError(Exception):
@@ -35,9 +36,10 @@ class Step:
 
 
 class Workflow(Step):
-    def __init__(self, id: str, steps: List[Step]):
+    def __init__(self, id: str, steps: List[Step], data:Dict):
         super().__init__(id, {})
         self.steps = steps
+        self.ouput_key = data.get('output_key', None)
 
     def inputs(self):
         paths = []
@@ -50,15 +52,20 @@ class Workflow(Step):
         if debug:
             options['tracer'] = lambda id, tag, data: print(f"--- Step {id}: {tag} - {data}")
 
+        total = len(self.steps)
         results = {}
-        for step in self.steps:
+        for idx, step in enumerate(self.steps):
             if debug:
-                print(f"Running step {step.id}")
+                print(f"Running step [{idx+1}/{total}] {step.id}")
             step_result = step.run(context, options)
             if debug:
                 print(f"Step {step.id} result: {yaml.dump(step_result)}")
             results[step.id] = step_result
             context.update(results)
+
+        if self.ouput_key:
+            results = results[self.ouput_key]
+
         return results
 
     def __str__(self):
@@ -114,6 +121,10 @@ class Map(Step):
         self.strip_thought = data.get('strip_thought', True)
         self.merge_item = data.get('merge_item', True)
         self.include_item = data.get('include_item', False)
+        self.previous_item_key = data.get('include_previous_item_as', "Previous Item:")
+        self.include_previous_item = data.get("include_previous", False)
+        self.previous_items_key = data.get('include_previous_items_as', "Previous:")
+        self.include_previous_items = data.get("include_previous_items", False)
         self.max_workers = data.get('max_workers', 5)
 
         if 'map' not in data or 'input' not in data:
@@ -153,35 +164,96 @@ class Map(Step):
         input_path = self.data['input']
         tracer(self.id, "input", input_path)
 
-        input_list = resolve(context, input_path)
-        if isinstance(input_list, str):
-            if self.split:
-                input_list = input_list.split(self.split)
-                if self.number_splits:
-                    input_list = [f"{self.number_prefix}{i+1}{self.number_suffix} {item}"
-                                  for i, item in enumerate(input_list)]
-            else:
-                input_list = [input_list]
-        if not isinstance(input_list, list):
-            raise ValueError(f"Input for Map step {self.id} must be a list")
+        input_list = self.get_input_list(context, input_path)
 
         tracer(self.id, "input_list", input_list)
 
+        results = None
+        if not self.include_previous_items and not self.include_previous:
+            results = self.run_parallel(context, input_list, tracer)
+        else:
+            results = self.run_sequential(context, input_list, tracer)
+
+        return results
+
+
+    def run_sequential(self, context, input_list, tracer):
+        results = []
+        total = len(input_list)
+        for idx, item in enumerate(input_list):
+            tracer(self.id, f"[{idx+1}/{total}] mapitem_{idx}", item)
+
+            if self.include_previous_items:
+                context[self.previous_items_key] = results
+            if self.include_previous_item and len(results) > 0:
+                context[self.previous_item_key] = results[-1]
+
+            item_result = self.process_item(item, idx, context)
+            tracer(self.id, f"[{idx+1}/{total}] map_item_{idx}_result", item_result)
+            results.append(item_result)
+
+        return results
+
+    def run_parallel(self, context, input_list, tracer):
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_item = {executor.submit(self.process_item, item, idx, context): (item, idx)
                               for idx, item in enumerate(input_list)}
 
             results = []
+            total = len(input_list)
             for future in concurrent.futures.as_completed(future_to_item):
                 item, idx = future_to_item[future]
                 try:
                     item_result = future.result()
-                    tracer(self.id, f"map_item_{idx}", {"item": item, "result": item_result})
+                    tracer(self.id, f"[{idx+1}/{total}] map_item_{idx}", {"item": item, "result": item_result})
                     results.append(item_result)
                 except Exception as exc:
-                    print(f'{self.id}: item {idx} generated an exception: {exc}')
-
+                    print(f'[{idx+1}/{total}] {self.id}: item {idx} generated an exception: {exc}')
         return results
+
+    def get_input_list(self, context, input_path):
+        input_list = resolve(context, input_path)
+        if isinstance(input_list, str):
+            if self.split:
+                input_list = input_list.split(self.split)
+                if self.number_splits:
+                    input_list = [f"{self.number_prefix}{i + 1}{self.number_suffix} {item}"
+                                  for i, item in enumerate(input_list)]
+            else:
+                input_list = [input_list]
+        if not isinstance(input_list, list):
+            raise ValueError(f"Input for Map step {self.id} must be a list")
+        return input_list
+
+
+class Format(Step):
+    def __init__(self, id: str, data: Dict):
+        super().__init__(id, data)
+        if 'input' not in data or 'format' not in data:
+            raise WorkflowValidationError(f"Format step {id} must have 'input' and 'template' fields")
+
+        self.input_path = data['input']
+        self.template = data['format']
+        self.join_str = data.get('join', '\n')  # Default join string is newline
+
+    def run(self, context: Dict, options={}) -> Dict:
+        input_data = resolve(context, self.input_path)
+
+        if isinstance(input_data, list):
+            formatted_items = self.format_list(input_data)
+        else:
+            formatted_items = self.format_list([input_data])
+
+        result = self.join_str.join(formatted_items)
+        return result
+
+    def format_list(self, items: List) -> List[str]:
+        formatted_items = []
+        for item in items:
+            item_context = {'item': item}
+            formatted_item = fill_prompt_template(item_context, self.template)
+            formatted_items.append(formatted_item)
+        return formatted_items
 
 
 class Reduce(Step):
@@ -215,7 +287,7 @@ class Action(Step):
 def create_step(step_data: Dict, step_id: str) -> Step:
     if 'steps' in step_data:
         nested_steps = [create_step(s, f"{step_id}_{i}") for i, s in enumerate(step_data['steps'])]
-        return Workflow(step_id, nested_steps)
+        return Workflow(step_id, nested_steps, step_data)
     elif 'map' in step_data:
         return Map(step_id, step_data)
     elif 'reduce' in step_data:
@@ -228,6 +300,8 @@ def create_step(step_data: Dict, step_id: str) -> Step:
         return Action(step_id, step_data)
     elif 'prompt' in step_data:
         return Prompt(step_id, step_data)
+    elif 'format' in step_data:
+        return Format(step_id, step_data)
     else:
         raise WorkflowValidationError(f"Unknown step type for step {step_id}")
 
@@ -251,7 +325,12 @@ def validate_workflow(workflow: Workflow, path: str = ""):
 
 def parse_workflow(yaml_string: str) -> Workflow:
     try:
-        data = yaml.safe_load(yaml_string)
+        if os.path.isfile(yaml_string):
+            with open(yaml_string, 'r') as file:
+                data = yaml.safe_load(file)
+        else:
+            # Assume the input is a YAML string
+            data = yaml.safe_load(yaml_string)
     except yaml.YAMLError as e:
         raise WorkflowValidationError(f"Invalid YAML: {str(e)}")
 
@@ -271,6 +350,6 @@ def parse_workflow(yaml_string: str) -> Workflow:
         step = create_step(step_data, step_id)
         steps.append(step)
 
-    workflow = Workflow(workflow_id, steps)
+    workflow = Workflow(workflow_id, steps, data)
     validate_workflow(workflow)
     return workflow
