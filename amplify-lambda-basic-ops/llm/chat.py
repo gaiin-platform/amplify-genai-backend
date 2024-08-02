@@ -155,8 +155,6 @@ def chat(chat_url, access_token, payload):
     # invoke the chat_streaming function with the provided parameters
     chat_streaming(chat_url, access_token, payload, content_handler, meta_handler)
 
-    print(f"CDD: {concatenated_d_data}")
-
     return concatenated_d_data, meta_events
 
 
@@ -229,8 +227,6 @@ def chat_streaming(chat_url, access_token, payload, content_handler, meta_handle
         print(f"Error: {response.status_code}")
         print(response.text)
         response.raise_for_status()
-
-    print(f"Response code: {response.status_code}")
 
     # Process the streamed response
     for line in response.iter_lines():
