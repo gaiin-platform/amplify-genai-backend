@@ -39,13 +39,16 @@ def clean_text(text):
     return cleaned_text.strip()
 
 def preprocess_text(text):
-    # Remove punctuation and other non-word characters
-    cleaned_text = re.sub(r'[^\w\s]', ' ', text)
-    # Split the text into words based on whitespace
-    words = cleaned_text.split()
-    # Join the words with a space, a | symbol, and another space
-    return ' | '.join(words)
-
+    try:
+        # Remove non-ASCII characters
+        text = text.encode('ascii', 'ignore').decode('ascii')
+        # Remove punctuation using regex
+        text_without_punctuation = re.sub(r'[^\w\s]', '', text)
+        # Remove extra spaces using regex
+        cleaned_text = re.sub(r'\s+', ' ', text_without_punctuation)
+        return (success: True, data: cleaned_text.strip())
+    except Exception as e:
+        return (success: False, error: f"An error occurred: {str(e)}")
 
 
 def generate_embeddings(content):
@@ -60,13 +63,15 @@ def generate_embeddings(content):
     )
     try:
         response = client.embeddings.create(input=content, model=embedding_model_name)
-        logger.info(f"Embedding: {response.data[0].embedding}")
-        return response.data[0].embedding
+        logger.info(f"Embedding: {response.data[0].embedding}") 
+        embeddings = response.data[0].embedding
+        return {"success":True, "data": embeddings}
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
-        raise
+        return {"success":False, "error": f"An error occurred: {str(e)}"}
+        
 
-
+#Currently Not In Use but leaving in case we go back to it. 
 def generate_keywords(content):
     logger.info("Getting Keywords Endpoints")
     endpoint, api_key = get_endpoint(keyword_model_name, endpoints_arn)
@@ -127,19 +132,12 @@ def generate_questions(content):
         logger.info(f"Questions: {questions}")
 
         return {
-            "statusCode": 200,
-            "body": {
-                "questions": questions
-            }
+            "success": True,
+            "data": questions
         }
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
-        return {
-            "statusCode": 500,
-            "body": {
-                "error": f"An error occurred: {str(e)}"
-            }
-        }
+        return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 
 
@@ -195,12 +193,7 @@ def record_usage(account, requestId, user, model, input_tokens, output_tokens, d
     
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
-        return {
-            "statusCode": 500,
-            "body": {
-                "error": f"An error occurred: {str(e)}"
-            }
-        }    
+
    
 
 
