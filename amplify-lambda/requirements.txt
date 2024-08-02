@@ -14,7 +14,7 @@ docx==0.2.4
 ecdsa==0.18.0
 et-xmlfile==1.1.0
 h11==0.14.0
-httpcore==1.0.2
+httpcore==1.0.5
 httpx==0.25.1
 idna==3.4
 jmespath==1.0.1
@@ -38,7 +38,7 @@ python-jose==3.3.0
 python-pptx==0.6.23
 pytz==2023.3.post1
 PyYAML==6.0.1
-referencing==0.31.0
+referencing==0.35.1
 regex==2023.10.3
 requests==2.31.0
 rpds-py==0.13.0

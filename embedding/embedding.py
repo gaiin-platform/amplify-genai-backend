@@ -6,7 +6,7 @@ import boto3
 import logging
 from botocore.exceptions import ClientError
 from common.credentials import get_credentials
-from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions, record_usage, get_key_details
+from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions, record_usage, get_key_details, preprocess_text
 import urllib
 sqs = boto3.client('sqs')
 
@@ -232,11 +232,11 @@ def embed_chunks(data, embedding_progress_table, db_connection):
             item = response.get('Item')
             if item and 'data' in item:
                 total_chunks = item['data'].get('totalChunks')
-                logging.info(f"Total chunks to process: {total_chunks} (fetched from DynamoDB)")
+                logging.info(f"Total parent chunk increments to process: {total_chunks} (fetched from DynamoDB)")
                 local_chunks_to_process = len(local_chunks)
-                logging.info(f"Local chunks to process: {local_chunks_to_process}")
-                current_chunk_index = int(item['data'].get('chunkIndex', 0))  # Ensure current_chunk_index is an integer
-                logging.info(f"Current chunk index: {current_chunk_index}")
+                logging.info(f"Local chunks to process (max 10): {local_chunks_to_process}")
+                current_remote_chunk_index = int(item['data'].get('chunkIndex', 0))  # Ensure current_remote_chunk_index is an integer
+                logging.info(f"Current chunk index: {current_remote_chunk_index}")
                 
                 
                 # Check if the `terminated` field is set to False
@@ -251,11 +251,11 @@ def embed_chunks(data, embedding_progress_table, db_connection):
             logging.error(e)
 
 
-        print(f"Processing {current_chunk_index} of {total_chunks} (fetched from DynamoDB)")
+        print(f"Processing {current_remote_chunk_index} of {total_chunks} (fetched from DynamoDB)")
         current_local_chunk_index = 0 # Start from the fetched chunk index
 
         # Update the DynamoDB table with the initial status
-        update_dynamodb_status(table, trimmed_src, current_chunk_index, "embedding")
+        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "embedding")
 
         with db_connection.cursor() as cursor:
             db_connection.commit()
@@ -265,34 +265,58 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                     locations = chunk['locations']
                     orig_indexes = chunk['indexes']
                     char_index = chunk['char_index']
-                    current_chunk_index += 1
+                    current_remote_chunk_index += 1
                     current_local_chunk_index += 1
 
+                    response_clean_text = preprocess_text(content)
+                    if response_clean_text["success"]:
+                        clean_text = response_clean_text["data"]
+                    else:
+                        error = response_clean_text["error"]
+                        print(f"Error occurred: {error}")
+                        raise Exception(error)
+                    
                     print(f"Processing local chunk {current_local_chunk_index} of {local_chunks_to_process}")
 
                     # Update the DynamoDB table with the current chunk index
-                    update_dynamodb_status(table, trimmed_src, current_chunk_index, "embedding")
+                    update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "embedding")
 
-                    vector_embedding = generate_embeddings(content)
-
-                    response = generate_questions(content)
-                    if response["statusCode"] == 200:
-                        qa_summary = response["body"]["questions"]
+                    
+                    # Generate embeddings
+                    response_vector_embedding = generate_embeddings(clean_text)
+                    if response_vector_embedding["success"]:
+                        vector_embedding = response_vector_embedding["data"]
                     else:
-                        error = response["body"]["error"]
+                        error = response_vector_embedding["error"]
                         print(f"Error occurred: {error}")
-                    qa_vector_embedding = generate_embeddings(content=qa_summary)
+                        
+                    # Generate QA summary
+                    response_qa_summary = generate_questions(clean_text)
+                    if response_qa_summary["success"]:
+                        qa_summary = response_qa_summary["data"]
+                    else:
+                        error = response_qa_summary["error"]
+                        print(f"Error occurred: {error}")
 
-                    qa_summary_input_tokens = num_tokens_from_text(content, qa_model_name)
+                    # Create embeddings for QA summary    
+                    response_qa_embedding = generate_embeddings(content=qa_summary)
+                    if response_qa_embedding["success"]:
+                        qa_vector_embedding = response_qa_embedding["data"]
+                    else:
+                        error = response_qa_embedding["error"]
+                        print(f"Error occurred: {error}")    
+
+                    qa_summary_input_tokens = num_tokens_from_text(clean_text, qa_model_name)
                     qa_summary_output_token_count = num_tokens_from_text(qa_summary, qa_model_name)
-                    vector_token_count = num_tokens_from_text(content, embedding_model_name)
+                    vector_token_count = num_tokens_from_text(clean_text, embedding_model_name)
                     qa_vector_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
 
+                    #This is written to the embeddings table but is not used for cost calucations
                     total_vector_token_count = vector_token_count + qa_vector_token_count
                     
                     
                     logging.info(f"Embedding local chunk index: {current_local_chunk_index}")
-                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
+                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_remote_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
                     print(f"Getting Account information for {trimmed_src}")
                     result = get_key_details(trimmed_src)
                    
@@ -309,6 +333,7 @@ def embed_chunks(data, embedding_progress_table, db_connection):
 
                     # Record QA usage in DynamoDB
                     record_usage(account,src, user, qa_model_name, api_key=api_key,input_tokens=qa_summary_input_tokens, output_tokens=None)
+
                     record_usage(account,src, user, qa_model_name, api_key=api_key,input_tokens=None, output_tokens=qa_summary_output_token_count)
 
                     # Record embedding usage in DynamoDB
@@ -318,17 +343,17 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                 except Exception as e:
                     logging.error(f"An error occurred embedding chunk index: {local_chunk_index}")
                     logging.error(f"An error occurred during the embedding process: {e}")
-                    update_dynamodb_status(table, trimmed_src, current_chunk_index, "failed")
+                    update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "failed")
                     raise
 
         # After all chunks are processed, update the status to 'complete'
-        current_chunk_index += 1
-        update_dynamodb_status(table, trimmed_src, current_chunk_index)
+
+        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index)
 
         return True, src
 
     except Exception as e:
         logging.exception("An error occurred during the embed_chunks execution.")
-        update_dynamodb_status(table, trimmed_src, current_chunk_index, "failed")
+        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "failed")
         db_connection.rollback()
         return False, src

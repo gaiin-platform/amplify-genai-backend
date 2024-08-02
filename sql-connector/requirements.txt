@@ -1,4 +1,4 @@
-dataclasses-json==0.6.3
+dataclasses-json==0.6.7
 jsonschema==4.17.3
 requests==2.31.0
 python-jose==3.3.0
