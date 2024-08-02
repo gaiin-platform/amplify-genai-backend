@@ -78,21 +78,34 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
         const totalCost = inputCost + outputCost;
 
-        // TODO: add the totalCost to the dailyCost field
-        //       get the current hour (0-23), add the totalCost to the hourlyCost field (save it to the correct index in hourlyCost's 24 index list)
-        //       make sure the code works if the record exists or if it doesn't exist yet
+        // adds the totalCost to the dailyCost field
+        // gets the current hour (0-23), add the totalCost to the hourlyCost field (saves it to the correct index in hourlyCost's 24 index list)
+        // ensures the code works if the record exists or if it doesn't exist yet
 
         const now = new Date();
         const currentHour = now.getUTCHours();
 
-        // const updateExpression = `SET dailyCost = if_not_exists(dailyCost, :zero) + :totalCost`;
-        const updateExpression = `
-            SET dailyCost = if_not_exists(dailyCost, :zero) + :totalCost,
-                hourlyCost = list_append(
-                    if_not_exists(hourlyCost, :emptyList),
-                    :newHourlyCost
-                )
-        `;
+        // First update: Ensure dailyCost and hourlyCost are initialized
+        const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList)`;
+
+        const initializeCommand = new UpdateItemCommand({
+            TableName: costDynamoTableName,
+            Key: {
+                id: { S: account.user }
+            },
+            UpdateExpression: initializeExpression,
+            ExpressionAttributeValues: {
+                ":zero": { N: "0" },
+                ":emptyList": { L: Array(24).fill({ N: "0" }) }
+            }
+        });
+
+        // Send the initialization command
+        await dynamodbClient.send(initializeCommand);
+
+        // Second update: Update dailyCost and the specific hourlyCost index
+        const updateExpression = `SET dailyCost = dailyCost + :totalCost
+        ADD hourlyCost[${currentHour}] :totalCost`;
 
         const updateCommand = new UpdateItemCommand({
             TableName: costDynamoTableName,
@@ -101,38 +114,12 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             },
             UpdateExpression: updateExpression,
             ExpressionAttributeValues: {
-                ":zero": { N: "0" },
                 ":totalCost": { N: totalCost.toString() }
-                ":emptyList": { L: Array(24).fill({ N: "0" }) },
-                ":newHourlyCost": {
-                    L: Array(24).fill({ N: "0" }).map((_, i) =>
-                        i === currentHour ? { N: totalCost.toString() } : { N: "0" }
-                    )
-                }
             }
         });
 
+        // Send the update command
         await dynamodbClient.send(updateCommand);
-
-        // this code below works, but it is not the implementation 
-        // const currentHour = new Date().getUTCHours();
-        // const hourField = `hour_${currentHour}`;
-
-        // const updateCommand = new UpdateItemCommand({
-        //     TableName: costDynamoTableName,
-        //     Key: {
-        //         id: { S: account.user }
-        //     },
-        //     UpdateExpression: "ADD dailyCost :cost, #hourField :cost",
-        //     ExpressionAttributeNames: {
-        //         "#hourField": hourField
-        //     },
-        //     ExpressionAttributeValues: {
-        //         ":cost": { N: totalCost.toString() }
-        //     },
-        // });
-
-        // await dynamodbClient.send(updateCommand);
         
     } catch (e) {
         logger.error("Error calculating or updating cost:", e);
