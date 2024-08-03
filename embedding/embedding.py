@@ -41,7 +41,7 @@ def extract_child_chunk_number_from_src(src):
     pattern = r'.json-(\d+)'
     match = re.search(pattern, src)
     if match:
-        return int(match.group(1))  # Convert the matched string to an integer
+        return str(match.group(1))  # Convert the matched item to string
     else:
         raise ValueError("Number not found in the key")
 
