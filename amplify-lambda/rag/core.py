@@ -692,10 +692,10 @@ def update_embedding_status(original_creator, object_id, chunk_index, total_chun
                 'originalCreator': original_creator,
                 'terminated': False,
                 'data': {
-                    'chunkIndex': chunk_index,
-                    'totalChunks': total_chunks or 0,
-                    'status': status
-                }
+                    'parentIndex': [{'status': status, 'chunkIndex': i} for i in range(10)],
+                    'status': status    
+                },
+                
             }
         )
         print("Created chunk count status for embedding.")
