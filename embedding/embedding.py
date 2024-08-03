@@ -221,11 +221,11 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
             item = response.get('Item')
             if item and 'data' in item:
                 total_chunks = item['data'].get('totalChunks')
-                child_chunk_index = extract_child_chunk_number_from_src(childChunk)
-                logging.info(f"Processing child chunk: {child_chunk_index} of total parent chunks: {total_chunks}")
+    
+                logging.info(f"Processing child chunk: {childChunk} of total parent chunks: {total_chunks}")
 
                 local_chunks_to_process = len(local_chunks)
-                logging.info(f"There are {local_chunks_to_process} (max 10) within child chunk: {child_chunk_index}")
+                logging.info(f"There are {local_chunks_to_process} (max 10) within child chunk: {childChunk}")
                 
                 
                 # Check if the `terminated` field is set to False
