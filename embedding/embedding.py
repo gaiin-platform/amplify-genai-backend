@@ -4,6 +4,7 @@ import json
 import os
 import boto3
 import logging
+import re
 from botocore.exceptions import ClientError
 from common.credentials import get_credentials
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions, record_usage, get_key_details, preprocess_text
@@ -36,63 +37,48 @@ def trim_src(src):
     trimmed_src = parts[0] + '.json' if len(parts) > 1 else src
     return trimmed_src
 
+def extract_child_chunk_number_from_src(src):
+    pattern = r'.json-(\d+)'
+    match = re.search(pattern, src)
+    if match:
+        return int(match.group(1))  # Convert the matched string to an integer
+    else:
+        raise ValueError("Number not found in the key")
 
 
-def update_dynamodb_status(table, object_id, chunk_index, status=None, total_chunks=None):
+def update_child_chunk_status(object_id, child_chunk, new_status):
     try:
-        # Attempt to get the item
-        response = table.get_item(Key={'object_id': object_id})
-        item = response.get('Item')
-
-        if item:
-            # The item exists, update it
-            update_expression = "SET #data.#chunkIndex = :chunkIndex"
-            expression_attribute_names = {
-                "#data": "data",
-                "#chunkIndex": "chunkIndex"
-            }
-            expression_attribute_values = {
-                ":chunkIndex": chunk_index
-            }
-
-            # Check if the chunk_index equals the total_chunks to potentially set status to 'complete'
-            if chunk_index == item["data"].get("totalChunks"):
-                status = "complete"
-
-            if status:
-                update_expression += ", #data.#status = :status"
-                expression_attribute_names["#status"] = "status"
-                expression_attribute_values[":status"] = status
-
-            response = table.update_item(
-                Key={'object_id': object_id},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=expression_attribute_names,
-                ExpressionAttributeValues=expression_attribute_values,
-                ReturnValues="UPDATED_NEW"
-            )
-            logging.info(f"Chunk: {chunk_index} updated successfully.")
-        else:
-            # The item does not exist, create it
-            item_data = {
-                'chunkIndex': chunk_index,
-                'status': status
-            }
-            if total_chunks is not None:
-                item_data['totalChunks'] = total_chunks
-
-            response = table.put_item(
-                Item={
-                    'object_id': object_id,
-                    'data': item_data
-                }
-            )
-            logging.info(f"Chunk: {chunk_index} of {total_chunks} created successfully.")
-
-    except ClientError as e:
-        logging.error("Failed to create or update item in DynamoDB table.")
-        logging.error(e)
-        raise
+        progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+        print(f"Updating status of child chunk {child_chunk} for {object_id} to {new_status}")
+        
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(progress_table)
+        
+        # Update the status of the specific child chunk
+        update_expression = 'SET #data.#childChunks.#chunkId.#status = :new_status'
+        expression_attribute_names = {
+            '#data': 'data',
+            '#childChunks': 'childChunks',
+            '#chunkId': str(child_chunk),
+            '#status': 'status'
+        }
+        expression_attribute_values = {
+            ':new_status': new_status
+        }
+        
+        result = table.update_item(
+            Key={'object_id': object_id},
+            UpdateExpression=update_expression,
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values,
+            ReturnValues='UPDATED_NEW'  # Optional: to return the updated values
+        )
+        
+        print(f"Successfully updated child chunk status: {result}")
+    
+    except Exception as e:
+        print("Failed to update the child chunk status in DynamoDB table.")
+        print(e)
 
 
 
@@ -157,6 +143,7 @@ def lambda_handler(event, context):
 
         #url decode the key
         object_key = urllib.parse.unquote(url_encoded_key)
+        childChunk = extract_child_chunk_number_from_src(object_key)
 
         #Print the bucket name and key for debugging purposes
         print(f"bucket = {bucket_name} and key = {object_key}")
@@ -178,7 +165,7 @@ def lambda_handler(event, context):
             db_connection = get_db_connection()
 
             # Call the embed_chunks function with the JSON data
-            success, src = embed_chunks(data, embedding_progress_table, db_connection)
+            success, src = embed_chunks(data, childChunk, embedding_progress_table, db_connection)
 
             # If the extraction process was successful, send a completion email
             if success:
@@ -216,27 +203,29 @@ def lambda_handler(event, context):
             logging.info("Database connection closed.")    
 
 
-def embed_chunks(data, embedding_progress_table, db_connection):
+def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(embedding_progress_table)
 
     src = None
-    original_creator = None  # Initialize the original creator variable
+
     try:
         local_chunks = data.get('chunks', [])
         src = data.get('src', '')
         trimmed_src = trim_src(src)
+        childChunk = (childChunk)
+
 
         try:
             response = table.get_item(Key={'object_id': trimmed_src})
             item = response.get('Item')
             if item and 'data' in item:
                 total_chunks = item['data'].get('totalChunks')
-                logging.info(f"Total parent chunk increments to process: {total_chunks} (fetched from DynamoDB)")
+                child_chunk_index = extract_child_chunk_number_from_src(childChunk)
+                logging.info(f"Processing child chunk: {child_chunk_index} of total parent chunks: {total_chunks}")
+
                 local_chunks_to_process = len(local_chunks)
-                logging.info(f"Local chunks to process (max 10): {local_chunks_to_process}")
-                current_remote_chunk_index = int(item['data'].get('chunkIndex', 0))  # Ensure current_remote_chunk_index is an integer
-                logging.info(f"Current chunk index: {current_remote_chunk_index}")
+                logging.info(f"There are {local_chunks_to_process} (max 10) within child chunk: {child_chunk_index}")
                 
                 
                 # Check if the `terminated` field is set to False
@@ -251,11 +240,9 @@ def embed_chunks(data, embedding_progress_table, db_connection):
             logging.error(e)
 
 
-        print(f"Processing {current_remote_chunk_index} of {total_chunks} (fetched from DynamoDB)")
-        current_local_chunk_index = 0 # Start from the fetched chunk index
+        print(f"Processing {childChunk} of {total_chunks} (fetched from DynamoDB)")
+        current_local_chunk_index = 0
 
-        # Update the DynamoDB table with the initial status
-        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "embedding")
 
         with db_connection.cursor() as cursor:
             db_connection.commit()
@@ -265,8 +252,6 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                     locations = chunk['locations']
                     orig_indexes = chunk['indexes']
                     char_index = chunk['char_index']
-                    current_remote_chunk_index += 1
-                    current_local_chunk_index += 1
 
                     response_clean_text = preprocess_text(content)
                     if response_clean_text["success"]:
@@ -275,11 +260,7 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                         error = response_clean_text["error"]
                         print(f"Error occurred: {error}")
                         raise Exception(error)
-                    
-                    print(f"Processing local chunk {current_local_chunk_index} of {local_chunks_to_process}")
 
-                    # Update the DynamoDB table with the current chunk index
-                    update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "embedding")
 
                     
                     # Generate embeddings
@@ -316,7 +297,7 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                     
                     
                     logging.info(f"Embedding local chunk index: {current_local_chunk_index}")
-                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_remote_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
+                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_local_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
                     print(f"Getting Account information for {trimmed_src}")
                     result = get_key_details(trimmed_src)
                    
@@ -339,21 +320,22 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                     # Record embedding usage in DynamoDB
                     record_usage(account,src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
 
+                    current_local_chunk_index += 1
                     db_connection.commit()
                 except Exception as e:
                     logging.error(f"An error occurred embedding chunk index: {local_chunk_index}")
                     logging.error(f"An error occurred during the embedding process: {e}")
-                    update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "failed")
+                    update_child_chunk_status(trimmed_src, childChunk, "failed")
                     raise
 
         # After all chunks are processed, update the status to 'complete'
 
-        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index)
+        update_child_chunk_status ( trimmed_src, childChunk, "completed")
 
         return True, src
 
     except Exception as e:
         logging.exception("An error occurred during the embed_chunks execution.")
-        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "failed")
+        update_child_chunk_status(trimmed_src, childChunk, "failed")
         db_connection.rollback()
         return False, src
