@@ -62,7 +62,11 @@ functions:
           path: /utilities/emails
           method: get
     environment: 
-      COGNITO_USERS_TABLE: !GetAtt CognitoUsersTable.Arn
+      OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
 
   update_obj_perms:
@@ -182,7 +186,7 @@ functions:
 
 
   sync_cog_users:
-    runtime: python3.11
+    runtime: python3.10
     handler: cognito_users_sync.sync_users_to_dynamo  # Update with the actual path to your handler
     timeout: 900  # Set an appropriate timeout, max is 15 minutes (900 seconds)
     events:
