@@ -690,6 +690,7 @@ def update_embedding_status(original_creator, object_id, chunk_index, total_chun
         table.put_item(
             Item={
                 'object_id': object_id,
+                'parentChunkStatus': status,
                 'timestamp': datetime.now().isoformat(),
                 'originalCreator': original_creator,
                 'terminated': False,
@@ -697,8 +698,7 @@ def update_embedding_status(original_creator, object_id, chunk_index, total_chun
                 'data': {
                     'childChunks': {
                         str(i+1): {'status': status} for i in range(total_chunks)
-                    },
-                    'status': status    
+                    }   
                 }
             }
         )

@@ -81,6 +81,42 @@ def update_child_chunk_status(object_id, child_chunk, new_status):
         print(e)
 
 
+def update_parent_chunk_status(object_id):
+    dynamodb = boto3.resource('dynamodb')
+    progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+    table = dynamodb.Table(progress_table)
+    
+    try:
+        logging.info('Fetching item from DynamoDB for object_id: %s', object_id)
+        # Fetch the item from DynamoDB
+        response = table.get_item(Key={'object_id': object_id})
+        item = response.get('Item')
+        
+        if not item:
+            raise ValueError(f"No item found with object_id {object_id}")
+    
+        logging.info('Item fetched: %s', item)
+        child_chunks = item.get('data', {}).get('childChunks', {})
+        logging.info('Child chunks: %s', child_chunks)
+        
+        # Check if all child chunks are complete
+        all_complete = all(chunk['status'] == 'completed' for chunk in child_chunks.values())
+        logging.info('All child chunks complete: %s', all_complete)
+        
+        if all_complete:
+            logging.info('Updating parentChunkStatus to completed for object_id: %s', object_id)
+            table.update_item(
+                Key={'object_id': object_id},
+                UpdateExpression="set parentChunkStatus = :val",
+                ExpressionAttributeValues={':val': 'completed'}
+            )
+            logging.info('parentChunkStatus updated to completed for object_id: %s', object_id)
+        else:
+            logging.info('Not all child chunks are complete for object_id: %s', object_id)        
+    except Exception as e:
+        print("Failed to update the parentChunkStatus in DynamoDB table.")
+        print(e)
+
 
 #initially set db_connection to none/closed 
 db_connection = None
@@ -160,6 +196,7 @@ def lambda_handler(event, context):
 
             # Read the content of the object
             data = json.loads(response['Body'].read().decode('utf-8'))
+            src = data.get('src', '')
 
             # Get or establish a database connection
             db_connection = get_db_connection()
@@ -180,12 +217,14 @@ def lambda_handler(event, context):
                     ReceiptHandle=receipt_handle
                 )
                 print(f"Deleted message {record['messageId']} from queue")
+                # Update the parent chunk status to 'completed' if all child chunks are complete
+                update_parent_chunk_status(src)
+                print(f"Parent chunk status updated to 'completed' for {src}.")
 
             else:
                 print(f"An error occurred during the embedding process for {src}.")
 
                 db_connection.close()
-
             return {
                 'statusCode': 200,
                 'body': json.dumps('Embedding process completed successfully.')
