@@ -211,9 +211,13 @@ resources:
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
+          - AttributeName: accountInfo
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
+          - AttributeName: accountInfo
+            KeyType: RANGE
         TableName: ${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}
     ChatTracesBucket:
          Type: AWS::S3::Bucket
