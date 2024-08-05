@@ -136,9 +136,6 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             }
 
             if (doTrace) {
-                logger.debug("TRACING: ", doTrace)
-                logger.debug("TRACING: ", doTrace)
-                logger.debug("TRACING: ", doTrace)
                 responseStream = new TraceStream({}, responseStream);
             }
 
