@@ -193,6 +193,7 @@ const api_authenticator = async (apiKey, event) => {
             };
         }
         requestBody.options.api_accessed = true;
+        requestBody.options.rateLimit = apiData.rateLimit;
         // Return the validated user and additional data
         return {user: currentUser, body: requestBody, accessToken: apiKey};
 

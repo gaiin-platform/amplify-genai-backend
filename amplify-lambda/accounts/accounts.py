@@ -38,6 +38,12 @@ def save_accounts_for_user(user, accounts_list):
     accounting_table_name = os.environ['ACCOUNTS_DYNAMO_TABLE']
     users_table = dynamodb.Table(accounting_table_name)
 
+    #clean up rateLimit in accounts:
+    for account in accounts_list:
+        rateLimit = account['rateLimit']
+        if  rateLimit.get("rate", None):
+            account['rateLimit']["rate"] = Decimal(str(rateLimit["rate"]))
+
     try:
         # Put (or update) the item for the specified user in the DynamoDB table
         response = users_table.put_item(

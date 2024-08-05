@@ -188,7 +188,7 @@ def create_api_key_for_user(user, api_key) :
                 'applicationDescription': api_key["appDescription"],
                 'createdAt': timestamp, 
                 'lastAccessed': timestamp,
-                'rateLimit': api_key["rateLimit"], # format {rate: , time: }
+                'rateLimit': formatRateLimit( api_key["rateLimit"] ), 
                 'expirationDate': api_key.get("expirationDate", None),
                 'accessTypes' :  api_key["accessTypes"]
             }
@@ -247,6 +247,8 @@ def update_api_key(item_id, updates, user):
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
+
+            if (field == 'rateLimit'): value = formatRateLimit(value)
             # Use attribute names to avoid conflicts with DynamoDB reserved keywords
             placeholder = f"#{field}"
             value_placeholder = f":{field}"
@@ -411,3 +413,9 @@ def generate_presigned_url(file):
     except ClientError as e:
         print(f"Error generating presigned download URL for file {file}: {e}")
         return None
+    
+
+def formatRateLimit(rateLimit):
+    if rateLimit.get(["rate"], None):
+        rateLimit["rate"] = Decimal(str(rateLimit["rate"]))
+    return rateLimit
