@@ -14,7 +14,8 @@ import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {resolveDataSources} from "./datasource/datasources.js";
 import {saveTrace, trace} from "./common/trace.js";
 
-const doTrace = process.env.TRACING_ENABLED;
+const doTrace = process.env.TRACING_ENABLED === 'true';
+
 const logger = getLogger("router");
 
 function getRequestId(params) {
@@ -134,7 +135,10 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 });
             }
 
-            if(doTrace) {
+            if (doTrace) {
+                logger.debug("TRACING: ", doTrace)
+                logger.debug("TRACING: ", doTrace)
+                logger.debug("TRACING: ", doTrace)
                 responseStream = new TraceStream({}, responseStream);
             }
 
