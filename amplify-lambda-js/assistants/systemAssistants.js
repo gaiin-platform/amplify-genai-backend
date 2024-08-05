@@ -153,7 +153,7 @@ const systemAssistantIds = {
                     "appName": "<FILL IN APPLICATION NAME>",
                     "appDescription": "<FILL IN APPLICATION DESCRIPTION>",
                     "rateLimit": {
-                        "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
+                        "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Daily', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                         "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
                     },
                     "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
@@ -181,7 +181,7 @@ const systemAssistantIds = {
                     [{  "id": <owner_api_id FROM IDENTIFIED KEY>,
                         "name:" <applicationName FROM IDENTIFIED KEY>,
                         "rateLimit": {
-                            "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
+                            "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Daily', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                             "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
                         },
                         "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
