@@ -70,8 +70,8 @@ provider:
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-history-cost-calculations
     MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
-    HISTORY_USAGE_TABLE: chat-billing-${sls:stage}-history-usage
     # STREAM: false # optional 
     
 
@@ -181,13 +181,13 @@ functions:
         assistant_task_queue_url:
           Ref: AssistantTaskQueue
   
-  # reset-billing:
-  #   handler: billing/reset.handler
-  #   events:
-  #     - schedule:
-  #         rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
-  #     - schedule:
-  #         rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
+  reset-billing:
+    handler: billing/reset.handler
+    events:
+      - schedule:
+          rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
+      - schedule:
+          rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
 
 
 resources:

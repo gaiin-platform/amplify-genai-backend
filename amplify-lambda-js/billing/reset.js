@@ -1,8 +1,8 @@
 // this file needs to:
 // 1.  add the value in the dailyCost field to the monthlyCost field
-// 2.  save the value in the dailyCost field to the history usage table
-// 3.  set the dailyCost field and hourlyCost fields to zero
-// *4. if this is a monthly trigger, the monthlyCost field needs to be saved to the history usage table and reset as well
+// 2.  save the value in the dailyCost field to the HISTORY_COST_CALCULATIONS_DYNAMO_TABLE. 
+// 3.  set the dailyCost field to zero and set the hourlyCost field to an list of 24 zeros (set all of the existing values in hourlyCost to zero)
+// *4. if this is the first day of the month, the monthlyCost field needs to be saved to the history usage table, and the  reset as well
 
 const AWS = require('aws-sdk');
 const dynamoDB = new AWS.DynamoDB.DocumentClient();
