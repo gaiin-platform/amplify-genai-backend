@@ -1,0 +1,193 @@
+service: chat-billing
+
+frameworkVersion: '3'
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-prune-plugin
+  - serverless-deployment-bucket
+  - serverless-python-requirements
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)}
+
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)}
+  stages:
+    - dev
+    - staging
+    - prod
+
+  deploymentBucket:
+    versioning: true
+    accelerate: true
+    blockPublicAccess: true
+    tags:
+      - Key: Environment
+        Value: ${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
+  
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+  
+  environment:
+    MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
+    ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
+    HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
+    CHAT_USAGE_TABLE: vu-amplify-${sls:stage}-chat-usage
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:CreateTable
+          Resource:
+            - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}/*"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+          Resource:
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CHAT_USAGE_TABLE}"
+            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CHAT_USAGE_TABLE}/*"
+
+
+functions:
+  # sets the value of the model input and output rates
+  # ONLY TRIGGERED MANUALLY VIA:
+  # ~ serverless invoke --function updateModelRateTable --stage dev --log
+  # NOTE: make sure you have deployed the most up to date version of the chat-billing/model_rates/model_rate_values.csv file 
+  #       or else the DynamoDB table will not update with what you have locally
+  updateModelRateTable:
+    handler: model_rates/update_table.updateModelRateTable
+    memorySize: 128
+    environment:
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+
+  
+  # triggered at the start of each day and month
+  # calculates cost of all usage from the chat usage table and the additional charges table
+  # saves costs for each user, coa, and date to the history usage table
+  trackUsage:
+    handler: usage/track_usage.handler
+    memorySize: 512 # increased memory size to increase speed
+    timeout: 900 # 900 seconds (15 minutes) is the maximum
+    events:
+      - schedule:
+          rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
+      - schedule:
+          rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
+    environment:
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+      CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+      ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+
+
+  # provides real-time usage information via API gateway
+  reportGenerator:
+    handler: usage/report_generator.report_generator
+    memorySize: 128
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: billing/report-generator
+          method: post
+          cors: true
+    environment:
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+      CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+      ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+
+resources:
+  Resources:
+    # model rates needed for usage cost calculations
+    ModelRateTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.MODEL_RATE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: 'ModelID'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'ModelID'
+            KeyType: 'HASH'
+
+    # contains charges not included in chat usage table 
+    # these charges could be for assistants (code interpreter), database entries, embeddings, infrastructure/lambdas, RAG, Dynamo, S3
+    #
+    # This table current contains code interpreter session and usage records
+    AdditionalChargesTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+
+    # daily and monthly usage saved to this table
+    HistoryUsageTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.HISTORY_USAGE_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+          - AttributeName: 'userDateComposite'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+          - AttributeName: 'userDateComposite'
+            KeyType: 'RANGE'

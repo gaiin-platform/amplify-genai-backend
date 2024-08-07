@@ -1,7 +1,6 @@
 # set up retriever function that accepts a a query, user, and/or list of keys for where claus
 
 import os
-import json
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint
@@ -212,7 +211,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     data = data['data']
     content = data['userInput']
     raw_src_ids = data['dataSources']
-    limit = data['limit']
+    limit = data.get('limit', 10)
 
     accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
     src_ids = accessible_src_ids

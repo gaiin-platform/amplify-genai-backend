@@ -44,13 +44,20 @@ provider:
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
-    ASSISTANT_CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
-
-    OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
-    OBJECT_SIMULATE_ACCESS_API_ENDPOINT: ${self:custom.stageVariables.OBJECT_SIMULATE_ACCESS_API_ENDPOINT}
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT}
+    ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
+    BILLING_DYNAMODB_TABLE: chat-billing-${sls:stage}-additional-charges
+    COST_CALCULATIONS_DYNAMODB_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
+    S3_SHARE_BUCKET_NAME: vu-amplify-${sls:stage}-share
+    SHARES_DYNAMODB_TABLE: vu-amplify-${sls:stage}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+    # needed for system assistant url 
+    ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
 
   iam:
     role:
@@ -71,7 +78,15 @@ provider:
           Resource:
             - "${self:provider.environment.OPENAI_API_KEY_ARN}"
             - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CHAT_USAGE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
@@ -80,7 +95,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
-            - - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
 
         - Effect: Allow
           Action:
@@ -93,6 +109,7 @@ provider:
             - s3:PutObject
           Resource:
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/assistants/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
 
 functions:
 
@@ -111,7 +128,7 @@ functions:
     events:
       - http:
           path: assistant/list
-          method: post
+          method: get
           cors: true
 
   share_assistant:
@@ -130,53 +147,27 @@ functions:
           path: assistant/delete
           method: post
           cors: true
-
-  delete_assistant_open_ai:
-    handler: openaiazure/assistant.delete_assistant
+    
+  download_code_interpreter_file:
+    handler: openaiazure/assistant.get_presigned_url_code_interpreter
     events:
       - http:
-          path: openai/assistant/delete
+          path: assistant/files/download/codeinterpreter
           method: post
           cors: true
 
-  add_message_assistant_thread:
-    handler: openaiazure/assistant.add_message_assistant_thread
-    timeout: 30
-    events:
-      - http:
-          path: assistant/thread/message/create
-          method: post
-          cors: true
-
-  get_messages_assistant_thread:
-    handler: openaiazure/assistant.get_messages_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/message/list
-          method: post
-          cors: true
 
   # This endpoint is mainly for local testing but doesn't have
   # a long enough timeout for use when running in AWS behind API Gateway
-  chat_assistant:
-    handler: openaiazure/assistant.chat_with_assistant
+  create_code_interpreter_assistant:
+    handler: openaiazure/assistant.create_code_interpreter_assistant 
     timeout: 30
-
     events:
       - http:
-          path: assistant/chat
+          path: assistant/create/codeinterpreter
           method: post
           cors: true
-
-  chat_assistant_url:
-    handler: openaiazure/assistant.chat_with_assistant
-    timeout: 900
-    url:
-      cors: true
-    
-
-
-    # for local testing 
+  
   chat_code_interpreter_assistant:
     handler: openaiazure/assistant.chat_with_code_interpreter
     timeout: 30
@@ -189,41 +180,27 @@ functions:
 
   chat_code_interpreter_assistant_url: 
     handler: openaiazure/assistant.chat_with_code_interpreter
-    timeout: 900
+    timeout: 420 # 7 min
     url: true
-
-
-  run_assistant_thread:
-    handler: openaiazure/assistant.run_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run
-          method: post
-          cors: true
-
-  run_status_assistant_thread:
-    handler: openaiazure/assistant.get_run_status_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  create_assistant_thread:
-    handler: openaiazure/assistant.create_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/create
-          method: post
-          cors: true
+    
 
   delete_assistant_thread:
     handler: openaiazure/assistant.delete_assistant_thread
     events:
       - http:
-          path: assistant/thread/delete
-          method: post
+          path: assistant/openai/thread/delete
+          method: delete
           cors: true
+
+
+  delete_assistant_open_ai:
+    handler: openaiazure/assistant.delete_assistant
+    events:
+      - http:
+          path: assistant/openai/delete
+          method: delete
+          cors: true
+
 
 
 resources:
@@ -395,10 +372,43 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}
 
+    AssistantCodeInterpreterDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: user
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: UserIndex
+            KeySchema:
+              -
+                AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
+
     AssistantsFilesBucket:
       Type: 'AWS::S3::Bucket'
       Properties:
         BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET']
+              AllowedHeaders: ['*']
+              MaxAge: 3000     
         BucketEncryption:
           ServerSideEncryptionConfiguration:
             - ServerSideEncryptionByDefault:

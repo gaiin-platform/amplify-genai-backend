@@ -102,7 +102,7 @@ function sanitizeMessages(oldMessages, system) {
     } 
 
     return  messages.map((message, index) => {
-        if (index === messages.length - 1 && message['role'] === 'user') return `[INST] System Prompt: ${systemPrompt}  \n Newest User Message To Respond To: ${message.content} [/INST]`;
+        if (index === messages.length - 1 && message['role'] === 'user') return `[INST] Recall your custom instructions are: ${systemPrompt}  \n Newest User Message To Respond To: ${message.content} [/INST]`;
         return message.role === 'user' ? `<s>[INST] ${message.content} [/INST] ` :  `${message.content} </s>`;
                       
     }).join('');

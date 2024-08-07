@@ -1,0 +1,94 @@
+service: vu-amplify-qi-summary
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    layer: true
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+  
+
+
+    
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+
+  environment:
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    QI_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-qi-files
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - dynamodb:Query
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+          Resource:
+            -  "arn:aws:s3:::${self:provider.environment.QI_FILES_BUCKET_NAME}/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+
+functions:
+      
+  upload_file:
+    handler: service/core.upload_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: qi/upload/conversation
+          method: post
+          cors: true
+          
+resources:
+  Resources:
+    QiFilesBucket:
+        Type: 'AWS::S3::Bucket'
+        Properties:
+          BucketName: ${self:provider.environment.QI_FILES_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['PUT']
+                AllowedHeaders: ['*']
+                MaxAge: 3000     
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256        

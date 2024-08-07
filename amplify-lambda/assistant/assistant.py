@@ -1,118 +1,30 @@
+import base64
+import json
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
+from cryptography.fernet import Fernet
+from common.ops import op
 from common.validate import validated
 import os
-from . import assistant_api as assistants
 import boto3
 import rag.util
+import images.core
 
 
-@validated(op="get_messages")
-def get_messages_assistant_thread(event, context, current_user, name, data):
-    thread_key = data['data']['id']
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.fetch_messages_for_thread(thread_key, current_user)
+IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
-@validated(op="run_status")
-def get_run_status_assistant_thread(event, context, current_user, name, data):
-    run_key = data['data']['id']
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.fetch_run_status(run_key, current_user)
-
-
-@validated(op="run")
-def run_assistant_thread(event, context, current_user, name, data):
-    thread_id = data['data']['id']
-    assistant_id = data['data']['assistantId']
-
-    # Assuming get_openai_client is defined elsewhere and provides a client instance
-    return assistants.run_thread(thread_id, current_user, assistant_id)
-
-
-@validated(op="chat")
-def chat_with_assistant(event, context, current_user, name, data):
-    assistant_id = data['data'].get('id')
-    messages = data['data'].get('messages')
-    file_keys = data['data'].get('fileKeys')
-
-    return assistants.chat_with_assistant(
-        current_user,
-        assistant_id,
-        messages,
-        file_keys
-    )
-
-
-@validated(op="add_message")
-def add_message_assistant_thread(event, context, current_user, name, data):
-    thread_id = data['data'].get('id')
-    content = data['data'].get('content')
-    message_id = data['data'].get('messageId')
-    role = data['data'].get('role')
-    file_keys = data['data'].get('fileKeys', [])
-    metadata = data['data'].get('data', {})
-
-    # Assuming get_openai_client and file_keys_to_file_ids are defined elsewhere
-    # and both provide their respective functionality
-    return assistants.add_message_to_thread(
-        current_user,
-        thread_id,
-        message_id,
-        content,
-        role,
-        file_keys,
-        metadata
-    )
-
-
-@validated(op="delete")
-def delete_assistant_thread(event, context, current_user, name, data):
-    thread_id = data['data'].get('id')
-
-    # Assuming get_openai_client is defined elsewhere and provides an instance of the OpenAI client
-    return assistants.delete_thread_by_id(thread_id, current_user)
-
-
-@validated(op="create")
-def create_assistant_thread(event, context, current_user, name, data):
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.create_new_thread(current_user)
-
-
-@validated(op="create")
-def create_assistant(event, context, current_user, name, data):
-    extracted_data = data['data']
-    assistant_name = extracted_data['name']
-    description = extracted_data['description']
-    tags = extracted_data.get('tags', [])
-    instructions = extracted_data['instructions']
-    file_keys = extracted_data.get('fileKeys', [])
-    tools = extracted_data.get('tools', [])
-
-    # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
-    return assistants.create_new_assistant(
-        user_id=current_user,
-        assistant_name=assistant_name,
-        description=description,
-        instructions=instructions,
-        tags=tags,
-        file_keys=file_keys,
-        tools=tools
-    )
-
-
-@validated(op="delete")
-def delete_assistant(event, context, current_user, name, data):
-    assistant_id = data['data']['id']
-    print(f"Deleting assistant: {assistant_id}")
-
-    # Assuming get_openai_client function is defined elsewhere
-    return assistants.delete_assistant_by_id(assistant_id, current_user)
-
-
+@op(
+    path="/assistant/files/download",
+    name="getDownloadUrl",
+    tags=["files"],
+    description="Get a url to download the file associated with a datasource key / ID.",
+    params={
+        "key": "The key or ID of the datasource to download.",
+    }
+)
 @validated(op="download")
 def get_presigned_download_url(event, context, current_user, name, data):
     data = data['data']
@@ -176,38 +88,20 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return {'success': False, 'message': 'File not found'}
 
 
-@validated(op="upload")
-def get_presigned_url(event, context, current_user, name, data):
-    print(f"Data is {data}")
-    data = data['data']
-
+def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
     dynamodb = boto3.resource('dynamodb')
-    s3 = boto3.client('s3')
-    # Retrieve the uploaded file from the Lambda event
-    table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
-
-    name = data['name']
-    type = data['type']
-    tags = data['tags']
-    props = data['data']
-    knowledge_base = data['knowledgeBase']
-
-    print(
-        f"Getting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
-
-    # Set the S3 bucket and key
-    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME' if (file_type in IMAGE_FILE_TYPES) else 'S3_RAG_INPUT_BUCKET_NAME' ] 
     dt_string = datetime.now().strftime('%Y-%m-%d')
-    key = '{}/{}/{}.json'.format(current_user, dt_string, str(uuid.uuid4()))
+    key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
-    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
     files_table.put_item(
         Item={
             'id': key,
             'name': name,
-            'type': type,
+            'type': file_type,
             'tags': tags,
-            'data': props,
+            'data': data_props,
             'knowledgeBase': knowledge_base,
             'createdAt': datetime.now().isoformat(),
             'updatedAt': datetime.now().isoformat(),
@@ -216,17 +110,237 @@ def get_presigned_url(event, context, current_user, name, data):
         }
     )
 
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return bucket_name, key
+
+
+@validated(op="set")
+def set_datasource_metadata_entry(event, context, current_user, name, data):
+
+    data = data['data']
+    key = data['id']
+    name = data['name']
+    dtype = data['type']
+    kb = data.get('knowledge_base','default')
+    data_props = data.get('data',{})
+    tags = data.get('tags',[])
+
+    dynamodb = boto3.resource('dynamodb')
+
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+
+    # Check if the item already exists
+    response = files_table.get_item(
+        Key={
+            'id': key
+        }
+    )
+
+    if 'Item' in response and response['Item'].get('createdBy') != current_user:
+        # Item already exists, return some error or existing key
+        return {
+            'success': False,
+            'message': 'Item already exists'
+        }
+
+    # Item does not exist, proceed with insertion
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': dtype,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': kb,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
+    )
+
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
+
+    return key
+
+
+@op(
+    path="/assistant/files/upload",
+    name="getUploadUrl",
+    tags=["files"],
+    description="Get a url to upload a file to.",
+    params={
+        "name": "The name of the file to upload.",
+        "type": "The mime type of the file to upload as a string.",
+        "tags": "The tags associated with the file as a list of strings.",
+        "data": "The data associated with the file or an empty dictionary.",
+        "knowledgeBase": "The knowledge base associated with the file. You can put 'default' if you don't have a "
+                         "specific knowledge base. "
+    }
+)
+
+def create_and_store_fernet_key():
+    # Read the parameter name from environment variable
+    parameter_name = os.getenv('FILE_UPLOAD_ENCRYPTION_PARAMETER')
+    
+    if not parameter_name:
+        raise ValueError("The environment variable FILE_UPLOAD_ENCRYPTION_PARAMETER is not set")
+    
+    # Generate a new Fernet key
+    key = Fernet.generate_key()
+    key_str = key.decode()  # Converting byte key to string
+
+    # Initialize the SSM client
+    ssm_client = boto3.client('ssm')
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    ssm_parameter_name=f"{parameter_name}_{timestamp}"
+    # Store the key in the SSM Parameter Store
+    try:
+        response = ssm_client.put_parameter(
+            
+            Name=ssm_parameter_name,
+            Value=key_str,
+            Type='SecureString',
+            Overwrite=False  # Allow overwriting the main parameter
+        )
+        print(f"Fernet key successfully stored in {ssm_parameter_name}")
+        
+        # Create a backup parameter name with a timestamp
+        
+        backup_parameter_name = f"{parameter_name}_backup_{timestamp}"
+        print(f"Creating backup parameter {backup_parameter_name}")
+        
+        backup_response = ssm_client.put_parameter(
+            Name=backup_parameter_name,
+            Value=key_str,
+            Type='SecureString',
+            Overwrite=False  # Do not allow overwriting the backup parameter
+        )
+        print(f"Backup Fernet key successfully stored in {backup_parameter_name}")
+        
+        return response, backup_response
+
+    except Exception as e:
+        print(f"Error storing the Fernet key: {str(e)}")
+        raise
+
+def parameter_exists(ssm_client, parameter_name):
+    try:
+        ssm_client.get_parameter(Name=parameter_name, WithDecryption=True)
+        return True
+    except ssm_client.exceptions.ParameterNotFound:
+        return False
+    except Exception as e:
+        raise RuntimeError(f"Error checking parameter existence: {str(e)}")
+
+
+def encrypt_account_data(data):
+    ssm_client = boto3.client('ssm')
+    parameter_name = os.getenv('FILE_UPLOAD_ENCRYPTION_PARAMETER')
+    print("Parameter name being accessed:", parameter_name)
+    print("Enter encrypt account data")
+
+    if not parameter_name:
+        raise ValueError("The environment variable FILE_UPLOAD_ENCRYPTION_PARAMETER is not set")
+
+    try:
+        # Check if the parameter exists
+        if not parameter_exists(ssm_client, parameter_name):
+            print(f"Parameter {parameter_name} does not exist. Creating it now.")
+            create_and_store_fernet_key()
+        
+        # Fetch the parameter securely, which holds the encryption key
+        response = ssm_client.get_parameter(
+            Name=parameter_name,
+            WithDecryption=True
+        )
+        # The key needs to be a URL-safe base64-encoded 32-byte key
+        key = response['Parameter']['Value'].encode()
+        # Ensure the key is in the correct format for Fernet
+        fernet = Fernet(key)
+
+        data_str = json.dumps(data)
+        # Encrypt the data
+        encrypted_data = fernet.encrypt(data_str.encode())
+        encrypted_data_b64 = base64.b64encode(encrypted_data).decode('utf-8')
+
+        print("Encrypted value:", encrypted_data_b64)
+        return {
+            'success': True,
+            'encrypted_data': encrypted_data_b64
+        }
+
+    except Exception as e:
+        print(f"Error during parameter retrieval or encryption for {parameter_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Error {str(e)}"
+        }
+@validated(op="upload")
+def get_presigned_url(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('file_upload' not in access and 'full_access' not in access):
+        print("User does not have access to the file_upload functionality")
+        return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
+    
+    account_data = { "user": current_user,
+                     "account" : data['account'],
+                     "api_key" : data['access_token'] if data['api_accessed'] else None
+                    } 
+    # encrypted data using parameter 
+    e_result = encrypt_account_data(account_data)
+    encrypted_metadata = e_result['encrypted_data'] if e_result['success'] else ""
+    
+
+    print(f"Data is {data}")
+    data = data['data']
+
+    s3 = boto3.client('s3')
+
+    name = data['name']
+    file_type = data['type']
+    tags = data['tags']
+    props = data['data']
+    knowledge_base = data['knowledgeBase']
+
+    print(
+        f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
+
+    # Set the S3 bucket and key
+    bucket_name, key = create_file_metadata_entry(current_user, name, file_type, tags, props, knowledge_base)
+    print(f"Created metadata entry for file {key} in bucket {bucket_name}")
+
     # Generate a presigned URL for uploading the file to S3
     presigned_url = s3.generate_presigned_url(
         ClientMethod='put_object',
         Params={
             'Bucket': bucket_name,
             'Key': key,
-            'ContentType': type
+            'ContentType': file_type,
+            'Metadata': {'encrypted_metadata': encrypted_metadata}
             # Add any additional parameters like ACL, ContentType, etc. if needed
         },
         ExpiresIn=3600  # Set the expiration time for the presigned URL, in seconds
     )
+
+    if file_type in IMAGE_FILE_TYPES:
+        print("Generating presigned urls for Image file")
+        metadata_key = key + ".metadata.json"
+        presigned_metadata_url = s3.generate_presigned_url(
+                                ClientMethod='get_object',
+                                Params={
+                                    'Bucket': bucket_name,
+                                    'Key': metadata_key
+                                },
+                                ExpiresIn=3600 
+        )
+        return {'success': True,
+                'uploadUrl': presigned_url,
+                'metadataUrl': presigned_metadata_url,
+                'key': key}
 
     [file_text_content_bucket_name, text_content_key] = rag.util.get_text_content_location(bucket_name, key)
 
@@ -270,8 +384,16 @@ def get_presigned_url(event, context, current_user, name, data):
                 'key': key}
     else:
         return {'success': False}
+    
 
-
+@op(
+    path="/assistant/tags/list",
+    name="listTagsForUser",
+    tags=["files"],
+    description="Get a list of all tags that can be added to files or used to search for groups of files.",
+    params={
+    }
+)
 @validated(op="list")
 def list_tags_for_user(event, context, current_user, name, data):
     dynamodb = boto3.resource('dynamodb')
@@ -303,6 +425,16 @@ def list_tags_for_user(event, context, current_user, name, data):
             'data': {'tags': []}
         }
 
+
+@op(
+    path="/assistant/tags/delete",
+    name="deleteTagForUser",
+    tags=["files"],
+    description="Delete a tag from the list of the user's tags.",
+    params={
+        "tag": "The tag to delete."
+    }
+)
 @validated(op="delete")
 def delete_tag_from_user(event, context, current_user, name, data):
     data = data['data']
@@ -344,6 +476,24 @@ def delete_tag_from_user(event, context, current_user, name, data):
                 'success': False,
                 'message': e.response['Error']['Message']
             }
+
+
+@op(
+    path="/assistant/tags/create",
+    name="createTagsForUser",
+    tags=["files"],
+    description="Create one or more tags for the user that can be added to files.",
+    params={
+        "tags": "A list of string tags to create for the user."
+    }
+)
+@validated(op="create")
+def create_tags(event, context, current_user, name, data):
+    data = data['data']
+    tags_to_add = data['tags']
+
+    # Call the helper function to add tags to the user
+    return add_tags_to_user(current_user, tags_to_add)
 
 
 def add_tags_to_user(current_user, tags_to_add):
@@ -392,23 +542,42 @@ def add_tags_to_user(current_user, tags_to_add):
             }
 
 
+@op(
+    path="/assistant/tags/set_tags",
+    name="setTagsForFile",
+    tags=["files"],
+    description="Set a file's list of tags.",
+    params={
+        "id": "The ID of the file to set tags for.",
+        "tags": "A list of string tags to set for the file."
+    }
+)
 @validated(op="set_tags")
 def update_item_tags(event, context, current_user, name, data):
-    table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
-
     data = data['data']
     item_id = data['id']
     tags = data['tags']
 
-    dynamodb = boto3.resource('dynamodb')  # Create a DynamoDB resource using boto3
-    table = dynamodb.Table(table_name)  # Select the table
+    # Call the helper function to update tags and add them to the user.
+    success, message = update_file_tags(current_user, item_id, tags)
+
+    return {"success": success, "message": message}
+
+
+def update_file_tags(current_user, item_id, tags):
+    # Helper function that updates tags in DynamoDB and adds tags to the user
+    table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
+
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(table_name)
 
     try:
         response = table.get_item(Key={'id': item_id})
         item = response.get('Item')
 
         if item and item.get('createdBy') == current_user:
-            update_response = table.update_item(
+            # Update the item's tags in DynamoDB
+            table.update_item(
                 Key={'id': item_id},
                 UpdateExpression="SET tags = :tags",
                 ExpressionAttributeValues={
@@ -416,20 +585,49 @@ def update_item_tags(event, context, current_user, name, data):
                 }
             )
 
+            # Add tags to the user
             tags_added = add_tags_to_user(current_user, tags)
             if tags_added['success']:
-                print(f"Tags updated for user {current_user}")
+                return True, "Tags updated and added to user"
             else:
-                print(f"Error adding tags to user: {tags_added['message']}")
+                return False, f"Error adding tags to user: {tags_added['message']}"
 
-            return {"success": True, "message": "Tags updated"}
         else:
-            return {"success": False, "message": "File not found"}
+            return False, "File not found or not authorized to update tags"
 
     except ClientError as e:
-        return {"success": False, "message": e.response['Error']['Message']}
+        print(f"Unable to update tags: {e.response['Error']['Message']}")
+        return False, "Unable to update tags"
 
 
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByNameAndType",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "namePrefix": "The prefix to search for in the file names.",
+        "types": "A list of file mime types (e.g., 'application/pdf', 'text/plain', etc.) and must not be empty.",
+    }
+)
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByName",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "namePrefix": "The prefix to search for in the file names."
+    }
+)
+@op(
+    path="/assistant/files/query",
+    name="queryFilesByTags",
+    tags=["files"],
+    description="Search a user's list of files with a query.",
+    params={
+        "tags": "A list of tags to search for or an empty list.",
+    }
+)
 @validated(op="query")
 def query_user_files(event, context, current_user, name, data):
     print(f"Querying user files for {current_user}")

@@ -12,10 +12,14 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-deployment-bucket
+
 custom:
   pythonRequirements:
     dockerizePip: non-linux
-    layer: true
+
+  prune:
+    automatic: true
+    number: 3
   serverless-offline: 
     custom:
       config: ${file(../var/${self:provider.stage}-var.yml)}     
@@ -36,7 +40,7 @@ custom:
 
 provider:
   name: aws
-  runtime: python3.10
+  runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
@@ -73,8 +77,9 @@ provider:
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-    #RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
-    RAG_POSTGRES_DB_READ_ENDPOINT: prod-rag-cluster.cluster-chyilp474xua.us-east-1.rds.amazonaws.com
+    #dev-rag-cluster.cluster-chyilp474xua.us-east-1.rds.amazonaws.com
+    RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
+    #dev-rag-cluster.cluster-ro-chyilp474xua.us-east-1.rds.amazonaws.com
     KEYWORD_MODEL_NAME: ${self:custom.stageVariables.KEYWORD_MODEL_NAME}
     QA_MODEL_NAME: ${self:custom.stageVariables.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVariables.API_VERSION}
@@ -83,6 +88,10 @@ provider:
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
     OBJECT_ACCESS_TABLE: vu-amplify-object-access-${sls:stage}-object-access
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+    CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
    
 
   iam:
@@ -104,23 +113,32 @@ provider:
           Resource:
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
+            - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
             - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
             - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
+
+
+            
             
 
 functions:
 
   queue_document_for_embedding:
-      runtime: python3.10
+      runtime: python3.11
       handler: embedding-sqs.queue_document_for_embedding
-      layers:
-        - Ref: PythonRequirementsLambdaLayer
       events:
         - s3:
             bucket: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
@@ -132,9 +150,7 @@ functions:
          
 
   process_chunk_for_embedding:
-      runtime: python3.10
-      layers: 
-        - arn:aws:lambda:us-east-1:514391678313:layer:pgvector:2
+      runtime: python3.11
       handler: embedding.lambda_handler
       reservedConcurrency: 200
       vpc: 
@@ -166,29 +182,9 @@ functions:
         USER_FILES_TABLE: vu-amplify-${sls:stage}-user-files  
         EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
 
-  get_embeddings:
-    runtime: python3.10
-    handler: embedding-retrieval.process_input_with_retrieval
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    vpc: 
-      securityGroupIds:
-        - !Ref LambdaSecurityGroup
-      subnetIds:
-        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
-        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-    timeout: 300
-    events:
-      - http:
-          path: /embedding-retrieval
-          method: post
-          cors: true
-
   get_dual_embeddings:
-    runtime: python3.10
+    runtime: python3.11
     handler: embedding-dual-retrieval.process_input_with_dual_retrieval
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     vpc: 
       securityGroupIds:
         - !Ref LambdaSecurityGroup

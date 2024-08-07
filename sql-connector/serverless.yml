@@ -65,6 +65,8 @@ provider:
     REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
     REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     
     # MYSQL_DB VARS
     # MYSQL_DB_HOST: ${self:custom.stageVariables.MYSQL_DB_HOST}
@@ -91,7 +93,14 @@ provider:
             - rds-data:BeginTransaction
             - rds-data:CommitTransaction
             - rds-data:RollbackTransaction
+            - dynamodb:Query
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
           Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
             - "arn:aws:secretsmanager:us-east-1:514391678313:secret:openai-endpoints-2O6UlC"
             - !GetAtt MySQLDbCluster.DBClusterArn
             - !Ref MySQLDbSecret
