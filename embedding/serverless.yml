@@ -16,7 +16,7 @@ plugins:
 
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
     layer: true
     slim: true
     zip: true
