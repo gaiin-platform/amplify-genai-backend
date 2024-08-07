@@ -7,4 +7,4 @@ node_modules
 *.pyo
 .env.local
 
-__pycache__/
+/__pycache__/
