@@ -20,6 +20,11 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
   stackTags:
     "vu:environment": ${sls:stage}
     "vu:applicationName": "amplify"
@@ -58,7 +63,7 @@ provider:
     ASSISTANTS_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistants
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: ${self:custom.stageVariables.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
     ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
-    TRACING_ENABLED: false
+    TRACING_ENABLED: true
     DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
@@ -67,6 +72,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
     HISTORY_USAGE_TABLE: chat-billing-${sls:stage}-history-usage
+    # STREAM: false # optional 
     
 
   iam:
@@ -146,6 +152,20 @@ functions:
     environment:
         assistant_task_queue_url:
           Ref: AssistantTaskQueue
+
+  api_g_chat:
+    handler: indexApiG.handler
+    memorySize: 1024
+    timeout: 180
+    environment:
+        assistant_task_queue_url:
+          Ref: AssistantTaskQueue
+    events:
+      - http:
+          path: api_g_chat/chat
+          method: post
+          cors: true
+    
 
   assistant_queue:
     handler: assistantQueueRouter.handler

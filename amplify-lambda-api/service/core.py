@@ -118,10 +118,8 @@ def get_api_keys_for_user(event, context, user, name, data):
 
 
 def can_create_api_key(user, account):
-    # here we want to check valid coa string, 
-    pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{3}\.\w{1})$')
-    if (not bool(pattern.match(account['id']))) :
-        return {"success":False, "message": "Invalid COA string"}
+    if (not is_valid_account(account['id'])):
+        return {"success": False, "message": "Invalid COA string"}
     # if delegate,  check user table for valid delegate email cognito user 
     cognito_user_table = dynamodb.Table(os.environ['COGNITO_USERS_TABLE'])
     try:
@@ -134,6 +132,10 @@ def can_create_api_key(user, account):
         print(f"Error checking user existence: {e}")
         return {"success": False, "message": "Unable to verify user at this time"}
 
+def is_valid_account(coa):
+    # here we want to check valid coa string, 
+    pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{3}\.\w{1})$')
+    return bool(pattern.match(coa))
     
 
 @validated("create")
@@ -143,7 +145,7 @@ def create_api_keys(event, context, user, name, data):
 
 
     can_create = can_create_api_key(user, apiKey["account"])
-    if (not can_create): 
+    if (not can_create['success']): 
         return {
             'success': False,
             'message': can_create['message']
@@ -247,7 +249,9 @@ def update_api_key(item_id, updates, user):
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
-
+            if (field == 'account'): 
+                if (not is_valid_account(value['id'])):
+                    return {"success": False, "error": "Invalid COA string attached to account", "key_name": key_name}
             if (field == 'rateLimit'): value = formatRateLimit(value)
             # Use attribute names to avoid conflicts with DynamoDB reserved keywords
             placeholder = f"#{field}"

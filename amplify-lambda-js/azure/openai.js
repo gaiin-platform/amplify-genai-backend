@@ -101,7 +101,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data.tool_choice = tool_choice;
     }
 
-    delete data.imageSources
+    if (data.imageSources) delete data.imageSources;
     
     const config = await endpointProvider(modelId);
 
