@@ -88,9 +88,9 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const currentHour = now.getUTCHours();
 
         // Create the accountInfo (secondary key)
-        const accountId = account.accountId || 'general_account';
-        const accessToken = account.accessToken.startsWith("amp-") ? account.accessToken : 'NA';
-        const accountInfo = `${accountId}#${accessToken}`;
+        const coaString = account.accountId || 'general_account';
+        const apiKey = account.accessToken.startsWith("amp-") ? account.accessToken : 'NA';
+        const accountInfo = `${coaString}#${apiKey}`;
 
         // First update: Ensure dailyCost and hourlyCost are initialized
         const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList)`;
