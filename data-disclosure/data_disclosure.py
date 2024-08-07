@@ -65,7 +65,9 @@ def upload_data_disclosure(event, context):
     except FileNotFoundError:
         return generate_error_response(404, "Data disclosure HTML file not found")
     except IOError as e:
-        return generate_error_response(500, "Error reading local data disclosure HTML file")
+        return generate_error_response(
+            500, "Error reading local data disclosure HTML file"
+        )
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     html_document_name = f"data_disclosure_{timestamp}.html"
@@ -112,6 +114,13 @@ def upload_data_disclosure(event, context):
         return generate_error_response(500, "Error uploading data disclosure")
 
 
+# helper function to get the latest version number
+def get_latest_version_number():
+    versions_table = dynamodb.Table(os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"])
+    latest_version_details = get_latest_version_details(versions_table)
+    return latest_version_details["version"] if latest_version_details else None
+
+
 # Check if a user's email has accepted the agreement in the DataDisclosureAcceptanceTable
 @validated(op="check_data_disclosure_decision")
 def check_data_disclosure_decision(event, context, current_user, name, data):
@@ -123,10 +132,25 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["DATA_DISCLOSURE_ACCEPTANCE_TABLE"])
 
     try:
+        # Get the latest version number
+        latest_version = get_latest_version_number()
+        if latest_version is None:
+            return generate_error_response(
+                500, "Error retrieving latest data disclosure version"
+            )
+
+        # Get the user's acceptance record
         response = table.get_item(Key={"user": email})
-        acceptedDataDisclosure = "Item" in response and response["Item"].get(
-            "acceptedDataDisclosure", False
-        )
+
+        if "Item" in response:
+            user_accepted = response["Item"].get("acceptedDataDisclosure", False)
+            user_version = response["Item"].get("documentVersion")
+
+            # Check if the user accepted the latest version
+            acceptedDataDisclosure = user_accepted and (user_version == latest_version)
+        else:
+            acceptedDataDisclosure = False
+
         return {
             "statusCode": 200,
             "body": json.dumps({"acceptedDataDisclosure": acceptedDataDisclosure}),
