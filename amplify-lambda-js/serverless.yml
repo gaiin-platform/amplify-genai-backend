@@ -109,6 +109,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
             - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
@@ -183,11 +185,11 @@ functions:
   
   reset-billing:
     handler: billing/reset.handler
+    memorySize: 512 # increased memory size to increase speed
+    timeout: 900 # 900 seconds (15 minutes) is the maximum
     events:
       - schedule:
           rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
-      - schedule:
-          rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
 
 
 resources:
@@ -239,6 +241,21 @@ resources:
           - AttributeName: accountInfo
             KeyType: RANGE
         TableName: ${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}
+    HistoryCostCalculationsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userDate
+            AttributeType: S
+          - AttributeName: accountInfo
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userDate
+            KeyType: HASH
+          - AttributeName: accountInfo
+            KeyType: RANGE
+        TableName: ${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}
     ChatTracesBucket:
          Type: AWS::S3::Bucket
          Properties:
