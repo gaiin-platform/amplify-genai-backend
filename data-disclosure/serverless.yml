@@ -75,6 +75,7 @@ provider:
 
 functions:
   # determine if a user exists as an "accepted" record in the DataDisclosureAcceptanceTable
+  # TODO: ensure that they have accepted the latest version of the agreement in the table
   check_data_disclosure_decision:
     handler: data_disclosure.check_data_disclosure_decision
     memorySize: 128
@@ -114,6 +115,8 @@ functions:
   # Step 1b: Save the data disclosure document you want at the download link as pdf at data-disclosure/data_disclosure.pdf
   # Step 2:  Deploy the lambda via:         ~ serverless deploy --stage dev
   # Step 3:  Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
+
+  # TODO: set the 'latest' version for the check_data_disclosure_decision function, so that it knows to check for the latest upload
   upload_data_disclosure:
     handler: data_disclosure.upload_data_disclosure
     memorySize: 128
