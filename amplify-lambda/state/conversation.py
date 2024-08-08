@@ -71,6 +71,7 @@ def get_all_conversations(event, context, current_user, name, data):
     user_prefix = current_user + '/'
 
     try:
+        print("Listing s3 pbjects")
         # List all objects in the bucket with the given prefix
         response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
         if 'Contents' not in response:
@@ -80,6 +81,7 @@ def get_all_conversations(event, context, current_user, name, data):
             }
         
         conversations = []
+        print("Number of conversation in list obj: ", len(response['Contents']))
         for obj in response['Contents']:
             conversation_key = obj['Key']
             # Get each conversation object
@@ -89,6 +91,7 @@ def get_all_conversations(event, context, current_user, name, data):
                 conversations.append(json.loads(conversation_body))
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve : {obj} with error: {str(e)}")
+        print("Number of conversations retrieved: ", len(conversations))
         return {
             'statusCode': 200,
             'body': json.dumps({'success': True, 'conversationsData': conversations})
@@ -100,7 +103,7 @@ def get_all_conversations(event, context, current_user, name, data):
             'statusCode': 404,
             'body': json.dumps({'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)})
         }
-    
+   
 
 @validated("get_multiple_conversations")
 def get_multiple_conversations(event, context, current_user, name, data):
