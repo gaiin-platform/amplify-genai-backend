@@ -195,8 +195,6 @@ functions:
   mtd_cost_reporter:
     handler: billing/mtd.handler
     memorySize: 128
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: billing/mtd-cost

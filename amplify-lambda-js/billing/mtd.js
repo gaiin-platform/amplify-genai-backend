@@ -1,9 +1,12 @@
-const AWS = require('aws-sdk');
-const dynamoDB = new AWS.DynamoDB.DocumentClient();
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+
+const client = new DynamoDBClient({});
+const dynamoDB = DynamoDBDocumentClient.from(client);
 
 const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
-exports.handler = async (event) => {
+export const handler = async (event) => {
     try {
         // Parse the request body
         const body = JSON.parse(event.body);
@@ -25,7 +28,8 @@ exports.handler = async (event) => {
             },
         };
 
-        const result = await dynamoDB.query(params).promise();
+        const command = new QueryCommand(params);
+        const result = await dynamoDB.send(command);
 
         if (result.Items.length === 0) {
             return {
@@ -45,7 +49,7 @@ exports.handler = async (event) => {
                 email: email,
                 dailyCost: dailyCost,
                 monthlyCost: monthlyCost,
-                totalCost: totalCost,
+                'MTD Cost': totalCost,
             }),
         };
     } catch (error) {
