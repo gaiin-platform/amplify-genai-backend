@@ -222,8 +222,8 @@ async function isRateLimited(params) {
     
 
     if (!costCalcTable) {
-        console.log("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.");
-        throw new Error("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.");
+        console.log("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
+        throw new Error("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
     }
     try {
 

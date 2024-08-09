@@ -566,8 +566,8 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
  * @returns {Promise<Awaited<unknown>[]>}
  */
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
-
-    dataSources = await resolveDataSourceAliases(params, body, dataSources.filter(ds => !isImage(ds)));
+    const toResolve = dataSources ? dataSources.filter(ds => !isImage(ds)) : [];
+    dataSources = await resolveDataSourceAliases(params, body, toResolve);
 
     const translated = await Promise.all(dataSources.map(async (ds) => {
 
