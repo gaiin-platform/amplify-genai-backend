@@ -1,24 +1,35 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { extractParams } from "../common/handlers.js";
+import { getLogger } from "../common/logging.js";
 
+const logger = getLogger("mtd");
 const client = new DynamoDBClient({});
 const dynamoDB = DynamoDBDocumentClient.from(client);
 
 const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
-export const handler = async (event) => {
+export const handler = async (event, context, callback) => {
     try {
-        const body = JSON.parse(event.body);
-        const email = body.data.email;
+        logger.debug("Extracting params from event");
+        const params = await extractParams(event);
 
-        if (!email) {
+        if (params.statusCode) {
+            return params; // This is an error response from extractParams
+        }
+
+        const { body } = params;
+
+        if (!body || !body.data || !body.data.email) {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'Email is required' }),
             };
         }
 
-        const params = {
+        const email = body.data.email;
+
+        const queryParams = {
             TableName: costDynamoTableName,
             KeyConditionExpression: 'id = :email',
             ExpressionAttributeValues: {
@@ -26,7 +37,7 @@ export const handler = async (event) => {
             },
         };
 
-        const command = new QueryCommand(params);
+        const command = new QueryCommand(queryParams);
         const result = await dynamoDB.send(command);
 
         if (result.Items.length === 0) {
@@ -56,7 +67,7 @@ export const handler = async (event) => {
             }),
         };
     } catch (error) {
-        console.error('Error:', error);
+        logger.error("Error processing request: " + error.message, error);
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal server error' }),
