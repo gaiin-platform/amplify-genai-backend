@@ -218,6 +218,7 @@ functions:
 
   get_multiple_conversations:
     handler: state/conversation.get_multiple_conversations
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -228,6 +229,7 @@ functions:
 
   get_all_conversation:
     handler: state/conversation.get_all_conversations
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -235,6 +237,7 @@ functions:
           path: state/conversation/get_all
           method: get
           cors: true
+
 
   upload_file:
     handler: assistant/assistant.get_presigned_url
