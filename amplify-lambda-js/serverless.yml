@@ -88,6 +88,7 @@ provider:
             - dynamodb:PutItem
             - dynamodb:Query 
             - dynamodb:UpdateItem
+            - dynamodb:Scan
             - sqs:SendMessage
             - sqs:DeleteMessage
             - bedrock:InvokeModelWithResponseStream
