@@ -78,6 +78,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
         const totalCost = inputCost + outputCost;
 
+        // TODO: need to save account.accountId, account.accessToken and account.user
+
         // adds the totalCost to the dailyCost field
         // gets the current hour (0-23), add the totalCost to the hourlyCost field (saves it to the correct index in hourlyCost's 24 index list)
         // ensures the code works if the record exists or if it doesn't exist yet
@@ -85,13 +87,19 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const now = new Date();
         const currentHour = now.getUTCHours();
 
+        // Create the accountInfo (secondary key)
+        const coaString = account.accountId || 'general_account';
+        const apiKey = account.accessToken.startsWith("amp-") ? account.accessToken : 'NA';
+        const accountInfo = `${coaString}#${apiKey}`;
+
         // First update: Ensure dailyCost and hourlyCost are initialized
         const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList)`;
 
         const initializeCommand = new UpdateItemCommand({
             TableName: costDynamoTableName,
             Key: {
-                id: { S: account.user }
+                id: { S: account.user },
+                accountInfo: { S: accountInfo }
             },
             UpdateExpression: initializeExpression,
             ExpressionAttributeValues: {
@@ -110,7 +118,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const updateCommand = new UpdateItemCommand({
             TableName: costDynamoTableName,
             Key: {
-                id: { S: account.user }
+                id: { S: account.user },
+                accountInfo: { S: accountInfo }
             },
             UpdateExpression: updateExpression,
             ExpressionAttributeValues: {
