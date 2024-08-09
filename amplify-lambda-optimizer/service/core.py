@@ -59,7 +59,8 @@ def optimize(event, context, current_user, name, data):
         """
 
         # This must be configured in the registry entry as described above
-        access_token = data['accessToken']
+
+        access_token = data['access_token']
 
         data = data['data']
         datasource = data.get('dataSource', None)
@@ -116,7 +117,7 @@ def optimize(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        print(e)
+        print("Error: ", e)
         return {
             'success': False,
             'message': "Failed to generate an optimized prompt."
