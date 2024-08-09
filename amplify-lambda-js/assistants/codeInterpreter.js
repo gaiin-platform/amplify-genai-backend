@@ -12,10 +12,11 @@ import {trace} from "../common/trace.js";
 
 
 const logger = getLogger("codeInterpreterAssitant");
-const description = `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
-It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
-Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
-Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
+const description = "Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files."
+// `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
+// It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
+// Use this for complex mathmatical operations and coding tasks that involve the need to run the code in a sandbox environment.
+// Only to be used when user specifically asks to use code interpreter or the user asks to create / generate png, pdf, or csv files.`;
 
 const additionalPrompt = `You have access to a sandboxed environment for writing and testing code when code is requested:
                             1. Anytime you write new code display a preview of the code to show your work.
@@ -63,12 +64,11 @@ const invokeCodeIterpreterAction =
                 description: description, 
                 tags: [],
                 instructions:  options.prompt + additionalPrompt,
-                fileKeys: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
-                tools: [{"type": "code_interpreter"}], 
+                dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
             }
 
             try {
-                const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT); 
+                const responseData = await fetchRequest(token, create_data, process.env.ASSISTANTS_API_BASE_URL + '/assistant/create/codeinterpreter'); 
 
                 if (responseData && responseData && responseData.success) {
                     assistantId = responseData.data.assistantId
@@ -88,7 +88,7 @@ const invokeCodeIterpreterAction =
         if (assistantId) {
             messages.at(-1)['content'] += "\nAlways include any code you write in your response inside code blocks in markdown. Do not include mock download links. Always generate files when asked. Always attach your generated files to your response."
             const chat_data = {
-                id: assistantId,
+                assistantId: assistantId,
                 messages: messages.slice(1),
                 accountId: account.accountId || 'general_account',
                 requestId: options.requestId
@@ -280,10 +280,10 @@ function sleepAction(wait) {
                 chainActions([
                     new PromptAction(
                         [{  role: "user",
-                            content: `Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
+                            content: `Always be concise, Do not respond to anything else except the following text that will serve as entertainment, without any introduction or preamble: ${content}`
                         }], actionType, { appendMessages: appendMessages, ragOnly: false, skipRag:true, streamResults: false, retries: 2, isEntertainment: true}
-                    ), sleepAction(2), 
-                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(20), 
+                    ), sleepAction(1), 
+                    updateStatus("actionType" + randomId(), {inProgress: true}, actionType), sleepAction(15), 
                     ...(actionType == 'guessTheRiddle' ? riddleAnswerActions : []),
                     (llm, context, dataSources) => { States.randomEntertainment.removeTransitions();
                         context.data['entertainmentHistory'][actionType].push(context.data[actionType]); },
@@ -307,19 +307,19 @@ const selectEntertainment = (llm, context, dataSources) => {
 
         switch (entertainmentSelected) {
             case 'todayInHistory':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is today in history, go here");
+                States.randomEntertainment.addTransition(States.todayInHistory.name, "The next random state is today in history, go here");
                 break;
             case 'onTopicPun':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is says puns, go here");
+                States.randomEntertainment.addTransition(States.onTopicPun.name, "The next random state is says puns, go here");
                 break;
             case 'roastMyPrompt':
                 States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is prompt roasting, go here");
                 break;
             case 'guessTheRiddle':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is riddles, go here");
+                States.randomEntertainment.addTransition(States.guessTheRiddle.name, "The next random state is riddles, go here");
                 break;
             case 'lifeHacks':
-                States.randomEntertainment.addTransition(States.roastMyPrompt.name, "The next random state is  life hacks, go here");
+                States.randomEntertainment.addTransition(States.lifeHacks.name, "The next random state is  life hacks, go here");
                 break;
             default:
                 logger.debug("Error with entertainment states")
@@ -339,16 +339,21 @@ const States = {
        
         (llm, context, dataSources) => { 
             context.data['isCodeInterpreterDone'] = false; // add a flag to context.data that will guide the llm in choosing the states by determining whether code interpreter is done or not
-            context.data['hasEntertainmentStopped'] = false;
-            let entertainmentTypes = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
-            let entertainmentHistory = {};
-            entertainmentTypes.forEach((type) => {
-                entertainmentHistory[type] = [];
-            });
-            context.data['entertainmentTypes'] = entertainmentTypes;
-            context.data['entertainmentHistory'] = entertainmentHistory;
-            
-        }, sleepAction(3)
+            if (!context.params.account.accessToken.startsWith("amp-")) {
+                context.data['hasEntertainmentStopped'] = false;
+                let entertainmentTypes = ['todayInHistory', 'onTopicPun', 'roastMyPrompt','guessTheRiddle', 'lifeHacks'];
+                let entertainmentHistory = {};
+                entertainmentTypes.forEach((type) => {
+                    entertainmentHistory[type] = [];
+                });
+                context.data['entertainmentTypes'] = entertainmentTypes;
+                context.data['entertainmentHistory'] = entertainmentHistory;
+                States.invokeCodeInterpreter.addTransition(States.randomEntertainment.name, "Choose a random next state!");
+            } else {
+                context.data['hasEntertainmentStopped'] = true;
+                States.invokeCodeInterpreter.addTransition(States.wait.name, "Wait for codeInterpreter to finish");
+            }
+        }, sleepAction(2)
     ]), false,
     ),
 
@@ -412,10 +417,16 @@ const States = {
     ),
     
 
-    iRatherWait:  new AssistantState("iRatherWait",
+    wait:  new AssistantState("wait",
         "Just wait for code interpreter to finish up",
         chainActions([ sleepAction(25), codeInterpreterStatusUpdate,
             updateStatus("invokeCodeInterpreter", {inProgress: true}, 'codeInterpreterCurStatusSummary'),
+            (llm, context, dataSources) => {
+                if (context.data['isCodeInterpreterDone']) {
+                    States.wait.addTransition(States.finalWait.name, "Code Interpreter is finishing up");
+                    // console.log("To waiting state")
+                } 
+            }
         ]),
         false, {extraInstructions: {postInstructions: 
                 `Is Code Interpreter done? If not, we need to continue to wait until it is done.
@@ -440,15 +451,15 @@ const current = States.initialState;
 // We add transitions to the state machine to define the state machine.
 States.initialState.addTransition(States.invokeCodeInterpreter.name, "Start by calling Code Interpreter");
 
-States.invokeCodeInterpreter.addTransition(States.randomEntertainment.name, "Choose a random next state!");
-
 States.todayInHistory.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.onTopicPun.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.roastMyPrompt.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.guessTheRiddle.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 States.lifeHacks.addTransition(States.randomEntertainment.name, "Go Check if we need more entertainment");
 
+States.wait.addTransition(States.wait.name, "Continue to wait");
 States.finalWait.addTransition(States.finalWait.name, "Wait for code interpreter data to come through");
+
 
 // We create the assistant with the state machine and the current state.
 export const codeInterpreterAssistant = new StateBasedAssistant(

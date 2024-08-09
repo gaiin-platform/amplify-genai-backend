@@ -1,6 +1,7 @@
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk';
 import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
+import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 
 const logger = getLogger("anthropic");
 
@@ -11,6 +12,8 @@ export const chatAnthropic = async (chatBody, writable) => {
     delete body.options; 
 
     const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
+
+    const updatedMessages = await includeImageSources(body.imageSources, sanitizedMessages.messages); 
     
     try {
         const currentModel = options.model.id;
@@ -27,8 +30,8 @@ export const chatAnthropic = async (chatBody, writable) => {
         const stream = await client.messages.create({
                     model: selectedModel,
                     system: sanitizedMessages.systemPrompt, 
-                    max_tokens: options.model.tokenLimit,
-                    messages: sanitizedMessages.messages, 
+                    max_tokens: options.model.tokenLimit || chatBody.max_tokens,
+                    messages: updatedMessages, 
                     stream: true, 
                     temperature: options.temperature,
                 });
@@ -94,6 +97,45 @@ function sanitizeMessages(oldMessages, system) {
     return {'messages': messages, 'systemPrompt': systemPrompt};
 
 }
+
+async function includeImageSources(dataSources, messages) {
+    if (!dataSources || dataSources.length === 0) return messages;
+
+    let imageMessageContent = []
+    for (let i = 0; i < dataSources.length; i++) {
+        const ds = dataSources[i];
+        const encoded_image = await getImageBase64Content(ds);
+        if (encoded_image) {
+            imageMessageContent.push(
+                    { "type": "text",
+                      "text": `Image ${i + 1}:`
+                    }
+            )
+            imageMessageContent.push( 
+                { "type": "image",
+                "source": {
+                        "type": "base64",
+                        "media_type": ds.type,
+                        "data": encoded_image
+                }
+                }, 
+            )
+        }
+    }
+
+    const msgLen = messages.length - 1;
+    messages[msgLen]['content'] = [{ "type": "text",
+                                    "text": additionalImageInstruction
+                                    }, 
+                                    ...imageMessageContent, 
+                                    { "type": "text",
+                                        "text": messages[msgLen]['content']
+                                    }
+                                  ]
+    return messages 
+}
+    
+
 
 
 

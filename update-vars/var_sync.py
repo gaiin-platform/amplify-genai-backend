@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 
 # Configuration
-env_file = '.env.dev'
+env_file = '.env.local'
 sync_mode = 'SYNC'  # Set to 'PULL' to pull vars from AWS or 'SYNC' to sync local vars to AWS
 alphabetize_env = True 
 

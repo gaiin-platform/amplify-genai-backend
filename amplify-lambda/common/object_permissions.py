@@ -10,7 +10,7 @@ def update_object_permissions(access_token,
                               principal_type="user",
                               permission_level="read",
                               policy=""):
-    permissions_endpoint = os.environ['OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT']
+    permissions_endpoint = os.environ['API_BASE_URL'] +  "/utilities/update_object_permissions"
     request = {
         "data": {
             "emailList": shared_with_users,

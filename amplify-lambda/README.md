@@ -53,8 +53,6 @@ The following environment variables are used:
 
 - `DYNAMODB_TABLE`: The base DynamoDB table name for storing data.
 - `ASSISTANTS_DYNAMODB_TABLE`: Stores the assistants' data.
-- `ASSISTANT_THREADS_DYNAMODB_TABLE`: Stores assistant threads' data.
-- `THREAD_RUNS_DYNAMODB_TABLE`: Stores thread run status.
 - `S3_BUCKET_NAME`: The S3 bucket for shared files.
 - `S3_ASSISTANT_FILES_BUCKET_NAME`: The S3 bucket for assistant files.
 - `AUTH0_AUDIENCE`: The Auth0 audience for authentication.

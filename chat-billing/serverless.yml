@@ -57,6 +57,8 @@ provider:
     CHAT_USAGE_TABLE: vu-amplify-${sls:stage}-chat-usage
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
 
   iam:
     role:
@@ -79,6 +81,10 @@ provider:
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
             - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
         - Effect: Allow
           Action:
             - dynamodb:Query
@@ -105,38 +111,40 @@ functions:
   # triggered at the start of each day and month
   # calculates cost of all usage from the chat usage table and the additional charges table
   # saves costs for each user, coa, and date to the history usage table
-  trackUsage:
-    handler: usage/track_usage.handler
-    memorySize: 512 # increased memory size to increase speed
-    timeout: 900 # 900 seconds (15 minutes) is the maximum
-    events:
-      - schedule:
-          rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
-      - schedule:
-          rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
-    environment:
-      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
-      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
-      CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
-      ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+  # removed @ 6pm Aug 8
+  # trackUsage:
+  #   handler: usage/track_usage.handler
+  #   memorySize: 512 # increased memory size to increase speed
+  #   timeout: 900 # 900 seconds (15 minutes) is the maximum
+  #   events:
+  #     - schedule:
+  #         rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
+  #     - schedule:
+  #         rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
+  #   environment:
+  #     MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
 
   # provides real-time usage information via API gateway
-  reportGenerator:
-    handler: usage/report_generator.report_generator
-    memorySize: 128
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: billing/report-generator
-          method: post
-          cors: true
-    environment:
-      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
-      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
-      CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
-      ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+  # removed @ 6pm Aug 8
+  # reportGenerator:
+  #   handler: usage/report_generator.report_generator
+  #   memorySize: 128
+  #   layers:
+  #     - Ref: PythonRequirementsLambdaLayer
+  #   events:
+  #     - http:
+  #         path: billing/report-generator
+  #         method: post
+  #         cors: true
+  #   environment:
+  #     MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
 resources:
   Resources:

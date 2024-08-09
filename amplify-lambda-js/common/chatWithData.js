@@ -150,6 +150,9 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // 3. Is the document done processing wtih RAG, if not, run against the whole document.
 
     const allSources = await getDataSourcesByUse(params, chatRequestOrig, dataSources);
+
+    logger.debug("All datasources for chatWithData: ", allSources);
+
     // These data sources are the ones that will be completely inserted into the
     // conversation
     dataSources = allSources.dataSources;
@@ -354,18 +357,23 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                     const dataSource = s.dataSource;
                     //const summary = summarizeLocations(s.locations);
 
-                    if(isDocument(dataSource)){
+                    if(s && !dataSource){
+                        const source = {key: s.id, name, type: dataSource.type, locations: s.locations};
+                        return {type: 'documentContext', source};
+                    }
+                    else if(dataSource && isDocument(dataSource)){
                         const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
                         const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations};
                         return {type: 'documentContext', source};
                     }
-                    else {
+                    else if(dataSource) {
                         const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
                         return {type, source: {key: dataSource.id, name: dataSource.name || dataSource.id, locations: s.locations}};
                     }
-                    //const name = dataSourceDetailsLookup[s.id]?.name || "Attached Document ("+s.type+")";
-                    // return {...summary};
-                });
+                    else {
+                        return null;
+                    }
+                }).filter(s => s);
 
                 const byType = sources.reduce((acc, source) => {
                     if(!acc[source.type]){

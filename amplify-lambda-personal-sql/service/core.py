@@ -4,6 +4,8 @@ import datetime
 import boto3
 import requests
 
+from common.errors import ActionError
+from common.ops import op
 # Don't remove, required for the registry to work
 from db.postgres import postgres_handler
 
@@ -33,6 +35,18 @@ def parse_result(result):
     # Return the dictionary with 'thought' and 'sql' keys
     return sql_value, thought_value
 
+
+@op(
+    path="/pdb/sql/llmquery",
+    name="queryDatabaseWithLLM",
+    tags=["pdb"],
+    description="Use a LLM to query a database for you based on a detailed natural langauge question, task,"
+                " analysis or other text that you give it. It will create the SQL and return the results as text.",
+    params={
+        "id": "The ID of the database to query",
+        "query": "A detailed natural langauge question, task, analysis or other description that the LLM will use to construct the SQL query. It should be completely self-contained and have all relevant information to construct the query. The LLM will use this to generate the SQL query based on its knowledge of the database.",
+    }
+)
 @validated(op="query")
 def llm_query_db(event, context, current_user, name, data):
     try:
@@ -66,6 +80,7 @@ def llm_query_db(event, context, current_user, name, data):
         print(f"Database schema created in text")
 
         final_query = None
+        final_thought = None
 
         while result is None and tries > 0:
             try:
@@ -78,6 +93,7 @@ def llm_query_db(event, context, current_user, name, data):
 
                 result = query_db(conn, sql)
                 final_query = sql
+                final_thought = thought
 
             except requests.exceptions.HTTPError as err:
                 print(f'HTTP error occurred: {err}')
@@ -93,7 +109,14 @@ def llm_query_db(event, context, current_user, name, data):
         return {
             'success': True,
             'data': result,
-            'location': {"sql_query": final_query}
+            'location': {"sql_query": final_query, "thought": final_thought}
+        }
+
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
 
     except Exception as e:
@@ -104,6 +127,19 @@ def llm_query_db(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/pdb/sql/register",
+    name="registerDatabase",
+    tags=["pdb"],
+    description="Register a database with the Personal Database service. This will allow you to query the database.",
+    params={
+        "name": "The name for the database [a-zA-Z0-9_-], which is for the user's reference",
+        "description": "A description of the database",
+        "type": "The type of database (postgres, mysql, etc.)",
+        "tags": "A list of tags for the database",
+        "connection": "The connection information for the database as a JSON in the format {\"name\":\"alumni\",\"host\":\"localhost\",\"port\":5432,\"user\":\"juleswhite\",\"s_password\":\"amplifytestdb\"} Note: this is the ACTUAL name of the database within the database server, not the name of the database in the Personal Database service.",
+    }
+)
 @validated(op="register")
 def register_db(event, context, current_user, name, data):
     try:
@@ -143,6 +179,12 @@ def register_db(event, context, current_user, name, data):
             'success': False,
             'message': f"Database with name {e.db_name} already exists for user {e.user}"
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         print(e)
         return {
@@ -151,6 +193,18 @@ def register_db(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/pdb/sql/create",
+    name="createDatabaseFromCSVFiles",
+    tags=["pdb"],
+    description="Create a new database from a set of CSV files, one CSV file per table. The schema of each table will match the CSV file automatically.",
+    params={
+        "name": "The name for the database [a-zA-Z0-9_-], which is for the user's reference",
+        "tables": "A JSON list of the tables to create that maps keys (short IDs) to tables. Do NOT put the JSON in a string within quotes. The corresponding document will be used to populate the rows in the table. A sample of the JSON format is: [{\"table\": \"stores\",\"key\":\"#$1\"},{\"table\": \"sales\",\"key\": \"#$2\"},{\"table\": \"features\",\"key\": \"#$0\"}]",
+        "description": "A description of the database",
+        "tags": "A list of string tags for the database"
+    }
+)
 @validated(op="create")
 def create_db(event, context, current_user, name, data):
     try:
@@ -179,6 +233,12 @@ def create_db(event, context, current_user, name, data):
             'success': True,
             'id': db_id
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         print(e)
         return {
@@ -187,6 +247,14 @@ def create_db(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/pdb/sql/list",
+    name="listUserDBs",
+    tags=["pdb"],
+    description="List all of the DBs that the user has registered.",
+    params={
+    }
+)
 @validated(op="list")
 def get_user_dbs(event, context, current_user, name, data):
     try:
@@ -211,6 +279,12 @@ def get_user_dbs(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to get list of databases for the user"
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         print("Error in get_user_dbs {e}")
 
@@ -220,6 +294,15 @@ def get_user_dbs(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/pdb/sql/schema",
+    name="describeDBSchema",
+    tags=["pdb"],
+    description="Describe the schema of the given DB.",
+    params={
+        "id": "The ID of the database to describe the schema for",
+    }
+)
 @validated(op="describe")
 def describe_personal_db_schema(event, context, current_user, name, data):
     try:
@@ -247,6 +330,12 @@ def describe_personal_db_schema(event, context, current_user, name, data):
         return {
             'success': False,
             'message': "Failed to describe schemas from DB"
+        }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
     except Exception as e:
         print("Error in describe_personal_db_schema")
@@ -287,6 +376,12 @@ def describe_db_schema(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to describe schemas from DB"
         }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
+        }
     except Exception as e:
         return {
             'success': False,
@@ -294,6 +389,16 @@ def describe_db_schema(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/pdb/sql/query",
+    name="queryDBWithSQL",
+    tags=["pdb"],
+    description="Execute a SQL query against the DB.",
+    params={
+        "id": "The ID of the database to query",
+        "query": "The SQL query to execute"
+    }
+)
 @validated(op="query")
 def query_personal_db(event, context, current_user, name, data):
     try:
@@ -324,6 +429,12 @@ def query_personal_db(event, context, current_user, name, data):
         return {
             'success': False,
             'message': "Failed to query DB"
+        }
+    except ActionError as e:
+        print(e)
+        return {
+            'success': False,
+            'message': e.message
         }
     except Exception as e:
         print("Error in query_personal_db")

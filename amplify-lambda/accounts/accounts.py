@@ -1,3 +1,4 @@
+from common.ops import op
 from common.validate import validated
 from decimal import Decimal
 import boto3
@@ -36,6 +37,12 @@ def save_accounts_for_user(user, accounts_list):
     dynamodb = boto3.resource('dynamodb')
     accounting_table_name = os.environ['ACCOUNTS_DYNAMO_TABLE']
     users_table = dynamodb.Table(accounting_table_name)
+
+    #clean up rateLimit in accounts:
+    for account in accounts_list:
+        rateLimit = account['rateLimit']
+        if  rateLimit.get("rate", None):
+            account['rateLimit']["rate"] = Decimal(str(rateLimit["rate"]))
 
     try:
         # Put (or update) the item for the specified user in the DynamoDB table
@@ -114,6 +121,14 @@ def charge_request(event, context, user, name, data):
     return create_charge(account_id, charge, description, user, details)
 
 
+@op(
+    path="/state/accounts/get",
+    name="getUserAccounts",
+    tags=["accounts"],
+    description="Get a list of the user's accounts that costs are charged to.",
+    params={
+    }
+)
 @validated("get")
 def get_accounts(event, context, user, name, data):
     # accounts/get

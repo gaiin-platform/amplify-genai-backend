@@ -7,9 +7,8 @@ import uuid
 
 from boto3.dynamodb.conditions import Key
 from common.object_permissions import update_object_permissions
-from common.data_sources import extract_key, translate_user_data_sources_to_hash_data_sources
+from common.data_sources import get_data_source_keys
 from common.share_assistants import share_assistant
-import copy
 import boto3
 
 from common.validate import HTTPException, validated
@@ -42,6 +41,11 @@ def get_data_from_dynamodb(user, name):
 
 @validated("load")
 def load_data_from_s3(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        print("User does not have access to the share functionality")
+        raise HTTPException(401, 'User does not have access to the share functionality')
+
     s3_key = data['data']['key']
     print("Loading data from S3: {}".format(s3_key))
 
@@ -87,34 +91,6 @@ def get_base_prompts(event, context, current_user, name, data):
     }
 
 
-def get_data_source_keys(data_sources):
-    print("Get keys from data sources")
-    data_sources_keys = []
-    for i in range(len(data_sources)):
-        ds = data_sources[i]
-        # print("current datasource: ", ds)
-        key = ''
-        if (ds['id'].startswith("global/")):
-            key = ds['id']
-        else:
-            if (ds["id"].startswith("s3://global/")):
-                key = extract_key(ds['id'])
-            else:
-                ds_copy = copy.deepcopy(ds)
-                # Assistant attached data sources tends to have id vals of uuids vs they key we need
-                if ('key' in ds):
-                    ds_copy['id'] = ds["key"]
-
-                key = translate_user_data_sources_to_hash_data_sources([ds_copy])[0]['id']  # cant
-
-            print("Updated Key: ", key)
-
-        if (not key): return {'success': False, 'error': 'Could not extract key'}
-        data_sources_keys.append(key)
-
-    print("Datasource Keys: ", data_sources_keys)
-    return data_sources_keys
-
 
 def handle_conversation_datasource_permissions(access_token, recipient_users, conversations):
     print('Enter handle shared datasources in conversations')
@@ -147,17 +123,10 @@ def handle_share_assistant(access_token, prompts, recipient_users):
     for prompt in prompts:
         try:
             if ('data' in prompt and 'assistant' in prompt['data'] and 'definition' in prompt['data']['assistant']):
-                assistant_data = prompt['data']['assistant']['definition']
-
-                data_sources = assistant_data['dataSources']
-                print("Datasources: ", data_sources, " for assistant id: ", prompt['id'])
-                data_sources_keys = get_data_source_keys(data_sources)
-
                 data = {
                     'assistantId': prompt['id'],
                     'recipientUsers': recipient_users,
                     'accessType': 'read',
-                    'dataSources': data_sources_keys,
                     'policy': '',
                 }
 
@@ -183,7 +152,7 @@ def share_with_users(event, context, current_user, name, data):
     new_data = data['data']['sharedData']
     new_data['sharedBy'] = current_user.lower()
 
-    conversations = remove_code_interpreter_details(new_data['history']) # if it has any else just return normal convs 
+    conversations = remove_code_interpreter_details(new_data['history']) # if it has any, else it just returns the conv back
 
     # Saving a workspace is sharing with yourself, so we don't need to go through this if it is a workspace save
     if len(conversations) > 0 and len(users) > 0 and current_user != users[0]:
@@ -273,6 +242,10 @@ def remove_code_interpreter_details(conversations):
 
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to share functionality'}
+    
     tableName = os.environ['DYNAMODB_TABLE']
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(tableName)

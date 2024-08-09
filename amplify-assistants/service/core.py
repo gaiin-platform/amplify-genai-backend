@@ -1,216 +1,23 @@
+from datetime import datetime
 import hashlib
 import os
 import time
 import boto3
 import json
 import uuid
-import random
-import string
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
-from common.data_sources import translate_user_data_sources_to_hash_data_sources
+from common.data_sources import get_data_source_keys, translate_user_data_sources_to_hash_data_sources
 from common.encoders import CombinedEncoder
 from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
-from openaiazure.assistant_api import create_new_openai_assistant
 
 from common.validate import validated
 
-SYSTEM_TAG = "amplify:system"
-ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
-ASSISTANT_TAG = "amplify:assistant"
-AMPLIFY_AUTOMATION_TAG = "amplify:automation"
-AMPLIFY_API_KEYS_TAG = "amplify:api-keys"
-
-RESERVED_TAGS = [
-    SYSTEM_TAG,
-    ASSISTANT_BUILDER_TAG,
-    ASSISTANT_TAG,
-    AMPLIFY_AUTOMATION_TAG,
-    AMPLIFY_API_KEYS_TAG
-]
+from assistants.system_assistants import RESERVED_TAGS, get_system_assistants
+from decimal import Decimal
 
 
-def get_amplify_automation_assistant():
-    instructions = """
-You will help accomplish tasks be creating descriptions of javascript fetch operations to execute. I will execute the fetch operations for you and give you the results. You write your fetch code in javascript in special markdown blocks as shown:
-
-```auto
-fetch(<SOME URL>, {
-            method: 'POST',
-            headers: {
-                ...
-            },
-            body: JSON.stringify(<Insert JSON>),
-        });
-```
-
-All ```auto blocks must have a single statement wtih a fetch call to fetch(...with some params...). 
-
-The supported URLs to fetch from are:
-
-GET, /chats // returns a list of chat threads 
-GET, /folders // returns a list of folders 
-GET, /models // returns a list of models 
-GET, /prompts // returns a list of prompts 
-GET, /defaultModelId // returns the default model ID 
-GET, /featureFlags // returns a list of feature flags 
-GET, /workspaceMetadata // returns workspace metadata 
-GET, /selectedConversation // returns the currently selected conversation 
-GET, /selectedAssistant // returns the currently selected assistant
-
-Help me accomplish tasks by creating ```auto blocks and then waiting for me to provide the results from the fetch calls. We keep going until the problem is solved.
-
-Always try to output an ```auto block if possible. When the problem is solved, output <<DONE>>
-    """
-
-    description = """
-Consider this assistant your very own genie, granting your data wishes within Amplify with a simple "command." You make a wish - perhaps for viewing a conversation or organizing your folders - and the assistant spells out the magic words for you to say. With minimal effort on your part, your wish is granted, and you're provided with the treasures you seek.    
-    """
-    id = "ast/amplify-automation"
-    name = "Amplify Automator"
-    datasources = []
-    tags = [AMPLIFY_AUTOMATION_TAG, SYSTEM_TAG]
-    created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
-    updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
-    tools = []
-    data = {
-        "provider": "amplify",
-        "conversationTags": [AMPLIFY_AUTOMATION_TAG],
-    }
-
-    return {
-        'id': id,
-        'coreHash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'hash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'instructionsHash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'dataSourcesHash': hashlib.sha256(json.dumps(datasources).encode()).hexdigest(),
-        'version': 1,
-        'name': name,
-        'description': description,
-        'instructions': instructions,
-        'tags': tags,
-        'createdAt': created_at,
-        'updatedAt': updated_at,
-        'dataSources': datasources,
-        'data': data,
-        'tools': tools,
-        'user': 'amplify'
-    }
-
-
-def get_assistant_builder_assistant():
-    instructions = """
-You are going to help me build a customized ChatGPT assistant. To do this, you will need to help me create the instructions that guide the assistant in its job. 
-
-What we want to define is:
-1. A name and description of the assistant. 
-2. What the assistant does.
-3. What are the rules about how it does its work (e.g., what questions it will or won't answer, things its way of working, etc.)
-4. It's tone of voice. Is it informal or formal in style. Does it have a persona or personality?
-
-You will ask me questions to help determine these things. As we go, try to incrementally output values for all these things. You will write the instructions in a detailed manner that incorporates all of my feedback. Every time I give you new information that changes things, update the assistant.
-
-At the end of every message you output, you will update the assistant in a special code block WITH THIS EXACT FORMAT:
-
-```assistant
-{
-"name": "<FILL IN NAME>"
-"description": "<FILL IN DESCRIPTION>"
-"instructions": "<FILL IN INSTRUCTIONS>"
-}
-```
-    """
-
-    description = "This assistant will guide you through the process of building a customized large language model assistant."
-    id = "ast/assistant-builder"
-    name = "Assistant Creator"
-    datasources = []
-    tags = [ASSISTANT_BUILDER_TAG, SYSTEM_TAG]
-    created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
-    updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
-    tools = []
-    data = {
-        "provider": "amplify",
-        "conversationTags": [ASSISTANT_BUILDER_TAG],
-    }
-
-    return {
-        'id': id,
-        'coreHash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'hash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'instructionsHash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'dataSourcesHash': hashlib.sha256(json.dumps(datasources).encode()).hexdigest(),
-        'version': 1,
-        'name': name,
-        'description': description,
-        'instructions': instructions,
-        'tags': tags,
-        'createdAt': created_at,
-        'updatedAt': updated_at,
-        'dataSources': datasources,
-        'data': data,
-        'tools': tools,
-        'user': 'amplify'
-    }
-
-def get_api_key_creator_assistant():
-    instructions = """
-    You are going to help me build a customized ChatGPT assistant. To do this, you will need to help me create the instructions that guide the assistant in its job. 
-
-    What we want to define is:
-    1. Application Name 
-    2. Application Description
-    3. Do we want to define a use to be the delegate 
-    4. Rate limit - unlimited, monthly, weekly, hourly (dollar amount in the format $0.00
-    5. Optional expiration date
-    6. Acesss type - full-access    XOR   chat, assisant, upload file
-
-    You will ask me questions to help determine these things. As we go, try to incrementally output values for all these things. You will write the instructions in a detailed manner that incorporates all of my feedback. Every time I give you new information that changes things, update the information.
-
-    At the end of every message you output, you will update the assistant in a special code block WITH THIS EXACT FORMAT:
-
-    ```api-key
-    {
-    "name": "<FILL IN APPLICATION NAME>"
-    "description": "<FILL IN APPLICATION    DESCRIPTION>"
-    "delegate": "<FILL IN DELEGATE>"
-    ... so on
-    }
-    ```
-    """
-
-    description = "This assistant will guide you through the process of cretaing an Amplify API Key"
-    id = "ast/assistant-api-key-creator"
-    name = "Amplify API Key Creator"
-    datasources = []
-    tags = [AMPLIFY_API_KEYS_TAG, SYSTEM_TAG]
-    created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
-    updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
-    tools = []
-    data = {
-        "provider": "amplify",
-        "conversationTags": [AMPLIFY_API_KEYS_TAG],
-    }
-
-    return {
-        'id': id,
-        'coreHash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'hash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'instructionsHash': hashlib.sha256(instructions.encode()).hexdigest(),
-        'dataSourcesHash': hashlib.sha256(json.dumps(datasources).encode()).hexdigest(),
-        'version': 1,
-        'name': name,
-        'description': description,
-        'instructions': instructions,
-        'tags': tags,
-        'createdAt': created_at,
-        'updatedAt': updated_at,
-        'dataSources': datasources,
-        'data': data,
-        'tools': tools,
-        'user': 'amplify'
-    }
 def check_user_can_share_assistant(assistant, user_id):
     if assistant:
         return assistant['user'] == user_id
@@ -231,6 +38,9 @@ def check_user_can_update_assistant(assistant, user_id):
 
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('assistants' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to assistant functionality'}
     """
     Deletes an assistant from the DynamoDB table based on the assistant's public ID.
 
@@ -271,6 +81,9 @@ def delete_assistant(event, context, current_user, name, data):
 
 @validated(op="list")
 def list_assistants(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('assistants' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to assistant functionality'}
     """
     Retrieves all assistants associated with the current user.
 
@@ -285,14 +98,13 @@ def list_assistants(event, context, current_user, name, data):
         dict: A dictionary containing the list of assistants.
     """
     assistants = list_user_assistants(current_user)
-    # Add the system assistants
-    assistants.append(get_assistant_builder_assistant())
-    # assistants.append(get_amplify_automation_assistant())
-    # assistants.append(get_api_key_creator_assistant())
 
     assistant_ids = [assistant['id'] for assistant in assistants]
 
     access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
+
+     # Add the system assistants
+    assistants += get_system_assistants(data['groups'], current_user)
 
     # Make sure each assistant has a data field and initialize it if it doesn't
     for assistant in assistants:
@@ -373,6 +185,10 @@ def get_assistant(assistant_id):
 
 @validated(op="create")
 def create_assistant(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('assistants' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to assistant functionality'}
+    
     print(f"Creating assistant with data: {data}")
 
     extracted_data = data['data']
@@ -387,7 +203,7 @@ def create_assistant(event, context, current_user, name, data):
     tags = [tag for tag in tags if not tag.startswith("amplify:") and tag not in RESERVED_TAGS]
 
     instructions = extracted_data['instructions']
-    disclaimer = extracted_data.get("disclaimer", "")
+    disclaimer = extracted_data['disclaimer']
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
@@ -407,7 +223,8 @@ def create_assistant(event, context, current_user, name, data):
 
         for i in range(len(filtered_ds)):
             source = filtered_ds[i]
-            if (not source['id'].startswith("s3://")): filtered_ds[i]['id'] = source['key']
+            if "://" not in source['id']:
+                filtered_ds[i]['id'] = source['key']
         
         print(f"Final data sources before translation: {filtered_ds}")
 
@@ -442,11 +259,17 @@ def create_assistant(event, context, current_user, name, data):
 
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
+    access = data['allowed_access']
+    if ('share' not in access and 'full_access' not in access):
+        return {'success': False, 'message': 'API key does not have access to share functionality'}
+
+        
     extracted_data = data['data']
     assistant_key = extracted_data['assistantId']
     recipient_users = extracted_data['recipientUsers']
-    access_type = extracted_data['accessType']
-    data_sources = extracted_data['dataSources']
+    access_type = extracted_data.get('accessType', 'read')
+    note = extracted_data.get('note', 'Shared via API')
+
     policy = extracted_data.get('policy', '')
 
     return share_assistant_with(
@@ -455,18 +278,21 @@ def share_assistant(event, context, current_user, name, data):
         assistant_key=assistant_key,
         recipient_users=recipient_users,
         access_type=access_type,
-        data_sources=data_sources,
-        policy=policy
-
+        note=note,
+        api_accessed=data['api_accessed'],
+        policy=policy,
+        
     )
 
 
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, data_sources, policy=''):
-    dynamodb = boto3.resource('dynamodb')
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, api_accessed, policy=''): # data_sources, 
     assistant_entry = get_assistant(assistant_key)
 
     if not assistant_entry:
         return {'success': False, 'message': 'Assistant not found'}
+    
+    data_sources = get_data_source_keys(assistant_entry['dataSources'])
+    print("DS: ", data_sources)
 
     if not can_access_objects(
             access_token=access_token,
@@ -497,6 +323,7 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
             permission_level='read',
             policy='')
 
+        failed_shares = []
         for user in recipient_users:     
 
             print(f"Creating alias for user {user} for assistant {assistant_public_id}")
@@ -504,8 +331,116 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
                                    'latest')
             print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
+            # if api accessed  
+            if (api_accessed):
+                print("API_accessed, sending to s3...")
+                result = assistant_share_save(current_user, user, note, assistant_entry)
+                if (not result['success']):
+                    print("Failed share for: ", user)
+                    failed_shares.append(user)
+
         print(f"Successfully updated permissions for assistant {assistant_public_id}")
-        return {'success': True, 'message': 'Permissions updated'}
+        if (len(failed_shares) > 0):
+            return {'success': False, 'message': 'Unable to share with some users', 'failedShares': failed_shares}
+        
+        return {'success': True, 'message': f"Assistants shared with users: {recipient_users}" }
+
+
+def assistant_share_save(current_user, shared_with, note, assistant):
+    try:
+        # Generate a unique file key for each user
+        dt_string = datetime.now().strftime('%Y-%m-%d')
+        s3_key = '{}/{}/{}/{}.json'.format(shared_with, current_user, dt_string, str(uuid.uuid4()))
+        
+        ast_id = assistant['id']
+
+        # keys_to_copy = ['id', 'name', 'description', 'instructions', 'disclaimer', 
+        #                 'tags', 'dataSources', 'provider', 'uri', 'version', 'data',]
+        # ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
+        ast = assistant
+        ast['tools'] = []
+        ast['fileKeys'] = []
+        #match frontend prompt data 
+        ast_prompt =  {
+                'id': ast_id,
+                'type': 'root_prompt',
+                'name': assistant['name'],
+                'description': assistant['description'],
+                'content': assistant['instructions'],
+                'folderId': "assistants",
+                'data': {
+                    'assistant': {'id': ast_id, 'definition': ast},
+                    **(assistant.get('data', {})),
+                    'noCopy': True,
+                    'noEdit': True,
+                    'noDelete': True,
+                    'noShare':True,
+                }
+            }
+        ast_prompt['data']['access']['write'] = False
+        shared_data = {
+            'version': 1,
+            'history':[],
+            'prompts': [ast_prompt],
+            'folders':[],
+            'sharedBy': current_user
+        }
+        bucket_name = os.environ['S3_SHARE_BUCKET_NAME']
+        s3_client = boto3.client('s3')
+
+        print('Put assistant in s3')
+        s3_client.put_object(Body=json.dumps(shared_data, default=str).encode(), Bucket=bucket_name, Key=s3_key)
+
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(os.environ['SHARES_DYNAMODB_TABLE'])
+
+        name = '/state/share'
+        response = table.query(
+            IndexName="UserNameIndex",
+            KeyConditionExpression=Key('user').eq(shared_with) & Key('name').eq(name)
+        )
+
+        items = response.get('Items')
+        timestamp = int(time.time() * 1000)
+
+        if not items:
+            # No item found with user and name, create a new item
+            id_key = '{}/{}'.format(shared_with, str(uuid.uuid4()))  # add the user's name to the key in DynamoDB
+            new_item = {
+                'id': id_key,
+                'user': shared_with,
+                'name': name,
+                'data': [{'sharedBy': current_user, 'note': note, 'sharedAt': timestamp, 'key': s3_key}],
+                'createdAt': timestamp,
+                'updatedAt': timestamp
+            }
+            table.put_item(Item=new_item)
+
+        else:
+            # Otherwise, update the existing item
+            item = items[0]
+
+            result = table.update_item(
+                Key={'id': item['id']},
+                ExpressionAttributeNames={'#data': 'data'},
+                ExpressionAttributeValues={
+                    ':data': [{'sharedBy': current_user, 'note': note, 'sharedAt': timestamp, 'key': s3_key}],
+                    ':updatedAt': timestamp},
+                UpdateExpression='SET #data = list_append(#data, :data), updatedAt = :updatedAt',
+                ReturnValues='ALL_NEW',
+            )
+        print('Added to table')
+
+        return {'success': True}
+
+    except Exception as e:
+        print(e)
+        return {'success': False}
+
+def decimal_to_float(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError("Object of type 'Decimal' is not JSON serializable")
 
 
 def get_most_recent_assistant_version(assistants_table,
@@ -980,3 +915,4 @@ def save_assistant_for_rag(assistant):
         print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
     except Exception as e:
         print(f"Error saving assistant for RAG: {e}")
+

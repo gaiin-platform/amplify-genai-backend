@@ -231,14 +231,3 @@ def create_or_update_personal_db(event, context, current_user, name, data):
             'success': False,
             'message': "DB could not be created"
         }
-
-
-@validated(op="sample")
-def sample(event, context, current_user, name, data):
-    data = data['data']
-
-    print(f"User {current_user} requested {data}")
-
-    return {"success": True,
-            "message": "Sample response",
-            "data": {"msg": "Sample response"}}

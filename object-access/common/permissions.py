@@ -51,11 +51,11 @@ permissions_by_state_type = {
     "/utilities/create_cognito_group": {
         "create_cognito_group": can_create_cognito_group
     },
-    "/utilities/in_cognito_group": {
-    "read": can_read_cognito_groups
+    "/utilities/get_user_groups": {
+        "read": can_read_cognito_groups
     },
-     "/utilities/emails": {
-    "read": can_read_emails
+    "/utilities/emails": {
+        "read": can_read_emails
     }
 }
 
