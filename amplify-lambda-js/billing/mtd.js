@@ -8,7 +8,6 @@ const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
 export const handler = async (event) => {
     try {
-        // Parse the request body
         const body = JSON.parse(event.body);
         const email = body.data.email;
 
@@ -19,7 +18,6 @@ export const handler = async (event) => {
             };
         }
 
-        // Query DynamoDB
         const params = {
             TableName: costDynamoTableName,
             KeyConditionExpression: 'id = :email',
@@ -38,17 +36,22 @@ export const handler = async (event) => {
             };
         }
 
-        const costData = result.Items[0];
-        const dailyCost = parseFloat(costData?.dailyCost) || 0;
-        const monthlyCost = parseFloat(costData?.monthlyCost) || 0;
-        const totalCost = dailyCost + monthlyCost;
+        let totalDailyCost = 0;
+        let totalMonthlyCost = 0;
+
+        result.Items.forEach(item => {
+            totalDailyCost += parseFloat(item.dailyCost) || 0;
+            totalMonthlyCost += parseFloat(item.monthlyCost) || 0;
+        });
+
+        const totalCost = totalDailyCost + totalMonthlyCost;
 
         return {
             statusCode: 200,
             body: JSON.stringify({
                 email: email,
-                dailyCost: dailyCost,
-                monthlyCost: monthlyCost,
+                dailyCost: totalDailyCost,
+                monthlyCost: totalMonthlyCost,
                 'MTD Cost': totalCost,
             }),
         };
