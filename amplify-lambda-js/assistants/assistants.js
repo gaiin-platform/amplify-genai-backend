@@ -267,8 +267,6 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     // }
 
 
-    let selected = defaultAssistant;
-
 
     const clientSelectedAssistant = (body.options && body.options.assistantId) ?
         body.options.assistantId : null;
