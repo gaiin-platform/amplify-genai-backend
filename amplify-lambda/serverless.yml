@@ -170,7 +170,7 @@ functions:
 
   chat_endpoint:
     handler: chat/service.chat_endpoint
-    timeout: 30
+    timeout: 180
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
