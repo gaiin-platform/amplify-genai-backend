@@ -16,7 +16,7 @@ plugins:
 
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
     layer: true
 
   serverless-offline: 
@@ -31,7 +31,7 @@ custom:
 
   deploymentBucket:
     versioning: true
-    accelerate: true
+    accelerate: false
     blockPublicAccess: true
     tags:
       - Key: Environment
@@ -39,7 +39,7 @@ custom:
 
 provider:
   name: aws
-  runtime: python3.10
+  runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
@@ -122,7 +122,7 @@ functions:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"    
 
   share_src_ids:
-    runtime: python3.10
+    runtime: python3.11
     handler: .share_src_ids
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -159,7 +159,7 @@ functions:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
   update_ojbect_perms:
-    runtime: python3.10
+    runtime: python3.11
     handler: object_access.update_object_permissions
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -196,7 +196,7 @@ functions:
 
 
   can_access_objects:
-    runtime: python3.10
+    runtime: python3.11
     handler: object_access.can_access_objects
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -228,7 +228,7 @@ functions:
               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
 
   simulate_access:
-     runtime: python3.10
+     runtime: python3.11
      handler: object_access.simulate_access_to_objects
      layers:
        - Ref: PythonRequirementsLambdaLayer
@@ -261,7 +261,7 @@ functions:
 
 
   create_cognito_group:
-      runtime: python3.10
+      runtime: python3.11
       handler: object_access.create_cognito_group
       layers:
         - Ref: PythonRequirementsLambdaLayer

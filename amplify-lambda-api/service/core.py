@@ -420,6 +420,6 @@ def generate_presigned_url(file):
     
 
 def formatRateLimit(rateLimit):
-    if rateLimit.get(["rate"], None):
+    if rateLimit.get("rate", None):
         rateLimit["rate"] = Decimal(str(rateLimit["rate"]))
     return rateLimit

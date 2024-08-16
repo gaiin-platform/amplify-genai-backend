@@ -245,43 +245,33 @@ def lambda_handler(event, context):
 def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(embedding_progress_table)
-
     src = None
 
     try:
         local_chunks = data.get('chunks', [])
         src = data.get('src', '')
         trimmed_src = trim_src(src)
-        childChunk = (childChunk)
-
+        childChunk = str(childChunk)
 
         try:
             response = table.get_item(Key={'object_id': trimmed_src})
             item = response.get('Item')
             if item and 'data' in item:
                 total_chunks = item['data'].get('totalChunks')
-    
                 logging.info(f"Processing child chunk: {childChunk} of total parent chunks: {total_chunks}")
-
                 local_chunks_to_process = len(local_chunks)
                 logging.info(f"There are {local_chunks_to_process} (max 10) within child chunk: {childChunk}")
                 
-                
-                # Check if the `terminated` field is set to False
                 if not item['data'].get('terminated', True):
                     logging.info("The file embedding process has been terminated.")
                     return False, src
             else:
-                logging.info("No item found in DynamoDB table.")
-
+                logging.warning("No item found in DynamoDB table.")
         except ClientError as e:
-            logging.error("Failed to fetch item from DynamoDB table.")
-            logging.error(e)
+            logging.error(f"Failed to fetch item from DynamoDB table: {e}")
 
-
-        print(f"Processing {childChunk} of {total_chunks} (fetched from DynamoDB)")
+        logging.info(f"Processing {childChunk} of {total_chunks} (fetched from DynamoDB)")
         current_local_chunk_index = 0
-
 
         with db_connection.cursor() as cursor:
             db_connection.commit()
@@ -293,88 +283,61 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                     char_index = chunk['char_index']
 
                     response_clean_text = preprocess_text(content)
-                    if response_clean_text["success"]:
-                        clean_text = response_clean_text["data"]
-                    else:
-                        error = response_clean_text["error"]
-                        print(f"Error occurred: {error}")
-                        raise Exception(error)
+                    if not response_clean_text["success"]:
+                        raise Exception(f"Text preprocessing failed: {response_clean_text['error']}")
+                    clean_text = response_clean_text["data"]
 
-
-                    
-                    # Generate embeddings
                     response_vector_embedding = generate_embeddings(clean_text)
-                    if response_vector_embedding["success"]:
-                        vector_embedding = response_vector_embedding["data"]
-                    else:
-                        error = response_vector_embedding["error"]
-                        print(f"Error occurred: {error}")
-                        
-                    # Generate QA summary
-                    response_qa_summary = generate_questions(clean_text)
-                    if response_qa_summary["success"]:
-                        qa_summary = response_qa_summary["data"]
-                    else:
-                        error = response_qa_summary["error"]
-                        print(f"Error occurred: {error}")
+                    if not response_vector_embedding["success"]:
+                        raise Exception(f"Vector embedding generation failed: {response_vector_embedding['error']}")
+                    vector_embedding = response_vector_embedding["data"]
 
-                    # Create embeddings for QA summary    
+                    response_qa_summary = generate_questions(clean_text)
+                    if not response_qa_summary["success"]:
+                        raise Exception(f"QA summary generation failed: {response_qa_summary['error']}")
+                    qa_summary = response_qa_summary["data"]
+
                     response_qa_embedding = generate_embeddings(content=qa_summary)
-                    if response_qa_embedding["success"]:
-                        qa_vector_embedding = response_qa_embedding["data"]
-                    else:
-                        error = response_qa_embedding["error"]
-                        print(f"Error occurred: {error}")    
+                    if not response_qa_embedding["success"]:
+                        raise Exception(f"QA embedding generation failed: {response_qa_embedding['error']}")
+                    qa_vector_embedding = response_qa_embedding["data"]
 
                     qa_summary_input_tokens = num_tokens_from_text(clean_text, qa_model_name)
                     qa_summary_output_token_count = num_tokens_from_text(qa_summary, qa_model_name)
                     vector_token_count = num_tokens_from_text(clean_text, embedding_model_name)
                     qa_vector_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
-
-                    #This is written to the embeddings table but is not used for cost calucations
                     total_vector_token_count = vector_token_count + qa_vector_token_count
-                    
-                    
+
                     logging.info(f"Embedding local chunk index: {current_local_chunk_index}")
                     insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_local_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
-                    print(f"Getting Account information for {trimmed_src}")
+
+                    logging.info(f"Getting Account information for {trimmed_src}")
                     result = get_key_details(trimmed_src)
-                   
-
                     if result:
-                        print("API Key:", result['apiKey'])
                         api_key = result['apiKey']
-                        print("Account:", result['account'])
                         account = result['account']
-                        print("User:", result['originalCreator'])
                         user = result['originalCreator']
+                        logging.info(f"Account details retrieved for {trimmed_src}")
                     else:
-                        print("Item not found or error retrieving the item.")
+                        logging.error(f"Failed to retrieve account details for {trimmed_src}")
+                        raise Exception("Account details not found")
 
-                    # Record QA usage in DynamoDB
-                    record_usage(account,src, user, qa_model_name, api_key=api_key,input_tokens=qa_summary_input_tokens, output_tokens=None)
-
-                    record_usage(account,src, user, qa_model_name, api_key=api_key,input_tokens=None, output_tokens=qa_summary_output_token_count)
-
-                    # Record embedding usage in DynamoDB
-                    record_usage(account,src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
+                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=qa_summary_input_tokens, output_tokens=None)
+                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=None, output_tokens=qa_summary_output_token_count)
+                    record_usage(account, src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
 
                     current_local_chunk_index += 1
                     db_connection.commit()
                 except Exception as e:
-                    logging.error(f"An error occurred embedding chunk index: {local_chunk_index}")
-                    logging.error(f"An error occurred during the embedding process: {e}")
+                    logging.error(f"Error processing chunk {local_chunk_index} of {src}: {str(e)}")
                     update_child_chunk_status(trimmed_src, childChunk, "failed")
-                    raise
+                    db_connection.rollback()
 
-        # After all chunks are processed, update the status to 'complete'
-
-        update_child_chunk_status ( trimmed_src, childChunk, "completed")
-
+        update_child_chunk_status(trimmed_src, childChunk, "completed")
         return True, src
 
     except Exception as e:
-        logging.exception("An error occurred during the embed_chunks execution.")
+        logging.exception(f"Critical error in embed_chunks for {src}: {str(e)}")
         update_child_chunk_status(trimmed_src, childChunk, "failed")
         db_connection.rollback()
         return False, src

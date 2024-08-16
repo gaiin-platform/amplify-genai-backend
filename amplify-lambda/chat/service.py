@@ -6,7 +6,7 @@ from common.validate import validated
 def chat_endpoint(event, context, current_user, name, data):
     try:
         payload = data['data']
-        print(payload)
+        # print(payload)
         chat_url = os.environ['CHAT_ENDPOINT']
         access_token = data['access_token']
 
