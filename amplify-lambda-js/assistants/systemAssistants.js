@@ -343,24 +343,24 @@ const systemAssistantIds = {
         End your resopnse with "You can verify the information through the API documentation. Let me know if you would like to see the it." (IF IT MAKES SENSE TO SAY SO)
     `,
     description: "This assistant will guide you through the process of making HTTP calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents.",
+    
     dataSources: [
-        //obtained from file query (listing our files) and reformatting
-        {
-            "metadata": {
-              "totalItems": 273,
-              "name": "Assistant_API_Document.docx",
-              "totalTokens": 4105,
-              "tags": [],
-              "props": {},
-            },
-            "data": {},
-            "name": "Assistant_API_Document.docx",
-            "id": "global/6bfca2049da590414caf9e803219d996f4a761a4fffd9a0341d47e373b357f60.content.json",
-            "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "key": "Amplify_System_Assistants/2024-07-19/b3741908-5b5f-4328-b5c6-e009f686cf5b.json"
-          }
-          
-    ],
+    //obtained from file query (listing our files) and reformatting
+    {
+        "metadata": {
+          "totalItems": 274,
+          "name": "Assistant_API_Document.docx",
+          "totalTokens": 4124,
+          "tags": [],
+          "props": {},
+        },
+        "data": {},
+        "name": "Assistant_API_Document.docx",
+        "id": "global/7b1697d5762e857e74e27dbe8096cd1112cd3f41154d2ee875c8105524645c5b.content.json",
+        "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "key": "Amplify_System_Assistants/2024-08-16/5b1669c5-0a2a-4ca5-9b8a-bbe702dc4dce.json"
+      }
+],
 
     tags: [AMPLIFY_API_DOC_HELPER_TAG, SYSTEM_TAG],
     tools: [],

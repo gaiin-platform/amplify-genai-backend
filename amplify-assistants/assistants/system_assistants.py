@@ -499,7 +499,7 @@ def get_api_doc_helper_assistant():
     description = "This assistant will guide you through the process of making http calls to Amplify's API. Provides accurate API usage information, example requests, and response explanations without referencing source documents."
     id = "ast/assistant-api-doc-helper"
     name = "Amplify API Assistant"
-    datasources = []
+    datasources = ["global/7b1697d5762e857e74e27dbe8096cd1112cd3f41154d2ee875c8105524645c5b.content.json"]
     tags = [AMPLIFY_API_DOC_HELPER_TAG, SYSTEM_TAG]
     created_at = time.strftime('%Y-%m-%dT%H:%M:%S')
     updated_at = time.strftime('%Y-%m-%dT%H:%M:%S')
