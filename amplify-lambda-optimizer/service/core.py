@@ -1,10 +1,14 @@
 import os
 import uuid
+from typing import List
+
+import yaml
 
 from common.ops import op
 from common.validate import validated
 from llm.chat import chat, prompt
 from pydantic import BaseModel, Field
+
 
 
 @op(
@@ -55,7 +59,8 @@ def optimize(event, context, current_user, name, data):
         """
 
         # This must be configured in the registry entry as described above
-        access_token = data['accessToken']
+
+        access_token = data['access_token']
 
         data = data['data']
         datasource = data.get('dataSource', None)
@@ -112,7 +117,7 @@ def optimize(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        print(e)
+        print("Error: ", e)
         return {
             'success': False,
             'message': "Failed to generate an optimized prompt."
@@ -122,6 +127,7 @@ def optimize(event, context, current_user, name, data):
 class PromptInput(BaseModel):
     task: str = Field(description="The task to generate a prompt template for.")
     max_placeholders: int = Field(description="The maximum number of placeholders to use in the prompt template.")
+
 
 class PromptTemplateOutput(BaseModel):
     prompt_template: str = Field(description="The template for a useful prompt.")

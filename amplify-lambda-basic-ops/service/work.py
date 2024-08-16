@@ -206,7 +206,7 @@ def delete_user_record(event, context, current_user, name, data):
     name="echoMessage",
     description="Echo a message back to the user as a pause.",
     params={
-        "message": "The message to be echoed back with new lines escaped as \\n."
+        "message": "The message to be echoed back with new lines escaped as \\n. This will insert the entire content of that message into the placeholder, but strip out anything prefixed with Thought: or Follow-up:. If you reference the same message twice, its content will be duplicated."
     }
 )
 @validated(op="echo")
@@ -216,10 +216,10 @@ def echo(event, context, current_user, name, data):
         message = data['data'].get('message', '')
 
         # Sections
-        prefixes = ["Thought:", "Content:", "Follow-up:"]
+        prefixes = ["Template:", "Thought:", "Content:", "Follow-up:"]
         sections = extract_sections(prefixes, message)
-        content_sections = [section for section in sections if section["key"] == "Content:"]
-        content_section_combined_value = " ".join([section["value"] for section in content_sections])
+        content_sections = [section for section in sections if section["key"] == "Content:" or section["key"] == "Template:"]
+        content_section_combined_value = "\n\n".join([section["value"] for section in content_sections])
 
         return {
             'success': True,

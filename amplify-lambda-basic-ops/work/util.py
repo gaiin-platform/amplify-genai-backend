@@ -25,6 +25,8 @@ def extract_sections(prefixes, text):
 prefixes = ["Thoughts:", "Contents:", "Follow-ups:"]
 
 text = """
+Someo other stuff
+
 Thought: I'll develop comprehensive content on Vanderbilt University by expanding on multiple aspects of the institution, including its foundation, academic programs, research contributions, notable alumni, campus life, and more. Here's the extended content in eight paragraphs:
 
 Content: Vanderbilt University, commonly referred to as Vanderbilt, is a private research university located in Nashville, Tennessee. It was founded in 1873 with a $1 million donation from Cornelius Vanderbilt, a shipping and rail magnate, despite having never been to the South himself. Vanderbilt's vision was to strengthen the ties between Northern and Southern states following the Civil War. The university was initially affiliated with the Methodist Episcopal Church, South, until it gained independence in 1914.

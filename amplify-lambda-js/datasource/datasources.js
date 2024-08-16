@@ -11,6 +11,8 @@ const logger = getLogger("datasources");
 const client = new S3Client();
 const dynamodbClient = new DynamoDBClient();
 
+export const additionalImageInstruction = "\n\n Additional Image Instructions:\n If given an encode image, describe the image in vivid detail, capturing every element, including the subjects, colors, textures, and emotions. Provide enough information so that someone can visualize the image perfectly without seeing it, using precise and rich language. This should be its own block of text."
+
 const dataSourcesQueryEndpoint = process.env.DATASOURCES_QUERY_ENDPOINT;
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
@@ -29,8 +31,8 @@ export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = t
 
         return base
             .filter(m => {
-                return m.data && m.data.dataSources
-            }).flatMap(m => m.data.dataSources)
+                return m.data && m.data.dataSources 
+            }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds))
     }
 
     return [];
@@ -65,6 +67,35 @@ export const getFileText = async (key) => {
     }
 }
 
+export const getImageBase64Content = async (dataSource) => {
+    const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
+    const key = extractKey(dataSource.id)
+    logger.debug("Fetching file from S3", {bucket: bucket, key: key});
+
+    const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+    });
+
+    try {
+        const response = await client.send(command);
+        const streamToString = (stream) => 
+            new Promise((resolve, reject) => {
+                const chunks = [];
+                stream.on("data", (chunk) => chunks.push(chunk));
+                stream.on("error", reject);
+                stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+            });
+        
+        const data = await streamToString(response.Body);
+        return data;
+    } catch (error) {
+        logger.error(error, {bucket: bucket, key: key});
+        return null;
+    }
+
+}
+
 export const isDocument = ds =>
     (ds && ds.id && ds.id.indexOf("://") < 0) ||
     (ds && ds.key && ds.key.indexOf("://") < 0) ||
@@ -72,6 +103,7 @@ export const isDocument = ds =>
     (ds && ds.key && ds.key.startsWith("s3://"));
 
 
+    export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
 
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
@@ -112,7 +144,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0,-1)
         .filter( m => {
             return m.data && m.data.dataSources
-        }).flatMap(m => m.data.dataSources);
+        }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
         params,
@@ -334,6 +366,15 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
 export const resolveDataSources = async (params, body, dataSources) => {
     logger.info("Resolving data sources", {dataSources: dataSources});
 
+    // seperate the image ds
+    if (body && body.messages && body.messages.length > 0) {
+        const lastMsg = body.messages[body.messages.length - 1];
+        const ds = lastMsg.data && lastMsg.data.dataSources;
+        if (ds) body.imageSources = ds.filter(d => isImage(d));
+    }
+
+    dataSources = dataSources.filter(ds => !isImage(ds))
+    
     dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
@@ -352,7 +393,8 @@ export const resolveDataSources = async (params, body, dataSources) => {
     if (nonUserSources && nonUserSources.length > 0) {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
-        if (!await canReadDataSources(params.accessToken, ds_with_keys)) {
+        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: ds.key })) : [];
+        if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
     }
@@ -524,8 +566,8 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
  * @returns {Promise<Awaited<unknown>[]>}
  */
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
-
-    dataSources = await resolveDataSourceAliases(params, body, dataSources);
+    const toResolve = dataSources ? dataSources.filter(ds => !isImage(ds)) : [];
+    dataSources = await resolveDataSourceAliases(params, body, toResolve);
 
     const translated = await Promise.all(dataSources.map(async (ds) => {
 

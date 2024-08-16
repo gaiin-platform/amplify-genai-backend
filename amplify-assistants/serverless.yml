@@ -47,6 +47,7 @@ provider:
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
     BILLING_DYNAMODB_TABLE: chat-billing-${sls:stage}-additional-charges
+    COST_CALCULATIONS_DYNAMODB_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
     S3_SHARE_BUCKET_NAME: vu-amplify-${sls:stage}-share
     SHARES_DYNAMODB_TABLE: vu-amplify-${sls:stage}
@@ -83,6 +84,7 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"

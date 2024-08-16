@@ -149,28 +149,29 @@ const systemAssistantIds = {
                 -  What we need to define as DATA is (Do not stop gathering data until you have an answer/no null values for each attribute):
                 {
                     "account": "<SPECIFY SELECTED ACCOUNT as the account object given>",
-                    "delegate?": "<SPECIFY DELEGATE EMAIL/USERNAME OR null IF SPECIFIED NO DELEGATE - NOT PROVIDED DEFAULT: null>",
+                    "delegate?": "<SPECIFY DELEGATE EMAIL/USERNAME OR null IF SPECIFIED NO DELEGATE >",
                     "appName": "<FILL IN APPLICATION NAME>",
                     "appDescription": "<FILL IN APPLICATION DESCRIPTION>",
                     "rateLimit": {
-                        "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
+                        "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Daily', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                         "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
                     },
                     "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",
                     "accessTypes": [
                         <LIST ALL ACCESS TYPES ('full_access', 'chat', 'assistants', 'upload_file', 'share', dual_embedding) SELECTED> - NOT PROVIDED DEFAULT: 'full_access'
                     ],
-                    "systemUse": <SPECIFY true/false if GIVEN, THERE CAN BE NO DELEGATE TO BE SET TO true - NOT PROVIDED DEFAULT: null> 
+                    "systemUse": <SPECIFY true/false if GIVEN, THERE CAN BE NO DELEGATE TO BE SET TO true > 
                     }
                 
                 - Additional information for you to understand if asked:
+                    * A Personal use key means no delegate, set delegate to null.
                     * System use means the delegate will be removed if one was added, confirm with the user that they are okay with removing the delegate if they ask for 'system use', ONLY when they have already specified a delegate
                     * if they say 'system use; and there is no delegate, then you do not need to confirm 
                     * full_access means access to ['chat', 'assistants', 'upload_file', 'share', dual_embedding]
                     * you have a list of the accounts given below, display the name and id so that the user can identify the account by using either attribute. Refer to the account by "Account <account.name> - <account.id>"
                     * ask the user to give you the full date for the expiration date (if applicale) 
                     * When you list the access types to the user OUTSIDE of the block ensure you format the types like this: ('Full Access', 'Chat', 'Assistants', 'Upload File', 'Share', Dual Embedding)
-                    * ensure to OMIT any attribute not given (&& do not have a NOT PROVIDED DEFAULT) in the DATA object inside the APIkey block
+                    * ensure to OMIT any attributes not given THAT DO NOT have a 'NOT PROVIDED DEFAULT' in the DATA object inside the APIkey block. In other words, Always include attributes that have a 'NOT PROVIDED DEFAULT' even if they are not given.
                     
             3. Update API Key - OP UPDATE
                 - Ensure you have identified which Api Key the user is wanting to update. Ask if you do not know by listing the supplied API Keys in markdown
@@ -180,7 +181,7 @@ const systemAssistantIds = {
                     [{  "id": <owner_api_id FROM IDENTIFIED KEY>,
                         "name:" <applicationName FROM IDENTIFIED KEY>,
                         "rateLimit": {
-                            "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Weekly', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
+                            "period": "<SPECIFY RATE LIMIT PERIOD ('Unlimited', 'Monthly', 'Daily', 'Hourly') OR - NOT PROVIDED DEFAULT: 'Unlimited'>",
                             "rate?": "<SPECIFY RATE AMOUNT (0.00 FORMAT - NOT PROVIDED DEFAULT: 100.00) OR null IF 'Unlimited'>"
                         },
                         "expirationDate?": "<SPECIFY EXPIRATION DATE (YYYY-MM-DD FORMAT) OR null IF SPECIFIED NO EXPIRATION - NOT PROVIDED DEFAULT: null>",

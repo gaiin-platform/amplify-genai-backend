@@ -20,6 +20,11 @@ def translate_user_data_sources_to_hash_data_sources(data_sources):
         key = ds['id']
 
         try:
+            if ("image/" in ds['type']):
+                ds['id'] = extract_key(ds['id']) 
+                translated_data_sources.append(ds)
+                continue
+
             if key.startswith("s3://"):
                 key = extract_key(key)
 
@@ -50,6 +55,9 @@ def get_data_source_keys(data_sources):
     data_sources_keys = []
     for i in range(len(data_sources)):
         ds = data_sources[i]
+        if ('metadata' in ds and "image/" in ds['type']):
+            data_sources_keys.append(ds['id'])
+            continue
         # print("current datasource: ", ds)
         key = ''
         if (ds['id'].startswith("global/")):

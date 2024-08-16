@@ -16,6 +16,7 @@ custom:
   pythonRequirements:
     dockerizePip: non-linux
     layer: true
+    slim: true
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -47,11 +48,14 @@ provider:
     ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
+    CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
+    S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
     S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
     S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
+    S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
     S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
     S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
@@ -72,10 +76,19 @@ provider:
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
 
   iam:
     role:
       statements:
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+            - ssm:DescribeParameters
+            - ssm:PutParameter
+          Resource: 
+            - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+  
         - Effect: Allow
           Action:
             - s3:ListBucket
@@ -124,6 +137,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
@@ -139,6 +154,7 @@ provider:
             - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
             - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
             - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
@@ -146,11 +162,15 @@ provider:
             - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
             - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
             - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
+ 
 
 functions:
 
   chat_endpoint:
     handler: chat/service.chat_endpoint
+    timeout: 180
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -202,6 +222,7 @@ functions:
 
   get_multiple_conversations:
     handler: state/conversation.get_multiple_conversations
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -212,6 +233,7 @@ functions:
 
   get_all_conversation:
     handler: state/conversation.get_all_conversations
+    timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
@@ -219,6 +241,7 @@ functions:
           path: state/conversation/get_all
           method: get
           cors: true
+
 
   upload_file:
     handler: assistant/assistant.get_presigned_url
@@ -229,6 +252,8 @@ functions:
           path: assistant/files/upload
           method: post
           cors: true
+    environment:
+        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
 
   download_file:
     handler: assistant/assistant.get_presigned_download_url
@@ -393,6 +418,7 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
+      - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
@@ -426,9 +452,10 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
+        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
-
+    
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
     layers:
@@ -464,9 +491,27 @@ functions:
     timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
-      
+
+  process_images_for_chat:
+    handler: images/core.process_images_for_chat
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
+
+  archive_chat_usage:
+    handler: utilities/amplify-lambda/utilities/chat_usage_archive.archive_items
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - schedule: cron(0 0 ? * SUN *) # Run every Sunday at midnight          
+  
 resources:
   Resources:
+
     StateBucket:
       Type: AWS::S3::Bucket
       Properties:
@@ -477,6 +522,10 @@ resources:
               AllowedMethods: ['PUT', 'POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
+        LoggingConfiguration:
+          DestinationBucketName: 
+            Ref: AccessLogsBucket
+          LogFilePrefix: S3AccessLogs/
 
     AssistantUploadsBucket:
       Type: AWS::S3::Bucket
@@ -488,6 +537,10 @@ resources:
               AllowedMethods: ['PUT', 'POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
+        LoggingConfiguration:
+          DestinationBucketName: 
+            Ref: AccessLogsBucket
+          LogFilePrefix: S3AccessLogs/              
 
     AssistantsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -661,10 +714,19 @@ resources:
           -
             AttributeName: id
             AttributeType: S
+          - AttributeName: textLocationKey
+            AttributeType: S  
         KeySchema:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.HASH_FILES_DYNAMO_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: TextLocationIndex
+            KeySchema:
+              - AttributeName: textLocationKey
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
 
 
     AccountingChargesDynamoDbTable:
@@ -735,76 +797,152 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
+          - IndexName: DateIndex
+            KeySchema:
+              - AttributeName: time
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
         StreamSpecification:  # enable streaming
-          StreamViewType: NEW_AND_OLD_IMAGES
+          StreamViewType: NEW_AND_OLD_IMAGES        
 
+    AccountingChatUsageArchiveDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: time
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: UserUsageTimeIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: time
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
+          - IndexName: DateIndex
+            KeySchema:
+              - AttributeName: time
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
 
 
     ConversionInputBucket:
          Type: AWS::S3::Bucket
          Properties:
-           BucketName: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+          BucketName: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket 
+            LogFilePrefix: S3AccessLogs/
 
     ConversionOutputBucket:
          Type: AWS::S3::Bucket
          Properties:
-           BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+          BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/      
 
     BasePromptsBucket:
          Type: AWS::S3::Bucket
          Properties:
-           BucketName: ${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+          BucketName: ${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+             - AllowedOrigins: ['*']
+               AllowedMethods: ['GET']
+               AllowedHeaders: ['*']
+               MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/      
+
 
     RagInputBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET','PUT', 'POST']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET','PUT', 'POST']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
+    
+    ImageInputBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET','PUT', 'POST']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
     RagChunksBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
     FileTextBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET','HEAD']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET','HEAD']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
     RagDocumentIndexQueue:
           Type: "AWS::SQS::Queue"
@@ -828,6 +966,10 @@ resources:
               AllowedMethods: ['PUT', DELETE, GET]
               AllowedHeaders: ['*']
               MaxAge: 3000
+        LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
     
     ZipFileBucket:
       Type: 'AWS::S3::Bucket'
@@ -839,4 +981,39 @@ resources:
               AllowedMethods: ['GET','PUT','POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
+        LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
+
+    AccessLogsBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}
+
+    AccessLogsBucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        Bucket:
+          Ref: AccessLogsBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: 'S3ServerAccessLogsPolicy'
+              Effect: 'Allow'
+              Principal:
+                Service: 'logging.s3.amazonaws.com'
+              Action:
+                - 's3:PutObject'
+              Resource: 
+                Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: AccessLogsBucket
+                    - '/S3AccessLogs/*'
+              Condition:
+                StringEquals:
+                  'aws:SourceAccount': ${aws:accountId}
+
+
   

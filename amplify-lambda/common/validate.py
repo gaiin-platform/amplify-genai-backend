@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import boto3
 from datetime import datetime
 import re
+from boto3.dynamodb.conditions import Key
 
 load_dotenv(dotenv_path=".env.local")
 
@@ -552,9 +553,17 @@ save_accounts_schema = {
                     "isDefault": {
                         "type": "boolean",
                         "description": "Indicates if this is the default account."
-                    }
+                    },
+                     "rateLimit": {
+                        "type": "object",
+                        "properties": {
+                            "rate": { "type": ["number", "null"] },
+                            "period": { "type": "string" } 
+                        },
+                        "description": "Cost restriction using the API key"
+                    },
                 },
-                "required": ["id", "name"]
+                "required": ["id", "name", 'rateLimit']
             }
         }
     },
@@ -793,10 +802,9 @@ api_validators = {
 }
 
 def validate_data(name, op, data, api_accessed):
-    print(f"Name: {name} and Op: {op} and Data: {data}")
+    # print(f"Name: {name} and Op: {op} and Data: {data}")
     validator = api_validators if api_accessed else validators
     if name in validator and op in validator[name]:
-        print(f"Name: {name} and Op: {op} and Data: {data}")
         schema = validator[name][op]
         try:
             validate(instance=data.get("data"), schema=schema)
@@ -1015,6 +1023,16 @@ def api_claims(event, context, token):
                                         and'full_access' not in access):
             print("API key doesn't have access to the functionality")
             raise PermissionError("API key does not have access to the required functionality")
+        
+        # Determine API user
+        current_user = determine_api_user(item)
+        
+        rate_limit = item['rateLimit']
+        if is_rate_limited(current_user, rate_limit):
+                    rate = float(rate_limit['rate'])
+                    period = rate_limit['period']
+                    print(f"You have exceeded your rate limit of ${rate:.2f}/{period}")
+                    raise Unauthorized(f"You have exceeded your rate limit of ${rate:.2f}/{period}")
 
         # Update last accessed
         table.update_item(
@@ -1023,9 +1041,6 @@ def api_claims(event, context, token):
             ExpressionAttributeValues={':now': datetime.now().isoformat()}
         )
         print("Last Access updated")
-
-        # Determine API user
-        current_user = determine_api_user(item)
 
         return {'username': current_user, 'account': item['account']['id'], 'allowed_access': access}
 
@@ -1049,6 +1064,39 @@ def determine_api_user(data):
         raise Exception("Invalid or unrecognized key type.")
     
 
-    
 
-    
+def is_rate_limited(current_user, rate_limit): 
+    print(rate_limit)
+    if rate_limit['period'] == 'Unlimited': return False
+    #lookups COST_CALCULATIONS_DYNAMODB_TABLE
+
+    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMODB_TABLE')
+    if not cost_calc_table:
+        raise ValueError("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.")
+
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(cost_calc_table)
+
+    try:
+        print("Query cost calculation table")
+        response = table.query(
+            KeyConditionExpression=Key('id').eq(current_user) 
+        )
+        items = response['Items']
+        if not items:
+            print("Table entry does not exist. Cannot verify if rate limited.")
+            return False
+
+        rate_data = items[0] 
+
+        period = rate_limit['period']
+        col_name = f"{period.lower()}Cost"
+
+        spent = rate_data[col_name]
+        if (period == 'Hourly'): spent = spent[datetime.now().hour] # Get the current hour as a number from 0 to 23
+        print(f"Amount spent {spent}")
+        return spent >= rate_limit['rate']
+
+    except Exception as error:
+        print(f"Error during rate limit DynamoDB operation: {error}")
+        return False

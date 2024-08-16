@@ -1,0 +1,10 @@
+/package
+node_modules
+.DS_Store
+.idea
+.serverless
+*.pyc
+*.pyo
+.env.local
+
+/__pycache__/

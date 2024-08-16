@@ -1,13 +1,19 @@
+import base64
+import json
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
-
+from cryptography.fernet import Fernet
 from common.ops import op
 from common.validate import validated
 import os
 import boto3
 import rag.util
+import images.core
+
+
+IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @op(
@@ -84,38 +90,11 @@ def get_presigned_download_url(event, context, current_user, name, data):
 
 def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
     dynamodb = boto3.resource('dynamodb')
-    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME' if (file_type in IMAGE_FILE_TYPES) else 'S3_RAG_INPUT_BUCKET_NAME' ] 
     dt_string = datetime.now().strftime('%Y-%m-%d')
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
-    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
-    files_table.put_item(
-        Item={
-            'id': key,
-            'name': name,
-            'type': file_type,
-            'tags': tags,
-            'data': data_props,
-            'knowledgeBase': knowledge_base,
-            'createdAt': datetime.now().isoformat(),
-            'updatedAt': datetime.now().isoformat(),
-            'createdBy': current_user,
-            'updatedBy': current_user
-        }
-    )
-
-    if tags is not None and len(tags) > 0:
-        update_file_tags(current_user, key, tags)
-
-    return bucket_name, key
-
-def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
-    dynamodb = boto3.resource('dynamodb')
-    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
-    dt_string = datetime.now().strftime('%Y-%m-%d')
-    key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
-
-    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
     files_table.put_item(
         Item={
             'id': key,
@@ -202,6 +181,104 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
                          "specific knowledge base. "
     }
 )
+
+def create_and_store_fernet_key():
+    # Read the parameter name from environment variable
+    parameter_name = os.getenv('FILE_UPLOAD_ENCRYPTION_PARAMETER')
+    
+    if not parameter_name:
+        raise ValueError("The environment variable FILE_UPLOAD_ENCRYPTION_PARAMETER is not set")
+    
+    # Generate a new Fernet key
+    key = Fernet.generate_key()
+    key_str = key.decode()  # Converting byte key to string
+
+    # Initialize the SSM client
+    ssm_client = boto3.client('ssm')
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    ssm_parameter_name=f"{parameter_name}_{timestamp}"
+    # Store the key in the SSM Parameter Store
+    try:
+        response = ssm_client.put_parameter(
+            
+            Name=ssm_parameter_name,
+            Value=key_str,
+            Type='SecureString',
+            Overwrite=False  # Allow overwriting the main parameter
+        )
+        print(f"Fernet key successfully stored in {ssm_parameter_name}")
+        
+        # Create a backup parameter name with a timestamp
+        
+        backup_parameter_name = f"{parameter_name}_backup_{timestamp}"
+        print(f"Creating backup parameter {backup_parameter_name}")
+        
+        backup_response = ssm_client.put_parameter(
+            Name=backup_parameter_name,
+            Value=key_str,
+            Type='SecureString',
+            Overwrite=False  # Do not allow overwriting the backup parameter
+        )
+        print(f"Backup Fernet key successfully stored in {backup_parameter_name}")
+        
+        return response, backup_response
+
+    except Exception as e:
+        print(f"Error storing the Fernet key: {str(e)}")
+        raise
+
+def parameter_exists(ssm_client, parameter_name):
+    try:
+        ssm_client.get_parameter(Name=parameter_name, WithDecryption=True)
+        return True
+    except ssm_client.exceptions.ParameterNotFound:
+        return False
+    except Exception as e:
+        raise RuntimeError(f"Error checking parameter existence: {str(e)}")
+
+
+def encrypt_account_data(data):
+    ssm_client = boto3.client('ssm')
+    parameter_name = os.getenv('FILE_UPLOAD_ENCRYPTION_PARAMETER')
+    print("Parameter name being accessed:", parameter_name)
+    print("Enter encrypt account data")
+
+    if not parameter_name:
+        raise ValueError("The environment variable FILE_UPLOAD_ENCRYPTION_PARAMETER is not set")
+
+    try:
+        # Check if the parameter exists
+        if not parameter_exists(ssm_client, parameter_name):
+            print(f"Parameter {parameter_name} does not exist. Creating it now.")
+            create_and_store_fernet_key()
+        
+        # Fetch the parameter securely, which holds the encryption key
+        response = ssm_client.get_parameter(
+            Name=parameter_name,
+            WithDecryption=True
+        )
+        # The key needs to be a URL-safe base64-encoded 32-byte key
+        key = response['Parameter']['Value'].encode()
+        # Ensure the key is in the correct format for Fernet
+        fernet = Fernet(key)
+
+        data_str = json.dumps(data)
+        # Encrypt the data
+        encrypted_data = fernet.encrypt(data_str.encode())
+        encrypted_data_b64 = base64.b64encode(encrypted_data).decode('utf-8')
+
+        print("Encrypted value:", encrypted_data_b64)
+        return {
+            'success': True,
+            'encrypted_data': encrypted_data_b64
+        }
+
+    except Exception as e:
+        print(f"Error during parameter retrieval or encryption for {parameter_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Error {str(e)}"
+        }
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
     access = data['allowed_access']
@@ -209,10 +286,18 @@ def get_presigned_url(event, context, current_user, name, data):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
     
+    account_data = { "user": current_user,
+                     "account" : data['account'],
+                     "api_key" : data['access_token'] if data['api_accessed'] else None
+                    } 
+    # encrypted data using parameter 
+    e_result = encrypt_account_data(account_data)
+    encrypted_metadata = e_result['encrypted_data'] if e_result['success'] else ""
+    
+
     print(f"Data is {data}")
     data = data['data']
 
-    dynamodb = boto3.resource('dynamodb')
     s3 = boto3.client('s3')
 
     name = data['name']
@@ -222,7 +307,7 @@ def get_presigned_url(event, context, current_user, name, data):
     knowledge_base = data['knowledgeBase']
 
     print(
-        f"Getting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
+        f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
 
     # Set the S3 bucket and key
     bucket_name, key = create_file_metadata_entry(current_user, name, file_type, tags, props, knowledge_base)
@@ -234,11 +319,28 @@ def get_presigned_url(event, context, current_user, name, data):
         Params={
             'Bucket': bucket_name,
             'Key': key,
-            'ContentType': file_type
+            'ContentType': file_type,
+            'Metadata': {'encrypted_metadata': encrypted_metadata}
             # Add any additional parameters like ACL, ContentType, etc. if needed
         },
         ExpiresIn=3600  # Set the expiration time for the presigned URL, in seconds
     )
+
+    if file_type in IMAGE_FILE_TYPES:
+        print("Generating presigned urls for Image file")
+        metadata_key = key + ".metadata.json"
+        presigned_metadata_url = s3.generate_presigned_url(
+                                ClientMethod='get_object',
+                                Params={
+                                    'Bucket': bucket_name,
+                                    'Key': metadata_key
+                                },
+                                ExpiresIn=3600 
+        )
+        return {'success': True,
+                'uploadUrl': presigned_url,
+                'metadataUrl': presigned_metadata_url,
+                'key': key}
 
     [file_text_content_bucket_name, text_content_key] = rag.util.get_text_content_location(bucket_name, key)
 
@@ -282,7 +384,7 @@ def get_presigned_url(event, context, current_user, name, data):
                 'key': key}
     else:
         return {'success': False}
-
+    
 
 @op(
     path="/assistant/tags/list",
