@@ -1,12 +1,14 @@
 import copy
 import os
 from pprint import pformat
-from typing import Dict, List
-
+from typing import Dict, List, Any, Tuple
+import requests
 import yaml
-
+import concurrent.futures
+from typing import Dict, List
+import copy
 from flow.spec import validate_output_spec
-from flow.util import get_root_key, find_template_vars, dynamic_prompt, resolve, fill_prompt_template
+from flow.util import get_root_key, find_template_vars, dynamic_prompt, resolve, fill_prompt_template, resolve_and_set
 
 
 class WorkflowValidationError(Exception):
@@ -17,6 +19,7 @@ class Step:
     def __init__(self, id: str, data: Dict):
         self.id = id
         self.data = data
+        self.update_context = False
 
     def inputs(self):
         return []
@@ -29,6 +32,12 @@ class Step:
         # Placeholder for actual step execution
         return {}
 
+    def exec(self, context: Dict, options={}) -> Dict:
+        self.get_tracer(options)(self.id, "start", {'context': context})
+        output = self.run(context, options)
+        self.get_tracer(options)(self.id, "end", {'result': output})
+        return output
+
     def __str__(self):
         return f"{self.__class__.__name__}(id={self.id}, data={pformat(self.data)})"
 
@@ -36,10 +45,11 @@ class Step:
 
 
 class Workflow(Step):
-    def __init__(self, id: str, steps: List[Step], data:Dict):
+    def __init__(self, id: str, steps: List[Step], data: Dict):
         super().__init__(id, {})
         self.steps = steps
-        self.ouput_key = data.get('output_key', None)
+        self.output_key = data.get('output_key', None)
+        self.context_data = data.get('context', {})
 
     def inputs(self):
         paths = []
@@ -49,22 +59,33 @@ class Workflow(Step):
 
     def run(self, context: Dict, options={}) -> Dict:
         debug = options.get('debug', False)
+        if debug and 'tracer' not in options:
+            options['tracer'] = lambda id, tag, data: print(f"--- Step {id}: {tag}")
+
+        # merge self.context with context, letting context take priority
+        context = {**self.context_data, **context}
+
         if debug:
-            options['tracer'] = lambda id, tag, data: print(f"--- Step {id}: {tag} - {data}")
+            print(f"Context after merging additional data: {yaml.dump(context)}")
 
         total = len(self.steps)
         results = {}
         for idx, step in enumerate(self.steps):
             if debug:
                 print(f"Running step [{idx+1}/{total}] {step.id}")
-            step_result = step.run(context, options)
+            step_result = step.exec(context, options)
             if debug:
                 print(f"Step {step.id} result: {yaml.dump(step_result)}")
-            results[step.id] = step_result
+
+            if not step.update_context:
+                results[step.id] = step_result
+            else:
+                results = step_result
+
             context.update(results)
 
-        if self.ouput_key:
-            results = results[self.ouput_key]
+        if self.output_key:
+            results = resolve(results, self.output_key)
 
         return results
 
@@ -77,6 +98,7 @@ class Prompt(Step):
     def __init__(self, id: str, data: Dict):
         super().__init__(id, {})
         self.prompt = data['prompt']
+        self.strip_thought = data.get('strip_thought', True)
         self.system_prompt = data.get('system_prompt', "Follow the user's instructions very carefully. "
                                                        "Analyze the task or question and output the requested "
                                                        "information.")
@@ -96,7 +118,17 @@ class Prompt(Step):
         return [get_root_key(path) for path in list(set(paths + spaths))]
 
     def run(self, context: Dict, options={}) -> Dict:
-        result = dynamic_prompt(context, self.prompt, self.system_prompt, self.output)
+        result, data = dynamic_prompt(context, self.prompt, self.system_prompt, self.output)
+
+        self.get_tracer(options)(
+            self.id,
+            "prompt_data",
+            data
+        )
+
+        if self.strip_thought and 'thought' in result:
+            del result['thought']
+
         return result
 
     def __str__(self):
@@ -104,9 +136,7 @@ class Prompt(Step):
         return f"Prompt(id={self.id}, prompt={self.prompt}, system_prompt={self.system_prompt}, output={self.output})"
 
 
-import concurrent.futures
-from typing import Dict, List
-import copy
+
 
 class Map(Step):
     def __init__(self, id: str, data: Dict):
@@ -117,9 +147,14 @@ class Map(Step):
         self.number_splits = data.get('number_splits', True)
         self.number_prefix = data.get('number_prefix', "")
         self.number_suffix = data.get('number_suffix', ".")
+        self.limit = data.get('limit', -1)
         self.item_key = data.get('item_key', 'item')
+        self.result_key = data.get('result_key', 'result')
         self.strip_thought = data.get('strip_thought', True)
         self.merge_item = data.get('merge_item', True)
+        self.enhance = data.get('enhance', False)
+        self.update_context = self.enhance
+        self.enhance_item = data.get('enhance_item', False)
         self.include_item = data.get('include_item', False)
         self.previous_item_key = data.get('include_previous_item_as', "Previous Item:")
         self.include_previous_item = data.get("include_previous", False)
@@ -136,16 +171,20 @@ class Map(Step):
         paths.append(self.data['input'])
         return [get_root_key(path) for path in paths]
 
-    def process_item(self, item, idx, context):
+    def process_item(self, item, idx, context, options={}):
         item_context = copy.deepcopy(context)
         item_context['item'] = item
+        item_context[self.item_key] = item
         item_context['index'] = idx
 
-        item_result = self.delegate.run(item_context)
+        item_result = self.delegate.exec(item_context, options)
 
         if self.strip_thought and isinstance(item_result, dict) and 'thought' in item_result:
             del item_result['thought']
 
+        if isinstance(item, dict) and self.enhance_item:
+            item[self.result_key] = item_result
+            item_result = item
         if isinstance(item_result, dict) and isinstance(item, dict) and self.merge_item:
             item_result = {**item, **item_result}
         if isinstance(item_result, dict) and not isinstance(item, dict) and self.merge_item:
@@ -153,8 +192,10 @@ class Map(Step):
         if isinstance(item_result, dict) and self.include_item:
             item_result[self.item_key] = item
 
-        if isinstance(item_result, list) and (self.merge_item or self.include_item):
+        if isinstance(item_result, list) and self.merge_item:
             item_result.append(item)
+        if isinstance(item_result, list) and self.include_item:
+            item_result = {self.item_key: item, self.result_key: item_result}
 
         return item_result
 
@@ -169,15 +210,22 @@ class Map(Step):
         tracer(self.id, "input_list", input_list)
 
         results = None
-        if not self.include_previous_items and not self.include_previous:
-            results = self.run_parallel(context, input_list, tracer)
+        if not self.include_previous_items and not self.include_previous_item:
+            results = self.run_parallel(context, input_list, options)
         else:
-            results = self.run_sequential(context, input_list, tracer)
+            results = self.run_sequential(context, input_list, options)
+
+        if self.enhance:
+            results_context = copy.deepcopy(context)
+            resolve_and_set(results_context, input_path, results)
+            results = results_context
 
         return results
 
 
-    def run_sequential(self, context, input_list, tracer):
+    def run_sequential(self, context, input_list, options):
+        tracer = self.get_tracer(options)
+
         results = []
         total = len(input_list)
         for idx, item in enumerate(input_list):
@@ -188,15 +236,18 @@ class Map(Step):
             if self.include_previous_item and len(results) > 0:
                 context[self.previous_item_key] = results[-1]
 
-            item_result = self.process_item(item, idx, context)
+            item_result = self.process_item(item, idx, context, options)
             tracer(self.id, f"[{idx+1}/{total}] map_item_{idx}_result", item_result)
             results.append(item_result)
 
         return results
 
-    def run_parallel(self, context, input_list, tracer):
+    def run_parallel(self, context, input_list, options):
+
+        tracer = self.get_tracer(options)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_item = {executor.submit(self.process_item, item, idx, context): (item, idx)
+            future_to_item = {executor.submit(self.process_item, item, idx, context, options): (item, idx)
                               for idx, item in enumerate(input_list)}
 
             results = []
@@ -223,7 +274,64 @@ class Map(Step):
                 input_list = [input_list]
         if not isinstance(input_list, list):
             raise ValueError(f"Input for Map step {self.id} must be a list")
+
+        if self.limit > 0 and self.limit < len(input_list):
+            # sublist of the list
+            input_list = input_list[:self.limit]
+
         return input_list
+
+
+class Files(Step):
+    def __init__(self, id: str, data: Dict):
+        super().__init__(id, data)
+        if 'input' not in data or 'files' not in data:
+            raise WorkflowValidationError(f"Files step {id} must have 'input' and 'files' fields")
+
+        self.input_path = data['input']
+        self.files = data['files']
+        self.content_key = data.get("content_key", None)
+
+    def run(self, context: Dict, options={}) -> List[Dict]:
+        input_data = resolve(context, self.input_path)
+
+        if not isinstance(input_data, list):
+            input_data = [input_data]
+
+        created_files = self.save_files(context, input_data, options)
+
+        return created_files
+
+    def save_files(self, context, items: List, options) -> List[Dict]:
+        tracer = self.get_tracer(options)
+        created_files = []
+
+        for item in items:
+            # Resolve the file path using the item context
+            file_path = fill_prompt_template({**context, 'item': item}, self.files)
+
+            # Create the directory if it doesn't exist
+            directory = os.path.dirname(file_path)
+            os.makedirs(directory, exist_ok=True)
+
+            # Log file creation
+            tracer(self.id, "creating_file", {"file_name": file_path})
+
+            content = item[self.content_key] if self.content_key else yaml.dump(item)
+
+            # Write the content to the file
+            with open(file_path, 'w') as file:
+                file.write(content)  # Assuming 'content' holds the text to save in the file
+
+            # Log after file is written
+            tracer(self.id, "file_written", {"file_name": file_path})
+
+            # Append to created files list
+            created_files.append({"item": item, "file": file_path})
+
+        return created_files
+
+
 
 
 class Format(Step):
@@ -302,6 +410,8 @@ def create_step(step_data: Dict, step_id: str) -> Step:
         return Prompt(step_id, step_data)
     elif 'format' in step_data:
         return Format(step_id, step_data)
+    elif 'files' in step_data:
+        return Files(step_id, step_data)
     else:
         raise WorkflowValidationError(f"Unknown step type for step {step_id}")
 
@@ -323,14 +433,48 @@ def validate_workflow(workflow: Workflow, path: str = ""):
             validate_workflow(step, step_path)
 
 
-def parse_workflow(yaml_string: str) -> Workflow:
-    try:
-        if os.path.isfile(yaml_string):
-            with open(yaml_string, 'r') as file:
-                data = yaml.safe_load(file)
+def import_from_uri(uri: str, base_dir: str = None) -> Any:
+    if uri.startswith('http://') or uri.startswith('https://'):
+        response = requests.get(uri)
+        return yaml.safe_load(response.text)
+    else:
+        if base_dir and not os.path.isabs(uri):
+            uri = os.path.join(base_dir, uri)
+        if os.path.exists(uri):
+            with open(uri, 'r') as file:
+                return yaml.safe_load(file)
         else:
-            # Assume the input is a YAML string
-            data = yaml.safe_load(yaml_string)
+            raise ValueError(f"Cannot import from URI: {uri}")
+
+def process_context(data: Dict, base_dir: str = None):
+    if 'context' in data:
+        for key, value in data['context'].items():
+            if isinstance(value, str) and value.startswith('import(') and value.endswith(')'):
+                uri = value[7:-1].strip()
+                data['context'][key] = import_from_uri(uri, base_dir)
+
+def process_workflow_data(data: Dict, base_dir: str = None):
+    process_context(data, base_dir)
+    if 'steps' in data:
+        for step in data['steps']:
+            if 'steps' in step:  # This is a nested workflow
+                process_workflow_data(step, base_dir)
+
+def load_yaml(yaml_input: str) -> Tuple[Dict, str]:
+    base_dir = None
+    if os.path.isfile(yaml_input):
+        with open(yaml_input, 'r') as file:
+            data = yaml.safe_load(file)
+        base_dir = os.path.dirname(os.path.abspath(yaml_input))
+    else:
+        # Assume the input is a YAML string
+        data = yaml.safe_load(yaml_input)
+    return data, base_dir
+
+
+def parse_workflow(yaml_input: str) -> 'Workflow':
+    try:
+        data, base_dir = load_yaml(yaml_input)
     except yaml.YAMLError as e:
         raise WorkflowValidationError(f"Invalid YAML: {str(e)}")
 
@@ -339,6 +483,9 @@ def parse_workflow(yaml_string: str) -> Workflow:
 
     if 'steps' not in data:
         raise WorkflowValidationError("Workflow must have 'steps' defined")
+
+    # Process the entire workflow data recursively
+    process_workflow_data(data, base_dir)
 
     workflow_id = data.get('id', 'root_workflow')
     steps = []
