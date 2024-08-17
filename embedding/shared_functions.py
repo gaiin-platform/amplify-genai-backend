@@ -46,9 +46,9 @@ def preprocess_text(text):
         text_without_punctuation = re.sub(r'[^\w\s]', '', text)
         # Remove extra spaces using regex
         cleaned_text = re.sub(r'\s+', ' ', text_without_punctuation)
-        return (success: True, data: cleaned_text.strip())
+        return {"success": True, "data": cleaned_text.strip()}
     except Exception as e:
-        return (success: False, error: f"An error occurred: {str(e)}")
+        return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 
 def generate_embeddings(content):

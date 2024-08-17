@@ -4,6 +4,7 @@ import json
 import os
 import boto3
 import logging
+import re
 from botocore.exceptions import ClientError
 from common.credentials import get_credentials
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions, record_usage, get_key_details, preprocess_text
@@ -36,64 +37,85 @@ def trim_src(src):
     trimmed_src = parts[0] + '.json' if len(parts) > 1 else src
     return trimmed_src
 
+def extract_child_chunk_number_from_src(src):
+    pattern = r'.json-(\d+)'
+    match = re.search(pattern, src)
+    if match:
+        return str(match.group(1))  # Convert the matched item to string
+    else:
+        raise ValueError("Number not found in the key")
 
 
-def update_dynamodb_status(table, object_id, chunk_index, status=None, total_chunks=None):
+def update_child_chunk_status(object_id, child_chunk, new_status):
     try:
-        # Attempt to get the item
+        progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+        print(f"Updating status of child chunk {child_chunk} for {object_id} to {new_status}")
+        
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(progress_table)
+        
+        # Update the status of the specific child chunk
+        update_expression = 'SET #data.#childChunks.#chunkId.#status = :new_status'
+        expression_attribute_names = {
+            '#data': 'data',
+            '#childChunks': 'childChunks',
+            '#chunkId': str(child_chunk),
+            '#status': 'status'
+        }
+        expression_attribute_values = {
+            ':new_status': new_status
+        }
+        
+        result = table.update_item(
+            Key={'object_id': object_id},
+            UpdateExpression=update_expression,
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values,
+            ReturnValues='UPDATED_NEW'  # Optional: to return the updated values
+        )
+        
+        print(f"Successfully updated child chunk status: {result}")
+    
+    except Exception as e:
+        print("Failed to update the child chunk status in DynamoDB table.")
+        print(e)
+
+
+def update_parent_chunk_status(object_id):
+    dynamodb = boto3.resource('dynamodb')
+    progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+    table = dynamodb.Table(progress_table)
+    
+    try:
+        logging.info('Fetching item from DynamoDB for object_id: %s', object_id)
+        # Fetch the item from DynamoDB
         response = table.get_item(Key={'object_id': object_id})
         item = response.get('Item')
-
-        if item:
-            # The item exists, update it
-            update_expression = "SET #data.#chunkIndex = :chunkIndex"
-            expression_attribute_names = {
-                "#data": "data",
-                "#chunkIndex": "chunkIndex"
-            }
-            expression_attribute_values = {
-                ":chunkIndex": chunk_index
-            }
-
-            # Check if the chunk_index equals the total_chunks to potentially set status to 'complete'
-            if chunk_index == item["data"].get("totalChunks"):
-                status = "complete"
-
-            if status:
-                update_expression += ", #data.#status = :status"
-                expression_attribute_names["#status"] = "status"
-                expression_attribute_values[":status"] = status
-
-            response = table.update_item(
+        
+        if not item:
+            raise ValueError(f"No item found with object_id {object_id}")
+    
+        logging.info('Item fetched: %s', item)
+        child_chunks = item.get('data', {}).get('childChunks', {})
+        logging.info('Child chunks: %s', child_chunks)
+        
+        # Check if all child chunks are complete
+        all_complete = all(chunk['status'] == 'completed' for chunk in child_chunks.values())
+        logging.info('All child chunks complete: %s', all_complete)
+        
+        if all_complete:
+            logging.info('Updating parentChunkStatus to completed for object_id: %s', object_id)
+            table.update_item(
                 Key={'object_id': object_id},
-                UpdateExpression=update_expression,
-                ExpressionAttributeNames=expression_attribute_names,
-                ExpressionAttributeValues=expression_attribute_values,
-                ReturnValues="UPDATED_NEW"
+                UpdateExpression="set parentChunkStatus = :val",
+                ExpressionAttributeValues={':val': 'completed'}
             )
-            logging.info(f"Chunk: {chunk_index} updated successfully.")
+            logging.info('parentChunkStatus updated to completed for object_id: %s', object_id)
         else:
-            # The item does not exist, create it
-            item_data = {
-                'chunkIndex': chunk_index,
-                'status': status
-            }
-            if total_chunks is not None:
-                item_data['totalChunks'] = total_chunks
-
-            response = table.put_item(
-                Item={
-                    'object_id': object_id,
-                    'data': item_data
-                }
-            )
-            logging.info(f"Chunk: {chunk_index} of {total_chunks} created successfully.")
-
-    except ClientError as e:
-        logging.error("Failed to create or update item in DynamoDB table.")
-        logging.error(e)
-        raise
-
+            logging.info('Not all child chunks are complete for object_id: %s', object_id)        
+    except Exception as e:
+        print("Failed to update the parentChunkStatus in DynamoDB table.")
+        print(e)
 
 
 #initially set db_connection to none/closed 
@@ -157,6 +179,7 @@ def lambda_handler(event, context):
 
         #url decode the key
         object_key = urllib.parse.unquote(url_encoded_key)
+        childChunk = extract_child_chunk_number_from_src(object_key)
 
         #Print the bucket name and key for debugging purposes
         print(f"bucket = {bucket_name} and key = {object_key}")
@@ -173,12 +196,13 @@ def lambda_handler(event, context):
 
             # Read the content of the object
             data = json.loads(response['Body'].read().decode('utf-8'))
+            src = data.get('src', '')
 
             # Get or establish a database connection
             db_connection = get_db_connection()
 
             # Call the embed_chunks function with the JSON data
-            success, src = embed_chunks(data, embedding_progress_table, db_connection)
+            success, src = embed_chunks(data, childChunk, embedding_progress_table, db_connection)
 
             # If the extraction process was successful, send a completion email
             if success:
@@ -193,12 +217,14 @@ def lambda_handler(event, context):
                     ReceiptHandle=receipt_handle
                 )
                 print(f"Deleted message {record['messageId']} from queue")
+                # Update the parent chunk status to 'completed' if all child chunks are complete
+                update_parent_chunk_status(src)
+                print(f"Parent chunk status updated to 'completed' for {src}.")
 
             else:
                 print(f"An error occurred during the embedding process for {src}.")
 
                 db_connection.close()
-
             return {
                 'statusCode': 200,
                 'body': json.dumps('Embedding process completed successfully.')
@@ -216,46 +242,36 @@ def lambda_handler(event, context):
             logging.info("Database connection closed.")    
 
 
-def embed_chunks(data, embedding_progress_table, db_connection):
+def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(embedding_progress_table)
-
     src = None
-    original_creator = None  # Initialize the original creator variable
+
     try:
         local_chunks = data.get('chunks', [])
         src = data.get('src', '')
         trimmed_src = trim_src(src)
+        childChunk = str(childChunk)
 
         try:
             response = table.get_item(Key={'object_id': trimmed_src})
             item = response.get('Item')
             if item and 'data' in item:
                 total_chunks = item['data'].get('totalChunks')
-                logging.info(f"Total parent chunk increments to process: {total_chunks} (fetched from DynamoDB)")
+                logging.info(f"Processing child chunk: {childChunk} of total parent chunks: {total_chunks}")
                 local_chunks_to_process = len(local_chunks)
-                logging.info(f"Local chunks to process (max 10): {local_chunks_to_process}")
-                current_remote_chunk_index = int(item['data'].get('chunkIndex', 0))  # Ensure current_remote_chunk_index is an integer
-                logging.info(f"Current chunk index: {current_remote_chunk_index}")
+                logging.info(f"There are {local_chunks_to_process} (max 10) within child chunk: {childChunk}")
                 
-                
-                # Check if the `terminated` field is set to False
                 if not item['data'].get('terminated', True):
                     logging.info("The file embedding process has been terminated.")
                     return False, src
             else:
-                logging.info("No item found in DynamoDB table.")
-
+                logging.warning("No item found in DynamoDB table.")
         except ClientError as e:
-            logging.error("Failed to fetch item from DynamoDB table.")
-            logging.error(e)
+            logging.error(f"Failed to fetch item from DynamoDB table: {e}")
 
-
-        print(f"Processing {current_remote_chunk_index} of {total_chunks} (fetched from DynamoDB)")
-        current_local_chunk_index = 0 # Start from the fetched chunk index
-
-        # Update the DynamoDB table with the initial status
-        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "embedding")
+        logging.info(f"Processing {childChunk} of {total_chunks} (fetched from DynamoDB)")
+        current_local_chunk_index = 0
 
         with db_connection.cursor() as cursor:
             db_connection.commit()
@@ -265,95 +281,63 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                     locations = chunk['locations']
                     orig_indexes = chunk['indexes']
                     char_index = chunk['char_index']
-                    current_remote_chunk_index += 1
-                    current_local_chunk_index += 1
 
                     response_clean_text = preprocess_text(content)
-                    if response_clean_text["success"]:
-                        clean_text = response_clean_text["data"]
-                    else:
-                        error = response_clean_text["error"]
-                        print(f"Error occurred: {error}")
-                        raise Exception(error)
-                    
-                    print(f"Processing local chunk {current_local_chunk_index} of {local_chunks_to_process}")
+                    if not response_clean_text["success"]:
+                        raise Exception(f"Text preprocessing failed: {response_clean_text['error']}")
+                    clean_text = response_clean_text["data"]
 
-                    # Update the DynamoDB table with the current chunk index
-                    update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "embedding")
-
-                    
-                    # Generate embeddings
                     response_vector_embedding = generate_embeddings(clean_text)
-                    if response_vector_embedding["success"]:
-                        vector_embedding = response_vector_embedding["data"]
-                    else:
-                        error = response_vector_embedding["error"]
-                        print(f"Error occurred: {error}")
-                        
-                    # Generate QA summary
-                    response_qa_summary = generate_questions(clean_text)
-                    if response_qa_summary["success"]:
-                        qa_summary = response_qa_summary["data"]
-                    else:
-                        error = response_qa_summary["error"]
-                        print(f"Error occurred: {error}")
+                    if not response_vector_embedding["success"]:
+                        raise Exception(f"Vector embedding generation failed: {response_vector_embedding['error']}")
+                    vector_embedding = response_vector_embedding["data"]
 
-                    # Create embeddings for QA summary    
+                    response_qa_summary = generate_questions(clean_text)
+                    if not response_qa_summary["success"]:
+                        raise Exception(f"QA summary generation failed: {response_qa_summary['error']}")
+                    qa_summary = response_qa_summary["data"]
+
                     response_qa_embedding = generate_embeddings(content=qa_summary)
-                    if response_qa_embedding["success"]:
-                        qa_vector_embedding = response_qa_embedding["data"]
-                    else:
-                        error = response_qa_embedding["error"]
-                        print(f"Error occurred: {error}")    
+                    if not response_qa_embedding["success"]:
+                        raise Exception(f"QA embedding generation failed: {response_qa_embedding['error']}")
+                    qa_vector_embedding = response_qa_embedding["data"]
 
                     qa_summary_input_tokens = num_tokens_from_text(clean_text, qa_model_name)
                     qa_summary_output_token_count = num_tokens_from_text(qa_summary, qa_model_name)
                     vector_token_count = num_tokens_from_text(clean_text, embedding_model_name)
                     qa_vector_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
-
-                    #This is written to the embeddings table but is not used for cost calucations
                     total_vector_token_count = vector_token_count + qa_vector_token_count
-                    
-                    
+
                     logging.info(f"Embedding local chunk index: {current_local_chunk_index}")
-                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_remote_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
-                    print(f"Getting Account information for {trimmed_src}")
+                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_local_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
+
+                    logging.info(f"Getting Account information for {trimmed_src}")
                     result = get_key_details(trimmed_src)
-                   
-
                     if result:
-                        print("API Key:", result['apiKey'])
                         api_key = result['apiKey']
-                        print("Account:", result['account'])
                         account = result['account']
-                        print("User:", result['originalCreator'])
                         user = result['originalCreator']
+                        logging.info(f"Account details retrieved for {trimmed_src}")
                     else:
-                        print("Item not found or error retrieving the item.")
+                        logging.error(f"Failed to retrieve account details for {trimmed_src}")
+                        raise Exception("Account details not found")
 
-                    # Record QA usage in DynamoDB
-                    record_usage(account,src, user, qa_model_name, api_key=api_key,input_tokens=qa_summary_input_tokens, output_tokens=None)
+                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=qa_summary_input_tokens, output_tokens=None)
+                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=None, output_tokens=qa_summary_output_token_count)
+                    record_usage(account, src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
 
-                    record_usage(account,src, user, qa_model_name, api_key=api_key,input_tokens=None, output_tokens=qa_summary_output_token_count)
-
-                    # Record embedding usage in DynamoDB
-                    record_usage(account,src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
-
+                    current_local_chunk_index += 1
                     db_connection.commit()
                 except Exception as e:
-                    logging.error(f"An error occurred embedding chunk index: {local_chunk_index}")
-                    logging.error(f"An error occurred during the embedding process: {e}")
-                    update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "failed")
-                    raise
+                    logging.error(f"Error processing chunk {local_chunk_index} of {src}: {str(e)}")
+                    update_child_chunk_status(trimmed_src, childChunk, "failed")
+                    db_connection.rollback()
 
-        # After all chunks are processed, update the status to 'complete'
-
-        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index)
-
+        update_child_chunk_status(trimmed_src, childChunk, "completed")
         return True, src
 
     except Exception as e:
-        logging.exception("An error occurred during the embed_chunks execution.")
-        update_dynamodb_status(table, trimmed_src, current_remote_chunk_index, "failed")
+        logging.exception(f"Critical error in embed_chunks for {src}: {str(e)}")
+        update_child_chunk_status(trimmed_src, childChunk, "failed")
         db_connection.rollback()
         return False, src

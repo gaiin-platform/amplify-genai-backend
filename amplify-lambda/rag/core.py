@@ -683,22 +683,26 @@ def update_embedding_status(original_creator, object_id, chunk_index, total_chun
         progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
         print(f"Updating chunk count status for embedding {progress_table}/{object_id} "
               f"{chunk_index}/{total_chunks} {status}")
+        
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table(progress_table)
+        
         table.put_item(
             Item={
                 'object_id': object_id,
+                'parentChunkStatus': status,
                 'timestamp': datetime.now().isoformat(),
                 'originalCreator': original_creator,
                 'terminated': False,
+                'totalChunks': total_chunks,
                 'data': {
-                    'chunkIndex': chunk_index,
-                    'totalChunks': total_chunks or 0,
-                    'status': status
+                    'childChunks': {
+                        str(i+1): {'status': status} for i in range(total_chunks)
+                    }   
                 }
             }
         )
-        print("Created chunk count status for embedding.")
+        print (f"Created {total_chunks} nested childCunks for {object_id} in Embeddings Progress Table")
 
     except Exception as e:
         print("Failed to create or update item in DynamoDB table.")

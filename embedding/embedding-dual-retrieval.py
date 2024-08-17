@@ -41,7 +41,6 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
         # Register pgvector extension
         register_vector(conn)
         with conn.cursor() as cur:
-
             # Ensure the query_embedding is a list of floats
             assert isinstance(query_embedding, list), "Expected query_embedding to be a list of floats"
             #print(f"here is the query embedding {query_embedding}")
@@ -94,6 +93,7 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
         register_vector(conn)
         with conn.cursor() as cur:
             
+            #print(f"Here is the query embedding {query_embedding}")
             # Ensure the query_embedding is a list of floats
             assert isinstance(query_embedding, list), "Expected query_embedding to be a list of floats"
 
@@ -216,8 +216,13 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
     src_ids = accessible_src_ids
 
-    embeddings = generate_embeddings(content)
-
+    response_embeddings = generate_embeddings(content)
+    
+    if response_embeddings["success"]:
+        embeddings = response_embeddings["data"]
+    else:
+        error = response_embeddings["error"]
+        print(f"Error occurred: {error}")
 
 
     # Step 1: Get documents related to the user input from the database
