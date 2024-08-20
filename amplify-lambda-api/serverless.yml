@@ -39,6 +39,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     COGNITO_USERS_TABLE:  vu-amplify-object-access-${sls:stage}-cognito-users
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
 
 
@@ -59,6 +60,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
             - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/"
             - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"
 

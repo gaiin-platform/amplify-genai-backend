@@ -93,6 +93,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
     CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     EMBEDDING_CHUNKS_INDEX_DLQ: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
    
 
@@ -131,6 +132,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
             - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
             - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"

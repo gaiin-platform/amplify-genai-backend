@@ -511,11 +511,10 @@ def determine_api_user(data):
 def is_rate_limited(current_user, rate_limit): 
     print(rate_limit)
     if rate_limit['period'] == 'Unlimited': return False
-    #lookups COST_CALCULATIONS_DYNAMODB_TABLE
-
-    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMODB_TABLE')
+    
+    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMO_TABLE')
     if not cost_calc_table:
-        raise ValueError("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.")
+        raise ValueError("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.")
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(cost_calc_table)
