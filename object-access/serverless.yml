@@ -70,7 +70,7 @@ functions:
 
 
   update_obj_perms:
-    runtime: python3.10
+    runtime: python3.11
     handler: object_access.update_object_permissions
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -102,7 +102,7 @@ functions:
 
 
   can_access_obj:
-    runtime: python3.10
+    runtime: python3.11
     handler: object_access.can_access_objects
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -129,7 +129,7 @@ functions:
               - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:service}-${sls:stage}-object-access"
 
   simulate_access:
-     runtime: python3.10
+     runtime: python3.11
      handler: object_access.simulate_access_to_objects
      layers:
        - Ref: PythonRequirementsLambdaLayer
@@ -157,7 +157,7 @@ functions:
 
 
   create_cog_group:
-      runtime: python3.10
+      runtime: python3.11
       handler: object_access.create_cognito_group
       layers:
         - Ref: PythonRequirementsLambdaLayer
@@ -186,7 +186,7 @@ functions:
 
 
   sync_cog_users:
-    runtime: python3.10
+    runtime: python3.11
     handler: cognito_users_sync.sync_users_to_dynamo  # Update with the actual path to your handler
     timeout: 900  # Set an appropriate timeout, max is 15 minutes (900 seconds)
     events:

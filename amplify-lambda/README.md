@@ -103,7 +103,7 @@ Python requirements are dockerized to ensure compatibility across operating syst
 ```yaml
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
 ```
 
 For any additional information or configuration details, refer to the `serverless.yml` file provided in the repository.

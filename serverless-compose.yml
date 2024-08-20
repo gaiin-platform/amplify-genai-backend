@@ -1,6 +1,17 @@
 # serverless-compose.yml
 services:
+  amplify-assistants:
+    path: ./amplify-assistants
 
+  amplify-lambda-js:
+    path: ./amplify-lambda-js
+    params:
+      ASSISTANTS_AZURE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscorecodeUnderscoreintUnderscoreassistUnderscoreurlLambdaFunctionUrl}
+      ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscoreassistantUnderscoreurlLambdaFunctionUrl}
+      ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
+    dependsOn:
+      - amplify-assistants
+  
   amplify-lambda:
     path: ./amplify-lambda
     params:
@@ -18,15 +29,13 @@ services:
     dependsOn:
       - amplify-lambda
   
-  amplify-assistants:
-    path: ./amplify-assistants
-
-  amplify-lambda-js:
-    path: ./amplify-lambda-js
-    params:
-      ASSISTANTS_AZURE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscorecodeUnderscoreintUnderscoreassistUnderscoreurlLambdaFunctionUrl}
-      ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscoreassistantUnderscoreurlLambdaFunctionUrl}
-      ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
+  amplify-embedding:
+    path: ./embedding
     dependsOn:
-      - amplify-assistants
+      - amplify-lambda
   
+  amplify-object-accecss:
+    path:
+    dependsOn:
+      - amplify-lambda
+
