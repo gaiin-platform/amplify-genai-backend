@@ -41,18 +41,6 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-# JSON schema for validating the request to check a user's data disclosure decision
-check_data_disclosure_decision_schema = {
-    "type": "object",
-    "properties": {
-        "email": {
-            "type": "string",
-            "format": "email",
-            "description": "The email of the user to check the data disclosure decision for.",
-        },
-    },
-    "required": ["email"],
-}
 
 # JSON schema for validating the request to save a user's data disclosure decision
 save_data_disclosure_decision_schema = {
@@ -71,22 +59,16 @@ save_data_disclosure_decision_schema = {
     "required": ["email", "acceptedDataDisclosure"],
 }
 
-# JSON schema for validating the request to get the latest data disclosure
-get_latest_data_disclosure_schema = {
-    "type": "object",
-    "properties": {},
-    "additionalProperties": False,
-}
 
 validators = {
-    "/data_disclosure": {
-        "check_data_disclosure_decision": check_data_disclosure_decision_schema
+    "/data-disclosure/check": {
+        "check_data_disclosure_decision": {} # uses query param
     },
-    "/data_disclosure": {
+    "/data-disclosure/save": {
         "save_data_disclosure_decision": save_data_disclosure_decision_schema
     },
-    "/data_disclosure": {
-        "get_latest_data_disclosure": get_latest_data_disclosure_schema
+    "/data-disclosure/latest": {
+        "get_latest_data_disclosure": {} # get
     },
 }
 
