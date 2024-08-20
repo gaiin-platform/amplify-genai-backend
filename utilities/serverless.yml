@@ -15,7 +15,7 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
 
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
     layer: true
 
   stages:

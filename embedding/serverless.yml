@@ -16,7 +16,7 @@ plugins:
 
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
     layer: true
     slim: true
     zip: true
@@ -44,10 +44,10 @@ custom:
 
 provider:
   name: aws
-  runtime: python3.10
+  runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: false
+  versionFunctions: true
   deploymentBucket:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256
@@ -87,14 +87,12 @@ provider:
     VPC_CIDR: ${self:custom.stageVars.VPC_CIDR}
     QA_MODEL_NAME: ${self:custom.stageVars.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVars.API_VERSION}
-    #OPENAI_API_KEY_ARN: ${self:custom.stageVars.OPENAI_API_KEY_ARN}
     OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY}
     EMBEDDING_MODEL_NAME: ${self:custom.stageVars.EMBEDDING_MODEL_NAME}
     ENDPOINTS_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    #PGVECTOR_LAMBDA_LAYER_ARN: ${self:custom.stageVars.PGVECTOR_LAMBDA_LAYER_ARN}
 
 
   iam:
@@ -103,8 +101,8 @@ provider:
         - Effect: Allow
           Action:
             - secretsmanager:GetSecretValue
-            - s3:GetObject  # for accessing S3
-            - s3:ListBucket # for listing objects in S3
+            - s3:GetObject 
+            - s3:ListBucket 
             - dynamodb:Query
             - dynamodb:Scan
             - dynamodb:GetItem
@@ -114,7 +112,6 @@ provider:
             - sqs:SendMessage
 
           Resource:
-            #- "arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.OPENAI_API_KEY}"
             - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
             - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
             - "arn:aws:dynamodb:${self:provider.region}:${self:custom.stageVars.AWS_ACCOUNT_ID}:table/${self:provider.environment.USER_FILES_TABLE}"
@@ -127,7 +124,7 @@ provider:
 
 functions:
   create_table:
-    runtime: python3.10
+    runtime: python3.11
     handler: create_table.create_table
     layers:
      - Ref: PythonRequirementsLambdaLayer
@@ -144,7 +141,7 @@ functions:
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
   queue_document_for_embedding:
-    runtime: python3.10
+    runtime: python3.11
     handler: embedding-sqs.queue_document_for_embedding
     events:
       - s3:
@@ -156,7 +153,7 @@ functions:
           Ref: EmbeddingChunksIndexQueue
         
   process_chunk_for_embedding:
-    runtime: python3.10
+    runtime: python3.11
     layers: 
       - Ref: PythonRequirementsLambdaLayer
     handler: embedding.lambda_handler
@@ -167,9 +164,10 @@ functions:
       subnetIds:
         - ${self:provider.environment.PRIVATE_SUBNET_ONE}
         - ${self:provider.environment.PRIVATE_SUBNET_TWO}
-    timeout: 900
+    timeout: 120
     events:
       - sqs:
+          batchSize: 1
           arn:
             Fn::GetAtt:
               - EmbeddingChunksIndexQueue
@@ -189,7 +187,7 @@ functions:
 
 
   get_dual_embeddings:
-    runtime: python3.10
+    runtime: python3.11
     layers:
       - Ref: PythonRequirementsLambdaLayer
     handler: embedding-dual-retrieval.process_input_with_dual_retrieval
