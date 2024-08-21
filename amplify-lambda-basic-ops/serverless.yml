@@ -31,7 +31,7 @@ provider:
   environment:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    CHAT_ENDPOINT: "http://localhost:8000" #${self:custom.stageVariables.CHAT_ENDPOINT}
+    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "anthropic.claude-3-5-sonnet-20240620-v1:0"
