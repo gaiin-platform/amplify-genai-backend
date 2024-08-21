@@ -1,4 +1,5 @@
 import os
+import traceback
 import uuid
 
 from pydantic import BaseModel, Field, ValidationError
@@ -61,15 +62,21 @@ def llm_prompt_datasource(event, context, current_user, name, data):
         """
 
         # This must be configured in the registry entry as described above
-        access_token = data['accessToken']
+        access_token = data['access_token']
 
         data = data['data']
 
-        datasource = data.get('dataSource', None)
+        if isinstance(data.get('id'), dict):
+            datasource = data.get('id')
+        else:
+            datasource = data.get('dataSource', None)
         datasource_id = data.get('id', datasource.get('id', None) if datasource else None)
 
         print(f"Datasource ID: {datasource_id}")
         print(f"Datasource: {datasource}")
+
+        if not datasource:
+            datasource = {"id": datasource_id}
 
         custom_instructions = data.get('customInstructions', """
         Please follow the user's instructions EXTREMELY CAREFULLY. 
@@ -124,11 +131,14 @@ def llm_prompt_datasource(event, context, current_user, name, data):
             'location': {
                 'name': 'llm',
                 'prompt': query,
-                'dataSource': [datasource['id'] if datasource else 'None'],
+                'dataSource': [datasource['id'] if datasource else datasource_id],
             }
         }
 
     except Exception as e:
+        # Print stack trace
+        print(traceback.format_exc())
+
         print(e)
         return {
             'success': False,
@@ -232,7 +242,7 @@ def llm_qa_check(event, context, current_user, name, data):
 
         """
         # This must be configured in the registry entry as described above
-        access_token = data['accessToken']
+        access_token = data['access_token']
         data = data['data']
 
         try:

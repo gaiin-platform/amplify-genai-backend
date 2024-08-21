@@ -49,14 +49,11 @@ query_schema = {
     "title": "Data Schema",
     "type": "object",
     "properties": {
-        "id": {
-            "type": "string"
-        },
         "query": {
             "type": "string"
         },
     },
-    "required": ["query"],
+    "required": ["query","id"],
     "additionalProperties": True
 }
 
