@@ -42,6 +42,7 @@ These variables should be configured inside your `amplify-genai-backend/<environ
 - EMBEDDING_MODEL_NAME:
 - MIN_ACU:
 - MAX_ACU:
+- OPENAI_PROVIDER: can be 'azure' or switched to 'openai' if using the OpenAI service APIs
 
 ## Deployment Process
 
