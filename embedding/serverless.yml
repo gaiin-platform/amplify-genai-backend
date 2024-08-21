@@ -93,6 +93,7 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
 
 
   iam:
@@ -184,6 +185,7 @@ functions:
       API_VERSION: ${self:provider.environment.API_VERSION}
       USER_FILES_TABLE: ${self:provider.environment.USER_FILES_TABLE}
       EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
+      OPENAI_PROVIDER: ${self:provider.environment.OPENAI_PROVIDER}
 
 
   get_dual_embeddings:
