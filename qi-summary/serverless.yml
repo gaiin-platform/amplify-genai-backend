@@ -46,6 +46,8 @@ provider:
     QI_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-qi-files
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+
 
 
   iam:
@@ -58,11 +60,13 @@ provider:
             - dynamodb:GetItem
             - dynamodb:UpdateItem
           Resource:
-            -  "arn:aws:s3:::${self:provider.environment.QI_FILES_BUCKET_NAME}/*"
+            - "arn:aws:s3:::${self:provider.environment.QI_FILES_BUCKET_NAME}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
 
 functions:
       
