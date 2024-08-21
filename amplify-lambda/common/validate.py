@@ -632,7 +632,7 @@ def parse_and_validate(current_user, event, op, validate_body=True):
 
 idpPrefix = os.environ['IDP_PREFIX']
 
-def validated(op, validate_body=True, idpPrefix_variable=None):
+def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
@@ -645,7 +645,7 @@ def validated(op, validate_body=True, idpPrefix_variable=None):
                     else:
                         return text
 
-                current_user = get_email(claims['username'], idpPrefix_variable)
+                current_user = get_email(claims['username'], idpPrefix)
 
                 print(f"User: {current_user}")
 
