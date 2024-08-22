@@ -50,7 +50,7 @@ def parse_result(result):
 @validated(op="query")
 def llm_query_db(event, context, current_user, name, data):
     try:
-        access_token = data['accessToken']
+        access_token = data['access_token']
         data = data['data']
         db_id = data['id']
         task = data['query']
@@ -143,7 +143,7 @@ def llm_query_db(event, context, current_user, name, data):
 @validated(op="register")
 def register_db(event, context, current_user, name, data):
     try:
-        access_token = data['accessToken']
+        access_token = data['access_token']
         event_data = data['data']
         db_name = event_data.get('name')
         description = event_data.get('description', '')
@@ -208,7 +208,7 @@ def register_db(event, context, current_user, name, data):
 @validated(op="create")
 def create_db(event, context, current_user, name, data):
     try:
-        access_token = data['accessToken']
+        access_token = data['access_token']
         event_data = data['data']
         s3_bucket = os.getenv('PERSONAL_SQL_S3_BUCKET')
         key_table_list = event_data.get('tables')
@@ -357,7 +357,7 @@ def describe_personal_db_schema(event, context, current_user, name, data):
 def describe_db_schema(event, context, current_user, name, data):
     try:
         # Extract parameters from the event data
-        access_token = data['accessToken']
+        access_token = data['access_token']
         event_data = data['data']
         key_table_list = event_data.get('tables')
 

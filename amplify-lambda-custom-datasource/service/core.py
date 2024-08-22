@@ -43,7 +43,7 @@ def query_datasource(event, context, current_user, name, data):
         """
 
         # This must be configured in the registry entry as described above
-        access_token = data['accessToken']
+        access_token = data['access_token']
 
         data = data['data']
         datasource_id = data['id']
