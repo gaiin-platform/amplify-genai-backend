@@ -126,6 +126,15 @@ functions:
           method: post
           cors: true
 
+  llm_rag_prompt_datasource:
+    handler: service/core.llm_prompt_datasource_rag
+    timeout: 30
+    events:
+      - http:
+          path: llm/rag_query
+          method: post
+          cors: true
+
   llm_qa_check:
     handler: service/core.llm_qa_check
     timeout: 30
