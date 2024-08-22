@@ -9,11 +9,27 @@ from common.validate import validated
 from llm.chat import chat, prompt
 from work.session import create_session
 
+
+@vop(
+    path="/llm/rag_query",
+    tags=["llm", "default"],
+    name="llmRagQueryDatasource",
+    description="Search for information in a datasource using the LLM. This is a lightweight, less expensive search that works when targeted questions are sufficient. It doesn't guarantee that all relevant information is found.",
+    params={
+        "id": "The ID of the datasource to use for the query.",
+        "query": "The 'query' or 'task' to use for the query.",
+    }
+)
+@validated(op="rag_query")
+def llm_prompt_datasource_rag(event, context, current_user, name, data):
+    data['ragOnly'] = True
+    return llm_prompt_datasource(event, context, current_user, name, data)
+
 @op(
     path="/llm/query",
     tags=["llm", "default"],
     name="llmQueryDatasource",
-    description="Query a datasource using the LLM.",
+    description="Query a datasource using the LLM. This is a much more extensive and robust, but expensive, search. It looks at the entire document and can be used when you need all information related to a topic",
     params={
         "id": "The ID of the datasource to use for the query.",
         "query": "The 'query' or 'task' to use for the query.",
@@ -72,6 +88,9 @@ def llm_prompt_datasource(event, context, current_user, name, data):
             datasource = data.get('dataSource', None)
         datasource_id = data.get('id', datasource.get('id', None) if datasource else None)
 
+        rag_only = data.get("ragOnly", False)
+
+
         print(f"Datasource ID: {datasource_id}")
         print(f"Datasource: {datasource}")
 
@@ -103,7 +122,7 @@ def llm_prompt_datasource(event, context, current_user, name, data):
         options = data.get('options', default_options)
         options = {**default_options, **options}
 
-        result, meta_events = prompt_llm(access_token, model, datasource, custom_instructions, query, rag_only=False)
+        result, meta_events = prompt_llm(access_token, model, datasource, custom_instructions, query, rag_only)
 
         print(f"The result of the prompt was: {result}")
 
@@ -144,19 +163,6 @@ def llm_prompt_datasource(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to query the datasource"
         }
-
-
-@vop(
-    path="/session/create",
-    tags=["session", "default"],
-    name="createSession",
-    description="Create a new session for the current user.",
-    params={
-        "conversation_id": "Optional ID of the conversation this session belongs to.",
-        "tags": "Optional list of tags for the session.",
-        "metadata": "Optional dictionary of metadata for the session."
-    }
-)
 
 
 def prompt_llm(access_token, model, datasource, custom_instructions, query, rag_only=False):
