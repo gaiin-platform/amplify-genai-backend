@@ -216,6 +216,13 @@ def create_db(event, context, current_user, name, data):
         description = event_data.get('description', '')
         tags = event_data.get('tags', [])
 
+        # Each entry in key_table_list is {key:..., table:...}, iterate over the keys and make sure they arne't dicts,
+        # if so, extract the id of the dict
+        for entry in key_table_list:
+            if isinstance(entry['key'], dict):
+                entry['key'] = entry['key'].get('id')
+
+
         if not (s3_bucket and key_table_list and db_name and description):
             return {
                 'success': False,
