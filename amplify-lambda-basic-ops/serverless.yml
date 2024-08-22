@@ -31,7 +31,7 @@ provider:
   environment:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    CHAT_ENDPOINT: "http://localhost:8000" #${self:custom.stageVariables.CHAT_ENDPOINT}
+    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "anthropic.claude-3-5-sonnet-20240620-v1:0"
@@ -42,6 +42,7 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     DYNAMO_DYNAMIC_CODE_TABLE: vu-amplify-${sls:stage}-dynamic-code
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     DYNAMIC_CODE_BUCKET: vu-amplify-${sls:stage}-dynamic-code
 
   apiGateway:
@@ -69,6 +70,8 @@ provider:
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
         - Effect: Allow
           Action:
             - s3:PutObject
@@ -120,6 +123,15 @@ functions:
     events:
       - http:
           path: llm/query
+          method: post
+          cors: true
+
+  llm_rag_prompt_datasource:
+    handler: service/core.llm_prompt_datasource_rag
+    timeout: 30
+    events:
+      - http:
+          path: llm/rag_query
           method: post
           cors: true
 

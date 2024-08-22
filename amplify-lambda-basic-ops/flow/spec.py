@@ -1,5 +1,5 @@
 import re
-
+import yaml
 
 def validate_output_spec(spec):
     def lint(spec, path=''):
@@ -13,7 +13,11 @@ def validate_output_spec(spec):
             lint(item_type, path + '[list]')
         elif isinstance(spec, str):
             expected_type, note = parse_type_and_note(spec)
-            if expected_type.startswith('list['):
+            if expected_type == 'dict':
+                return
+            elif expected_type == 'list':
+                return
+            elif expected_type.startswith('list['):
                 item_type = expected_type[5:-1]
                 lint(item_type, path + '[list]')
             elif expected_type.startswith('dict['):
@@ -148,3 +152,53 @@ def validate_dict(spec, data):
     except ValueError as e:
         return False, str(e)
     return True, "Validation successful"
+
+
+def convert_keys_to_strings_based_on_spec(spec, data):
+    """
+    Convert dictionary values to strings based on the specification.
+
+    Example spec:
+
+    spec = {
+        'key1': 'str',
+        'key2': 'int',
+        'key3': 'float',
+        'key4': 'bool',
+        'key5': ['str'],
+        'key6': {
+            'subkey1': 'str',
+            'subkey2': 'int',
+            'subkey3': ['float']
+        },
+        'key7': [
+            {
+                'subkey1': 'str',
+                'subkey2': 'int'
+            }
+        ]
+    }
+
+    :param spec: Specification dict that defines which values should be converted to strings.
+    :param data: Data dict to be processed.
+    :return: Updated data dict with specified values converted to strings.
+    """
+
+    def convert(spec, data):
+        if isinstance(spec, dict):
+            if isinstance(data, dict):
+                for key, subspec in spec.items():
+                    if key in data:
+                        data[key] = convert(subspec, data[key])
+        elif isinstance(spec, list):
+            if isinstance(data, list):
+                item_type = spec[0]
+                for index, item in enumerate(data):
+                    data[index] = convert(item_type, item)
+        elif isinstance(spec, str):
+            if spec == 'str' and not isinstance(data, str):
+                return yaml.dump(data).strip()
+
+        return data
+
+    return convert(spec, data)

@@ -8,7 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from llm.chat import chat_simple
-from flow.spec import validate_dict
+from flow.spec import validate_dict, convert_keys_to_strings_based_on_spec
 
 
 def generate_example(spec):
@@ -72,6 +72,35 @@ def get_path_keys(path):
 def get_root_key(path):
     return get_path_keys(path)[0]
 
+
+def resolve_and_set(data, path, new_data):
+    """
+    Set a value in a nested dictionary/list structure given a dot-notated or bracket-notated path.
+
+    :param data: The dictionary or list to modify
+    :param path: A string path like "foo.bar.baz" or "foo.bar[0].baz"
+    :param new_data: The value to set at the end of the path
+    """
+    def parse_key(k):
+        if k.startswith('[') and k.endswith(']'):
+            return int(k[1:-1])
+        return k
+
+    keys = get_path_keys(path)
+    result = data
+    for key in keys[:-1]:
+        if key:
+            try:
+                key = parse_key(key)
+                if key not in result:
+                    result[key] = {} if isinstance(parse_key(keys[keys.index(key) + 1]), str) else []
+                result = result[key]
+            except (KeyError, IndexError, TypeError):
+                return None  # Return None if the path is invalid or cannot be set
+
+    last_key = parse_key(keys[-1])
+    result[last_key] = new_data
+    return data
 
 def resolve(data, path):
     """
@@ -151,6 +180,90 @@ def with_retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
     return decorator
 
 
+def fix_truncated_yaml_output(output):
+    system_prompt = f"""
+    The user made a mistake at the end of their YAML. The last part got cut off and now you need to fix it.
+    You need to figure out a string suffix that can be appended to what the user wrote to complete the needed
+    thought as succinctly as possible and turn it into valid yaml. This will likely just need to be 4-5 words
+    and an ending " new line, etc.
+
+    Your output with the data should be in the YAML format:
+    \`\`\`yaml
+thought: <INSERT THOUGHT>
+suffix_to_fix: <INSERT JUST THE SUFFIX to concatenate with the provided data to make it valid yaml>
+    \`\`\`
+    
+    You MUST provide the requested data. Make sure strings are YAML multiline strings
+    that properly escape special characters.
+    
+    You ALWAYS output a \`\`\`yaml code block.
+    """
+
+    prompt_with_yaml = f"""
+        The user's truncated YAML:
+        ```yaml
+        {output}
+        ```
+        
+        Think about what got cut off. Output only the suffix that needs to be appended to
+        the YAML to make it valid. 
+        
+        Examples:
+        ---------
+users_truncated_yaml: |
+  person:
+    name: "John
+thought: "The quoted string 'John' is not closed and the name is not complete. It should be terminated with another double quote."
+suffix_to_fix: ' Doe"'
+
+users_truncated_yaml: |
+  person:
+    name: 'Jane
+thought: "The quoted string 'Jane' is not closed. It should be terminated with another single quote."
+suffix_to_fix: "'"
+
+users_truncated_yaml: |
+  greeting: "Hello, World
+thought: "The quoted string 'Hello, World' is not closed. It should be terminated with another double quote."
+suffix_to_fix: '"'
+
+users_truncated_yaml: |
+  multiline_string: >
+    This is a multiline string
+    that is missing its end new line
+thought: "The multiline string is not properly closed with a line terminator. Ensure it is properly formatted to complete the entire string content."
+suffix_to_fix: '\n'
+
+users_truncated_yaml: |
+  text: |
+    "This is a block scalar text that is missing its end quote
+thought: "The block scalar text defined by '|' is missing its closing quote. Ensure the string is properly terminated."
+suffix_to_fix: '"\n'       
+        
+        
+        ---------
+        
+        Here is what will be done with your suffix_to_fix:
+        
+        corrected_yaml = users_truncated_yaml + suffix_to_fix
+        data = yaml.safe_load(corrected_yaml)
+        
+        """
+
+    try:
+
+        llm_response = prompt_llm(
+            prompt_with_yaml,
+            system_prompt)
+
+        # Extract YAML from the LLM response
+        yaml_content = extract_yaml(llm_response)
+        parsed_data = yaml.safe_load(yaml_content)
+        return parsed_data['suffix_to_fix']
+    except:
+        return None
+
+
 @with_retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,))
 def dynamic_prompt(context: Dict[str, Any], template: str, system_prompt: str, output_spec: Dict[str, Any]) -> Dict[str, Any]:
     # Fill in the template
@@ -184,9 +297,16 @@ thought: <INSERT THOUGHT>
 
     # Extract YAML from the LLM response
     yaml_content = extract_yaml(llm_response)
+    if not yaml_content:
+        # see if it got cut off producing out and try to recover
+        yaml_content = extract_yaml(f"{llm_response}\n\n```")
+        fix = fix_truncated_yaml_output(yaml_content)
+        yaml_content = f"{yaml_content}{fix}\n"
 
     # Parse the YAML content
     parsed_data = yaml.safe_load(yaml_content)
+
+    parsed_data = convert_keys_to_strings_based_on_spec(output_spec, parsed_data)
 
     # Validate and parse the data using the Pydantic model
     try:
@@ -195,7 +315,14 @@ thought: <INSERT THOUGHT>
             if not valid:
                 raise ValueError(f"LLM output validation Error: {msg}")
 
-        return parsed_data
+        return parsed_data, {
+            'llm_response': llm_response,
+            'yaml_content': yaml_content,
+            'prompt': template,
+            'system_prompt': system_prompt,
+            'filled_prompt': filled_prompt,
+            'filled_system_prompt': system_data_prompt
+        }
     except ValidationError as e:
         print("Validation Error:", e)
         raise

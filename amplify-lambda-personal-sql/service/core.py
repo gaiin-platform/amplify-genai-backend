@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 import datetime
@@ -50,7 +51,7 @@ def parse_result(result):
 @validated(op="query")
 def llm_query_db(event, context, current_user, name, data):
     try:
-        access_token = data['accessToken']
+        access_token = data['access_token']
         data = data['data']
         db_id = data['id']
         task = data['query']
@@ -143,7 +144,7 @@ def llm_query_db(event, context, current_user, name, data):
 @validated(op="register")
 def register_db(event, context, current_user, name, data):
     try:
-        access_token = data['accessToken']
+        access_token = data['access_token']
         event_data = data['data']
         db_name = event_data.get('name')
         description = event_data.get('description', '')
@@ -193,6 +194,19 @@ def register_db(event, context, current_user, name, data):
         }
 
 
+def parse_json_if_valid(input_value):
+    if not isinstance(input_value, str):
+        return input_value
+
+    stripped = input_value.strip()
+    if stripped.startswith('{'):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return stripped
+    return stripped
+
+
 @op(
     path="/pdb/sql/create",
     name="createDatabaseFromCSVFiles",
@@ -200,7 +214,7 @@ def register_db(event, context, current_user, name, data):
     description="Create a new database from a set of CSV files, one CSV file per table. The schema of each table will match the CSV file automatically.",
     params={
         "name": "The name for the database [a-zA-Z0-9_-], which is for the user's reference",
-        "tables": "A JSON list of the tables to create that maps keys (short IDs) to tables. Do NOT put the JSON in a string within quotes. The corresponding document will be used to populate the rows in the table. A sample of the JSON format is: [{\"table\": \"stores\",\"key\":\"#$1\"},{\"table\": \"sales\",\"key\": \"#$2\"},{\"table\": \"features\",\"key\": \"#$0\"}]",
+        "tables": "A JSON list of the tables to create that maps keys (short IDs) to tables. Do NOT put the JSON in a string within quotes. The corresponding document will be used to populate the rows in the table. A sample of the JSON format is: [{\"table\": \"stores\",\"key\":#$1},{\"table\": \"sales\",\"key\": #$2},{\"table\": \"features\",\"key\":#$0}]",
         "description": "A description of the database",
         "tags": "A list of string tags for the database"
     }
@@ -208,13 +222,22 @@ def register_db(event, context, current_user, name, data):
 @validated(op="create")
 def create_db(event, context, current_user, name, data):
     try:
-        access_token = data['accessToken']
+        access_token = data['access_token']
         event_data = data['data']
         s3_bucket = os.getenv('PERSONAL_SQL_S3_BUCKET')
         key_table_list = event_data.get('tables')
         db_name = event_data.get('name')
         description = event_data.get('description', '')
         tags = event_data.get('tags', [])
+
+        # Each entry in key_table_list is {key:..., table:...}, iterate over the keys and make sure they arne't dicts,
+        # if so, extract the id of the dict
+        for entry in key_table_list:
+            kv = entry['key']
+            kv = parse_json_if_valid(kv)
+            if isinstance(kv, dict):
+                entry['key'] = kv.get('id')
+
 
         if not (s3_bucket and key_table_list and db_name and description):
             return {
@@ -350,7 +373,7 @@ def describe_personal_db_schema(event, context, current_user, name, data):
 def describe_db_schema(event, context, current_user, name, data):
     try:
         # Extract parameters from the event data
-        access_token = data['accessToken']
+        access_token = data['access_token']
         event_data = data['data']
         key_table_list = event_data.get('tables')
 

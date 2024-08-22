@@ -46,6 +46,8 @@ provider:
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    
 
   apiGateway:
     restApiId:
@@ -71,6 +73,8 @@ provider:
             - dynamodb:UpdateItem
             - dynamodb:Scan
           Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_DYNAMO_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}"
             - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}/index/CreatorIndex"
