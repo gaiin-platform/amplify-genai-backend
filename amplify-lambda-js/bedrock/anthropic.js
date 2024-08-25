@@ -6,6 +6,7 @@ import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
 
 const logger = getLogger("anthropic");
+const region = process.env.REGION || "us-east-1";
 
 export const chatAnthropic = async (chatBody, writable) => {
 
@@ -17,7 +18,7 @@ export const chatAnthropic = async (chatBody, writable) => {
     
     try {
         // Ensure credentials are in ~/.aws/credentials
-        const client = new AnthropicBedrock({awsRegion: 'us-west-2'}); // default to 1 if omitted
+        const client = new AnthropicBedrock({awsRegion: region}); // default to 1 if omitted
         
         logger.debug("Initiating call to Anthropic Bedrock");
 
