@@ -94,6 +94,8 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
+    EMBEDDING_PROVIDER: ${self:custom.stageVars.EMBEDDING_PROVIDER}
+    REGION: ${self:provider.region}
 
 
   iam:
@@ -111,6 +113,8 @@ provider:
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
             - sqs:SendMessage
+            - bedrock:InvokeModelWithResponseStream
+            - bedrock:InvokeModel
 
           Resource:
             - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
@@ -119,6 +123,8 @@ provider:
             - "arn:aws:dynamodb:${self:provider.region}:${self:custom.stageVars.AWS_ACCOUNT_ID}:table/${self:provider.environment.OBJECT_ACCESS_TABLE}"            
             - "arn:aws:sqs:${self:provider.region}:${self:custom.stageVars.AWS_ACCOUNT_ID}:${self:service}-${sls:stage}-embedding-chunks-index-queue"
             - "arn:aws:dynamodb:${self:provider.region}:${self:custom.stageVars.AWS_ACCOUNT_ID}:table/${self:service}-${sls:stage}-embedding-progress"
+            - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
+            - 'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1'
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret            
             

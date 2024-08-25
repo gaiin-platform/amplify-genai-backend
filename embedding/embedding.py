@@ -19,6 +19,8 @@ pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
+qa_summary_model_name = os.environ['QA_MODEL_NAME']
+embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
@@ -134,9 +136,6 @@ def get_db_connection():
     return db_connection
 
 
-
-
-    
 
 
 def insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, content, vector_embedding, qa_vector_embedding, cursor):
@@ -275,22 +274,37 @@ def embed_chunks(data, embedding_progress_table, db_connection):
                     # Update the DynamoDB table with the current chunk index
                     update_dynamodb_status(table, trimmed_src, chunk_index, total_chunks, "embedding")
 
-                    vector_embedding = generate_embeddings(content)
+                    embedding_result = generate_embeddings(content, embedding_provider)
+            
+                    if embedding_result["success"]:
+                        vector_embedding = embedding_result["data"]
+                        vector_token_count = embedding_result["token_count"]
+                        print(f"Vector Token Count: {vector_token_count}")
+                    else:
+                        raise Exception(embedding_result["error"])
 
                     response = generate_questions(content)
                     if response["statusCode"] == 200:
                         qa_summary = response["body"]["questions"]
+                        print(f"QA Summary: {qa_summary}")
 
                     else:
                         # If there was an error, you can handle it accordingly.
                         error = response["body"]["error"]
                         print(f"Error occurred: {error}")
-                    qa_vector_embedding = generate_embeddings(content=qa_summary)
+
+                    qa_vector_embedding_response = generate_embeddings(qa_summary,embedding_provider)
+                    print(f"QA Vector Embedding Response: {qa_vector_embedding_response}")
+                    
+                    if qa_vector_embedding_response["success"]:
+                        qa_vector_embedding = qa_vector_embedding_response["data"]
+                        qa_vector_token_count = qa_vector_embedding_response["token_count"]
+                        print(f"QA Vector Token Count: {qa_vector_token_count}")
 
 
                     # Calculate token count for the content
-                    vector_token_count = num_tokens_from_text(content, embedding_model_name)
-                    qa_summary_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
+                    
+                    qa_summary_token_count = num_tokens_from_text(qa_summary, qa_summary_model_name)
                     token_count = vector_token_count + qa_summary_token_count
 
 
