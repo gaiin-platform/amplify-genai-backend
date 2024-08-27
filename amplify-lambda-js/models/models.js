@@ -43,8 +43,8 @@ export const Models = {
             name: 'GPT-4o',
             actualTokenLimit: 128000,
             visible: true,
-            outputCost: .005,
-            inputCost: .015,
+            outputCost: .00066,
+            inputCost: .000165,
             },        
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,

@@ -257,6 +257,7 @@ functions:
           cors: true
     environment:
         ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+    timeout: 9    
 
   download_file:
     handler: assistant/assistant.get_presigned_download_url
