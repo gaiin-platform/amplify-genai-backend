@@ -25,9 +25,8 @@ endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
 table_name = 'embeddings'
-
-
 pg_password = get_credentials(rag_pg_password)
+
 
 
 
@@ -278,20 +277,22 @@ def embed_chunks(data, embedding_progress_table, db_connection):
             
                     if embedding_result["success"]:
                         vector_embedding = embedding_result["data"]
-                        vector_token_count = embedding_result["token_count"]
-                        print(f"Vector Token Count: {vector_token_count}")
+                        content_vector_token_count = embedding_result["token_count"]
+                        print(f"Vector Token Count: {content_vector_token_count}")
                     else:
                         raise Exception(embedding_result["error"])
 
-                    response = generate_questions(content)
-                    if response["statusCode"] == 200:
-                        qa_summary = response["body"]["questions"]
+                    response = generate_questions(content, embedding_provider)
+                    if response["success"]:
+                        qa_summary = response["data"]
+                        input_tokens = response["input_tokens"]
+                        output_tokens = response["output_tokens"]
                         print(f"QA Summary: {qa_summary}")
-
+                        print(f"Input tokens: {input_tokens}")
+                        print(f"Output tokens: {output_tokens}")
                     else:
-                        # If there was an error, you can handle it accordingly.
-                        error = response["body"]["error"]
-                        print(f"Error occurred: {error}")
+                        error = response["error"]
+                        print(f"Error: {error}")
 
                     qa_vector_embedding_response = generate_embeddings(qa_summary,embedding_provider)
                     print(f"QA Vector Embedding Response: {qa_vector_embedding_response}")
@@ -304,12 +305,11 @@ def embed_chunks(data, embedding_progress_table, db_connection):
 
                     # Calculate token count for the content
                     
-                    qa_summary_token_count = num_tokens_from_text(qa_summary, qa_summary_model_name)
-                    token_count = vector_token_count + qa_summary_token_count
+                    vector_token_count = qa_vector_token_count + content_vector_token_count
 
 
                     # Insert data into the database
-                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, token_count, embedding_index, content, vector_embedding, qa_vector_embedding, cursor)
+                    insert_chunk_data_to_db(src, locations, orig_indexes, char_index, vector_token_count, embedding_index, content, vector_embedding, qa_vector_embedding, cursor)
                     ()
                     # Commit the transaction
                     db_connection.commit()

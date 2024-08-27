@@ -19,7 +19,6 @@ custom:
     dockerizePip: true
     layer: true
     slim: true
-    zip: true
 
 
   prune:
@@ -147,9 +146,12 @@ functions:
       RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
+  
   queue_document_for_embedding:
     runtime: python3.11
     handler: embedding-sqs.queue_document_for_embedding
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
@@ -337,7 +339,7 @@ resources:
     EmbeddingChunksIndexQueue:
           Type: "AWS::SQS::Queue"
           Properties:
-            VisibilityTimeout: 900
+            VisibilityTimeout: 180
             QueueName: ${self:provider.environment.EMBEDDING_CHUNKS_INDEX_QUEUE}           
     
 

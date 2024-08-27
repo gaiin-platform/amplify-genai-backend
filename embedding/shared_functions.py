@@ -112,68 +112,120 @@ def generate_openai_embeddings(content):
     logger.info(f"Embedding: {embedding}")
     return {"success": True, "data": embedding, "token_count": token_count}
 
-def generate_questions(content):
+def generate_questions(content, embedding_provider="azure"):
+    if embedding_provider == "bedrock":
+        return generate_bedrock_questions(content)
+    if embedding_provider == "azure":
+        return generate_azure_questions(content)
+    if embedding_provider == "openai":
+        return generate_openai_questions(content)
+
+def generate_bedrock_questions(content):
+    try:
+        client = boto3.client("bedrock-runtime", region_name=region)
+        model_id = qa_model_name
+        
+        system_prompt = f"With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."
+
+        native_request = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "system": system_prompt,
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": content}],
+                }
+            ],
+        }
+        request = json.dumps(native_request)
+        
+        response = client.invoke_model(modelId=model_id, body=request)
+        model_response = json.loads(response["body"].read())
+        
+        questions = model_response["content"][0]["text"]
+        input_tokens = model_response["usage"]["input_tokens"]
+        output_tokens = model_response["usage"]["output_tokens"]
+        
+        logger.info(f"Questions generated: {questions}")
+        return {
+            "success": True,
+            "data": questions,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+    except Exception as e:
+        logger.error(f"An error occurred with Bedrock: {e}", exc_info=True)
+        return {"success": False, "error": f"An error occurred with Bedrock: {str(e)}"}
+
+def generate_azure_questions(content):
     logger.info("Getting QA Endpoints")
     endpoint, api_key = get_endpoint(qa_model_name, endpoints_arn)
     logger.info(f"Endpoint: {endpoint}")
-
-    if openai_provider.lower() == "azure":
-        client = AzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version=api_version
+        
+    client = AzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        api_version=api_version
+    )
+    try:
+        input_tokens = num_tokens_from_text(content, qa_model_name)
+        
+        response = client.chat.completions.create(
+            model=qa_model_name,
+            messages=[
+                {"role": "system", "content": "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."},
+                {"role": "user", "content": content}
+            ],
+            max_tokens=500,
+            temperature=0.7
         )
-        try:
-            response = client.chat.completions.create(
-                model=qa_model_name,
-                messages=[
-                    {"role": "system", "content": "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."},
-                    {"role": "user", "content": content}
-                ],
-                max_tokens=500,
-                temperature=0.7
-            )
-            questions = response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"An error occurred with Azure OpenAI: {e}", exc_info=True)
-            return {
-                "statusCode": 500,
-                "body": {
-                    "error": f"An error occurred: {str(e)}"
-                }
-            }
-    elif openai_provider.lower() == "openai":
-        client = OpenAI(
-            api_key=api_key,
-        )
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."},
-                    {"role": "user", "content": content}
-                ],
-                max_tokens=500,
-                temperature=0.7
-            )
-            questions = response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"An error occurred with OpenAI: {e}", exc_info=True)
-            return {
-                "statusCode": 500,
-                "body": {
-                    "error": f"An error occurred: {str(e)}"
-                }
-            }
-    else:
-        raise ValueError(f"Unsupported openai_provider value: {openai_provider}")
+        questions = response.choices[0].message.content.strip()
+        output_tokens = num_tokens_from_text(questions, qa_model_name)
+    except Exception as e:
+        logger.error(f"An error occurred with Azure OpenAI: {e}", exc_info=True)
+        return {"success": False, "error": f"An error occurred with Azure OpenAI: {str(e)}"}
 
     logger.info(f"Questions: {questions}")
-
     return {
-        "statusCode": 200,
-        "body": {
-            "questions": questions
-        }
+        "success": True,
+        "data": questions,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens
+    }
+
+def generate_openai_questions(content):
+    logger.info("Getting QA Endpoints")
+    endpoint, api_key = get_endpoint(qa_model_name, endpoints_arn)
+    logger.info(f"Endpoint: {endpoint}")
+        
+    client = OpenAI(
+        api_key=api_key
+    )
+    try:
+        input_tokens = num_tokens_from_text(content, "gpt-3.5-turbo")
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."},
+                {"role": "user", "content": content}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        questions = response.choices[0].message.content.strip()
+        output_tokens = num_tokens_from_text(questions, "gpt-3.5-turbo")
+    except Exception as e:
+        logger.error(f"An error occurred with OpenAI: {e}", exc_info=True)
+        return {"success": False, "error": f"An error occurred with OpenAI: {str(e)}"}
+
+    logger.info(f"Questions: {questions}")
+    return {
+        "success": True,
+        "data": questions,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens
     }
 
