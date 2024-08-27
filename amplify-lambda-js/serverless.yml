@@ -68,6 +68,7 @@ provider:
     #SECRETS_NAME: ${self:custom.stageVars.SECRETS_NAME}
     SECRETS_ARN_NAME: ${self:custom.stageVars.SECRETS_ARN_NAME}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    REGION: ${self:provider.region}
 
 
     
@@ -107,6 +108,7 @@ provider:
             - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-7b-instruct-v0:2'
             - 'arn:aws:bedrock:*::foundation-model/mistral.mixtral-8x7b-instruct-v0:1'
             - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-2402-v1:0'
+            - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v1'
 
         - Effect: Allow
           Action:
