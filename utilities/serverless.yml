@@ -16,7 +16,7 @@ custom:
 
   pythonRequirements:
     dockerizePip: true
-    layer: true
+    layer: false
 
   stages:
     - dev
@@ -74,6 +74,5 @@ functions:
           path: /execute_rename
           method: post
           cors: true
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
+
 
