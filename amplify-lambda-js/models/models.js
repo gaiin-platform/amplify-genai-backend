@@ -41,14 +41,14 @@ export const Models = {
         outputCost: .005,
         inputCost: .015,
         },
-        [ModelID.GPT_4o_MINI]: {
-            id: ModelID.GPT_4o_MINI,
-            name: 'GPT-4o',
-            actualTokenLimit: 128000,
-            visible: true,
-            outputCost: .00066,
-            inputCost: .000165,
-            },          
+    [ModelID.GPT_4o_MINI]: {
+        id: ModelID.GPT_4o_MINI,
+        name: 'GPT-4o',
+        actualTokenLimit: 128000,
+        visible: true,
+        outputCost: .00066,
+        inputCost: .000165,
+        },          
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',
