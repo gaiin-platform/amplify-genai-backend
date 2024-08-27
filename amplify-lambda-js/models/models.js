@@ -4,6 +4,7 @@
     GPT_4_TURBO_AZ: 'gpt-4-1106-Preview',
     GPT_4o_AZ: 'gpt-4o',
     GPT_4_TURBO: 'gpt-4-1106-preview',
+    GPT_4o_MINI: 'gpt-4o-mini',
     GPT_3_5: 'gpt-3.5-turbo',
     GPT_3_5_FN: 'gpt-3.5-turbo-1106',
     GPT_3_5_AZ: 'gpt-35-turbo',
@@ -37,6 +38,14 @@ export const Models = {
         outputCost: .005,
         inputCost: .015,
         },
+        [ModelID.GPT_4o_MINI]: {
+            id: ModelID.GPT_4o_MINI,
+            name: 'GPT-4o',
+            actualTokenLimit: 128000,
+            visible: true,
+            outputCost: .005,
+            inputCost: .015,
+            },        
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',
