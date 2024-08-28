@@ -23,7 +23,7 @@ pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
-
+embedding_provider = os.environ['EMBEDDING_PROVIDER']
 qa_model_name = os.environ['QA_MODEL_NAME']
 api_version = os.environ['API_VERSION']
 object_access_table = os.environ['OBJECT_ACCESS_TABLE']
@@ -175,7 +175,13 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
     src_ids = accessible_src_ids
 
-    embeddings = generate_embeddings(content)
+    embedding_result = generate_embeddings(content, embedding_provider)
+    if embedding_result["success"]:
+        embeddings = embedding_result["data"]
+        content_vector_token_count = embedding_result["token_count"]
+        print(f"Vector Token Count: {content_vector_token_count}")
+    else:
+        raise Exception(embedding_result["error"])
     
     # Step 1: Get documents related to the user input from the database
     related_docs = get_top_similar_docs(embeddings, src_ids, limit)
