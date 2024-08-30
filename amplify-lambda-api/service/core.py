@@ -249,11 +249,14 @@ def update_api_key(item_id, updates, user):
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
-            if (field == 'account'): 
-                if (not is_valid_account(value['id'])):
-                    return {"success": False, "error": "Invalid COA string attached to account", "key_name": key_name}
-            if (field == 'rateLimit'): value = formatRateLimit(value)
-            # Use attribute names to avoid conflicts with DynamoDB reserved keywords
+    if (not is_valid_account(value['id'])):
+        if (field == 'account'):
+                warning = "Warning: Invalid COA string attached to account"
+                print(warning)  # or use a logging mechanism
+            # Continue with key creation despite the warning
+        if (field == 'rateLimit'): 
+            value = formatRateLimit(value)
+        # Use attribute names to avoid conflicts with DynamoDB reserved keywords
             placeholder = f"#{field}"
             value_placeholder = f":{field}"
             update_expression.append(f"{placeholder} = {value_placeholder}")
