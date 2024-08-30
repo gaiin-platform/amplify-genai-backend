@@ -37,7 +37,7 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME}
     # Valid values are either "openai" or "azure"
-    HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
+    HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
     ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants

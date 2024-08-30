@@ -5,8 +5,7 @@ import json
 def deactivate_key(access_token, api_owner_id):
     print("Initiate deactivate key call")
 
-    amplify_group_endpoint = "http://localhost:3019/dev/apiKeys/deactivate_key"
-    #os.environ['API_BASE_URL'] + '/apiKeys/deactivate_key'
+    amplify_group_endpoint = os.environ['API_BASE_URL'] + '/apiKeys/deactivate_key'
 
     headers = {
         'Content-Type': 'application/json',

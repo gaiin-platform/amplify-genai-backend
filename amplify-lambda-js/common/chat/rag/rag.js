@@ -15,14 +15,14 @@ const limiter = new Bottleneck({
     minTime: 10
 });
 
-const ragEndpoint = process.env.RAG_ENDPOINT;
+const ragEndpoint = process.env.API_BASE_URL + '/embedding-dual-retrieval';
 
-async function getRagResults(params, token, search, ragDataSourceKeys, count) {
-
+async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupDataSourcesKeys, count) {
     const ragRequest = {
         data: {
             dataSources: ragDataSourceKeys,
-            userInput: search,
+            groupDataSources : ragGroupDataSourcesKeys, 
+            userInput : search,
             limit: count
         },
     }
@@ -104,13 +104,22 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
         const search = lastMessage.content;
 
         const keyLookup = {};
+        const ragGroupDataSourcesKeys = {};
+        const ragDataSourceKeys = [];
         dataSources.forEach(ds => {
-            const key = extractKey(ds.id) //+ ".content.json";
+            const key = extractKey(ds.id);
+            if (ds.groupId) {
+                // If the dataSource has a groupId, add it to the groupDataSources object
+                if (!ragGroupDataSourcesKeys[ds.groupId]) {
+                    ragGroupDataSourcesKeys[ds.groupId] = [];
+                }
+                ragGroupDataSourcesKeys[ds.groupId].push(key);
+            } else {
+                ragDataSourceKeys.push(key)
+            }
             keyLookup[key] = ds;
         });
-
-        const ragDataSourceKeys = Object.keys(keyLookup);
-
+        
         const searches = await llm.promptForData(
             chatBody, [],
             `
@@ -152,7 +161,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 limiter.schedule(async () => {
                     try {
                         const searchString = idea.descriptionOfSpecificHelpfulInformation;
-                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, resultsPerIdea);
+                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, ragGroupDataSourcesKeys, resultsPerIdea);
                         const sources = response.data.result.map((item) => {
                             const [content, key, locations, indexes, charIndex, user, tokenCount,  ragId, score] = item;
                             const ds = keyLookup[key];

@@ -22,7 +22,7 @@ def share_assistant(access_token, data):
             headers=headers,
             data=json.dumps(request)
         )
-        print("Response: ", response.content)
+        # print("Response: ", response.content)
         response_content = response.json() # to adhere to object access return response dict
 
         if response.status_code != 200 or not response_content.get('success', False):
@@ -50,10 +50,10 @@ def list_assistants(access_token):
             assistant_endpoint,
             headers=headers,
         )
-        print("Response: ", response.content)
         response_content = response.json() # to adhere to object access return response dict
 
         if response.status_code != 200 or not 'success' in response_content:
+            print("Response: ", response.content)
             return {"success": False}
         else:
             return response_content
@@ -83,7 +83,7 @@ def remove_astp_perms(access_token, data):
             headers=headers,
             data=json.dumps(request)
         )
-        print("Response: ", response.content)
+        # print("Response: ", response.content)
         response_content = response.json() # to adhere to object access return response dict
 
         if response.status_code != 200 or not 'success' in response_content:
@@ -116,7 +116,7 @@ def delete_assistant(access_token, data):
             headers=headers,
             data=json.dumps(request)
         )
-        print("Response: ", response.content)
+        # print("Response: ", response.content)
         response_content = response.json() # to adhere to object access return response dict
 
         if response.status_code != 200 or not 'success' in response_content:
@@ -150,9 +150,9 @@ def create_assistant(access_token, data):
             headers=headers,
             data=json.dumps(request)
         )
-        print("Response: ", response.content)
+        # print("Response: ", response.content)
         response_content = response.json() # to adhere to object access return response dict
-        print(response_content)
+        # print(response_content)
 
         if response.status_code != 200 or not 'success' in response_content:
             return {"success": False}

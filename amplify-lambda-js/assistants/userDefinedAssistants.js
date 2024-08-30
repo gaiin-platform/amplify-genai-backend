@@ -243,6 +243,13 @@ but otherwise don't describe them in your answers as it might confuse the user.
                 (message) => message.role !== "system"
             );
 
+            const groupType = body.options.groupType;
+            if (groupType) {
+                const groupTypeData = assistant.data.groupTypeData[groupType];
+                assistant.instructions += "\n\n" + groupTypeData.additionalInstructions
+                assistant.dataSources = [...assistant.dataSources, ...groupTypeData.dataSources]
+            }
+
             const instructions = await fillInTemplate(
                 llm,
                 params,
@@ -253,7 +260,6 @@ but otherwise don't describe them in your answers as it might confuse the user.
                     assistant: assistant,
                 }
             );
-
 
                 llm.sendStateEventToStream({
                     references: getReferences(references),

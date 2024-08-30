@@ -74,6 +74,16 @@ dual_retrieval_schema = {
             "type": "array",
             "description": "A list of data sources to search for related documents."
         },
+        "groupDataSources": {
+            "type": "object",
+            "description": "A dict of group data sources to search for related documents. Group is the key, list of globals is the value.",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        },
         "limit": {
             "type": "integer",
             "description": "The maximum number of documents to return."

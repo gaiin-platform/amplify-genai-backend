@@ -454,7 +454,10 @@ def validated(op, validate_body=True):
                 data['account'] = claims['account']
                 data['allowed_access'] = claims['allowed_access']
                 data['api_accessed'] = api_accessed
-            
+
+                # additional validator change from other lambdas
+                data["is_group_sys_user"] = claims.get('is_group_sys_user', False) 
+                ###
 
                 result = f(event, context, current_user, name, data)
 
@@ -631,7 +634,10 @@ def api_claims(event, context, token):
         )
         print("Last Access updated")
 
-        return {'username': current_user, 'account': item['account']['id'], 'allowed_access': access}
+         # additional validator change from other lambdas
+        is_group_sys_user = item.get('purpose', '') == 'group'
+        ###
+        return {'username': current_user, 'account': item['account']['id'], 'allowed_access': access, 'is_group_sys_user': is_group_sys_user}
 
     except Exception as e:
         print("Error during DynamoDB operation:", str(e))

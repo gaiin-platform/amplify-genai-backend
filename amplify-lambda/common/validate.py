@@ -389,7 +389,10 @@ file_upload_schema = {
         },
         "data": {
             "type": "object"
-        }
+        },
+        "groupId": {
+            "type": ["string", "null"]
+        },
     },
     "required": ["type", "name", "knowledgeBase", "tags", "data"],
 }

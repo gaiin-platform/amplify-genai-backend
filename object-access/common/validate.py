@@ -107,7 +107,29 @@ simulate_access_to_objects = {
     "required": ["objects"]
 }
 
-create_cognito_group = {
+in_amp_cogn_group_schema ={
+    "type": "object",
+    "properties": {
+        "amplifyGroups": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "cognitoGroups": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "anyOf": [
+        {"required": ["amplifyGroups"]},
+        {"required": ["cognitoGroups"]}
+    ]
+}
+
+create_cognito_group_schema = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
     "properties": {
@@ -135,17 +157,44 @@ members_schema = {
 
 
 
-create_amplify_group = {
+update_group_type_schema = {
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "description": "The ID of the group."
+    },
+    "types": {
+        "type": "array",
+        "items": {
+            "type": "string"
+        }
+    }
+  },
+  "required": ["group_id", "types"]
+}
+
+
+
+create_admin_group_schema = {
     "type": "object",
     "properties": {
-        "groupName": {
+        "group_name": {
             "type": "string",
             "description": "The name of the group to be created."
         },
         "members": members_schema,
         },
-    "required": ["groupName", "members"]
+        "types": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+    "required": ["group_name", "members"]
 }
+
+
 
 create_assistant_schema = {
     "type": "object",
@@ -289,16 +338,19 @@ validators = {
         "simulate_access_to_objects": simulate_access_to_objects
     },
     "/utilities/create_cognito_group": {
-        "create_cognito_group": create_cognito_group
+        "create_cognito_group": create_cognito_group_schema
     },
     "/utilities/get_user_groups": {
         "read": {}
+    },
+    "/utilities/in_cognito_amp_groups" : {
+        "in_group" : in_amp_cogn_group_schema
     },
     "/utilities/emails": {
         "read": {}
     },
     "/groups/create" : {
-        'create': create_amplify_group
+        'create': create_admin_group_schema
     },
     "/groups/members/update" : {
         "update": update_members_schema
@@ -309,6 +361,9 @@ validators = {
     "/groups/assistants/update" : {
         "update": update_ast_schema
     },
+    "/groups/types/update": {
+        'update' : update_group_type_schema
+    },
     "/groups/delete" : {
         "delete": {}
     },
@@ -317,8 +372,7 @@ validators = {
     },
     "/groups/members/list" : {
         'list': {}
-    }
-    
+    },
 }
 
 
@@ -332,28 +386,6 @@ api_validators = {
     "/utilities/simulate_access_to_objects": {
         "simulate_access_to_objects": simulate_access_to_objects
     },
-
-    # "/groups/create" : {
-    #     'create': create_amplify_group
-    # },
-    # "/groups/members/update" : {
-    #     "update": update_members_schema
-    # },
-    # "/groups/members/update_permissions" : {
-    #     "update": update_members_perms_schema
-    # },
-    # "/groups/assistants/update" : {
-    #     "update": update_ast_schema
-    # },
-    # "/groups/delete" : {
-    #     "delete": {}
-    # },
-    # "/groups/list" : {
-    #     'list': {}
-    # },
-    # "/groups/members/list" : {
-    #     'list': {}
-    # }
 }
 
 def validate_data(name, op, data, api_accessed):

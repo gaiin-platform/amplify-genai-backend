@@ -106,7 +106,9 @@ def list_assistants(event, context, current_user, name, data):
 
     assistant_ids = [assistant['id'] for assistant in assistants]
 
-    access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
+    access_rights ={}
+    if not data["is_group_sys_user"]: # saves us the call, access is determined by group members access list 
+        access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
 
     # Add the system assistants for Amplify requests only
     if (not data['api_accessed']):
@@ -122,7 +124,7 @@ def list_assistants(event, context, current_user, name, data):
         try:
             if assistant['data'] is None:
                 assistant['data'] = {'access': None}
-            assistant['data']['access'] = access_rights.get(assistant['id'], 'none')
+            assistant['data']['access'] = access_rights.get(assistant['id'], {})
         except Exception as e:
             print(f"Error adding access rights to assistant {assistant['id']}: {e}")
 
@@ -259,7 +261,8 @@ def create_assistant(event, context, current_user, name, data):
         tools=tools,
         provider=provider,
         uri=uri,
-        assistant_public_id=assistant_public_id
+        assistant_public_id=assistant_public_id,
+        is_group_sys_user = data["is_group_sys_user"]
     )
 
 
@@ -473,7 +476,7 @@ def get_most_recent_assistant_version(assistants_table,
 
 
 def save_assistant(assistants_table, assistant_name, description, instructions, assistant_data, disclaimer, data_sources, provider, tools,
-                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None):
+                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None, is_group_sys_user=False):
     """
     Saves the assistant data to the DynamoDB table.
 
@@ -508,12 +511,15 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
                              data_sources,
                              provider,
                              tools)
-
-    assistant_database_id = f'ast/{str(uuid.uuid4())}'
-
+    
+    # to differentiate Group ast because when a group member chats with it they wont have access directly but the group system user will
+    # so the object access relies on looking up if a user is a member of that group and the group system user has perms
+    ast_prefix = 'astg' if is_group_sys_user else 'ast'
+    assistant_database_id = f'{ast_prefix}/{str(uuid.uuid4())}'
+    
     # Create an assistantId
     if not assistant_public_id:
-        assistant_public_id = f'astp/{str(uuid.uuid4())}'
+        assistant_public_id = f'{ast_prefix}p/{str(uuid.uuid4())}'
 
     # Create the new item for the DynamoDB table
     new_item = {
@@ -685,7 +691,8 @@ def create_or_update_assistant(
         tools,
         provider,
         uri,
-        assistant_public_id=None
+        assistant_public_id=None,
+        is_group_sys_user=False
 ):
     """
     Creates a new assistant in the DynamoDB table and sets the appropriate permissions.
@@ -710,6 +717,9 @@ def create_or_update_assistant(
     assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
 
     existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_public_id)
+
+    principal_type = 'group' if is_group_sys_user else 'user'
+    print("isGroupSystemUser? ", principal_type)
 
     if existing_assistant:
 
@@ -738,7 +748,8 @@ def create_or_update_assistant(
             new_version,
             tags,
             uri,
-            assistant_public_id
+            assistant_public_id,
+            is_group_sys_user
         )
         new_item['version'] = new_version
 
@@ -748,7 +759,7 @@ def create_or_update_assistant(
                 [user_that_owns_the_assistant],
                 [new_item['id']],
                 'assistant',
-                'user',
+                principal_type,
                 'owner'):
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:
@@ -784,6 +795,7 @@ def create_or_update_assistant(
             tags,
             uri,
             None, 
+            is_group_sys_user
         )
 
         # Update the permissions for the new assistant
@@ -792,7 +804,7 @@ def create_or_update_assistant(
                 [user_that_owns_the_assistant],
                 [new_item['assistantId'], new_item['id']],
                 'assistant',
-                'user',
+                principal_type,
                 'owner'):
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:

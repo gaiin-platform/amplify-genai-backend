@@ -274,9 +274,11 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     let selectedAssistant = null;
     if(clientSelectedAssistant) {
         logger.info(`Client Selected Assistant`);
+        // For group ast
+        const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : llm.params.account.user;
         // check if system defined
         selectedAssistant = isSystemAssistant(clientSelectedAssistant) ? getSystemAssistant(defaultAssistant, clientSelectedAssistant) 
-                                             : await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
+                                             : await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
 
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = codeInterpreterAssistant;

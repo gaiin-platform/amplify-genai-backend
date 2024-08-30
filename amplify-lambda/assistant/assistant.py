@@ -267,7 +267,7 @@ def encrypt_account_data(data):
         encrypted_data = fernet.encrypt(data_str.encode())
         encrypted_data_b64 = base64.b64encode(encrypted_data).decode('utf-8')
 
-        print("Encrypted value:", encrypted_data_b64)
+        # print("Encrypted value:", encrypted_data_b64)
         return {
             'success': True,
             'encrypted_data': encrypted_data_b64
@@ -286,6 +286,11 @@ def get_presigned_url(event, context, current_user, name, data):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
     
+    # we need the perms to be under the groupId if applicable
+    groupId = data['data'].get('groupId', None) 
+    if (groupId): 
+        print("GroupId ds upload: ", groupId)
+        current_user = groupId
     account_data = { "user": current_user,
                      "account" : data['account'],
                      "api_key" : data['access_token'] if data['api_accessed'] else None
@@ -294,8 +299,7 @@ def get_presigned_url(event, context, current_user, name, data):
     e_result = encrypt_account_data(account_data)
     encrypted_metadata = e_result['encrypted_data'] if e_result['success'] else ""
     
-
-    print(f"Data is {data}")
+    # print(f"Data is {data}")
     data = data['data']
 
     s3 = boto3.client('s3')

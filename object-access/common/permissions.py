@@ -58,6 +58,9 @@ permissions_by_state_type = {
     "/utilities/get_user_groups": {
         "read": can_read
     },
+    "/utilities/in_cognito_amp_groups" : {
+        "in_group" : can_read
+    },
     "/utilities/emails": {
         "read": can_read
     },
@@ -71,6 +74,9 @@ permissions_by_state_type = {
     },
     "/groups/assistants/update" : {
         "update": can_update
+    },
+    "/groups/types/update": {
+        'update' : can_update
     },
     "/groups/delete" : {
         "delete": can_delete
