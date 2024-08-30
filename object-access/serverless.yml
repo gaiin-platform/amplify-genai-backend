@@ -705,6 +705,7 @@ functions:
           - dynamodb:Scan
           - dynamodb:GetItem
           - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
         Resource:
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
