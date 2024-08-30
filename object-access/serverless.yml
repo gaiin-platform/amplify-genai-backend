@@ -59,7 +59,7 @@ functions:
     handler: cognito_users.get_emails
     layers:
       - Ref: PythonRequirementsLambdaLayer    
-    timeout: 30
+    timeout: 15
     events:
       - http:
           path: /utilities/emails
@@ -98,7 +98,7 @@ functions:
     handler: cognito_users.get_user_groups
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 30   
+    timeout: 12   
     events:
       - http:
           path: /utilities/get_user_groups
@@ -132,7 +132,7 @@ functions:
     handler: cognito_users.in_cognito_amplify_groups
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 30   
+    timeout: 12  
     events:
       - http:
           path: /utilities/in_cognito_amp_groups
@@ -378,6 +378,7 @@ functions:
 
   create_ast_admin_group:
     handler: groups.create_group
+    timeout: 12
     layers:
         - Ref: PythonRequirementsLambdaLayer
     events:
@@ -422,7 +423,7 @@ functions:
     handler: groups.update_members
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 12
     events:
       - http:
           path: /groups/members/update
@@ -464,7 +465,7 @@ functions:
     handler: groups.update_group_types
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 12
     events:
       - http:
           path: /groups/types/update
@@ -504,7 +505,7 @@ functions:
     handler: groups.update_members_permission
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 12
     events:
       - http:
           path: /groups/members/update_permissions
@@ -547,7 +548,7 @@ functions:
     handler: groups.list_groups
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 30
     events:
       - http:
           path: /groups/list
@@ -587,7 +588,7 @@ functions:
     handler: groups.list_group_members
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 30
     events:
       - http:
           path: /groups/members/list
@@ -625,7 +626,7 @@ functions:
     handler: groups.update_assistants
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 900
+    timeout: 30
     events:
       - http:
           path: /groups/assistants/update
@@ -679,7 +680,7 @@ functions:
     handler: groups.delete_group
     layers:
         - Ref: PythonRequirementsLambdaLayer
-    timeout: 300
+    timeout: 12
     events:
       - http:
           path: /groups/delete
