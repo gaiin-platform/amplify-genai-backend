@@ -444,6 +444,11 @@ functions:
     iamRoleStatements:
       - Effect: Allow
         Action:
+          - dynamodb:PutItem
+        Resource: 
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+      - Effect: Allow
+        Action:
           - dynamodb:Query
           - dynamodb:Scan
           - dynamodb:GetItem
@@ -456,7 +461,6 @@ functions:
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
-          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations/index/*"
@@ -485,6 +489,11 @@ functions:
     iamRoleStatements:
       - Effect: Allow
         Action:
+          - dynamodb:PutItem
+        Resource: 
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+      - Effect: Allow
+        Action:
           - dynamodb:Query
           - dynamodb:Scan
           - dynamodb:GetItem
@@ -495,7 +504,6 @@ functions:
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
-          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations/index/*"
@@ -526,6 +534,11 @@ functions:
     iamRoleStatements:
       - Effect: Allow
         Action:
+          - dynamodb:PutItem
+        Resource: 
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+      - Effect: Allow
+        Action:
           - dynamodb:Query
           - dynamodb:Scan
           - dynamodb:GetItem
@@ -538,7 +551,6 @@ functions:
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
-          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations/index/*"
@@ -657,6 +669,7 @@ functions:
           - dynamodb:PutItem
         Resource: 
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
       - Effect: Allow
         Action:
           - dynamodb:Query
@@ -669,7 +682,6 @@ functions:
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
-          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations/index/*" 
@@ -702,6 +714,11 @@ functions:
     iamRoleStatements:
       - Effect: Allow
         Action:
+          - dynamodb:PutItem
+        Resource: 
+          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+      - Effect: Allow
+        Action:
           - dynamodb:Query
           - dynamodb:Scan
           - dynamodb:GetItem
@@ -713,12 +730,9 @@ functions:
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts/index/*"  
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
-          - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups/index/*"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations"
           - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-cost-calculations/index/*"   
-
-            
 
   
 
