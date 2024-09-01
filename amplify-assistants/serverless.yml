@@ -51,6 +51,7 @@ provider:
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
     ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
+    ASSISTANT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
     BILLING_DYNAMODB_TABLE: chat-billing-${sls:stage}-additional-charges
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}
@@ -64,60 +65,12 @@ provider:
     # needed for system assistant url 
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
 
+
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - secretsmanager:GetSecretValue
-            - dynamodb:Query
-            - dynamodb:Scan
-            - dynamodb:GetItem
-            - dynamodb:DeleteItem
-            - dynamodb:PutItem
-            - dynamodb:UpdateItem
-            - s3:GetObject
-            - s3:PutObject
-            - s3:HeadObject
-            - s3:ListBucket
-          Resource:
-            - "${self:provider.environment.OPENAI_API_KEY_ARN}"
-            - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-            - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
-            
-
-        - Effect: Allow
-          Action:
-            - dynamodb:GetItem
-          Resource: 
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-          Resource:
-            - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/assistants/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
-
+      managedPolicies:
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.ASSISTANT_LAMBDA_MANAGED_POLICY}
+       
 functions:
 
   remove_astp_perms:
@@ -439,3 +392,59 @@ resources:
           ServerSideEncryptionConfiguration:
             - ServerSideEncryptionByDefault:
                 SSEAlgorithm: AES256
+
+    AssistantsLambdaPolicy:
+      Type: 'AWS::IAM::ManagedPolicy'
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.ASSISTANT_LAMBDA_MANAGED_POLICY}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:DeleteItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - s3:GetObject
+                - s3:PutObject
+                - s3:HeadObject
+                - s3:ListBucket
+              Resource:
+                - "${self:provider.environment.OPENAI_API_KEY_ARN}"
+                - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: 
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/assistants/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
