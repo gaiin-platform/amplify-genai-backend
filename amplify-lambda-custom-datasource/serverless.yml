@@ -28,6 +28,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   environment:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}

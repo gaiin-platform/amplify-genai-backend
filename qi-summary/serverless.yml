@@ -32,6 +32,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
 
   apiGateway:
     restApiId:

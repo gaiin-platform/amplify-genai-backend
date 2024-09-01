@@ -39,6 +39,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   deploymentBucket:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256

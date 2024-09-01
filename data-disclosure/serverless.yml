@@ -28,6 +28,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   stackTags:
     "vu:environment": ${sls:stage}
     "vu:applicationName": "amplify"
@@ -136,6 +137,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: user
             AttributeType: S
@@ -149,6 +152,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: key
             AttributeType: S

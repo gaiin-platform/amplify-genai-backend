@@ -31,6 +31,11 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logs:
+    httpApi: true
+    restApi: true
+    websocket: true
+  logRetentionInDays: 365  
   stackTags:
     "vu:environment": ${sls:stage}
     "vu:applicationName": "amplify"
@@ -550,6 +555,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: id
@@ -605,6 +612,8 @@ resources:
             AttributeName: id
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         GlobalSecondaryIndexes:
           -
             IndexName: UserIndex
@@ -630,6 +639,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: id
@@ -700,6 +711,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: user
@@ -714,6 +727,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: id
@@ -737,6 +752,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: id
@@ -750,6 +767,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: user
@@ -763,6 +782,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: email
@@ -781,6 +802,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
@@ -814,6 +837,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S

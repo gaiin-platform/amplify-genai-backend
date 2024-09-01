@@ -20,6 +20,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   apiGateway:
     restApiId:
       ${self:custom.stageVariables.REST_API_ID}
@@ -205,6 +206,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: requestId
@@ -224,6 +227,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           -
             AttributeName: type
@@ -237,6 +242,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
@@ -252,6 +259,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: userDate
             AttributeType: S

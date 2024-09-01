@@ -39,6 +39,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   apiGateway:
     restApiId:
       ${self:custom.stageVariables.REST_API_ID}
@@ -227,6 +228,8 @@ resources:
             AttributeName: id
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         GlobalSecondaryIndexes:
           -
             IndexName: UserIndex
@@ -258,6 +261,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         StreamSpecification:
             StreamViewType: NEW_IMAGE
         AttributeDefinitions:

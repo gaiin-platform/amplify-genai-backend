@@ -26,6 +26,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   environment:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
@@ -105,6 +106,8 @@ resources:
       Properties:
         TableName: ${self:provider.environment.PERSONAL_DB_DYNAMO_TABLE}
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: hashKey
             AttributeType: S

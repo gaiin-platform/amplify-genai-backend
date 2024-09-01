@@ -40,6 +40,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   deploymentBucket:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256
@@ -157,6 +158,8 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         TableName: ${self:provider.environment.MODEL_RATE_TABLE}
         AttributeDefinitions:
           - AttributeName: 'ModelID'
@@ -174,6 +177,8 @@ resources:
       Properties:
         TableName: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: 'id'
             AttributeType: 'S'
@@ -187,6 +192,8 @@ resources:
       Properties:
         TableName: ${self:provider.environment.HISTORY_USAGE_TABLE}
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         AttributeDefinitions:
           - AttributeName: 'id'
             AttributeType: 'S'
