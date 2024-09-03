@@ -13,9 +13,24 @@ from common.encoders import CombinedEncoder
 from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
 
 from common.validate import validated
-
-from assistants.system_assistants import RESERVED_TAGS, get_system_assistants
 from decimal import Decimal
+
+
+SYSTEM_TAG = "amplify:system"
+ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
+ASSISTANT_TAG = "amplify:assistant"
+AMPLIFY_AUTOMATION_TAG = "amplify:automation"
+AMPLIFY_API_KEY_MANAGER_TAG = "amplify:api-key-manager"
+AMPLIFY_API_DOC_HELPER_TAG = "amplify:api-doc-helper"
+
+RESERVED_TAGS = [
+    SYSTEM_TAG,
+    ASSISTANT_BUILDER_TAG,
+    ASSISTANT_TAG,
+    AMPLIFY_AUTOMATION_TAG,
+    AMPLIFY_API_KEY_MANAGER_TAG,
+    AMPLIFY_API_DOC_HELPER_TAG
+]
 
 
 def check_user_can_share_assistant(assistant, user_id):
@@ -110,9 +125,9 @@ def list_assistants(event, context, current_user, name, data):
     if not data["is_group_sys_user"]: # saves us the call, access is determined by group members access list 
         access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
 
-    # Add the system assistants for Amplify requests only
-    if (not data['api_accessed']):
-        assistants += get_system_assistants(current_user)
+    # # Add the system assistants for Amplify requests only
+    # if (not data['api_accessed']):
+    #     assistants += get_system_assistants(current_user)
 
     # Make sure each assistant has a data field and initialize it if it doesn't
     for assistant in assistants:
