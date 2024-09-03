@@ -411,7 +411,7 @@ functions:
     events:
       - http:
           path: state/accounts/get
-          method: post
+          method: get
 
   accounts_save:
     handler: accounts/accounts.save_accounts

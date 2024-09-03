@@ -746,7 +746,7 @@ validators = {
         "save": save_accounts_schema
     },
     "/state/accounts/get": {
-    "get": {}
+        "get": {}
     },
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema

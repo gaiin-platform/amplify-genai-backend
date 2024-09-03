@@ -85,7 +85,7 @@ permissions_by_state_type = {
     "create_charge": can_publish_item
     },
   "/state/accounts/get": {
-    "get": can_publish_item
+    "get": can_read
   },
   "/state/accounts/save": {
     "save": can_publish_item
