@@ -38,15 +38,13 @@ provider:
   environment:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    LAMBDA_PYTHON_BASE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-python-base-iam-policy
 
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-
-          Resource:
+      managedPolicies:
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_PYTHON_BASE_IAM_POLICY_NAME}
 
 
 functions:
@@ -58,7 +56,21 @@ functions:
           path: someservice/sample
           method: post
           cors: true
+resources:
+  Resources:
 
+    LambdaPythonBaseAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_PYTHON_BASE_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - someActio:GetAction
+              Resource:
+                - "arn:aws:someResource:${aws:region}:*:someResourceName"
       
 
         

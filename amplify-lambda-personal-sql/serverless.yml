@@ -48,6 +48,8 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    LAMBDA_PERSONAL_SQL_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-personal-sql-iam-policy
+
     
 
   apiGateway:
@@ -58,63 +60,9 @@ provider:
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - dynamodb:GetItem
-          Resource:
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-        - Effect: Allow
-          Action:
-            - dynamodb:PutItem
-            - dynamodb:DeleteItem
-            - dynamodb:GetItem
-            - dynamodb:Query
-            - dynamodb:DescribeTable
-            - dynamodb:UpdateItem
-            - dynamodb:Scan
-          Resource:
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}/index/CreatorIndex"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-        - Effect: Allow
-          Action:
-            - dynamodb:PutItem
-            - dynamodb:GetItem
-            - dynamodb:Query
-          Resource:
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
-        - Effect: Allow
-          Action:
-            - s3:GetObject
-            - s3:PutObject
-          Resource:
-            - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}"
-            - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}/*"
-        - Effect: Allow
-          Action:
-            - s3:GetObject
-            - s3:PutObject
-          Resource:
-            - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}/*"
-        - Effect: Allow
-          Action:
-            - s3:GetObject
-          Resource:
-            - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
-        - Effect: Allow
-          Action:
-            - ssm:GetParameter
-            - ssm:PutParameter
-          Resource:
-            - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
+      managedPolicies:
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_PERSONAL_SQL_IAM_POLICY_NAME}
+
 
 functions:
 
@@ -185,6 +133,69 @@ functions:
 
 resources:
   Resources:
+    LambdaPersonalSQLIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_PERSONAL_SQL_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:DescribeTable
+                - dynamodb:UpdateItem
+                - dynamodb:Scan
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.PERSONAL_SQL_METADATA_TABLE}/index/CreatorIndex"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}"
+                - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}/*"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.PERSONAL_SQL_S3_BUCKET}/*"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+              Resource:
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"                
 
     DBBucket:
       Type: AWS::S3::Bucket
@@ -210,6 +221,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         
     PersonalSQLMetadataTable:
       Type: AWS::DynamoDB::Table
@@ -237,3 +250,5 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true

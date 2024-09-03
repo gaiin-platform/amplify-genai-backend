@@ -69,36 +69,13 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    LAMBDA_MARKETPLACE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - secretsmanager:GetSecretValue
-            - dynamodb:Query
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-            - s3:GetObject  
-            - s3:PutObject  
-            - s3:DeleteObject
-            - s3:HeadObject 
-            - s3:ListBucket 
-          Resource:
-            - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}/*" 
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+      - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_MARKETPLACE_IAM_POLICY_NAME}
+
 
 functions:
 
@@ -185,6 +162,39 @@ functions:
 
 resources:
   Resources:
+    LambdaMarketPlaceIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_MARKETPLACE_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - s3:GetObject  
+                - s3:PutObject  
+                - s3:DeleteObject
+                - s3:HeadObject 
+                - s3:ListBucket 
+              Resource:
+                - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}/*" 
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+
     LambdaSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
