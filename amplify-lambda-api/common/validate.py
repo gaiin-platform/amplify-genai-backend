@@ -208,6 +208,9 @@ validators = {
     "/apiKeys/get_key": {
         "read": {}
     },
+    "/apiKeys/get_keys_ast": {
+        "read": {}
+    },
     "/apiKeys/update_keys" : {
         "update": update_key_schema
     },
@@ -230,6 +233,9 @@ api_validators = {
         "read": {}
     },
     "/apiKeys/get_key": {
+        "read": {}
+    },
+    "/apiKeys/get_keys_ast": {
         "read": {}
     },
     "/apiKeys/update_keys" : {

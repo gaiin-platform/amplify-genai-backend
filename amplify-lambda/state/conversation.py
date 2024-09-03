@@ -95,10 +95,8 @@ def get_all_conversations(event, context, current_user, name, data):
                 conversation_body = conversation_response['Body'].read().decode('utf-8')
                 conversation = json.loads(conversation_body)
                 uncompressed_conversation = lzw_uncompress(conversation["conversation"])
-                if (uncompressed_conversation["name"] == "You Seem Nice Today!"): print( uncompressed_conversation["messages"])
                 if (uncompressed_conversation):
                     strippedConversation = pick_conversation_attributes(uncompressed_conversation) 
-                    print(conversation["folder"])
                     conversations.append({
                         'conversation': strippedConversation,
                         'folder': conversation["folder"]

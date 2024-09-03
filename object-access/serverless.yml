@@ -265,6 +265,12 @@ functions:
     iamRoleStatements:
           - Effect: Allow
             Action:
+              - dynamodb:UpdateItem
+            Resource:
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+              - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
+          - Effect: Allow
+            Action:
               - dynamodb:Query
               - dynamodb:Scan
               - dynamodb:GetItem
@@ -298,6 +304,12 @@ functions:
        COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
 
      iamRoleStatements:
+           - Effect: Allow
+             Action:
+               - dynamodb:UpdateItem
+             Resource:
+               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+               - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index/*"
            - Effect: Allow
              Action:
                - dynamodb:Query

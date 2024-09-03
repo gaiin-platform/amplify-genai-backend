@@ -22,7 +22,7 @@ serializer = TypeSerializer()
 IGNORED_DIRECTORIES = {"node_modules", "venv", "__pycache__"}
 
 
-def op(tags=None, path="", name="", description="", params=None):
+def op(tags=None, path="", name="", description="", params=None, method="POST"):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -30,6 +30,7 @@ def op(tags=None, path="", name="", description="", params=None):
             print(f"Path: {path}")
             print(f"Tags: {tags}")
             print(f"Name: {name}")
+            print(f"Method: {method}")
             print(f"Description: {description}")
             print(f"Params: {params}")
             # Call the actual function
@@ -110,7 +111,7 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
                                 description=op_kwargs['description'].s,
                                 id=op_kwargs['name'].s,
                                 includeAccessToken=True,  # Assuming ops will include access token
-                                method="POST",  # Default method
+                                method=op_kwargs['method'].s if 'method' in op_kwargs else "POST",  # Default method
                                 name=op_kwargs['name'].s,
                                 params=params,
                                 type="custom",  # Assuming custom type

@@ -75,6 +75,14 @@ functions:
           path: apiKeys/get_keys
           method: get
           cors: true
+  
+  get_api_keys_ast:
+    handler: service/core.get_api_keys_for_assistant
+    events:
+      - http:
+          path: apiKeys/get_keys_ast
+          method: get
+          cors: true
 
   get_api_key:
     handler: service/core.get_api_key
