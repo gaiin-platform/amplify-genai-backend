@@ -56,6 +56,7 @@ provider:
     CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
+    LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
     S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
@@ -86,93 +87,8 @@ provider:
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - ssm:GetParameter
-            - ssm:DescribeParameters
-            - ssm:PutParameter
-          Resource: 
-            - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
-  
-        - Effect: Allow
-          Action:
-            - s3:ListBucket
-            - s3:GetObject
-            - s3:PutObject
-            - s3:DeleteObject
-          Resource:
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
-        - Effect: Allow
-          Action:
-            - secretsmanager:GetSecretValue
-            - dynamodb:Query
-            - dynamodb:Scan
-            - dynamodb:GetItem
-            - dynamodb:PutItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - s3:GetObject  # for accessing S3
-            - s3:PutObject  # for putting objects into S3
-            - s3:DeleteObject
-            - s3:HeadObject # for getting metadata on objects in S3
-            - s3:ListBucket # for listing objects in S3
-            - s3:CreateBucket
-            - sqs:SendMessage
-            - sqs:DeleteMessage
-            - rds-data:ExecuteStatement
-            - rds-data:BatchExecuteStatement
-            - rds-data:BeginTransaction
-            - rds-data:CommitTransaction
-            - rds-data:RollbackTransaction
-          Resource:
-            - 'arn:aws:secretsmanager:us-east-1:*:secret:OPENAI_API_KEY-REUULJ'
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-            - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
-            - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
-            - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
-            - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
-            - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
-            - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
- 
+      managedPolicies:
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
 
 functions:
 
@@ -520,6 +436,97 @@ functions:
   
 resources:
   Resources:
+    LambdaIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:DescribeParameters
+                - ssm:PutParameter
+              Resource: 
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+                - s3:HeadObject
+                - s3:ListBucket
+                - s3:CreateBucket
+                - sqs:SendMessage
+                - sqs:DeleteMessage
+                - rds-data:ExecuteStatement
+                - rds-data:BatchExecuteStatement
+                - rds-data:BeginTransaction
+                - rds-data:CommitTransaction
+                - rds-data:RollbackTransaction
+              Resource:
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:OPENAI_API_KEY-REUULJ'
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
+                - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
+                - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
 
     StateBucket:
       Type: AWS::S3::Bucket
@@ -1044,5 +1051,3 @@ resources:
                 StringEquals:
                   'aws:SourceAccount': ${aws:accountId}
 
-
-  

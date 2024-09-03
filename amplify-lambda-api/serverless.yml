@@ -42,29 +42,15 @@ provider:
     COGNITO_USERS_TABLE:  vu-amplify-object-access-${sls:stage}-cognito-users
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-api-policy
 
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - dynamodb:Query
-            - dynamodb:Scan
-            - dynamodb:GetItem
-            - dynamodb:PutItem
-            - dynamodb:UpdateItem
-            - s3:GetObject
-          Resource:
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/"
-            - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"
+      managedPolicies:
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+
+      
 
 functions:
 
@@ -135,6 +121,32 @@ functions:
 
 resources:
   Resources:
+    LambdaAPIIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - s3:GetObject
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/"
+                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"
+    
     APIDocumentBucket:
         Type: 'AWS::S3::Bucket'
         Properties:
