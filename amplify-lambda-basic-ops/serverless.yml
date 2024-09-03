@@ -45,6 +45,7 @@ provider:
     DYNAMO_DYNAMIC_CODE_TABLE: vu-amplify-${sls:stage}-dynamic-code
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     DYNAMIC_CODE_BUCKET: vu-amplify-${sls:stage}-dynamic-code
+    LAMBDA_BASIC_OPS_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
 
   apiGateway:
     restApiId:
@@ -54,40 +55,8 @@ provider:
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - dynamodb:PutItem
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - dynamodb:Query
-          Resource:
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-            - s3:GetObject
-            - s3:DeleteObject
-          Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
-            - dynamodb:Query
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-            - s3:GetObject
-            - s3:DeleteObject
-          Resource: arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
+      managedPolicies:
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_BASIC_OPS_POLICY_NAME}
 
 functions:
 
@@ -200,6 +169,41 @@ functions:
 
 resources:
   Resources:
+    LambdaBasicOpsIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_BASIC_OPS_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+              Resource:
+                - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}
+                - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: 
+                - arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
+                - arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
+
+
     UserSessionsTable:
       Type: AWS::DynamoDB::Table
       Properties:
