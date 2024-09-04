@@ -605,21 +605,7 @@ def list_groups(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to retrive assistants for users groups"
         }
-    return {"success": True, "data": group_info, "incompleteGroupData": failed_to_list}
-
-@validated(op='list')
-def list_group_members(event, context, current_user, name, data):
-    groups_result = get_my_groups(current_user)
-    if (not groups_result['success']):
-        return groups_result
-    groups = groups_result['data']
-
-    groups_and_members = {}
-    for group in groups:
-        groups_and_members[group['groupName']] = list(group['members'].keys())
-
-    return {"suceess": True, "groupMemberData" : groups_and_members}
-    
+    return {"success": True, "data": group_info, "incompleteGroupData": failed_to_list}    
 
 def get_my_groups(current_user):
     group_rows = []
