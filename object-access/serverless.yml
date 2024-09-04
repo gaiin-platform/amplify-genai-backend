@@ -246,7 +246,7 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}        
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
-      AMPLIFY_ACCOUNTS_TABLE: vu-amplify-${sls:stage}-accounts
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     role: !GetAtt UpdateGroupTypesRole.Arn
 
   update_member_permission:
@@ -305,7 +305,10 @@ functions:
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL} 
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+
     role: !GetAtt UpdateAssistantsRole.Arn
   
   delete_group:
@@ -362,6 +365,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole        
           - !Ref CognitoUsersGetEmailsPolicy
 
     GetCognitoAmpGroupsPolicy:
@@ -389,6 +393,7 @@ resources:
                   - lambda.amazonaws.com
               Action: sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref GetCognitoAmpGroupsPolicy    
 
     CognitoAmpGroupsPolicy:
@@ -417,6 +422,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref CognitoAmpGroupsPolicy
 
     UpdateObjectPermsPolicy:
@@ -463,6 +469,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref UpdateObjectPermsPolicy
 
     CanAccessObjectsPolicy:
@@ -501,6 +508,7 @@ resources:
                   - lambda.amazonaws.com
               Action: sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole              
           - !Ref CanAccessObjectsPolicy
 
     SimulateAccessPolicy:
@@ -539,6 +547,7 @@ resources:
                   - lambda.amazonaws.com
               Action: sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref SimulateAccessPolicy
 
     SyncCognitoUsersPolicy:
@@ -573,6 +582,7 @@ resources:
                   - lambda.amazonaws.com
               Action: sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref SyncCognitoUsersPolicy
 
     CreateAstAdminGroupPolicy:
@@ -615,6 +625,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref CreateAstAdminGroupPolicy
 
 
@@ -655,6 +666,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref UpdateMembersPolicyDocument
 
     UpdateGroupTypesPolicy:
@@ -693,6 +705,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref UpdateGroupTypesPolicy
 
     UpdateMemberPermissionPolicy:
@@ -730,6 +743,7 @@ resources:
                 Service: lambda.amazonaws.com
               Action: sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref UpdateMemberPermissionPolicy
 
     ListGroupsPolicy:
@@ -763,6 +777,7 @@ resources:
               Action:
                 - sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref ListGroupsPolicy
 
     UpdateAssistantsPolicy:
@@ -782,11 +797,13 @@ resources:
                 - dynamodb:PutItem
               Resource: 
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-object-access"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-hash-files"
 
     UpdateAssistantsRole:
       Type: AWS::IAM::Role
@@ -800,7 +817,9 @@ resources:
                   - lambda.amazonaws.com
               Action: sts:AssumeRole
         ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref UpdateAssistantsPolicy
+    
     DeleteGroupRole:
       Type: AWS::IAM::Role
       Properties:
@@ -812,27 +831,32 @@ resources:
                 Service:
                   - lambda.amazonaws.com
               Action: sts:AssumeRole
-        Policies:
-          - PolicyName: DeleteGroupPolicy
-            PolicyDocument:
-              Version: '2012-10-17'
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - dynamodb:PutItem
-                  Resource: 
-                    - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
-                - Effect: Allow
-                  Action:
-                    - dynamodb:GetItem
-                    - dynamodb:DeleteItem
-                  Resource:
-                    - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
-                - Effect: Allow
-                  Action:
-                    - dynamodb:GetItem
-                  Resource:
-                    - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"          
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - !Ref DeleteGroupPolicy
+
+    DeleteGroupPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: 
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:DeleteItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"     
 
 
       
