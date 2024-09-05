@@ -28,7 +28,7 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
-  logRetentionInDays: 365
+  logRetentionInDays: 365 #Set the log retention to 365 days for 800-171 Compliance
   apiGateway:
     restApiId:
       ${self:custom.stageVariables.REST_API_ID}
@@ -43,7 +43,8 @@ provider:
 
   iam:
     role:
-      managedPolicies:
+      managedPolicies: #attach the managed policy to the Lambda functions for 800-171 Compliance
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_PYTHON_BASE_IAM_POLICY_NAME}
 
 
@@ -58,7 +59,7 @@ functions:
           cors: true
 resources:
   Resources:
-
+    # Set up a managed policy for the Lambda functions for 800-171 Compliance
     LambdaPythonBaseAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
@@ -71,6 +72,24 @@ resources:
                 - someActio:GetAction
               Resource:
                 - "arn:aws:someResource:${aws:region}:*:someResourceName"
+``` SampleDynamo:
+    Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_NAME}
+        PointInTimeRecoverySpecification: #Enable PITR for 800-171 compliance
+          PointInTimeRecoveryEnabled: true
+        SSESpecification: #Enable encryption at rest for 800-171 compliance
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
       
 
         
