@@ -1,4 +1,5 @@
 from openai import AzureOpenAI
+from openai import OpenAI
 import tiktoken
 import re
 import json
@@ -21,6 +22,7 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
 hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+region = os.environ['REGION']
 
 
 
@@ -51,25 +53,74 @@ def preprocess_text(text):
         return {"success": False, "error": f"An error occurred: {str(e)}"}
 
 
-def generate_embeddings(content):
+
+def generate_embeddings(content, embedding_provider= "azure"):
+    if embedding_provider == "bedrock":
+        return generate_bedrock_embeddings(content)
+    if embedding_provider == "azure":
+        return generate_azure_embeddings(content)
+    if embedding_provider == "openai":
+        return generate_openai_embeddings(content)
+
+def generate_bedrock_embeddings(content):
+    try:
+        client = boto3.client("bedrock-runtime", region_name=region)
+        model_id = embedding_model_name
+        
+        native_request = {"inputText": content}
+        request = json.dumps(native_request)
+        
+        response = client.invoke_model(modelId=model_id, body=request)
+        model_response = json.loads(response["body"].read())
+        
+        embeddings = model_response["embedding"]
+        input_token_count = model_response["inputTextTokenCount"]
+        
+        logger.info(f"Embedding generated. Input tokens: {input_token_count}, Embedding size: {len(embeddings)}")
+        return {"success": True, "data": embeddings, "token_count": input_token_count}
+    except Exception as e:
+        logger.error(f"An error occurred with Bedrock: {e}", exc_info=True)
+        return {"success": False, "error": f"An error occurred with Bedrock: {str(e)}"}
+
+def generate_azure_embeddings(content):
     logger.info("Getting Embedding Endpoints")
     endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
     logger.info(f"Endpoint: {endpoint}")
-
+        
     client = AzureOpenAI(
-    api_key = api_key,
-    azure_endpoint = endpoint,
-    api_version = api_version
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        api_version=api_version
     )
     try:
         response = client.embeddings.create(input=content, model=embedding_model_name)
-        logger.info(f"Embedding: {response.data[0].embedding}") 
-        embeddings = response.data[0].embedding
-        return {"success":True, "data": embeddings}
+        embedding = response.data[0].embedding
+        token_count = num_tokens_from_text(content, embedding_model_name)
     except Exception as e:
-        logger.error(f"An error occurred: {e}", exc_info=True)
-        return {"success":False, "error": f"An error occurred: {str(e)}"}
+        logger.error(f"An error occurred with Azure OpenAI: {e}", exc_info=True)
+        raise
+
+    logger.info(f"Embedding: {embedding}")
+    return {"success": True, "data": embedding, "token_count": token_count}
+
+def generate_openai_embeddings(content):
+    logger.info("Getting Embedding Endpoints")
+    endpoint, api_key = get_endpoint(embedding_model_name, endpoints_arn)
+    logger.info(f"Endpoint: {endpoint}")
         
+    client = OpenAI(
+        api_key=api_key
+    )
+    try:
+        response = client.embeddings.create(input=content, model=embedding_model_name)
+        embedding = response.data[0].embedding
+        token_count = num_tokens_from_text(content, embedding_model_name)
+    except Exception as e:
+        logger.error(f"An error occurred with OpenAI: {e}", exc_info=True)
+        raise
+
+    logger.info(f"Embedding: {embedding}")
+    return {"success": True, "data": embedding, "token_count": token_count}        
 
 #Currently Not In Use but leaving in case we go back to it. 
 def generate_keywords(content):

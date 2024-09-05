@@ -279,23 +279,23 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     src_ids = accessible_src_ids + group_accessible_src_ids
 
     response_embeddings = generate_embeddings(content)
-    
+
     if response_embeddings["success"]:
         embeddings = response_embeddings["data"]
+        token_count = response_embeddings["token_count"]
+        print(f"Here are the token count {token_count}")
     else:
         error = response_embeddings["error"]
         print(f"Error occurred: {error}")
+        return {"error": error}
 
 
     # Step 1: Get documents related to the user input from the database
     related_docs = get_top_similar_docs(embeddings, src_ids, limit)
-    
-    #print(f"Here are the related docs {related_docs}")
+
     related_qas = get_top_similar_qas(embeddings, src_ids, limit)
     related_docs.extend(related_qas)
-    #related_ft_docs = get_top_similar_ft_docs(input_keywords, src_ids, limit)
-    #related_docs.extend(related_ft_docs)
-    #related_docs.extend(src_ids_message)
+    
     print(f"Here are the related docs {related_docs}")
     # Return the related documents as a HTTP response
     return {"result":related_docs}

@@ -98,6 +98,7 @@ provider:
     GROUPS_DYNAMO_TABLE: vu-amplify-object-access-${sls:stage}-amplify-groups
     EMBEDDING_CHUNKS_INDEX_DLQ: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
     EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    REGION: ${self:provider.region}
     
    
 
