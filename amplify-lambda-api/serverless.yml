@@ -42,13 +42,14 @@ provider:
     COGNITO_USERS_TABLE:  vu-amplify-object-access-${sls:stage}-cognito-users
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
-    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-api-policy
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
 
 
   iam:
     role:
       managedPolicies:
-        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+        - !Ref LambdaAPIIAMPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       
 
