@@ -11,7 +11,9 @@ import os
 import boto3
 import rag.util
 import images.core
+from boto3.dynamodb.conditions import Key
 
+dynamodb = boto3.resource('dynamodb')
 
 IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
@@ -95,26 +97,54 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
-    files_table.put_item(
-        Item={
-            'id': key,
-            'name': name,
-            'type': file_type,
-            'tags': tags,
-            'data': data_props,
-            'knowledgeBase': knowledge_base,
-            'createdAt': datetime.now().isoformat(),
-            'updatedAt': datetime.now().isoformat(),
-            'createdBy': current_user,
-            'updatedBy': current_user
-        }
+
+    # Query the GSI to see if a file with the same name and createdBy exists
+    response = files_table.query(
+        IndexName='createdByAndName',  # Specify the GSI name
+        KeyConditionExpression = Key('createdBy').eq(current_user) & Key('name').eq(name)
     )
 
-    if tags is not None and len(tags) > 0:
-        update_file_tags(current_user, key, tags)
+    if response['Count'] == 0:
+        # If the item does not exist, create a new one
+        files_table.put_item(
+            Item={
+                'id': key,
+                'name': name,
+                'type': file_type,
+                'tags': tags,
+                'data': data_props,
+                'knowledgeBase': knowledge_base,
+                'createdAt': datetime.now().isoformat(),
+                'updatedAt': datetime.now().isoformat(),
+                'createdBy': current_user,
+                'updatedBy': current_user
+            }
+        )
 
-    return bucket_name, key
+        if tags is not None and len(tags) > 0:
+            update_file_tags(current_user, key, tags)
+        
+        print("File does not exist, created new entry.")
+        return bucket_name, key
+    else:
+        # If the item exists, update the `updatedAt` and `updatedBy` fields
+        existing_item = response['Items'][0]  # Get the first matching item (if any)
 
+        files_table.update_item(
+            Key={
+                'id': existing_item['id']  # Use the item's id as the key for the update
+            },
+            UpdateExpression="""
+                SET updatedAt = :updatedAt, 
+                    updatedBy = :updatedBy
+            """,
+            ExpressionAttributeValues={
+                ':updatedAt': datetime.now().isoformat(),
+                ':updatedBy': current_user
+            }
+        )
+        print("File already exists, updated existing entry.")
+        return bucket_name, existing_item['id']
 
 @validated(op="set")
 def set_datasource_metadata_entry(event, context, current_user, name, data):
@@ -310,6 +340,31 @@ def get_presigned_url(event, context, current_user, name, data):
     props = data['data']
     knowledge_base = data['knowledgeBase']
 
+    # file_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
+
+    # # Query the item where the name and user match
+    # response = file_table.get_item(
+    #     Key={
+    #         'name': name,
+    #         'user': current_user  # Assuming the user is part of the key schema
+    #     }
+    # )
+
+    # # Check if the item exists and proceed accordingly
+    # if 'Item' in response:
+    #     # Item exists, now you can compare the existing file details with the new one
+    #     existing_item = response['Item']
+        
+    #     # Add your comparison logic here
+    #     if existing_item['name'] == name:
+    #         print("This file is the same as before.")
+    #         # Further processing if needed
+    #     else:
+    #         print("This is a different file.")
+    # else:
+    #     print("No matching file found for this user.")
+
+    
     print(
         f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
 
