@@ -339,31 +339,6 @@ def get_presigned_url(event, context, current_user, name, data):
     tags = data['tags']
     props = data['data']
     knowledge_base = data['knowledgeBase']
-
-    # file_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
-
-    # # Query the item where the name and user match
-    # response = file_table.get_item(
-    #     Key={
-    #         'name': name,
-    #         'user': current_user  # Assuming the user is part of the key schema
-    #     }
-    # )
-
-    # # Check if the item exists and proceed accordingly
-    # if 'Item' in response:
-    #     # Item exists, now you can compare the existing file details with the new one
-    #     existing_item = response['Item']
-        
-    #     # Add your comparison logic here
-    #     if existing_item['name'] == name:
-    #         print("This file is the same as before.")
-    #         # Further processing if needed
-    #     else:
-    #         print("This is a different file.")
-    # else:
-    #     print("No matching file found for this user.")
-
     
     print(
         f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
