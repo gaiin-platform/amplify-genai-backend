@@ -125,7 +125,7 @@ functions:
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
       API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
-      COST_CALCULATIONS_DYNAMODB_TABLE: vu-amplify-${sls:stage}-cost-calculations
+      COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     role: !GetAtt UpdateObjectPermsRole.Arn
 
 
@@ -147,7 +147,7 @@ functions:
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
       API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
-      COST_CALCULATIONS_DYNAMODB_TABLE: vu-amplify-${sls:stage}-cost-calculations
+      COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     role: !GetAtt CanAccessObjectsRole.Arn           
 
   simulate_access:
@@ -168,7 +168,7 @@ functions:
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
       API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
-      COST_CALCULATIONS_DYNAMODB_TABLE: vu-amplify-${sls:stage}-cost-calculations
+      COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     role: !GetAtt SimulateAccessRole.Arn   
   
   sync_cognito_users:
@@ -482,8 +482,11 @@ resources:
               Action:
                 - dynamodb:Query
                 - dynamodb:UpdateItem
+                - dynamodb:GetItem
               Resource:
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index*"
+                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
             - Effect: Allow
               Action:
                 - dynamodb:Query
@@ -494,8 +497,7 @@ resources:
                 - dynamodb:GetItem
               Resource:
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${sls:stage}-accounts"   
-                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-object-access"
-
+  
     CanAccessObjectsRole:
       Type: AWS::IAM::Role
       Properties:
@@ -523,6 +525,7 @@ resources:
                 - dynamodb:UpdateItem
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-object-access"                
             - Effect: Allow
               Action:
                 - dynamodb:Query
@@ -533,7 +536,7 @@ resources:
                 - dynamodb:GetItem
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+
 
     SimulateAccessRole:
       Type: AWS::IAM::Role
@@ -763,6 +766,7 @@ resources:
                 - dynamodb:GetItem
               Resource:    
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
 
     ListGroupsRole:
       Type: AWS::IAM::Role
