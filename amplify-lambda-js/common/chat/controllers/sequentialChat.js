@@ -8,8 +8,36 @@ import {getLogger} from "../../logging.js";
 import {sendStatusEventToStream} from "../../streams.js";
 import {getUser} from "../../params.js";
 import {addContextMessage, createContextMessage} from "./common.js";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 const logger = getLogger("sequentialChat");
+
+const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
+const docClient = DynamoDBDocumentClient.from(dynamodbClient);
+
+async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, entryPoint) {
+    const params = {
+        TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
+        Item: {
+            conversationId: conversationId,
+            assistantId: assistantId,
+            assistantName: assistantName,
+            user: user,
+            modelUsed: modelUsed,
+            numberPrompts: numberPrompts,
+            entryPoint: entryPoint,
+            timestamp: new Date().toISOString()
+        }
+    };
+
+    try {
+        await docClient.send(new PutCommand(params));
+        logger.info(`Successfully wrote conversation data to DynamoDB for conversationId: ${conversationId}`);
+    } catch (error) {
+        logger.error(`Error writing to DynamoDB: ${error}`);
+    }
+}
 
 export const handleChat = async ({account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer, tokenReporting}) => {
 
@@ -102,4 +130,19 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             status);
     }
 
+    if (chatRequest.options.assistantId) {
+        // assistantId beginning with 'astgp' means this is a group assistant
+        if (chatRequest.options.assistantId.startsWith('astgp')) {
+            // write data to DynamoDB table
+            const conversationId = chatRequest.options.conversationId || `conv-${Date.now()}`;
+            const assistantId = chatRequest.options.assistantId;
+            const assistantName = chatRequest.options.assistantName;
+            const modelUsed = chatRequest.model;
+            const numberPrompts = chatRequest.n;
+            const s3Location = "tbd";
+
+            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, "Amplify");
+            // TODO: add rating, conversation name, location of conversation in S3, model used
+        }
+    }
 }

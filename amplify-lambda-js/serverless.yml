@@ -70,6 +70,7 @@ provider:
     HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-history-cost-calculations
     MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: vu-amplify-assistants-${sls:stage}-group-assistant-conversations
     # STREAM: false # optional 
     
 
@@ -183,6 +184,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
                 - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
                 - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
                 - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'

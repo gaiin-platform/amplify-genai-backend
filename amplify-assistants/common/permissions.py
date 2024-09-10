@@ -17,8 +17,11 @@ def can_chat_with_code_interpreter(user, data):
     return True
 
 def can_download(user, data):
-  return True
+    return True
 
+
+def can_get_group_assistant_conversations(user, data):
+    return True
 
 """
 Every service must define the permissions for each operation
@@ -61,5 +64,8 @@ permissions_by_state_type = {
     },
     "/assistant/remove_astp_permissions" : {
        "remove_astp_permissions":  can_delete_assistant
+    },
+    "/assistant/get_group_assistant_conversations": {
+        "get_group_assistant_conversations": can_get_group_assistant_conversations
     }
 }

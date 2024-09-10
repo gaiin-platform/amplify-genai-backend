@@ -311,6 +311,17 @@ remove_astp_perms_schema = {
     "required": ["assistant_public_id", "users"]
 }
 
+get_group_assistant_conversations_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The id of the assistant",
+        }
+    },
+    "required": ["assistantId"],
+}
+
 
 """
 Every service must define the permissions for each operation here. 
@@ -349,6 +360,9 @@ validators = {
     },
     "/assistant/remove_astp_permissions": {
         "remove_astp_permissions": remove_astp_perms_schema
+    },
+    "/assistant/get_group_assistant_conversations": {
+        "get_group_assistant_conversations": get_group_assistant_conversations_schema
     }
 
 }
@@ -386,6 +400,9 @@ api_validators = {
     },
     "/assistant/remove_astp_permissions": {
         "remove_astp_permissions": remove_astp_perms_schema
+    },
+    "/assistant/get_group_assistant_conversations": {
+        "get_group_assistant_conversations": get_group_assistant_conversations_schema
     }
 }
 

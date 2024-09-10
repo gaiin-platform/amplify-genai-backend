@@ -597,7 +597,6 @@ def remove_shared_ast_permissions(event, context, current_user, name, data):
     return delete_assistant_permissions_by_public_id(ast_public_id, users)
 
 
-
 def delete_assistant_permissions_by_public_id(assistant_public_id, users):
     #delete public id is not as sensitive as assistant id 
     dynamodb = boto3.resource('dynamodb')
@@ -615,7 +614,6 @@ def delete_assistant_permissions_by_public_id(assistant_public_id, users):
             print(f"Failed to delete permissions for user {user}. Error: {str(e)}")
 
     return {'success': True, 'message': 'Permissions successfully deleted.'}
-
 
 
 def delete_assistant_permissions_by_id(ast_id, current_user):
@@ -646,7 +644,6 @@ def delete_assistant_permissions_by_id(ast_id, current_user):
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         return {'success': False, 'message': str(e)}
-
 
 
 def delete_assistant_by_id(assistants_table, assistant_id):
@@ -1007,3 +1004,40 @@ def save_assistant_for_rag(assistant):
     except Exception as e:
         print(f"Error saving assistant for RAG: {e}")
 
+
+@validated(op="get_group_assistant_conversations")
+def get_group_assistant_conversations(event, context, current_user, name, data):
+    if "data" not in data or "assistantId" not in data["data"]:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "assistantId is required"}),
+        }
+
+    assistant_id = data["data"]["assistantId"]
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+
+    try:
+        response = table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_id),
+        )
+
+        conversations = response["Items"]
+
+        while "LastEvaluatedKey" in response:
+            response = table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            conversations.extend(response["Items"])
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(conversations, cls=CombinedEncoder),
+        }
+
+    except ClientError as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}

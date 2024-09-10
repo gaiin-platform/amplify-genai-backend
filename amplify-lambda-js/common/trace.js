@@ -40,6 +40,7 @@ export const saveTrace = async (user, requestId) => {
 
         if (data) {
             const seconduuid = uuidv4();
+            // TODO: modify key (after checking) so that we can lookup S3 file
             const key = `traces/${user}/${date}/${requestId}-${seconduuid}.json`;
 
             const command = new PutObjectCommand({

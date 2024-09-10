@@ -64,6 +64,7 @@ provider:
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     # needed for system assistant url 
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
+    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
 
 
   iam:
@@ -170,6 +171,14 @@ functions:
           method: delete
           cors: true
 
+  get_group_assistant_conversations:
+    handler: service/core.get_group_assistant_conversations
+    timeout: 30
+    events:
+      - http:
+          path: assistant/get_group_assistant_conversations
+          method: post
+          cors: true
 
 
 resources:
@@ -378,6 +387,31 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}
 
+    GroupAssistantConversationsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: conversationId
+            AttributeType: S
+          - AttributeName: assistantId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: conversationId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: AssistantIdIndex
+            KeySchema:
+              - AttributeName: assistantId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}
+    
     AssistantsFilesBucket:
       Type: 'AWS::S3::Bucket'
       Properties:
@@ -434,6 +468,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
             - Effect: Allow
