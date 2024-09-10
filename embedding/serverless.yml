@@ -100,12 +100,12 @@ provider:
     EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REGION: ${self:provider.region}
     
-   
-
   iam:
     role:
       managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.EMBEDDING_IAM_POLICY_NAME}
+
 
 
             
@@ -240,6 +240,7 @@ resources:
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
                 - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+  
           
     RagPostgresDbCluster:
       DependsOn: RagPostgresDbSecurityGroup
