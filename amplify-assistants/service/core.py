@@ -1025,6 +1025,8 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         )
 
         conversations = response["Items"]
+        # print(f"Found {len(conversations)} conversations for assistant {assistant_id}")
+        # print(f"Conversations: {json.dumps(conversations, cls=CombinedEncoder)}")
 
         while "LastEvaluatedKey" in response:
             response = table.query(
@@ -1040,4 +1042,8 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         }
 
     except ClientError as e:
+        print(f"DynamoDB ClientError: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
