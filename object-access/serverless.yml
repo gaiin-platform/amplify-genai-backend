@@ -286,6 +286,7 @@ functions:
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
       ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
     role: !GetAtt ListGroupsRole.Arn
   
  
