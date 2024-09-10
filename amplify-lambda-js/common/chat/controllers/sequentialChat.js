@@ -134,15 +134,15 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
         // assistantId beginning with 'astgp' means this is a group assistant
         if (chatRequest.options.assistantId.startsWith('astgp')) {
             // write data to DynamoDB table
-            const conversationId = chatRequest.options.conversationId || `conv-${Date.now()}`;
+            const conversationId = chatRequest.options.conversationId;
             const assistantId = chatRequest.options.assistantId;
             const assistantName = chatRequest.options.assistantName;
-            const modelUsed = chatRequest.model;
+            const modelUsed = chatRequest.model; // update this to the cleaner model name
             const numberPrompts = chatRequest.n;
             const s3Location = "tbd";
 
             await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, "Amplify");
-            // TODO: add rating, conversation name, location of conversation in S3, model used
+            // TODO: add rating, conversation name, location of conversation in S3, model used, employee type
         }
     }
 }
