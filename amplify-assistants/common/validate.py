@@ -277,7 +277,6 @@ chat_assistant_schema = {
 }
 
 
-
 download_ci_files_schema = {
     "type": "object",
     "properties": {
@@ -322,6 +321,34 @@ get_group_assistant_conversations_schema = {
     "required": ["assistantId"],
 }
 
+get_group_assistant_dashboards_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The id of the assistant",
+        },
+        "startDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional start date for filtering conversations",
+        },
+        "endDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional end date for filtering conversations",
+        },
+        "includeConversationData": {
+            "type": "boolean",
+            "description": "Whether to include conversation data in CSV format",
+        },
+        "includeConversationContent": {
+            "type": "boolean",
+            "description": "Whether to include full conversation content",
+        },
+    },
+    "required": ["assistantId"],
+}
 
 """
 Every service must define the permissions for each operation here. 
@@ -363,6 +390,9 @@ validators = {
     },
     "/assistant/get_group_assistant_conversations": {
         "get_group_assistant_conversations": get_group_assistant_conversations_schema
+    },
+    "/assistant/get_group_assistant_dashboards": {
+        "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
     }
 
 }
@@ -403,6 +433,9 @@ api_validators = {
     },
     "/assistant/get_group_assistant_conversations": {
         "get_group_assistant_conversations": get_group_assistant_conversations_schema
+    },
+    "/assistant/get_group_assistant_dashboards": {
+        "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
     }
 }
 
@@ -567,7 +600,6 @@ def get_claims(event, context, token):
     raise Unauthorized("No Valid Access Token Found")
 
 
-
 def parseToken(event):
     token = None
     normalized_headers = {k.lower(): v for k, v in event['headers'].items()}
@@ -675,14 +707,12 @@ def determine_api_user(data):
     else:
         print("Unknown or missing key type in api_owner_id:", key_type)
         raise Exception("Invalid or unrecognized key type.")
-    
 
 
 def get_groups(user, token):
     return ['Amplify_Dev_Api']
     # amplify_groups = get_user_cognito_amplify_groups(token)
     # return amplify_groups
-
 
 
 def is_rate_limited(current_user, rate_limit): 

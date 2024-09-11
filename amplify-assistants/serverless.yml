@@ -65,6 +65,7 @@ provider:
     # needed for system assistant url 
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
+    GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
 
 
   iam:
@@ -177,6 +178,15 @@ functions:
     events:
       - http:
           path: assistant/get_group_assistant_conversations
+          method: post
+          cors: true
+  
+  get_group_assistant_dashboards:
+    handler: service/core.get_group_assistant_dashboards
+    timeout: 30
+    events:
+      - http:
+          path: assistant/get_group_assistant_dashboards
           method: post
           cors: true
 
@@ -412,6 +422,23 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}
     
+    # how do we handle this table and requests for specific date ranges?
+    # GroupAssistantDashboardsDynamoDbTable:
+    #   Type: 'AWS::DynamoDB::Table'
+    #   Properties:
+    #     BillingMode: PAY_PER_REQUEST
+    #     PointInTimeRecoverySpecification:
+    #       PointInTimeRecoveryEnabled: true
+    #     SSESpecification:
+    #       SSEEnabled: true
+    #     AttributeDefinitions:
+    #       - AttributeName: assistantId
+    #         AttributeType: S
+    #     KeySchema:
+    #       - AttributeName: assistantId
+    #         KeyType: HASH
+    #     TableName: ${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}
+    
     AssistantsFilesBucket:
       Type: 'AWS::S3::Bucket'
       Properties:
@@ -470,6 +497,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
             - Effect: Allow

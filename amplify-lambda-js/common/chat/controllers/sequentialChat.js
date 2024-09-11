@@ -139,10 +139,13 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             const assistantName = chatRequest.options.assistantName;
             const modelUsed = chatRequest.model; // update this to the cleaner model name
             const numberPrompts = chatRequest.n;
+            // TODO: implement the below attributes
             const s3Location = "tbd";
+            const category = "tbd";
+            const employeeType = "tbd";
+            const rating = 5;
 
             await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, "Amplify");
-            // TODO: add rating, conversation name, location of conversation in S3, model used, employee type
         }
     }
 }

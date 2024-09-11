@@ -1,10 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import os
 import time
 import boto3
 import json
 import uuid
+import csv
+import io
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
@@ -1047,3 +1049,100 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
+
+
+# this function will be accessible via API gateway for users to collect data on their group assistant
+# user MUST provide assistantId
+# optional parameters to specify:
+# - specify date range: startDate-endDate (default null, meaning provide all data regardless of date)
+# - include conversation data: true/false (default false, meaning provide only dashboard data, NOT conversation statistics in CSV format)
+# - include conversation content: true/false (default false, meaning content of conversations is not provided
+@validated(op="get_group_assistant_dashboards")
+def get_group_assistant_dashboards(event, context, current_user, name, data):
+    if "data" not in data or "assistantId" not in data["data"]:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "assistantId is required"}),
+        }
+
+    assistant_id = data["data"]["assistantId"]
+    start_date = data["data"].get("startDate")
+    end_date = data["data"].get("endDate")
+    include_conversation_data = data["data"].get("includeConversationData", False)
+    include_conversation_content = data["data"].get("includeConversationContent", False)
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+
+    try:
+        response = table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_id),
+        )
+
+        conversations = response["Items"]
+
+        while "LastEvaluatedKey" in response:
+            response = table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            conversations.extend(response["Items"])
+
+        # Filter conversations by date range if specified
+        if start_date and end_date:
+            start = datetime.fromisoformat(start_date)
+            end = datetime.fromisoformat(end_date)
+            conversations = [
+                conv
+                for conv in conversations
+                if start <= datetime.fromisoformat(conv.get("timestamp", "")) <= end
+            ]
+
+        # Prepare dashboard data
+        total_conversations = len(conversations)
+        total_messages = sum(len(conv.get("messages", [])) for conv in conversations)
+        avg_messages_per_conversation = (
+            total_messages / total_conversations if total_conversations > 0 else 0
+        )
+
+        dashboard_data = {
+            "totalConversations": total_conversations,
+            "totalMessages": total_messages,
+            "avgMessagesPerConversation": avg_messages_per_conversation,
+        }
+
+        if include_conversation_data:
+            csv_output = io.StringIO()
+            writer = csv.writer(csv_output)
+            writer.writerow(["Conversation ID", "Timestamp", "Number of Messages"])
+
+            for conv in conversations:
+                writer.writerow(
+                    [
+                        conv.get("conversationId", ""),
+                        conv.get("timestamp", ""),
+                        len(conv.get("messages", [])),
+                    ]
+                )
+
+            dashboard_data["conversationDataCSV"] = csv_output.getvalue()
+
+        if include_conversation_content:
+            dashboard_data["conversations"] = conversations
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(dashboard_data, cls=CombinedEncoder),
+        }
+
+    except ClientError as e:
+        print(f"DynamoDB ClientError: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "An unexpected error occurred"}),
+        }

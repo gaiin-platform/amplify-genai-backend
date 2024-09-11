@@ -23,6 +23,9 @@ def can_download(user, data):
 def can_get_group_assistant_conversations(user, data):
     return True
 
+def can_get_group_assistant_dashboards(user, data):
+    return True
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -67,5 +70,8 @@ permissions_by_state_type = {
     },
     "/assistant/get_group_assistant_conversations": {
         "get_group_assistant_conversations": can_get_group_assistant_conversations
+    },
+    "/assistant/get_group_assistant_dashboards": {
+        "get_group_assistant_dashboards": can_get_group_assistant_dashboards
     }
 }
