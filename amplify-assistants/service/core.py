@@ -1,6 +1,7 @@
 from datetime import datetime
 import hashlib
 import os
+import re
 import time
 import boto3
 import json
@@ -31,6 +32,88 @@ RESERVED_TAGS = [
     AMPLIFY_API_KEY_MANAGER_TAG,
     AMPLIFY_API_DOC_HELPER_TAG
 ]
+
+
+# used for system users who have access to a group. Group assistants are based on group permissions
+# currently the data returned is best for our amplify wordpress plugin 
+@validated(op="get")
+def retrieve_astg_for_system_use(event, context, current_user, name, data):
+    query_params = event.get('queryStringParameters', {})
+    print("Query params: ", query_params)
+    assistantId = query_params.get('assistantId', '')
+    pattern = r'^[a-zA-Z0-9-]+-\d{6}$'
+                                # must be in system user format 
+    if (not assistantId or assistantId[:6] == 'astgp' or not re.match(pattern, current_user)):
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Invalid or missing assistantId parameter or not a system user.'}
+                })
+    print("retrieving astgp data")
+    dynamodb = boto3.resource('dynamodb')
+    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    
+    astgp = get_most_recent_assistant_version(assistants_table, assistantId)
+    if (not astgp): 
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'AssistantId parameter does not match any assistant'}
+                })
+
+    ast_data = astgp.get('data', {})
+
+    groupId = ast_data.get('groupId', None)
+    if (not groupId):
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'The assistant does not have a groupId.'}
+                })
+    
+    print("checking perms from group table")
+    #check system user has access to group assistant 
+    groups_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
+
+    try :
+        response = groups_table.get_item(Key={'group_id': groupId})
+            # Check if the item was found
+        if 'Item' in response:
+            item = response['Item']
+            if (current_user not in item.get('systemUsers', [])):
+                return json.dumps({
+                    'statusCode': 401,
+                    'body': {'error': 'User is not authorized to access assistant details'}
+                    })
+        else:
+            return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Item with group_id not found in dynamo'}
+                })
+
+    except Exception as e:
+        print(f"Error getting group from dynamo: {e}")
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Failed to retrieve group from dynamo'}
+                })
+
+    group_types_data =  {group_type: {
+                            "isDisabled": details["isDisabled"],
+                            "disabledMessage": details["disabledMessage"]
+                            }
+                        for group_type, details in ast_data.get('groupTypeData', {}).items()
+                        }
+    
+    return {
+            'statusCode': 200,
+            'body': {'assistant': {
+                    'name': astgp['name'], 
+                    'groupId': groupId, 
+                    'instructions': astgp['instructions'],
+                    'group_types': group_types_data,
+                    'group_type_questions': ast_data.get('groupUserTypeQuestion', None),
+                    'model': ast_data.get('model', None),
+                    'disclaimer': astgp.get('disclaimer', None)
+                }}
+                }
 
 
 def check_user_can_share_assistant(assistant, user_id):

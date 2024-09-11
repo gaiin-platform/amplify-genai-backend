@@ -9,6 +9,9 @@ def can_create_assistant(user, data):
 def can_list_assistant(user, data):
     return True
 
+def can_read(user, data):
+    return True
+
 def can_delete_assistant(user, data):
     return True
 
@@ -67,5 +70,8 @@ permissions_by_state_type = {
     },
     "/assistant/get_group_assistant_conversations": {
         "get_group_assistant_conversations": can_get_group_assistant_conversations
+    },
+     "/assistant/get/system_user": {
+        "get": can_read
     }
 }
