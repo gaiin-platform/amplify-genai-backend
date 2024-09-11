@@ -446,6 +446,7 @@ resources:
                 - dynamodb:UpdateItem
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
