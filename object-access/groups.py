@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr
 from common.api_key import deactivate_key
-from common.assistants import share_assistant, list_assistants, remove_astp_perms, delete_assistant, create_assistant
+from common.assistants import share_assistant, list_assistants, delete_assistant, create_assistant
 import boto3
 from common.validate import validated
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
@@ -80,7 +80,8 @@ def create_group(event, context, current_user, name, data):
         'createdAt': datetime.now(timezone.utc).isoformat(),
         'access': api_key_result['api_key'],
         'groupTypes' : group_types,
-        'amplifyGroups':[]
+        'amplifyGroups':[],
+        # 'systemUsers': []
 
     }
     
@@ -146,7 +147,7 @@ def create_api_key_for_group(group_name):
                 'systemId' : group_id,
                 'active': True,
                 'createdAt': timestamp, 
-                'accessTypes': ["api_key", 'assistants', 'share'],
+                'accessTypes': ["api_key", 'assistants' ],
                 'account': { 'id': 'group_account', 'name': 'No COA Required' },
                 'rateLimit': { 'rate': None, 'period': "UNLIMITED" },
                 'purpose': "group"
@@ -332,8 +333,7 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id):
     #compie ds into one list 
     # uploaded ones have the correct permissions, data selected from the user files do not, so we need to share it with the group 
     ds_selector_ds = [
-        ds
-        for info in group_type_data.values()
+        ds for info in group_type_data.values()
         if 'dataSources' in info
         for ds in info['dataSources']
         if 'groupId' not in ds
@@ -341,10 +341,10 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id):
     ds_selector_ds.extend(
         ds for ds in ast_ds if 'groupId' not in ds
     )
-    print("Updating permissions for the following ds: ", ds_selector_ds)
 
     try:
         translated_ds = translate_user_data_sources_to_hash_data_sources(ds_selector_ds)
+        print("Updating permissions for the following ds: ", translated_ds)
         # for group_type, info in group_type_data.items():
         #     if 'dataSources' in info:
         #         print(f"Updated Object Access for DS in Group Type: {group_type}")
@@ -587,16 +587,21 @@ def list_groups(event, context, current_user, name, data):
 
         #filter old versions
         assistants = get_latest_assistants(ast_result['data'])
-        #append groupId and correct permissions
+        published_assistants = []
+        #append groupId and correct permissions if published
         for ast in assistants:
-            ast['groupId'] = group["group_id"]
             ast_access = group["members"][current_user]
-            ast["data"]["access"]['write'] = ast_access in ['write', 'admin']
+            hasAdminInterfaceAccess = ast_access in ['write', 'admin']
+            if (("isPublished" in ast["data"] and ast["data"]["isPublished"]) or hasAdminInterfaceAccess):
+                ast['groupId'] = group["group_id"]
+                ast["data"]["access"]['write'] = hasAdminInterfaceAccess
+                published_assistants.append(ast)
+
         group_info.append({
             'name' : group_name, 
             'id' : group['group_id'], 
             'members': group['members'], 
-            'assistants': assistants,
+            'assistants': published_assistants,
             'groupTypes': group['groupTypes']
         })
 

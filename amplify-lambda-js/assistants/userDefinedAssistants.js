@@ -246,8 +246,10 @@ but otherwise don't describe them in your answers as it might confuse the user.
             const groupType = body.options.groupType;
             if (groupType) {
                 const groupTypeData = assistant.data.groupTypeData[groupType];
-                assistant.instructions += "\n\n" + groupTypeData.additionalInstructions
-                assistant.dataSources = [...assistant.dataSources, ...groupTypeData.dataSources]
+                if (!groupTypeData.isDisabled) {
+                    assistant.instructions += "\n\n" + groupTypeData.additionalInstructions;
+                    assistant.dataSources = [...assistant.dataSources, ...groupTypeData.dataSources];
+                }
             }
 
             const instructions = await fillInTemplate(

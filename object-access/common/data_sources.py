@@ -29,6 +29,11 @@ def translate_user_data_sources_to_hash_data_sources(data_sources):
             if key.startswith("s3://"):
                 key = extract_key(key)
 
+            if key.startswith("global/"):
+                ds['id'] = key
+                translated_data_sources.append(ds)
+                continue
+
             response = dynamodb_client.get_item(
                 TableName=hash_files_table_name,
                 Key={
