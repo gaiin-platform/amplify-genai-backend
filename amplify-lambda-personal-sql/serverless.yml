@@ -49,6 +49,9 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_PERSONAL_SQL_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-personal-sql-iam-policy
+    VPC_ID: ${self:custom.stageVariables.VPC_ID}
+    PRIVATE_SUBNET_ONE: ${self:custom.stageVariables.PRIVATE_SUBNET_ONE}
+    PRIVATE_SUBNET_TWO: ${self:custom.stageVariables.PRIVATE_SUBNET_TWO}    
 
     
 
@@ -68,6 +71,12 @@ functions:
 
   pdb_sql_files_db_describe:
     handler: service/core.describe_db_schema
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 30
     events:
       - http:
@@ -78,6 +87,12 @@ functions:
 
   pdb_sql_db_describe:
     handler: service/core.describe_personal_db_schema
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 30
     events:
       - http:
@@ -88,6 +103,12 @@ functions:
 
   pdb_sql_get_user_dbs:
     handler: service/core.get_user_dbs
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 30
     events:
       - http:
@@ -97,6 +118,12 @@ functions:
 
   pdb_sql_create_db:
     handler: service/core.create_db
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 30
     events:
       - http:
@@ -106,6 +133,12 @@ functions:
 
   pdb_sql_register_db:
     handler: service/core.register_db
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 30
     events:
       - http:
@@ -115,6 +148,12 @@ functions:
 
   pdb_sql_llm_query_db:
     handler: service/core.llm_query_db
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 90
     events:
       - http:
@@ -124,6 +163,12 @@ functions:
 
   pdb_sql_query_db:
     handler: service/core.query_personal_db
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
     timeout: 30
     events:
       - http:
