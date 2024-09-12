@@ -42,7 +42,6 @@ provider:
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
     OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
-    DATASOURCE_REGISTRY_ENDPOINT: ${self:custom.stageVariables.DATASOURCE_REGISTRY_ENDPOINT}
     HASH_FILES_DYNAMO_TABLE: ${self:custom.stageVariables.HASH_FILES_DYNAMO_TABLE}
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
