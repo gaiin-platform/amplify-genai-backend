@@ -14,35 +14,7 @@ Initial setup requires the creation of a `/var` directory at the root level of t
 
 ### Vars
 
-These variables should be configured inside your `amplify-genai-backend/<environment>/<environment>-var.yml` file:
-- DEP_NAME: name of the deployment; must be less than 10 characters and not contain spaces
-- COGNITO_USER_POOL_ID:
-- COGNITO_CLIENT_ID:
-- OAUTH_AUDIENCE: base of application
-- OAUTH_ISSUER_BASE_URL: cognito user pool url
-- VPC_ID: vpc id of deployment from terraform
-- VPC_CIDR: vpc cidr of deployment from terraform
-- PRIVATE_SUBNET_ONE: private subnet one id from terraform
-- PRIVATE_SUBNET_TWO: private subnet two id from terraform
-- OPENAI_API_KEY: secret name from AWS for $env-openai-api-key
-- LLM_ENDPOINTS_SECRETS_NAME_ARN: secret ARN from AWS for $env-openai-endopoints
-- SECRETS_ARN_NAME: secret ARN from AWS for $env-amplify-app-secrets
-- LLM_ENDPOINTS_SECRETS_NAME: secret name from AWS for $env-openai-endopoints
-- HOSTED_ZONE_ID: app_route53_zone_id from terraform
-- AWS_ACCOUNT_ID:
-- RDS_HOSTED_ZONE_ID: 'Z2R2ITUGPM61AM' is us-east-1, use the RDS Hosted Zone ID for your region
-- CUSTOM_API_DOMAIN: domain used for API gateway; for example: <environment>-api.<domain>.com
-- PANDOC_LAMBDA_LAYER_ARN:
-- ORGANIZATION_EMAIL_DOMAIN:
-- IDP_PREFIX: should match the value for provider_name in cognito vars of the terraform deployment
-- API_VERSION:
-- ASSISTANTS_OPENAI_PROVIDER: can be 'azure' or switched to 'openai' if using the OpenAI service APIs
-- RAG_ASSISTANT_MODEL_ID:
-- QA_MODEL_NAME:
-- EMBEDDING_MODEL_NAME:
-- MIN_ACU:
-- MAX_ACU:
-- OPENAI_PROVIDER: can be 'azure' or switched to 'openai' if using the OpenAI service APIs
+Variables should be configured inside your `amplify-genai-backend/<environment>/<environment>-var.yml` file. Comments are provided in `dev-var.yml-example` for each variable.
 
 ## Deployment Process
 
@@ -50,11 +22,11 @@ These variables should be configured inside your `amplify-genai-backend/<environ
 
 To deploy a service directly from the root of the repository, use the command structure below, replacing `service-name` with your specific service name and `stage` with the appropriate deployment stage ('dev', 'staging', 'prod'):
 
-serverless service-name:deploy --stage <stage>
+```serverless service-name:deploy --stage <stage>```
 
 ### Example Deploying a Specific Service
 
-serverless amplify-lambda:deploy --stage dev
+```serverless amplify-lambda:deploy --stage dev```
 
 ## Deploying from the Service Directory
 
