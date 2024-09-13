@@ -16,7 +16,7 @@ const logger = getLogger("sequentialChat");
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
 
-async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, entryPoint) {
+async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, entryPoint, s3Location, category, employeeType, userRating, couldChatbotAnswer) {
     const params = {
         TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
         Item: {
@@ -27,6 +27,11 @@ async function writeToGroupAssistantConversations(conversationId, assistantId, a
             modelUsed: modelUsed,
             numberPrompts: numberPrompts,
             entryPoint: entryPoint,
+            s3Location: s3Location,
+            category: category,
+            employeeType: employeeType,
+            userRating: userRating,
+            couldChatbotAnswer: couldChatbotAnswer,
             timestamp: new Date().toISOString()
         }
     };
@@ -137,15 +142,17 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             const conversationId = chatRequest.options.conversationId;
             const assistantId = chatRequest.options.assistantId;
             const assistantName = chatRequest.options.assistantName;
-            const modelUsed = chatRequest.model; // update this to the cleaner model name
+            const modelUsed = chatRequest.options.model.name;
             const numberPrompts = chatRequest.n;
-            // TODO: implement the below attributes
-            const s3Location = "tbd";
-            const category = "tbd";
-            const employeeType = "tbd";
-            const rating = 5;
+            // TODO: implement the below attributes 
+            const entryPoint = "Amplify";
+            const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
+            const category = "Category 1";
+            const employeeType = "Employee Type";
+            const userRating = 5;
+            const couldChatbotAnswer = "Yes";
 
-            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, "Amplify");
+            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, entryPoint, s3Location, category, employeeType, userRating, couldChatbotAnswer);
         }
     }
 }

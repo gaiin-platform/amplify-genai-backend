@@ -1007,6 +1007,8 @@ def save_assistant_for_rag(assistant):
         print(f"Error saving assistant for RAG: {e}")
 
 
+# queries GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE (updated at the end of every conversation via amplify-lambda-js/common/chat/controllers/sequentialChat.js)
+# to see all conversations of a specific group assistant. assistantId must be provided in the data field.
 @validated(op="get_group_assistant_conversations")
 def get_group_assistant_conversations(event, context, current_user, name, data):
     if "data" not in data or "assistantId" not in data["data"]:
@@ -1051,12 +1053,12 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
 
 
-# this function will be accessible via API gateway for users to collect data on their group assistant
+# accessible via API gateway for users to collect data on a group assistant
 # user MUST provide assistantId
 # optional parameters to specify:
 # - specify date range: startDate-endDate (default null, meaning provide all data regardless of date)
 # - include conversation data: true/false (default false, meaning provide only dashboard data, NOT conversation statistics in CSV format)
-# - include conversation content: true/false (default false, meaning content of conversations is not provided
+# - include conversation content: true/false (default false, meaning content of conversations is not provided)
 @validated(op="get_group_assistant_dashboards")
 def get_group_assistant_dashboards(event, context, current_user, name, data):
     if "data" not in data or "assistantId" not in data["data"]:
@@ -1101,40 +1103,67 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             ]
 
         # Prepare dashboard data
-        total_conversations = len(conversations)
-        total_messages = sum(len(conv.get("messages", [])) for conv in conversations)
-        avg_messages_per_conversation = (
-            total_messages / total_conversations if total_conversations > 0 else 0
+        assistant_name = (
+            conversations[0].get("assistantName", "") if conversations else ""
         )
+        unique_users = set(conv.get("user", "") for conv in conversations)
+        models_used = list(set(conv.get("modelUsed", "") for conv in conversations))
+        total_prompts = sum(conv.get("numberPrompts", 0) for conv in conversations)
+        total_conversations = len(conversations)
+
+        entry_points = {}
+        categories = {}
+        employee_types = {}
+        total_rating = 0
+        chatbot_could_answer_count = 0
+
+        for conv in conversations:
+            entry_points[conv.get("entryPoint", "")] = (
+                entry_points.get(conv.get("entryPoint", ""), 0) + 1
+            )
+            categories[conv.get("category", "")] = (
+                categories.get(conv.get("category", ""), 0) + 1
+            )
+            employee_types[conv.get("employeeType", "")] = (
+                employee_types.get(conv.get("employeeType", ""), 0) + 1
+            )
+            total_rating += conv.get("userRating", 0)
+            if conv.get("couldChatbotAnswer", False):
+                chatbot_could_answer_count += 1
 
         dashboard_data = {
-            "totalConversations": total_conversations,
-            "totalMessages": total_messages,
-            "avgMessagesPerConversation": avg_messages_per_conversation,
+            "assistantId": assistant_id,
+            "assistantName": assistant_name,
+            "numberOfUsers": len(unique_users),
+            "modelsUsed": models_used,
+            "averagePromptsPerConversation": (
+                total_prompts / total_conversations if total_conversations > 0 else 0
+            ),
+            "entryPointDistribution": entry_points,
+            "categoryDistribution": categories,
+            "employeeTypeDistribution": employee_types,
+            "averageUserRating": (
+                total_rating / total_conversations if total_conversations > 0 else 0
+            ),
+            "percentageChatbotCouldAnswer": (
+                (chatbot_could_answer_count / total_conversations) * 100
+                if total_conversations > 0
+                else 0
+            ),
         }
 
+        response_data = {"dashboardData": dashboard_data}
+
         if include_conversation_data:
-            csv_output = io.StringIO()
-            writer = csv.writer(csv_output)
-            writer.writerow(["Conversation ID", "Timestamp", "Number of Messages"])
-
-            for conv in conversations:
-                writer.writerow(
-                    [
-                        conv.get("conversationId", ""),
-                        conv.get("timestamp", ""),
-                        len(conv.get("messages", [])),
-                    ]
-                )
-
-            dashboard_data["conversationDataCSV"] = csv_output.getvalue()
+            response_data["conversationData"] = conversations
 
         if include_conversation_content:
-            dashboard_data["conversations"] = conversations
+            # Placeholder for S3 content retrieval
+            response_data["conversationContent"] = "Placeholder for S3 content"
 
         return {
             "statusCode": 200,
-            "body": json.dumps(dashboard_data, cls=CombinedEncoder),
+            "body": json.dumps(response_data, cls=CombinedEncoder),
         }
 
     except ClientError as e:
