@@ -158,6 +158,6 @@ def in_cognito_amplify_groups(event, context, current_user, name, data):
 
 def parse_group_string(group_str):
     """ Parses a group string formatted like a list and returns a Python list. """
-    if group_str.startswith('[') and group_str.endswith(']'):
+    if group_str and group_str.startswith('[') and group_str.endswith(']'):
         return [item.strip() for item in group_str[1:-1].split(',')]
     return []
