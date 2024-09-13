@@ -143,7 +143,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             const assistantId = chatRequest.options.assistantId;
             const assistantName = chatRequest.options.assistantName;
             const modelUsed = chatRequest.options.model.name;
-            const numberPrompts = chatRequest.n;
+            const numberPrompts = (chatRequest.messages.length / 2);
             // TODO: implement the below attributes 
             const entryPoint = "Amplify";
             const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
