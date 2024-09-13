@@ -71,8 +71,8 @@ def simulate_access_to_objects(event, context, current_user, name, data):
 
                 print(f"User has access to objectId {object_id} with access type {access_type}.")
                 add_access_response(access_responses, object_id, access_type, True)
-            except:
-                print(f"Error in simulate_access_to_objects.")
+            except Exception as e:
+                print(f"Error in simulate_access_to_objects: {e}")
                 add_access_response(access_responses, object_id, access_type, False)
 
     return {

@@ -245,9 +245,6 @@ def validate_data(name, op, data, api_accessed):
             print(e)
             raise ValidationError(f"Invalid data: {e.message}")
         print("Data validated")
-    else:
-        print(f"Invalid data or path: {name} - op:{op} - data: {data}")
-        raise Exception("Invalid data or path")
 
 
 def parse_and_validate(current_user, event, op, api_accessed, validate_body=True):

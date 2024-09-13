@@ -60,6 +60,7 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
+    GROUPS_DYNAMO_TABLE: vu-amplify-object-access-${sls:stage}-amplify-groups
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     # needed for system assistant url 
@@ -71,6 +72,7 @@ provider:
   iam:
     role:
       managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole      
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.ASSISTANT_LAMBDA_MANAGED_POLICY}
        
 functions:
@@ -179,6 +181,14 @@ functions:
       - http:
           path: assistant/get_group_assistant_conversations
           method: post
+          cors: true
+          
+  get_astg_system_user:
+    handler: service/core.retrieve_astg_for_system_use
+    events:
+      - http:
+          path: assistant/get/system_user
+          method: get
           cors: true
   
   get_group_assistant_dashboards:
@@ -501,12 +511,14 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
               Resource: 
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
             - Effect: Allow
               Action:
                 - s3:PutObject

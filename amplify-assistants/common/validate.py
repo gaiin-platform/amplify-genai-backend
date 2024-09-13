@@ -431,6 +431,9 @@ api_validators = {
     "/assistant/remove_astp_permissions": {
         "remove_astp_permissions": remove_astp_perms_schema
     },
+    "/assistant/get/system_user": {
+        "get":{}
+    },
     "/assistant/get_group_assistant_conversations": {
         "get_group_assistant_conversations": get_group_assistant_conversations_schema
     },
@@ -487,7 +490,6 @@ def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 token = parseToken(event)
                 api_accessed = token[:4] == 'amp-'
 

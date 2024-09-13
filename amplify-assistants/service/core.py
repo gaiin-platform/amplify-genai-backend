@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import hashlib
 import os
+import re
 import time
 import boto3
 import json
@@ -33,6 +34,88 @@ RESERVED_TAGS = [
     AMPLIFY_API_KEY_MANAGER_TAG,
     AMPLIFY_API_DOC_HELPER_TAG
 ]
+
+
+# used for system users who have access to a group. Group assistants are based on group permissions
+# currently the data returned is best for our amplify wordpress plugin 
+@validated(op="get")
+def retrieve_astg_for_system_use(event, context, current_user, name, data):
+    query_params = event.get('queryStringParameters', {})
+    print("Query params: ", query_params)
+    assistantId = query_params.get('assistantId', '')
+    pattern = r'^[a-zA-Z0-9-]+-\d{6}$'
+                                # must be in system user format 
+    if (not assistantId or assistantId[:6] == 'astgp' or not re.match(pattern, current_user)):
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Invalid or missing assistantId parameter or not a system user.'}
+                })
+    print("retrieving astgp data")
+    dynamodb = boto3.resource('dynamodb')
+    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    
+    astgp = get_most_recent_assistant_version(assistants_table, assistantId)
+    if (not astgp): 
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'AssistantId parameter does not match any assistant'}
+                })
+
+    ast_data = astgp.get('data', {})
+
+    groupId = ast_data.get('groupId', None)
+    if (not groupId):
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'The assistant does not have a groupId.'}
+                })
+    
+    print("checking perms from group table")
+    #check system user has access to group assistant 
+    groups_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
+
+    try :
+        response = groups_table.get_item(Key={'group_id': groupId})
+            # Check if the item was found
+        if 'Item' in response:
+            item = response['Item']
+            if (current_user not in item.get('systemUsers', [])):
+                return json.dumps({
+                    'statusCode': 401,
+                    'body': {'error': 'User is not authorized to access assistant details'}
+                    })
+        else:
+            return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Item with group_id not found in dynamo'}
+                })
+
+    except Exception as e:
+        print(f"Error getting group from dynamo: {e}")
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Failed to retrieve group from dynamo'}
+                })
+
+    group_types_data =  {group_type: {
+                            "isDisabled": details["isDisabled"],
+                            "disabledMessage": details["disabledMessage"]
+                            }
+                        for group_type, details in ast_data.get('groupTypeData', {}).items()
+                        }
+    
+    return {
+            'statusCode': 200,
+            'body': {'assistant': {
+                    'name': astgp['name'], 
+                    'groupId': groupId, 
+                    'instructions': astgp['instructions'],
+                    'group_types': group_types_data,
+                    'group_type_questions': ast_data.get('groupUserTypeQuestion', None),
+                    'model': ast_data.get('model', None),
+                    'disclaimer': astgp.get('disclaimer', None)
+                }}
+                }
 
 
 def check_user_can_share_assistant(assistant, user_id):
@@ -232,37 +315,40 @@ def create_assistant(event, context, current_user, name, data):
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
+    is_group_sys_user = data["is_group_sys_user"]
 
-    filtered_ds = []
-    tag_data_sources = []
-    for source in data_sources:
-        if source['id'].startswith("tag://"):
-            tag_data_sources.append(source)
-        else:
-            filtered_ds.append(source)
-    
-    print(f"Tag Data sources: {tag_data_sources}")
-
-    if (len(filtered_ds) > 0):
-        print(f"Data sources before translation: {filtered_ds}")
-
-        for i in range(len(filtered_ds)):
-            source = filtered_ds[i]
-            if "://" not in source['id']:
-                filtered_ds[i]['id'] = source['key']
+    # datasource permission are handled in groups update assistant logic. 
+    if not is_group_sys_user:
+        filtered_ds = []
+        tag_data_sources = []
+        for source in data_sources:
+            if source['id'].startswith("tag://"):
+                tag_data_sources.append(source)
+            else:
+                filtered_ds.append(source)
         
-        print(f"Final data sources before translation: {filtered_ds}")
+        print(f"Tag Data sources: {tag_data_sources}")
 
-        filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
-        
-        print(f"Data sources after translation and extraction: {filtered_ds}")
+        if (len(filtered_ds) > 0):
+            print(f"Data sources before translation: {filtered_ds}")
 
-        data_sources = filtered_ds + tag_data_sources
+            for i in range(len(filtered_ds)):
+                source = filtered_ds[i]
+                if "://" not in source['id']:
+                    filtered_ds[i]['id'] = source['key']
+            
+            print(f"Final data sources before translation: {filtered_ds}")
 
-        # Auth check: need to update to new permissions endpoint
-        if not can_access_objects(data['access_token'], data_sources):
-            return {'success': False, 'message': 'You are not authorized to access the referenced files'}
-        
+            filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+            
+            print(f"Data sources after translation and extraction: {filtered_ds}")
+
+            data_sources = filtered_ds + tag_data_sources
+
+            # Auth check: need to update to new permissions endpoint
+            if not can_access_objects(data['access_token'], data_sources):
+                return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+           
 
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_or_update_assistant(
@@ -279,7 +365,7 @@ def create_assistant(event, context, current_user, name, data):
         provider=provider,
         uri=uri,
         assistant_public_id=assistant_public_id,
-        is_group_sys_user = data["is_group_sys_user"]
+        is_group_sys_user = is_group_sys_user
     )
 
 
@@ -733,7 +819,6 @@ def create_or_update_assistant(
     existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_public_id)
 
     principal_type = 'group' if is_group_sys_user else 'user'
-    print("isGroupSystemUser? ", principal_type)
 
     if existing_assistant:
 

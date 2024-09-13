@@ -67,6 +67,7 @@ provider:
   iam:
     role:
       managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.CHAT_BILLING_IAM_POLICY_NAME}
 
 
