@@ -432,23 +432,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}
     
-    # how do we handle this table and requests for specific date ranges?
-    # GroupAssistantDashboardsDynamoDbTable:
-    #   Type: 'AWS::DynamoDB::Table'
-    #   Properties:
-    #     BillingMode: PAY_PER_REQUEST
-    #     PointInTimeRecoverySpecification:
-    #       PointInTimeRecoveryEnabled: true
-    #     SSESpecification:
-    #       SSEEnabled: true
-    #     AttributeDefinitions:
-    #       - AttributeName: assistantId
-    #         AttributeType: S
-    #     KeySchema:
-    #       - AttributeName: assistantId
-    #         KeyType: HASH
-    #     TableName: ${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}
-    
     AssistantsFilesBucket:
       Type: 'AWS::S3::Bucket'
       Properties:
