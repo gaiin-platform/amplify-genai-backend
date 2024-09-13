@@ -16,22 +16,21 @@ const logger = getLogger("sequentialChat");
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
 
-async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, entryPoint, s3Location, category, employeeType, userRating, couldChatbotAnswer) {
+async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location, category, successfulAnswer) {
     const params = {
         TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
         Item: {
             conversationId: conversationId,
             assistantId: assistantId,
             assistantName: assistantName,
-            user: user,
             modelUsed: modelUsed,
             numberPrompts: numberPrompts,
+            user: user,
+            employeeType: employeeType,
             entryPoint: entryPoint,
             s3Location: s3Location,
             category: category,
-            employeeType: employeeType,
-            userRating: userRating,
-            couldChatbotAnswer: couldChatbotAnswer,
+            successfulAnswer: successfulAnswer,
             timestamp: new Date().toISOString()
         }
     };
@@ -138,21 +137,24 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
     if (chatRequest.options.assistantId) {
         // assistantId beginning with 'astgp' means this is a group assistant
         if (chatRequest.options.assistantId.startsWith('astgp')) {
+            console.log("MADE IT");
+            
             // write data to DynamoDB table
             const conversationId = chatRequest.options.conversationId;
             const assistantId = chatRequest.options.assistantId;
             const assistantName = chatRequest.options.assistantName;
             const modelUsed = chatRequest.options.model.name;
-            const numberPrompts = (chatRequest.messages.length / 2);
-            // TODO: implement the below attributes 
-            const entryPoint = "Amplify";
+            const numberPrompts = chatRequest.options.numPrompts;
+            const employeeType = chatRequest.options.groupType;
+            // TODO: update entry point when wordpress is live and s3 location when filename is proper
+            const entryPoint = "Amplify"; // chatRequest.options.source
             const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
+            // TODO: perform category and successful answer analysis
             const category = "Category 1";
-            const employeeType = "Employee Type";
-            const userRating = 5;
-            const couldChatbotAnswer = "Yes";
+            const successfulAnswer = true;
+            // TODO: collect user rating from the front end if/when user submits it
 
-            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, user, modelUsed, numberPrompts, entryPoint, s3Location, category, employeeType, userRating, couldChatbotAnswer);
+            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location, category, successfulAnswer);
         }
     }
 }

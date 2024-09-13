@@ -78,6 +78,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             logger.debug("Processing request");
 
             let options = params.body.options ? {...params.body.options} : {};
+
+            params.body.options.numPrompts = params.body.messages ? (params.body.messages.length / 2) : 0;
             
             const modelId = (options.model && options.model.id);//|| "gpt-4-1106-Preview";
             const model = Models[modelId];
