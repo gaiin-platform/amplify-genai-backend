@@ -155,8 +155,7 @@ def validate_data(name, op, data, api_accessed):
             print(e)
             raise ValidationError(f"Invalid data: {e.message}")
         print("Data validated")
-    else:
-        print(f"No validator data or path: {name} - op:{op} - data: {data}")
+# We should not force validaiton here, as some operations do not require it
 
 
 def parse_and_validate(current_user, event, op, api_accessed, validate_body=True):
@@ -176,11 +175,13 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
         if validate_body:
             validate_data(name, op, data, api_accessed)
     except ValidationError as e:
+        print(f"Validation error: {e.message}")
         raise BadRequest(e.message)
 
     permission_checker = get_permission_checker(current_user, name, op, data)
 
     if not permission_checker(current_user, data):
+        print(f"User {current_user} does not have permission to perform the operation.")
         # Return a 403 Forbidden if the user does not have permission to append data to this item
         raise Unauthorized("User does not have permission to perform the operation.")
 
@@ -208,13 +209,18 @@ def validated(op, validate_body=True):
                 data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
 
+                print(f"Invoking {f.__name__} with data: {data}")
+
                 result = f(event, context, current_user, name, data)
+
+                print(f"Result: {result}")
 
                 return {
                     "statusCode": 200,
                     "body": json.dumps(result, cls=CombinedEncoder)
                 }
             except HTTPException as e:
+                print(f"Error: {e.status_code} - {e}")
                 return {
                     "statusCode": e.status_code,
                     "body": json.dumps({
