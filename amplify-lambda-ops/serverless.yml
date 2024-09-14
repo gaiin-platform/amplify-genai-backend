@@ -13,6 +13,8 @@ plugins:
   - serverless-prune-plugin
 
 custom:
+  pythonRequirements:
+    dockerizePip: true
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
