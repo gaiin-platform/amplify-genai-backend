@@ -44,16 +44,16 @@ permissions_by_state_type = {
         "create": can_create
     },
     "/work/session/add_record": {
-        "add": can_create
+        "add_record": can_create
     },
     "/work/session/list_records": {
-        "list": can_read
+        "list_records": can_read
     },
     "/work/session/delete_record": {
-        "delete": can_delete
+        "delete_record": can_delete
     },
     "/work/session/stitch_records": {
-        "stitch":  can_create
+        "stitch_records":  can_create
     }
     
 }
