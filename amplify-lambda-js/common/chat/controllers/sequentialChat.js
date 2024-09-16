@@ -16,7 +16,7 @@ const logger = getLogger("sequentialChat");
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
 
-async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location, category, successfulAnswer) {
+async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location) {
     const params = {
         TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
         Item: {
@@ -29,8 +29,6 @@ async function writeToGroupAssistantConversations(conversationId, assistantId, a
             employeeType: employeeType,
             entryPoint: entryPoint,
             s3Location: s3Location,
-            category: category,
-            successfulAnswer: successfulAnswer,
             timestamp: new Date().toISOString()
         }
     };
@@ -143,18 +141,15 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             const conversationId = chatRequest.options.conversationId;
             const assistantId = chatRequest.options.assistantId;
             const assistantName = chatRequest.options.assistantName;
-            const modelUsed = chatRequest.options.model.name;
+            const modelUsed = chatRequest.options.model.name; // TODO: switch this to the ID
             const numberPrompts = chatRequest.options.numPrompts;
             const employeeType = chatRequest.options.groupType;
             // TODO: update entry point when wordpress is live and s3 location when filename is proper
             const entryPoint = "Amplify"; // chatRequest.options.source
             const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
             // TODO: perform category and successful answer analysis
-            const category = "Category 1";
-            const successfulAnswer = true;
-            // TODO: collect user rating from the front end if/when user submits it
 
-            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location, category, successfulAnswer);
+            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location);
         }
     }
 }

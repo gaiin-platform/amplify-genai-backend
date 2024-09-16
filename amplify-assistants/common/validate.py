@@ -350,6 +350,21 @@ get_group_assistant_dashboards_schema = {
     "required": ["assistantId"],
 }
 
+save_user_rating_schema = {
+    "type": "object",
+    "properties": {
+        "conversationId": {
+            "type": "string",
+            "description": "The id of the conversation",
+        },
+        "userRating": {
+            "type": "number",
+            "description": "The user's rating",
+        },
+    },
+    "required": ["conversationId", "userRating"],
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -393,6 +408,9 @@ validators = {
     },
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
+    },
+    "/assistant/save_user_rating": {
+        "save_user_rating": save_user_rating_schema
     }
 
 }
@@ -439,6 +457,9 @@ api_validators = {
     },
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
+    },
+    "/assistant/save_user_rating": {
+        "save_user_rating": save_user_rating_schema
     }
 }
 

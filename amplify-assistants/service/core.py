@@ -12,7 +12,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 from common.data_sources import get_data_source_keys, translate_user_data_sources_to_hash_data_sources
-from common.encoders import CombinedEncoder
+from common.encoders import CombinedEncoder, DecimalEncoder
 from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
 
 from common.validate import validated
@@ -1268,6 +1268,56 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         return {
             "statusCode": 200,
             "body": json.dumps(response_data, cls=CombinedEncoder),
+        }
+
+    except ClientError as e:
+        print(f"DynamoDB ClientError: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "An unexpected error occurred"}),
+        }
+
+
+@validated(op="save_user_rating")
+def save_user_rating(event, context, current_user, name, data):
+    if (
+        "data" not in data
+        or "conversationId" not in data["data"]
+        or "userRating" not in data["data"]
+    ):
+        return {
+            "statusCode": 400,
+            "body": json.dumps(
+                {"error": "conversationId and userRating are required"}
+            ),
+        }
+
+    conversation_id = data["data"]["conversationId"]
+    user_rating = data["data"]["userRating"]
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+
+    try:
+        response = table.update_item(
+            Key={"conversationId": conversation_id},
+            UpdateExpression="SET userRating = :rating",
+            ExpressionAttributeValues={":rating": user_rating},
+            ReturnValues="UPDATED_NEW",
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "message": "User rating saved successfully",
+                    "updatedAttributes": response.get("Attributes"),
+                },
+                cls=DecimalEncoder,
+            ),
         }
 
     except ClientError as e:

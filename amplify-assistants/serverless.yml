@@ -200,6 +200,14 @@ functions:
           method: post
           cors: true
 
+  save_user_rating:
+    handler: service/core.save_user_rating
+    timeout: 30
+    events:
+      - http:
+          path: assistant/save_user_rating
+          method: post
+          cors: true
 
 resources:
   Resources:
