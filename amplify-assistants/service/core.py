@@ -37,7 +37,7 @@ RESERVED_TAGS = [
 
 
 # used for system users who have access to a group. Group assistants are based on group permissions
-# currently the data returned is best for our amplify wordpress plugin 
+# currently the data returned is best for our amplify wordpress plugin
 @validated(op="get")
 def retrieve_astg_for_system_use(event, context, current_user, name, data):
     query_params = event.get('queryStringParameters', {})
@@ -1199,8 +1199,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         entry_points = {}
         categories = {}
         employee_types = {}
-        total_rating = 0
-        chatbot_could_answer_count = 0
+        successful_answers = 0
 
         for conv in conversations:
             entry_points[conv.get("entryPoint", "")] = (
@@ -1212,9 +1211,8 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             employee_types[conv.get("employeeType", "")] = (
                 employee_types.get(conv.get("employeeType", ""), 0) + 1
             )
-            total_rating += conv.get("userRating", 0)
-            if conv.get("couldChatbotAnswer", False):
-                chatbot_could_answer_count += 1
+            if conv.get("successfulAnswer", False):
+                successful_answers += 1
 
         dashboard_data = {
             "assistantId": assistant_id,
@@ -1227,11 +1225,8 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "entryPointDistribution": entry_points,
             "categoryDistribution": categories,
             "employeeTypeDistribution": employee_types,
-            "averageUserRating": (
-                total_rating / total_conversations if total_conversations > 0 else 0
-            ),
-            "percentageChatbotCouldAnswer": (
-                (chatbot_could_answer_count / total_conversations) * 100
+            "percentageSuccessfulAnswers": (
+                (successful_answers / total_conversations) * 100
                 if total_conversations > 0
                 else 0
             ),
@@ -1243,8 +1238,21 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             response_data["conversationData"] = conversations
 
         if include_conversation_content:
-            # Placeholder for S3 content retrieval
-            response_data["conversationContent"] = "Placeholder for S3 content"
+            s3 = boto3.client("s3")
+            conversation_content = {}
+            for conv in conversations:
+                if "s3Location" in conv:
+                    bucket, key = conv["s3Location"].split("/", 1)
+                    try:
+                        obj = s3.get_object(Bucket=bucket, Key=key)
+                        conversation_content[conv["conversationId"]] = (
+                            obj["Body"].read().decode("utf-8")
+                        )
+                    except Exception as e:
+                        print(
+                            f"Error retrieving S3 content for conversation {conv['conversationId']}: {str(e)}"
+                        )
+            response_data["conversationContent"] = conversation_content
 
         return {
             "statusCode": 200,
