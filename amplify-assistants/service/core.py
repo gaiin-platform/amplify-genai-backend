@@ -1201,6 +1201,9 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         employee_types = {}
         successful_answers = 0
 
+        # Track users for employee type distribution
+        user_employee_types = {}
+
         for conv in conversations:
             entry_points[conv.get("entryPoint", "")] = (
                 entry_points.get(conv.get("entryPoint", ""), 0) + 1
@@ -1208,9 +1211,14 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             categories[conv.get("category", "")] = (
                 categories.get(conv.get("category", ""), 0) + 1
             )
-            employee_types[conv.get("employeeType", "")] = (
-                employee_types.get(conv.get("employeeType", ""), 0) + 1
-            )
+
+            # Update user_employee_types
+            user = conv.get("user", "")
+            employee_type = conv.get("employeeType", "")
+            if user not in user_employee_types:
+                user_employee_types[user] = employee_type
+                employee_types[employee_type] = employee_types.get(employee_type, 0) + 1
+
             if conv.get("successfulAnswer", False):
                 successful_answers += 1
 
@@ -1219,16 +1227,19 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "assistantName": assistant_name,
             "numberOfUsers": len(unique_users),
             "modelsUsed": models_used,
+            "totalConversations": total_conversations,
             "averagePromptsPerConversation": (
-                total_prompts / total_conversations if total_conversations > 0 else 0
+                float(total_prompts) / float(total_conversations)
+                if total_conversations > 0
+                else 0.0
             ),
             "entryPointDistribution": entry_points,
             "categoryDistribution": categories,
             "employeeTypeDistribution": employee_types,
             "percentageSuccessfulAnswers": (
-                (successful_answers / total_conversations) * 100
+                (float(successful_answers) / float(total_conversations)) * 100.0
                 if total_conversations > 0
-                else 0
+                else 0.0
             ),
         }
 
