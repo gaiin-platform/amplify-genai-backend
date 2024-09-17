@@ -467,12 +467,9 @@ def get_claims(event, context):
         except jwt.ExpiredSignatureError:
             print("Token has expired.")
             raise Unauthorized("Token has expired.")
-        except jwt.InvalidAudienceError:
-            print("Invalid audience.")
-            raise Unauthorized("Invalid audience.")
-        except jwt.InvalidIssuerError:
-            print("Invalid issuer.")
-            raise Unauthorized("Invalid issuer.")
+        except jwt.JWTClaimsError as e:
+            print(f"JWT Claims Error: {e}")
+            raise Unauthorized(str(e)) 
         except Exception as e:
             print(f"Error during token validation: {e}")
             raise Unauthorized(f"Error during token validation: {e}")
