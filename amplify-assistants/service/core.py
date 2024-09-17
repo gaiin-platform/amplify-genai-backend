@@ -1204,13 +1204,16 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         # Track users for employee type distribution
         user_employee_types = {}
 
+        successful_answers = 0
+        total_answered_conversations = 0
+
         for conv in conversations:
             entry_points[conv.get("entryPoint", "")] = (
                 entry_points.get(conv.get("entryPoint", ""), 0) + 1
             )
-            categories[conv.get("category", "")] = (
-                categories.get(conv.get("category", ""), 0) + 1
-            )
+            category = conv.get("category", "").strip()
+            if category:  # Only add non-empty categories
+                categories[category] = categories.get(category, 0) + 1
 
             # Update user_employee_types
             user = conv.get("user", "")
@@ -1219,8 +1222,10 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 user_employee_types[user] = employee_type
                 employee_types[employee_type] = employee_types.get(employee_type, 0) + 1
 
-            if conv.get("successfulAnswer", False):
-                successful_answers += 1
+            if 'successfulAnswer' in conv:
+                total_answered_conversations += 1
+                if conv['successfulAnswer']:
+                    successful_answers += 1
 
         dashboard_data = {
             "assistantId": assistant_id,
@@ -1237,8 +1242,9 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "categoryDistribution": categories,
             "employeeTypeDistribution": employee_types,
             "percentageSuccessfulAnswers": (
-                (float(successful_answers) / float(total_conversations)) * 100.0
-                if total_conversations > 0
+                (float(successful_answers) / float(total_answered_conversations))
+                * 100.0
+                if total_answered_conversations > 0
                 else 0.0
             ),
         }

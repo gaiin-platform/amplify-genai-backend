@@ -135,17 +135,14 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
     if (chatRequest.options.assistantId) {
         // assistantId beginning with 'astgp' means this is a group assistant
         if (chatRequest.options.assistantId.startsWith('astgp')) {
-            console.log("MADE IT");
-            
             // write data to DynamoDB table
             const conversationId = chatRequest.options.conversationId;
             const assistantId = chatRequest.options.assistantId;
             const assistantName = chatRequest.options.assistantName;
-            const modelUsed = chatRequest.options.model.name; // TODO: switch this to the ID
+            const modelUsed = chatRequest.options.model.id;
             const numberPrompts = chatRequest.options.numPrompts;
             const employeeType = chatRequest.options.groupType;
-            // TODO: update entry point when wordpress is live and s3 location when filename is proper
-            const entryPoint = "Amplify"; // chatRequest.options.source
+            const entryPoint = chatRequest.options.source || "Amplify";
             const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
             // TODO: perform category and successful answer analysis
 
