@@ -1192,25 +1192,25 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             conversations[0].get("assistantName", "") if conversations else ""
         )
         unique_users = set(conv.get("user", "") for conv in conversations)
-        models_used = list(set(conv.get("modelUsed", "") for conv in conversations))
         total_prompts = sum(conv.get("numberPrompts", 0) for conv in conversations)
         total_conversations = len(conversations)
 
         entry_points = {}
         categories = {}
         employee_types = {}
-        successful_answers = 0
-
-        # Track users for employee type distribution
         user_employee_types = {}
-
-        successful_answers = 0
-        total_answered_conversations = 0
+        total_user_rating = 0
+        total_system_rating = 0
+        user_rating_count = 0
+        system_rating_count = 0
 
         for conv in conversations:
+            # Determine entry points
             entry_points[conv.get("entryPoint", "")] = (
                 entry_points.get(conv.get("entryPoint", ""), 0) + 1
             )
+
+            # Determine categories
             category = conv.get("category", "").strip()
             if category:  # Only add non-empty categories
                 categories[category] = categories.get(category, 0) + 1
@@ -1222,16 +1222,25 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 user_employee_types[user] = employee_type
                 employee_types[employee_type] = employee_types.get(employee_type, 0) + 1
 
-            if 'successfulAnswer' in conv:
-                total_answered_conversations += 1
-                if conv['successfulAnswer']:
-                    successful_answers += 1
+            # Calculate user rating
+            user_rating = conv.get('userRating')
+            if user_rating is not None:
+                total_user_rating += user_rating
+                user_rating_count += 1
+
+            # Calculate system rating
+            system_rating = conv.get('systemRating')
+            if system_rating is not None:
+                total_system_rating += system_rating
+                system_rating_count += 1
+
+        average_user_rating = total_user_rating / user_rating_count if user_rating_count > 0 else None
+        average_system_rating = total_system_rating / system_rating_count if system_rating_count > 0 else None
 
         dashboard_data = {
             "assistantId": assistant_id,
             "assistantName": assistant_name,
-            "numberOfUsers": len(unique_users),
-            "modelsUsed": models_used,
+            "numUsers": len(unique_users),
             "totalConversations": total_conversations,
             "averagePromptsPerConversation": (
                 float(total_prompts) / float(total_conversations)
@@ -1241,12 +1250,8 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             "entryPointDistribution": entry_points,
             "categoryDistribution": categories,
             "employeeTypeDistribution": employee_types,
-            "percentageSuccessfulAnswers": (
-                (float(successful_answers) / float(total_answered_conversations))
-                * 100.0
-                if total_answered_conversations > 0
-                else 0.0
-            ),
+            "averageUserRating": average_user_rating,
+            "averageSystemRating": average_system_rating,
         }
 
         response_data = {"dashboardData": dashboard_data}
