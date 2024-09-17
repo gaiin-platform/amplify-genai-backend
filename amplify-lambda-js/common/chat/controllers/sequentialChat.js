@@ -144,7 +144,6 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             const employeeType = chatRequest.options.groupType;
             const entryPoint = chatRequest.options.source || "Amplify";
             const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
-            // TODO: perform category and successful answer analysis
 
             await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location);
         }
