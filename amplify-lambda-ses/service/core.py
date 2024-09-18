@@ -39,7 +39,7 @@ def send_email(event, context, current_user, name, data):
         )
         
         print(f"Email sent! Message ID: {response['MessageId']}")
-        return True
+        return {"success": True}
     except Exception as e:
         print(f"An error occurred: {str(e)}")
-        return False
+        return {"success": False}
