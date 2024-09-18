@@ -328,9 +328,9 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('dual_embedding' not in access and 'full_access' not in access):
-            print("API doesn't have access to file uploads")
-            raise PermissionError("API key does not have access to file upload functionality")
+        if ('chat' not in access and 'dual_embedding' not in access and 'full_access' not in access):
+            print("API doesn't have access to embeddings")
+            raise PermissionError("API key does not have access to embedding functionality")
         
         # Determine API user
         current_user = determine_api_user(item)

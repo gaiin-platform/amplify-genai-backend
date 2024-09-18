@@ -37,7 +37,6 @@ def get_presigned_download_url(event, context, current_user, name, data):
 
     dynamodb = boto3.resource('dynamodb')
     s3 = boto3.client('s3')
-    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
     files_table_name = os.environ['FILES_DYNAMO_TABLE']
 
     # Access the specific table
@@ -64,11 +63,12 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return {'success': False, 'message': 'File not found'}
 
     download_filename = response['Item']['name']
-
+    is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES
     response_headers = {
         'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
-    } if download_filename else {}
+    } if download_filename and not is_file_type else {}
 
+    bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME'] if is_file_type  else os.environ['S3_RAG_INPUT_BUCKET_NAME']
     # If the user matches, generate a presigned URL for downloading the file from S3
     try:
         presigned_url = s3.generate_presigned_url(

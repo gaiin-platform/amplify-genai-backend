@@ -300,8 +300,8 @@ def update_api_key(item_id, updates, user):
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
-    if (not is_valid_account(value['id'])):
         if (field == 'account'):
+            if (not is_valid_account(value['id'])):
                 warning = "Warning: Invalid COA string attached to account"
                 print(warning)  # or use a logging mechanism
             # Continue with key creation despite the warning
