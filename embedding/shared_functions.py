@@ -140,9 +140,3 @@ def generate_questions(content):
 
 
 
-#response=generate_embeddings("This is a test")
-#print(response)
-
-qa_response=preprocess_text("This is a test")
-response=generate_questions(qa_response)
-print(response)
