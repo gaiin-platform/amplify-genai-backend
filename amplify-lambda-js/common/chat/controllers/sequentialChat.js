@@ -1,47 +1,20 @@
-import {countChatTokens} from "../../../azure/tokens.js";
-import {StreamMultiplexer} from "../../multiplexer.js";
-import {sendSourceMetadata} from "./meta.js";
+import { countChatTokens } from "../../../azure/tokens.js";
+import { StreamMultiplexer } from "../../multiplexer.js";
+import { sendSourceMetadata } from "./meta.js";
 import { PassThrough, Writable } from 'stream';
-import {newStatus} from "../../status.js";
-import {isKilled} from "../../../requests/requestState.js";
-import {getLogger} from "../../logging.js";
-import {sendStatusEventToStream} from "../../streams.js";
-import {getUser} from "../../params.js";
-import {addContextMessage, createContextMessage} from "./common.js";
+import { newStatus } from "../../status.js";
+import { isKilled } from "../../../requests/requestState.js";
+import { getLogger } from "../../logging.js";
+import { sendStatusEventToStream } from "../../streams.js";
+import { getUser, getModel, setModel, getCheapestModelEquivalent, getMostAdvancedModelEquivalent } from "../../../common/params.js";
+import { addContextMessage, createContextMessage } from "./common.js";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
 
 const logger = getLogger("sequentialChat");
 
-const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
-const docClient = DynamoDBDocumentClient.from(dynamodbClient);
-
-async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location) {
-    const params = {
-        TableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
-        Item: {
-            conversationId: conversationId,
-            assistantId: assistantId,
-            assistantName: assistantName,
-            modelUsed: modelUsed,
-            numberPrompts: numberPrompts,
-            user: user,
-            employeeType: employeeType,
-            entryPoint: entryPoint,
-            s3Location: s3Location,
-            timestamp: new Date().toISOString()
-        }
-    };
-
-    try {
-        await docClient.send(new PutCommand(params));
-        logger.info(`Successfully wrote conversation data to DynamoDB for conversationId: ${conversationId}`);
-    } catch (error) {
-        logger.error(`Error writing to DynamoDB: ${error}`);
-    }
-}
-
-export const handleChat = async ({account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer, tokenReporting}) => {
+export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer, tokenReporting }) => {
 
     // The multiplexer is used to multiplex the streaming responses from the LLM provider
     // back to the client. This is necessary because we are going to run multiple requests (potentially)
@@ -53,6 +26,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
 
     const user = account.user;
     const requestId = chatRequest.options.requestId;
+    let llmResponse = '';
 
     sendSourceMetadata(multiplexer, metaData);
 
@@ -64,7 +38,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             sticky: false
         });
 
-    if(contexts.length > 1) {
+    if (contexts.length > 1) {
         sendStatusEventToStream(
             responseStream,
             newStatus(
@@ -79,7 +53,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
     for (const [index, context] of contexts.entries()) {
 
 
-        if((await isKilled(user, responseStream, chatRequest))){
+        if ((await isKilled(user, responseStream, chatRequest))) {
             return;
         }
 
@@ -103,7 +77,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             context.id, tokenCount
         )
 
-        if(contexts.length > 1) {
+        if (contexts.length > 1) {
             status.message = `Sending prompt ${index + 1} of ${contexts.length}`;
             status.dataSource = context.id;
             sendStatusEventToStream(
@@ -113,6 +87,30 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
 
         logger.debug("Creating stream wrapper");
         const streamReceiver = new PassThrough();
+
+        // Capture data as it's written to the streamReceiver for AI analysis
+        streamReceiver.on('data', (chunk) => {
+            const chunkStr = chunk.toString();
+            const jsonStrings = chunkStr.split('\n').filter(str => str.startsWith('data: ')).map(str => str.replace('data: ', ''));
+
+            for (const jsonStr of jsonStrings) {
+                if (jsonStr === '[DONE]') {
+                    continue;
+                }
+
+                try {
+                    const chunkObj = JSON.parse(jsonStr);
+                    if (chunkObj?.d?.delta?.text) {
+                        llmResponse += chunkObj.d.delta.text;
+                    }
+                } catch (e) {
+                    // Log the error and the problematic chunk, but don't throw
+                    console.warn(`Warning: Error parsing chunk: ${e.message}`);
+                    console.warn(`Problematic chunk: ${jsonStr}`);
+                }
+            }
+        });
+
         multiplexer.addSource(streamReceiver, context.id, eventTransformer);
 
         logger.debug("Calling chat function");
@@ -124,7 +122,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
         logger.debug("Chat function streaming finished");
     }
 
-    if(contexts.length > 1) {
+    if (contexts.length > 1) {
         status.message = `Completed ${contexts.length} of ${contexts.length} prompts`;
         status.inProgress = false;
         sendStatusEventToStream(
@@ -132,20 +130,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             status);
     }
 
-    if (chatRequest.options.assistantId) {
-        // assistantId beginning with 'astgp' means this is a group assistant
-        if (chatRequest.options.assistantId.startsWith('astgp')) {
-            // write data to DynamoDB table
-            const conversationId = chatRequest.options.conversationId;
-            const assistantId = chatRequest.options.assistantId;
-            const assistantName = chatRequest.options.assistantName;
-            const modelUsed = chatRequest.options.model.id;
-            const numberPrompts = chatRequest.options.numPrompts;
-            const employeeType = chatRequest.options.groupType;
-            const entryPoint = chatRequest.options.source || "Amplify";
-            const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
-
-            await writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location);
-        }
+    if ((chatRequest.options.assistantId) && (chatRequest.options.assistantId.startsWith('astgp')) && !(chatRequest.options.ragOnly)) {
+        await analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user);
     }
 }

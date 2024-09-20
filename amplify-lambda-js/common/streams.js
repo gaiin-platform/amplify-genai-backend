@@ -1,6 +1,6 @@
-import {Writable} from "stream";
-import {TextDecoder} from "util";
-import {newStatus} from "./status.js";
+import { Writable } from "stream";
+import { TextDecoder } from "util";
+import { newStatus } from "./status.js";
 
 export class TraceStream extends Writable {
     constructor(options, targetStream) {
@@ -19,11 +19,11 @@ export class TraceStream extends Writable {
 
                     const delta = JSON.parse(json);
 
-                    if(delta.s === "meta" && delta.st) {
+                    if (delta.s === "meta" && delta.st) {
                         // We do this to remove the hacky flushes to make
                         // AWS Lambda streaming work
-                        if(delta.message && delta.message.trim().length > 0 ||
-                           delta.summary && delta.summary.trim().length > 0) {
+                        if (delta.message && delta.message.trim().length > 0 ||
+                            delta.summary && delta.summary.trim().length > 0) {
                             this.trace += textChunk + "\n\n";
                         }
                     }
@@ -42,7 +42,7 @@ export class TraceStream extends Writable {
 
     _write(chunk, encoding, callback) {
         // Convert the chunk (which must be a Buffer) to a string
-        const textChunks = this.decoder.decode(chunk, {stream: true});
+        const textChunks = this.decoder.decode(chunk, { stream: true });
 
         for (const textChunk of textChunks.split('\n')) {
             this.handleChunk(textChunk);
@@ -93,11 +93,11 @@ export class StatusOutputStream extends Writable {
         this.message = "";
     }
 
-    addOutputStream(outputStream){
+    addOutputStream(outputStream) {
         this.outputStreams.push(outputStream);
     }
 
-    addTransformer(transformer){
+    addTransformer(transformer) {
         this.transformers.push(transformer);
     }
 
@@ -123,7 +123,7 @@ export class StatusOutputStream extends Writable {
                         return transformer(acc);
                     }, delta.d);
 
-                    if(delta.d) {
+                    if (delta.d) {
                         this.status.message += delta.d;
                         sendStatusEventToStream(this.statusStream, this.status);
                     }
@@ -141,7 +141,7 @@ export class StatusOutputStream extends Writable {
 
     _write(chunk, encoding, callback) {
         // Convert the chunk (which must be a Buffer) to a string
-        const textChunks = this.decoder.decode(chunk, {stream: true});
+        const textChunks = this.decoder.decode(chunk, { stream: true });
 
         for (const textChunk of textChunks.split('\n')) {
             this.handleChunk(textChunk);
@@ -173,17 +173,18 @@ export class StreamResultCollector extends Writable {
         this.transformers = [];
         this.outputStreams = [];
         this.statusStreams = [];
+        this.fullResponse = '';
     }
 
-    addOutputStream(outputStream){
+    addOutputStream(outputStream) {
         this.outputStreams.push(outputStream);
     }
 
-    addTransformer(transformer){
+    addTransformer(transformer) {
         this.transformers.push(transformer);
     }
 
-    addStatusStream(statusStream){
+    addStatusStream(statusStream) {
         this.statusStreams.push(statusStream);
     }
 
@@ -196,8 +197,8 @@ export class StreamResultCollector extends Writable {
                 const delta = JSON.parse(json);
 
                 // If set, we send the status to the output streams directly as well
-                if(delta && delta.s === "meta" && delta.st && this.statusStreams.length > 0){
-                    for(const sst of this.statusStreams) {
+                if (delta && delta.s === "meta" && delta.st && this.statusStreams.length > 0) {
+                    for (const sst of this.statusStreams) {
                         sst.write(textChunk + "\n\n");
                     }
                 }
@@ -209,17 +210,22 @@ export class StreamResultCollector extends Writable {
                     if (this.meta.sources) {
                         delta.s = this.meta.sources[delta.s];
                     }
+
+                    if (typeof delta.d === "string") {
+                        this.fullResponse += delta.d;
+                    }
+
                     if (typeof delta.d !== "string") {
                         delta.d = JSON.stringify(delta.d);
                     }
 
                     const key = (delta.s) ? delta.s : "default";
-                    const tokenKey = "__tokens_"+key;
+                    const tokenKey = "__tokens_" + key;
 
                     if (!this.result[key]) {
                         this.result[key] = "";
                     }
-                    if(!this.result[tokenKey]){
+                    if (!this.result[tokenKey]) {
                         this.result[tokenKey] = 0;
                     }
 
@@ -233,7 +239,7 @@ export class StreamResultCollector extends Writable {
                     this.outputStreams.forEach((outputStream) => {
                         outputStream.write(textChunk + "\n\n");
                     });
-                } else if(delta.s === "meta") {
+                } else if (delta.s === "meta") {
                     this.outputStreams.forEach((outputStream) => {
                         outputStream.write(textChunk + "\n\n");
                     });
@@ -244,9 +250,13 @@ export class StreamResultCollector extends Writable {
         }
     }
 
+    getFullResponse() {
+        return this.fullResponse;
+    }
+
     _write(chunk, encoding, callback) {
         // Convert the chunk (which must be a Buffer) to a string
-        const textChunks = this.decoder.decode(chunk, {stream: true});
+        const textChunks = this.decoder.decode(chunk, { stream: true });
 
         for (const textChunk of textChunks.split('\n')) {
             this.handleChunk(textChunk);
@@ -268,45 +278,47 @@ export class StreamResultCollector extends Writable {
 }
 
 export const sendOutOfOrderModeEventToStream = (resultStream) => {
-    resultStream.write(`data: ${JSON.stringify({s: "meta", m:"out_of_order"})}\n\n`);
+    resultStream.write(`data: ${JSON.stringify({ s: "meta", m: "out_of_order" })}\n\n`);
 }
 
 export const forceFlush = (resultStream) => {
     sendStateEventToStream(resultStream, newStatus(
-        {inProgress: false,
-            message: " ".repeat(100000)}));
+        {
+            inProgress: false,
+            message: " ".repeat(100000)
+        }));
 }
 
 export const sendStatusEventToStream = (resultStream, statusEvent) => {
-    resultStream.write(`data: ${JSON.stringify({s: "meta", st: statusEvent})}\n\n`);
+    resultStream.write(`data: ${JSON.stringify({ s: "meta", st: statusEvent })}\n\n`);
 }
 
 export const sendStateEventToStream = (resultStream, state) => {
-    resultStream.write(`data: ${JSON.stringify({s: "meta", state: state})}\n\n`);
+    resultStream.write(`data: ${JSON.stringify({ s: "meta", state: state })}\n\n`);
 }
 
 export const sendToStream = (resultStream, src, data) => {
-    if(!resultStream.writableEnded) {
-        resultStream.write(`data: ${JSON.stringify({s: src, ...data})}\n\n`);
+    if (!resultStream.writableEnded) {
+        resultStream.write(`data: ${JSON.stringify({ s: src, ...data })}\n\n`);
     }
 }
 
 export const sendDirectToStream = (resultStream, data) => {
-    if(!resultStream.writableEnded) {
+    if (!resultStream.writableEnded) {
         resultStream.write(data);
     }
 }
 
 export const sendDeltaToStream = (resultStream, src, delta) => {
-    sendToStream(resultStream, src, {d: delta});
+    sendToStream(resultStream, src, { d: delta });
 }
 
 export const sendResultToStream = (resultStream, result) => {
-    resultStream.write(`data: ${JSON.stringify({s: "result", d: result})}\n\n`);
+    resultStream.write(`data: ${JSON.stringify({ s: "result", d: result })}\n\n`);
 }
 
 export const endStream = (resultStream) => {
-    resultStream.write(`data: ${JSON.stringify({s: "result", type:'end'})}\n\n`);
+    resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
 }
 
 export const findResultKey = (result) => {
@@ -318,5 +330,3 @@ export const findResult = (result) => {
     const resultKey = findResultKey(result);
     return result[resultKey];
 }
-
-
