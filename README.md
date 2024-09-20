@@ -126,13 +126,10 @@ npm i
 You can run Serverless offline for `amplify-lambda` using one of the following methods,
 where <stage> corresponds to the appropriate deployment stage ('dev', 'staging', 'prod'):
 
-1. Directly from the repository root directory:
+Serverless offline does not support Serverless Compose. Because of this limitation, the only way to run serverless offline is to 
 
-```bash
-serverless amplify-lambda:offline --httpPort 3015 --stage <stage> 
-```
 
-2. By navigating to the `amplify-lambda` directory:
+1. By navigating to the `amplify-lambda` directory:
 
 ```bash
 cd amplify-lambda
