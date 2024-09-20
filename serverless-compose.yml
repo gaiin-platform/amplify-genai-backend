@@ -38,4 +38,9 @@ services:
     path: ./object-access
     dependsOn:
       - amplify-lambda
+  
+  amplify-lambda-optimizer:
+    path: ./amplify-lambda-optimizer
+    dependsOn:
+      - amplify-lambda
 
