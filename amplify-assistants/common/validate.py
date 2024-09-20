@@ -361,6 +361,10 @@ save_user_rating_schema = {
             "type": "number",
             "description": "The user's rating",
         },
+        "userFeedback": {
+            "type": "string",
+            "description": "Optional user feedback on the conversation",
+        },
     },
     "required": ["conversationId", "userRating"],
 }

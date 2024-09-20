@@ -1308,15 +1308,24 @@ def save_user_rating(event, context, current_user, name, data):
 
     conversation_id = data["data"]["conversationId"]
     user_rating = data["data"]["userRating"]
+    user_feedback = data["data"].get("userFeedback")  # Get userFeedback if present
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
 
     try:
+        # Construct the UpdateExpression based on whether userFeedback is present
+        update_expression = "SET userRating = :rating"
+        expression_attribute_values = {":rating": user_rating}
+
+        if user_feedback:
+            update_expression += ", userFeedback = :feedback"
+            expression_attribute_values[":feedback"] = user_feedback
+
         response = table.update_item(
             Key={"conversationId": conversation_id},
-            UpdateExpression="SET userRating = :rating",
-            ExpressionAttributeValues={":rating": user_rating},
+            UpdateExpression=update_expression,
+            ExpressionAttributeValues=expression_attribute_values,
             ReturnValues="UPDATED_NEW",
         )
 
@@ -1324,7 +1333,11 @@ def save_user_rating(event, context, current_user, name, data):
             "statusCode": 200,
             "body": json.dumps(
                 {
-                    "message": "User rating saved successfully",
+                    "message": (
+                        "User rating and feedback saved successfully"
+                        if user_feedback
+                        else "User rating saved successfully"
+                    ),
                     "updatedAttributes": response.get("Attributes"),
                 },
                 cls=DecimalEncoder,
