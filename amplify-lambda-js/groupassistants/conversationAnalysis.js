@@ -82,6 +82,11 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
         const entryPoint = chatRequest.options.source || "Amplify";
         const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
 
+        let userEmail = user;
+        if (chatRequest.options.source) { // save user email from wordpress
+            userEmail = chatRequest.options.user;
+        }
+
         const userPrompt = chatRequest.messages[chatRequest.messages.length - 1].content.substring(61);
 
         const resultCollector = new StreamResultCollector();
@@ -124,7 +129,7 @@ Provide a category from the predefined list, a system rating (1-5) based on the 
 
             await writeToGroupAssistantConversations(
                 conversationId, assistantId, assistantName, modelUsed,
-                numberPrompts, user, employeeType, entryPoint,
+                numberPrompts, userEmail, employeeType, entryPoint,
                 s3Location, category, systemRating
             );
         } catch (error) {
