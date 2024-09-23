@@ -477,6 +477,9 @@ resources:
                 - s3:CreateBucket
                 - sqs:SendMessage
                 - sqs:DeleteMessage
+                - sqs:ReceiveMessage
+                - sqs:GetQueueAttributes
+                - sqs:ChangeMessageVisibility
                 - rds-data:ExecuteStatement
                 - rds-data:BatchExecuteStatement
                 - rds-data:BeginTransaction
@@ -566,6 +569,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         AttributeDefinitions:
           -
             AttributeName: id
@@ -623,6 +628,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         GlobalSecondaryIndexes:
           -
             IndexName: UserIndex
@@ -650,6 +657,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -722,6 +731,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           -
             AttributeName: user
@@ -738,6 +749,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -763,6 +776,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -778,6 +793,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           -
             AttributeName: user
@@ -793,6 +810,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           -
             AttributeName: email
@@ -850,6 +869,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true          
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
