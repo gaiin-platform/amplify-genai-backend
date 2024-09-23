@@ -68,7 +68,7 @@ class DatabaseExistsError(Exception):
 
 
 def set_datasource_metadata(access_token, id, name, type, tags=[], data={}):
-    url = os.getenv("DATASOURCE_REGISTRY_ENDPOINT")
+    url = os.getenv("API_BASE_URL") + "/datasource/metadata/set"
 
     print(f"Setting datasource metadata for {id} at {url}")
 

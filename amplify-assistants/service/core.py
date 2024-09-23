@@ -1,21 +1,121 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import os
+import re
 import time
 import boto3
 import json
 import uuid
+import csv
+import io
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 
 from common.data_sources import get_data_source_keys, translate_user_data_sources_to_hash_data_sources
-from common.encoders import CombinedEncoder
+from common.encoders import CombinedEncoder, DecimalEncoder
 from common.object_permissions import update_object_permissions, can_access_objects, simulate_can_access_objects
 
 from common.validate import validated
-
-from assistants.system_assistants import RESERVED_TAGS, get_system_assistants
 from decimal import Decimal
+
+
+SYSTEM_TAG = "amplify:system"
+ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
+ASSISTANT_TAG = "amplify:assistant"
+AMPLIFY_AUTOMATION_TAG = "amplify:automation"
+AMPLIFY_API_KEY_MANAGER_TAG = "amplify:api-key-manager"
+AMPLIFY_API_DOC_HELPER_TAG = "amplify:api-doc-helper"
+
+RESERVED_TAGS = [
+    SYSTEM_TAG,
+    ASSISTANT_BUILDER_TAG,
+    ASSISTANT_TAG,
+    AMPLIFY_AUTOMATION_TAG,
+    AMPLIFY_API_KEY_MANAGER_TAG,
+    AMPLIFY_API_DOC_HELPER_TAG
+]
+
+
+# used for system users who have access to a group. Group assistants are based on group permissions
+# currently the data returned is best for our amplify wordpress plugin
+@validated(op="get")
+def retrieve_astg_for_system_use(event, context, current_user, name, data):
+    query_params = event.get('queryStringParameters', {})
+    print("Query params: ", query_params)
+    assistantId = query_params.get('assistantId', '')
+    pattern = r'^[a-zA-Z0-9-]+-\d{6}$'
+                                # must be in system user format 
+    if (not assistantId or assistantId[:6] == 'astgp' or not re.match(pattern, current_user)):
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Invalid or missing assistantId parameter or not a system user.'}
+                })
+    print("retrieving astgp data")
+    dynamodb = boto3.resource('dynamodb')
+    assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
+    
+    astgp = get_most_recent_assistant_version(assistants_table, assistantId)
+    if (not astgp): 
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'AssistantId parameter does not match any assistant'}
+                })
+
+    ast_data = astgp.get('data', {})
+
+    groupId = ast_data.get('groupId', None)
+    if (not groupId):
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'The assistant does not have a groupId.'}
+                })
+    
+    print("checking perms from group table")
+    #check system user has access to group assistant 
+    groups_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
+
+    try :
+        response = groups_table.get_item(Key={'group_id': groupId})
+            # Check if the item was found
+        if 'Item' in response:
+            item = response['Item']
+            if (current_user not in item.get('systemUsers', [])):
+                return json.dumps({
+                    'statusCode': 401,
+                    'body': {'error': 'User is not authorized to access assistant details'}
+                    })
+        else:
+            return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Item with group_id not found in dynamo'}
+                })
+
+    except Exception as e:
+        print(f"Error getting group from dynamo: {e}")
+        return json.dumps({
+                'statusCode': 400,
+                'body': {'error': 'Failed to retrieve group from dynamo'}
+                })
+
+    group_types_data =  {group_type: {
+                            "isDisabled": details["isDisabled"],
+                            "disabledMessage": details["disabledMessage"]
+                            }
+                        for group_type, details in ast_data.get('groupTypeData', {}).items()
+                        }
+    
+    return {
+            'statusCode': 200,
+            'body': {'assistant': {
+                    'name': astgp['name'], 
+                    'groupId': groupId, 
+                    'instructions': astgp['instructions'],
+                    'group_types': group_types_data,
+                    'group_type_questions': ast_data.get('groupUserTypeQuestion', None),
+                    'model': ast_data.get('model', None),
+                    'disclaimer': astgp.get('disclaimer', None)
+                }}
+                }
 
 
 def check_user_can_share_assistant(assistant, user_id):
@@ -56,6 +156,8 @@ def delete_assistant(event, context, current_user, name, data):
     """
     print(f"Deleting assistant with data: {data}")
 
+    users_who_have_perms = data['data'].get('removePermsForUsers', [])
+
     assistant_public_id = data['data'].get('assistantId', None)
     if not assistant_public_id:
         print("Assistant ID is required for deletion.")
@@ -72,6 +174,9 @@ def delete_assistant(event, context, current_user, name, data):
             return {'success': False, 'message': 'You are not authorized to delete this assistant.'}
 
         delete_assistant_by_public_id(assistants_table, assistant_public_id)
+        # remove permissions 
+        delete_assistant_permissions_by_public_id(assistant_public_id, [current_user] + users_who_have_perms)
+        delete_assistant_permissions_by_id(existing_assistant['id'], current_user)
         print(f"Assistant {assistant_public_id} deleted successfully.")
         return {'success': True, 'message': 'Assistant deleted successfully.'}
     except Exception as e:
@@ -101,10 +206,13 @@ def list_assistants(event, context, current_user, name, data):
 
     assistant_ids = [assistant['id'] for assistant in assistants]
 
-    access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
+    access_rights ={}
+    if not data["is_group_sys_user"]: # saves us the call, access is determined by group members access list 
+        access_rights = simulate_can_access_objects(data['access_token'], assistant_ids, ['read', 'write'])
 
-     # Add the system assistants
-    assistants += get_system_assistants(data['groups'], current_user)
+    # # Add the system assistants for Amplify requests only
+    # if (not data['api_accessed']):
+    #     assistants += get_system_assistants(current_user)
 
     # Make sure each assistant has a data field and initialize it if it doesn't
     for assistant in assistants:
@@ -116,7 +224,7 @@ def list_assistants(event, context, current_user, name, data):
         try:
             if assistant['data'] is None:
                 assistant['data'] = {'access': None}
-            assistant['data']['access'] = access_rights.get(assistant['id'], 'none')
+            assistant['data']['access'] = access_rights.get(assistant['id'], {})
         except Exception as e:
             print(f"Error adding access rights to assistant {assistant['id']}: {e}")
 
@@ -207,37 +315,40 @@ def create_assistant(event, context, current_user, name, data):
     data_sources = extracted_data.get('dataSources', [])
     tools = extracted_data.get('tools', [])
     provider = extracted_data.get('provider', 'amplify')
+    is_group_sys_user = data["is_group_sys_user"]
 
-    filtered_ds = []
-    tag_data_sources = []
-    for source in data_sources:
-        if source['id'].startswith("tag://"):
-            tag_data_sources.append(source)
-        else:
-            filtered_ds.append(source)
-    
-    print(f"Tag Data sources: {tag_data_sources}")
-
-    if (len(filtered_ds) > 0):
-        print(f"Data sources before translation: {filtered_ds}")
-
-        for i in range(len(filtered_ds)):
-            source = filtered_ds[i]
-            if "://" not in source['id']:
-                filtered_ds[i]['id'] = source['key']
+    # datasource permission are handled in groups update assistant logic. 
+    if not is_group_sys_user:
+        filtered_ds = []
+        tag_data_sources = []
+        for source in data_sources:
+            if source['id'].startswith("tag://"):
+                tag_data_sources.append(source)
+            else:
+                filtered_ds.append(source)
         
-        print(f"Final data sources before translation: {filtered_ds}")
+        print(f"Tag Data sources: {tag_data_sources}")
 
-        filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
-        
-        print(f"Data sources after translation and extraction: {filtered_ds}")
+        if (len(filtered_ds) > 0):
+            print(f"Data sources before translation: {filtered_ds}")
 
-        data_sources = filtered_ds + tag_data_sources
+            for i in range(len(filtered_ds)):
+                source = filtered_ds[i]
+                if "://" not in source['id']:
+                    filtered_ds[i]['id'] = source['key']
+            
+            print(f"Final data sources before translation: {filtered_ds}")
 
-        # Auth check: need to update to new permissions endpoint
-        if not can_access_objects(data['access_token'], data_sources):
-            return {'success': False, 'message': 'You are not authorized to access the referenced files'}
-        
+            filtered_ds = translate_user_data_sources_to_hash_data_sources(filtered_ds)
+            
+            print(f"Data sources after translation and extraction: {filtered_ds}")
+
+            data_sources = filtered_ds + tag_data_sources
+
+            # Auth check: need to update to new permissions endpoint
+            if not can_access_objects(data['access_token'], data_sources):
+                return {'success': False, 'message': 'You are not authorized to access the referenced files'}
+           
 
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_or_update_assistant(
@@ -253,7 +364,8 @@ def create_assistant(event, context, current_user, name, data):
         tools=tools,
         provider=provider,
         uri=uri,
-        assistant_public_id=assistant_public_id
+        assistant_public_id=assistant_public_id,
+        is_group_sys_user = is_group_sys_user
     )
 
 
@@ -269,8 +381,9 @@ def share_assistant(event, context, current_user, name, data):
     recipient_users = extracted_data['recipientUsers']
     access_type = extracted_data.get('accessType', 'read')
     note = extracted_data.get('note', 'Shared via API')
-
     policy = extracted_data.get('policy', '')
+
+    share_to_s3 = extracted_data.get("shareToS3", data['api_accessed'])
 
     return share_assistant_with(
         access_token=data['access_token'],
@@ -279,13 +392,12 @@ def share_assistant(event, context, current_user, name, data):
         recipient_users=recipient_users,
         access_type=access_type,
         note=note,
-        api_accessed=data['api_accessed'],
+        share_to_S3= share_to_s3,
         policy=policy,
         
     )
 
-
-def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, api_accessed, policy=''): # data_sources, 
+def share_assistant_with(access_token, current_user, assistant_key, recipient_users, access_type, note, share_to_S3, policy=''): # data_sources, 
     assistant_entry = get_assistant(assistant_key)
 
     if not assistant_entry:
@@ -332,7 +444,7 @@ def share_assistant_with(access_token, current_user, assistant_key, recipient_us
             print(f"Created alias for user {user} for assistant {assistant_public_id}")
 
             # if api accessed  
-            if (api_accessed):
+            if (share_to_S3):
                 print("API_accessed, sending to s3...")
                 result = assistant_share_save(current_user, user, note, assistant_entry)
                 if (not result['success']):
@@ -353,10 +465,6 @@ def assistant_share_save(current_user, shared_with, note, assistant):
         s3_key = '{}/{}/{}/{}.json'.format(shared_with, current_user, dt_string, str(uuid.uuid4()))
         
         ast_id = assistant['id']
-
-        # keys_to_copy = ['id', 'name', 'description', 'instructions', 'disclaimer', 
-        #                 'tags', 'dataSources', 'provider', 'uri', 'version', 'data',]
-        # ast  = {key: assistant[key] for key in keys_to_copy if key in assistant}
         ast = assistant
         ast['tools'] = []
         ast['fileKeys'] = []
@@ -471,7 +579,7 @@ def get_most_recent_assistant_version(assistants_table,
 
 
 def save_assistant(assistants_table, assistant_name, description, instructions, assistant_data, disclaimer, data_sources, provider, tools,
-                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None):
+                   user_that_owns_the_assistant, version, tags, uri=None, assistant_public_id=None, is_group_sys_user=False):
     """
     Saves the assistant data to the DynamoDB table.
 
@@ -506,12 +614,15 @@ def save_assistant(assistants_table, assistant_name, description, instructions, 
                              data_sources,
                              provider,
                              tools)
-
-    assistant_database_id = f'ast/{str(uuid.uuid4())}'
-
+    
+    # to differentiate Group ast because when a group member chats with it they wont have access directly but the group system user will
+    # so the object access relies on looking up if a user is a member of that group and the group system user has perms
+    ast_prefix = 'astg' if is_group_sys_user else 'ast'
+    assistant_database_id = f'{ast_prefix}/{str(uuid.uuid4())}'
+    
     # Create an assistantId
     if not assistant_public_id:
-        assistant_public_id = f'astp/{str(uuid.uuid4())}'
+        assistant_public_id = f'{ast_prefix}p/{str(uuid.uuid4())}'
 
     # Create the new item for the DynamoDB table
     new_item = {
@@ -562,6 +673,65 @@ def delete_assistant_by_public_id(assistants_table, assistant_public_id):
                 'id': item['id']
             }
         )
+
+@validated(op='remove_astp_permissions')
+def remove_shared_ast_permissions(event, context, current_user, name, data):
+    extracted_data = data['data']
+    ast_public_id = extracted_data['assistant_public_id']
+    users = extracted_data['users']
+
+    print(f"Removing permission for users {users}  for Astp {ast_public_id}")
+
+    return delete_assistant_permissions_by_public_id(ast_public_id, users)
+
+
+def delete_assistant_permissions_by_public_id(assistant_public_id, users):
+    #delete public id is not as sensitive as assistant id 
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
+    for user in users:
+        try:
+            response = table.delete_item(
+                Key={
+                    'object_id': assistant_public_id,
+                    'principal_id': user
+                }
+            )
+            print(f"Deleted permissions for user {user}")
+        except Exception as e:
+            print(f"Failed to delete permissions for user {user}. Error: {str(e)}")
+
+    return {'success': True, 'message': 'Permissions successfully deleted.'}
+
+
+def delete_assistant_permissions_by_id(ast_id, current_user):
+    #current user must be principal user to do this 
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
+    try:
+        response = table.get_item(
+            Key={
+                'object_id': ast_id,
+                'principal_id': current_user  
+            }
+        )
+        
+        if 'Item' in response:
+            delete_response = table.delete_item(
+                Key={
+                    'object_id': ast_id,
+                    'principal_id': current_user
+                }
+            )
+            print(f"Permissions deleted for assistant ID {ast_id}.")
+            return {'success': True, 'message': 'Permissions successfully deleted.'}
+        else:
+            # Current user is not authorized to delete the entry
+            return {'success': False, 'message': 'Not authorized to delete permissions'}
+        
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        return {'success': False, 'message': str(e)}
 
 
 def delete_assistant_by_id(assistants_table, assistant_id):
@@ -621,7 +791,8 @@ def create_or_update_assistant(
         tools,
         provider,
         uri,
-        assistant_public_id=None
+        assistant_public_id=None,
+        is_group_sys_user=False
 ):
     """
     Creates a new assistant in the DynamoDB table and sets the appropriate permissions.
@@ -646,6 +817,8 @@ def create_or_update_assistant(
     assistants_table = dynamodb.Table(os.environ['ASSISTANTS_DYNAMODB_TABLE'])
 
     existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_public_id)
+
+    principal_type = 'group' if is_group_sys_user else 'user'
 
     if existing_assistant:
 
@@ -674,7 +847,8 @@ def create_or_update_assistant(
             new_version,
             tags,
             uri,
-            assistant_public_id
+            assistant_public_id,
+            is_group_sys_user
         )
         new_item['version'] = new_version
 
@@ -684,7 +858,7 @@ def create_or_update_assistant(
                 [user_that_owns_the_assistant],
                 [new_item['id']],
                 'assistant',
-                'user',
+                principal_type,
                 'owner'):
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:
@@ -720,6 +894,7 @@ def create_or_update_assistant(
             tags,
             uri,
             None, 
+            is_group_sys_user
         )
 
         # Update the permissions for the new assistant
@@ -728,7 +903,7 @@ def create_or_update_assistant(
                 [user_that_owns_the_assistant],
                 [new_item['assistantId'], new_item['id']],
                 'assistant',
-                'user',
+                principal_type,
                 'owner'):
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:
@@ -916,3 +1091,265 @@ def save_assistant_for_rag(assistant):
     except Exception as e:
         print(f"Error saving assistant for RAG: {e}")
 
+
+# queries GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE (updated at the end of every conversation via amplify-lambda-js/common/chat/controllers/sequentialChat.js)
+# to see all conversations of a specific group assistant. assistantId must be provided in the data field.
+@validated(op="get_group_assistant_conversations")
+def get_group_assistant_conversations(event, context, current_user, name, data):
+    if "data" not in data or "assistantId" not in data["data"]:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "assistantId is required"}),
+        }
+
+    assistant_id = data["data"]["assistantId"]
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+
+    try:
+        response = table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_id),
+        )
+
+        conversations = response["Items"]
+        # print(f"Found {len(conversations)} conversations for assistant {assistant_id}")
+        # print(f"Conversations: {json.dumps(conversations, cls=CombinedEncoder)}")
+
+        while "LastEvaluatedKey" in response:
+            response = table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            conversations.extend(response["Items"])
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(conversations, cls=CombinedEncoder),
+        }
+
+    except ClientError as e:
+        print(f"DynamoDB ClientError: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
+
+
+# accessible via API gateway for users to collect data on a group assistant
+# user MUST provide assistantId
+# optional parameters to specify:
+# - specify date range: startDate-endDate (default null, meaning provide all data regardless of date)
+# - include conversation data: true/false (default false, meaning provide only dashboard data, NOT conversation statistics in CSV format)
+# - include conversation content: true/false (default false, meaning content of conversations is not provided)
+@validated(op="get_group_assistant_dashboards")
+def get_group_assistant_dashboards(event, context, current_user, name, data):
+    if "data" not in data or "assistantId" not in data["data"]:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "assistantId is required"}),
+        }
+
+    assistant_id = data["data"]["assistantId"]
+    start_date = data["data"].get("startDate")
+    end_date = data["data"].get("endDate")
+    include_conversation_data = data["data"].get("includeConversationData", False)
+    include_conversation_content = data["data"].get("includeConversationContent", False)
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+
+    try:
+        response = table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_id),
+        )
+
+        conversations = response["Items"]
+
+        while "LastEvaluatedKey" in response:
+            response = table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            conversations.extend(response["Items"])
+
+        # Filter conversations by date range if specified
+        if start_date and end_date:
+            start = datetime.fromisoformat(start_date)
+            end = datetime.fromisoformat(end_date)
+            conversations = [
+                conv
+                for conv in conversations
+                if start <= datetime.fromisoformat(conv.get("timestamp", "")) <= end
+            ]
+
+        # Prepare dashboard data
+        assistant_name = (
+            conversations[0].get("assistantName", "") if conversations else ""
+        )
+        unique_users = set(conv.get("user", "") for conv in conversations)
+        total_prompts = sum(conv.get("numberPrompts", 0) for conv in conversations)
+        total_conversations = len(conversations)
+
+        entry_points = {}
+        categories = {}
+        employee_types = {}
+        user_employee_types = {}
+        total_user_rating = 0
+        total_system_rating = 0
+        user_rating_count = 0
+        system_rating_count = 0
+
+        for conv in conversations:
+            # Determine entry points
+            entry_points[conv.get("entryPoint", "")] = (
+                entry_points.get(conv.get("entryPoint", ""), 0) + 1
+            )
+
+            # Determine categories
+            category = conv.get("category", "").strip()
+            if category:  # Only add non-empty categories
+                categories[category] = categories.get(category, 0) + 1
+
+            # Update user_employee_types
+            user = conv.get("user", "")
+            employee_type = conv.get("employeeType", "")
+            if user not in user_employee_types:
+                user_employee_types[user] = employee_type
+                employee_types[employee_type] = employee_types.get(employee_type, 0) + 1
+
+            # Calculate user rating
+            user_rating = conv.get('userRating')
+            if user_rating is not None:
+                total_user_rating += user_rating
+                user_rating_count += 1
+
+            # Calculate system rating
+            system_rating = conv.get('systemRating')
+            if system_rating is not None:
+                total_system_rating += system_rating
+                system_rating_count += 1
+
+        average_user_rating = float(total_user_rating) / float(user_rating_count) if user_rating_count > 0 else None
+        average_system_rating = float(total_system_rating) / float(system_rating_count) if system_rating_count > 0 else None
+
+        dashboard_data = {
+            "assistantId": assistant_id,
+            "assistantName": assistant_name,
+            "numUsers": len(unique_users),
+            "totalConversations": total_conversations,
+            "averagePromptsPerConversation": (
+                float(total_prompts) / float(total_conversations)
+                if total_conversations > 0
+                else 0.0
+            ),
+            "entryPointDistribution": entry_points,
+            "categoryDistribution": categories,
+            "employeeTypeDistribution": employee_types,
+            "averageUserRating": average_user_rating,
+            "averageSystemRating": average_system_rating,
+        }
+
+        response_data = {"dashboardData": dashboard_data}
+
+        if include_conversation_data:
+            response_data["conversationData"] = conversations
+
+        if include_conversation_content:
+            s3 = boto3.client("s3")
+            conversation_content = {}
+            for conv in conversations:
+                if "s3Location" in conv:
+                    bucket, key = conv["s3Location"].split("/", 1)
+                    try:
+                        obj = s3.get_object(Bucket=bucket, Key=key)
+                        conversation_content[conv["conversationId"]] = (
+                            obj["Body"].read().decode("utf-8")
+                        )
+                    except Exception as e:
+                        print(
+                            f"Error retrieving S3 content for conversation {conv['conversationId']}: {str(e)}"
+                        )
+            response_data["conversationContent"] = conversation_content
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(response_data, cls=CombinedEncoder),
+        }
+
+    except ClientError as e:
+        print(f"DynamoDB ClientError: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "An unexpected error occurred"}),
+        }
+
+
+@validated(op="save_user_rating")
+def save_user_rating(event, context, current_user, name, data):
+    if (
+        "data" not in data
+        or "conversationId" not in data["data"]
+        or "userRating" not in data["data"]
+    ):
+        return {
+            "statusCode": 400,
+            "body": json.dumps(
+                {"error": "conversationId and userRating are required"}
+            ),
+        }
+
+    conversation_id = data["data"]["conversationId"]
+    user_rating = data["data"]["userRating"]
+    user_feedback = data["data"].get("userFeedback")  # Get userFeedback if present
+
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+
+    try:
+        # Construct the UpdateExpression based on whether userFeedback is present
+        update_expression = "SET userRating = :rating"
+        expression_attribute_values = {":rating": user_rating}
+
+        if user_feedback:
+            update_expression += ", userFeedback = :feedback"
+            expression_attribute_values[":feedback"] = user_feedback
+
+        response = table.update_item(
+            Key={"conversationId": conversation_id},
+            UpdateExpression=update_expression,
+            ExpressionAttributeValues=expression_attribute_values,
+            ReturnValues="UPDATED_NEW",
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "message": (
+                        "User rating and feedback saved successfully"
+                        if user_feedback
+                        else "User rating saved successfully"
+                    ),
+                    "updatedAttributes": response.get("Attributes"),
+                },
+                cls=DecimalEncoder,
+            ),
+        }
+
+    except ClientError as e:
+        print(f"DynamoDB ClientError: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "An unexpected error occurred"}),
+        }

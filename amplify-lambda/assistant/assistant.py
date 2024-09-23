@@ -11,7 +11,11 @@ import os
 import boto3
 import rag.util
 import images.core
+from boto3.dynamodb.conditions import Key
+from common.data_sources import translate_user_data_sources_to_hash_data_sources
+from common.object_permissions import can_access_objects
 
+dynamodb = boto3.resource('dynamodb')
 
 IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
@@ -27,21 +31,26 @@ IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 )
 @validated(op="download")
 def get_presigned_download_url(event, context, current_user, name, data):
+    access_token = data['access_token']
     data = data['data']
     key = data['key']
+    group_id = data.get('groupId', None)
 
     if "://" in key:
         key = key.split("://")[1]
 
     dynamodb = boto3.resource('dynamodb')
     s3 = boto3.client('s3')
-    bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
     files_table_name = os.environ['FILES_DYNAMO_TABLE']
 
     # Access the specific table
     files_table = dynamodb.Table(files_table_name)
 
     print(f"Getting presigned download URL for {key} for user {current_user}")
+
+    # Since groups can have documents that belongs to other and the group itself only has permission we need to check this instead of if they are owner
+    # In case of wordpress plugin we will always be a system user so we will never be the owner
+    # 
 
     # Retrieve the item from DynamoDB to check ownership
     try:
@@ -56,17 +65,26 @@ def get_presigned_download_url(event, context, current_user, name, data):
         print(f"File not found for user {current_user}: {response}")
         return {'success': False, 'message': 'File not found'}
 
-    if response['Item']['createdBy'] != current_user:
-        # User doesn't match or item doesn't exist
-        print(f"User doesn't match for file for {current_user}: {response['Item']}")
-        return {'success': False, 'message': 'File not found'}
+    if response['Item']['createdBy'] != current_user and response['Item']['createdBy'] != group_id:
+        translated_ds = None
+        if (group_id):# check group_id has perms 
+            try:# need global 
+                translated_ds = translate_user_data_sources_to_hash_data_sources({"key" : key, 'type': response['Item']['type']})
+            except:
+                print("Translation for unauthorized user using group id failed")
+        if (not (translated_ds and can_access_objects(access_token, translated_ds))):
+            # User doesn't match or item doesn't exist
+            print(f"User doesn't match for file for {current_user}: {response['Item']}")
+            print(f"groupId attached? {group_id}")
+            return {'success': False, 'message': 'User does not have access'}
 
     download_filename = response['Item']['name']
-
+    is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES
     response_headers = {
         'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
-    } if download_filename else {}
+    } if download_filename and not is_file_type else {}
 
+    bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME'] if is_file_type  else os.environ['S3_RAG_INPUT_BUCKET_NAME']
     # If the user matches, generate a presigned URL for downloading the file from S3
     try:
         presigned_url = s3.generate_presigned_url(
@@ -95,26 +113,54 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
-    files_table.put_item(
-        Item={
-            'id': key,
-            'name': name,
-            'type': file_type,
-            'tags': tags,
-            'data': data_props,
-            'knowledgeBase': knowledge_base,
-            'createdAt': datetime.now().isoformat(),
-            'updatedAt': datetime.now().isoformat(),
-            'createdBy': current_user,
-            'updatedBy': current_user
-        }
+
+    # Query the GSI to see if a file with the same name and createdBy exists
+    response = files_table.query(
+        IndexName='createdByAndName',  # Specify the GSI name
+        KeyConditionExpression = Key('createdBy').eq(current_user) & Key('name').eq(name)
     )
 
-    if tags is not None and len(tags) > 0:
-        update_file_tags(current_user, key, tags)
+    if response['Count'] == 0:
+        # If the item does not exist, create a new one
+        files_table.put_item(
+            Item={
+                'id': key,
+                'name': name,
+                'type': file_type,
+                'tags': tags,
+                'data': data_props,
+                'knowledgeBase': knowledge_base,
+                'createdAt': datetime.now().isoformat(),
+                'updatedAt': datetime.now().isoformat(),
+                'createdBy': current_user,
+                'updatedBy': current_user
+            }
+        )
 
-    return bucket_name, key
+        if tags is not None and len(tags) > 0:
+            update_file_tags(current_user, key, tags)
+        
+        print("File does not exist, created new entry.")
+        return bucket_name, key
+    else:
+        # If the item exists, update the `updatedAt` and `updatedBy` fields
+        existing_item = response['Items'][0]  # Get the first matching item (if any)
 
+        files_table.update_item(
+            Key={
+                'id': existing_item['id']  # Use the item's id as the key for the update
+            },
+            UpdateExpression="""
+                SET updatedAt = :updatedAt, 
+                    updatedBy = :updatedBy
+            """,
+            ExpressionAttributeValues={
+                ':updatedAt': datetime.now().isoformat(),
+                ':updatedBy': current_user
+            }
+        )
+        print("File already exists, updated existing entry.")
+        return bucket_name, existing_item['id']
 
 @validated(op="set")
 def set_datasource_metadata_entry(event, context, current_user, name, data):
@@ -267,7 +313,7 @@ def encrypt_account_data(data):
         encrypted_data = fernet.encrypt(data_str.encode())
         encrypted_data_b64 = base64.b64encode(encrypted_data).decode('utf-8')
 
-        print("Encrypted value:", encrypted_data_b64)
+        # print("Encrypted value:", encrypted_data_b64)
         return {
             'success': True,
             'encrypted_data': encrypted_data_b64
@@ -286,6 +332,11 @@ def get_presigned_url(event, context, current_user, name, data):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
     
+    # we need the perms to be under the groupId if applicable
+    groupId = data['data'].get('groupId', None) 
+    if (groupId): 
+        print("GroupId ds upload: ", groupId)
+        current_user = groupId
     account_data = { "user": current_user,
                      "account" : data['account'],
                      "api_key" : data['access_token'] if data['api_accessed'] else None
@@ -294,8 +345,7 @@ def get_presigned_url(event, context, current_user, name, data):
     e_result = encrypt_account_data(account_data)
     encrypted_metadata = e_result['encrypted_data'] if e_result['success'] else ""
     
-
-    print(f"Data is {data}")
+    # print(f"Data is {data}")
     data = data['data']
 
     s3 = boto3.client('s3')
@@ -305,7 +355,7 @@ def get_presigned_url(event, context, current_user, name, data):
     tags = data['tags']
     props = data['data']
     knowledge_base = data['knowledgeBase']
-
+    
     print(
         f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}")
 

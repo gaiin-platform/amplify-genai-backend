@@ -165,13 +165,9 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
 # Save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
 @validated(op="save_data_disclosure_decision")
 def save_data_disclosure_decision(event, context, current_user, name, data):
-    try:
-        body = json.loads(event["body"])
-    except json.JSONDecodeError:
-        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
-
-    email = body.get("email")
-    accepted_data_disclosure = body.get("acceptedDataDisclosure")
+    data = data['data']
+    email = data.get("email")
+    accepted_data_disclosure = data.get("acceptedDataDisclosure")
 
     if not isinstance(email, str) or accepted_data_disclosure not in (True, False):
         return generate_error_response(

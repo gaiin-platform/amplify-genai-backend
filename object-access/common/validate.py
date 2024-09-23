@@ -107,7 +107,29 @@ simulate_access_to_objects = {
     "required": ["objects"]
 }
 
-create_cognito_group = {
+in_amp_cogn_group_schema ={
+    "type": "object",
+    "properties": {
+        "amplifyGroups": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "cognitoGroups": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "anyOf": [
+        {"required": ["amplifyGroups"]},
+        {"required": ["cognitoGroups"]}
+    ]
+}
+
+create_cognito_group_schema = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
     "properties": {
@@ -123,6 +145,188 @@ create_cognito_group = {
     "required": ["groupName", "groupDescription"]
 }
 
+members_schema = {
+    "type": "object",
+    "patternProperties": {
+        ".*": {  # This regex matches any string as the property name
+            "type": "string",
+            "enum": ["write", "read", "admin"]
+        }
+    }
+}
+
+
+
+update_group_type_schema = {
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "description": "The ID of the group."
+    },
+    "types": {
+        "type": "array",
+        "items": {
+            "type": "string"
+        }
+    }
+  },
+  "required": ["group_id", "types"]
+}
+
+
+
+create_admin_group_schema = {
+    "type": "object",
+    "properties": {
+        "group_name": {
+            "type": "string",
+            "description": "The name of the group to be created."
+        },
+        "members": members_schema,
+        },
+        "types": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+    "required": ["group_name", "members"]
+}
+
+
+
+create_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "The name of the item"
+        },
+        "description": {
+            "type": "string",
+            "description": "A brief description of the item"
+        },
+        "assistantId": {
+            "type": "string",
+            "description": "The public id of the assistant"
+        },
+        "tags": {
+            "type": "array",
+            "description": "A list of tags associated with the item",
+            "items": {
+                "type": "string"
+            }
+        },
+        "instructions": {
+            "type": "string",
+            "description": "Instructions related to the item"
+        },
+        "disclaimer": {
+            "type": "string",
+            "description": "Appended assistant response disclaimer related to the item"
+        },
+        "uri": {
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "The endpoint that receives requests for the assistant"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "dataSources": {
+            "type": "array",
+            "description": "A list of data sources",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The key of the data source"
+                    }
+                }
+            }
+        },
+    },
+    "required": ["name", "description", "tags", "instructions", "dataSources"]
+}
+
+update_ast_schema = {
+    "type": "object",
+    "properties": {
+        "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "update_type": {
+            "type": "string",
+            "enum": ["ADD", "REMOVE", "UPDATE"],
+            "description": "Type of update to perform on assistants."
+        },
+        "assistants": {
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": create_assistant_schema
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": "astp assistantId for REMOVE"
+                    }
+                }
+            ]
+        }
+    },
+    "required": ["group_id", "update_type", "assistants"]
+} 
+
+
+update_members_schema = {
+    "type": "object",
+    "properties": {
+        "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "update_type": {
+            "type": "string",
+            "enum": ["ADD", "REMOVE"],
+            "description": "Type of update to perform on members."
+        },
+        "members": {
+            "anyOf": [
+                members_schema,
+                {
+                   "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": "member emails to  REMOVE "
+                    } 
+                }
+            ]
+        }
+             
+    },
+    "required": ["group_id", "update_type", "members"]
+}
+
+update_members_perms_schema = {
+    "type": "object",
+    "properties": {
+        "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "affected_members": members_schema,
+    },
+    "required": ["group_id", "affected_members"]
+}
+
 validators = {
     "/utilities/update_object_permissions": {
         "update_object_permissions": update_object_permissions
@@ -134,14 +338,41 @@ validators = {
         "simulate_access_to_objects": simulate_access_to_objects
     },
     "/utilities/create_cognito_group": {
-        "create_cognito_group": create_cognito_group
+        "create_cognito_group": create_cognito_group_schema
     },
     "/utilities/get_user_groups": {
         "read": {}
     },
+    "/utilities/in_cognito_amp_groups" : {
+        "in_group" : in_amp_cogn_group_schema
+    },
     "/utilities/emails": {
         "read": {}
-    }
+    },
+    "/groups/create" : {
+        'create': create_admin_group_schema
+    },
+    "/groups/members/update" : {
+        "update": update_members_schema
+    },
+    "/groups/members/update_permissions" : {
+        "update": update_members_perms_schema
+    },
+    "/groups/assistants/update" : {
+        "update": update_ast_schema
+    },
+    "/groups/types/update": {
+        'update' : update_group_type_schema
+    },
+    "/groups/delete" : {
+        "delete": {}
+    },
+    "/groups/list" : {
+        'list': {}
+    },
+    "/groups/members/list" : {
+        'list': {}
+    },
 }
 
 
@@ -155,9 +386,6 @@ api_validators = {
     "/utilities/simulate_access_to_objects": {
         "simulate_access_to_objects": simulate_access_to_objects
     },
-    "/utilities/emails": {
-        "read": {}
-    }
 }
 
 def validate_data(name, op, data, api_accessed):
@@ -229,7 +457,7 @@ def validated(op, validate_body=True):
                 data['account'] = claims['account']
                 data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
-                result = f(event, context, current_user, name, data, None if api_accessed else claims['full_username'] )
+                result = f(event, context, current_user, name, data)
 
                 print(f"Result: {result}")
 
@@ -430,11 +658,10 @@ def determine_api_user(data):
 def is_rate_limited(current_user, rate_limit): 
     print(rate_limit)
     if rate_limit['period'] == 'Unlimited': return False
-    #lookups COST_CALCULATIONS_DYNAMODB_TABLE
 
-    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMODB_TABLE')
+    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMO_TABLE')
     if not cost_calc_table:
-        raise ValueError("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.")
+        raise ValueError("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.")
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(cost_calc_table)

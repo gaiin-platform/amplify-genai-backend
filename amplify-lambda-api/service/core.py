@@ -11,6 +11,7 @@ import random
 import boto3
 import json
 import re
+from common.ops import op
 
 
 dynamodb = boto3.resource('dynamodb')
@@ -73,9 +74,21 @@ def get_api_key(event, context, user, name, data):
             'body': json.dumps({'success': False , 'error': 'Failed to fetch API key'})
         }
 
-
+@op(
+    path="/apiKeys/get_keys",
+    name="getApiKeys",
+    method='GET',
+    tags=["apiKeys"],
+    description="Get a list of the user's amplify api keys.",
+    params={
+    }
+)
 @validated("read")
 def get_api_keys_for_user(event, context, user, name, data):
+    return get_api_keys(user)
+
+
+def get_api_keys(user):
     print("Getting keys from dyanmo")
     try:
         # Use a Scan operation with a FilterExpression to find items where the user is the owner or the delegate
@@ -116,6 +129,44 @@ def get_api_keys_for_user(event, context, user, name, data):
         return {'success': False, 'data': [], 'message': str(e)}
     
 
+@op(
+    path="/apiKeys/get_keys_ast",
+    name="getApiKeysForAst",
+    method='GET',
+    tags=["apiKeysAst"],
+    description="Get user's amplify api keys filtered for assistant use.",
+    params={
+    }
+)
+@validated("read")
+def get_api_keys_for_assistant(event, context, user, name, data):
+    # Fetch API keys
+    api_keys_res = get_api_keys(user)
+    if (not api_keys_res['success']):
+        return {'success': False, 'message': "API KEYS: UNAVAILABLE"}
+    
+    keys = api_keys_res['data']
+    append_msg = "Always display all the Keys."
+    if len(keys) > 0:
+        append_msg += f"\n\n There are a total of {len(keys)}. When asked to list keys, always list ALL {len(keys)} of the 'API KEYS'"
+        delegate_keys = []
+        delegated_keys = []
+        for k in keys:
+            if k.get('delegate'):
+                if k['delegate'] != user: # user is owner
+                    delegate_keys.append(k)
+                elif k['delegate'] == user and k['owner'] != user: # user is not owner
+                    delegated_keys.append(k)
+        
+        if delegate_keys:
+            append_msg += "\n\n GET OP is NOT allowed for the following Delegate keys (unauthorized): " + ', '.join([k['applicationName'] for k in delegate_keys])
+        if delegated_keys:
+            append_msg += "\n\n UPDATE OP is NOT allowed for the following Delegated keys (unauthorized): " + ', '.join([k['applicationName'] for k in delegated_keys])
+
+    return {'success': True, 'All_API_Keys': f"{keys} " if keys else "No current existing keys",
+            'Additional_Instructions': append_msg}
+
+
 
 def can_create_api_key(user, account):
     if (not is_valid_account(account['id'])):
@@ -134,7 +185,7 @@ def can_create_api_key(user, account):
 
 def is_valid_account(coa):
     # here we want to check valid coa string, 
-    pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{3}\.\w{1})$')
+    pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{1}\.\w{1})$')
     return bool(pattern.match(coa))
     
 
@@ -249,11 +300,14 @@ def update_api_key(item_id, updates, user):
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
-            if (field == 'account'): 
-                if (not is_valid_account(value['id'])):
-                    return {"success": False, "error": "Invalid COA string attached to account", "key_name": key_name}
-            if (field == 'rateLimit'): value = formatRateLimit(value)
-            # Use attribute names to avoid conflicts with DynamoDB reserved keywords
+        if (field == 'account'):
+            if (not is_valid_account(value['id'])):
+                warning = "Warning: Invalid COA string attached to account"
+                print(warning)  # or use a logging mechanism
+            # Continue with key creation despite the warning
+        if (field == 'rateLimit'): 
+            value = formatRateLimit(value)
+        # Use attribute names to avoid conflicts with DynamoDB reserved keywords
             placeholder = f"#{field}"
             value_placeholder = f":{field}"
             update_expression.append(f"{placeholder} = {value_placeholder}")
@@ -344,10 +398,6 @@ def is_expired(date_str):
     if (not date_str): return False
     date = datetime.strptime(date_str, '%Y-%m-%d')
     return date <= datetime.now()
-
-
-
-
 
 
 @validated("read")

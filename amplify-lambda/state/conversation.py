@@ -64,6 +64,11 @@ def get_conversation(event, context, current_user, name, data):
         }
     
 
+def pick_conversation_attributes(conversation):
+    attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal', 'groupType'] #, 'artifacts'
+    return {attr: conversation.get(attr, None) for attr in attributes}
+
+
 @validated("read")
 def get_all_conversations(event, context, current_user, name, data):
     s3 = boto3.client('s3')
@@ -88,7 +93,16 @@ def get_all_conversations(event, context, current_user, name, data):
             try:
                 conversation_response = s3.get_object(Bucket=conversations_bucket, Key=conversation_key)
                 conversation_body = conversation_response['Body'].read().decode('utf-8')
-                conversations.append(json.loads(conversation_body))
+                conversation = json.loads(conversation_body)
+                uncompressed_conversation = lzw_uncompress(conversation["conversation"])
+                if (uncompressed_conversation):
+                    strippedConversation = pick_conversation_attributes(uncompressed_conversation) 
+                    conversations.append({
+                        'conversation': strippedConversation,
+                        'folder': conversation["folder"]
+                    })
+                else:
+                    print("Conversation failed to uncompress")
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve : {obj} with error: {str(e)}")
         print("Number of conversations retrieved: ", len(conversations))
@@ -218,3 +232,37 @@ def is_valid_uuidv4(uuid):
     regex = r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
     match = re.fullmatch(regex, uuid, re.IGNORECASE)
     return bool(match)
+
+
+def lzw_uncompress(compressed_data):
+    dictionary = {i: chr(i) for i in range(256)}  # Build initial dictionary
+
+    decompressed_string = ""
+    previous_entry = dictionary.get(compressed_data[0])
+    if not previous_entry:
+        raise ValueError("Invalid compressed data: First entry not found in dictionary")
+
+    decompressed_string += previous_entry
+    next_code = 256
+
+    for code in compressed_data[1:]:
+        if code in dictionary:
+            current_entry = dictionary[code]
+        elif code == next_code:
+            current_entry = previous_entry + previous_entry[0]
+        else:
+            raise ValueError("Invalid compressed data: Entry for code not found")
+
+        decompressed_string += current_entry
+        dictionary[next_code] = previous_entry + current_entry[0]
+        next_code += 1
+        previous_entry = current_entry
+
+    # Postprocessing to convert the tagged Unicode characters back to their original form
+    unicode_pattern = re.compile(r"U\+([0-9a-f]{4})", re.IGNORECASE)
+    output = unicode_pattern.sub(lambda m: chr(int(m.group(1), 16)), decompressed_string)
+    try:
+        # Ensure the decompressed string is parsed into a dictionary
+        return json.loads(output)
+    except json.JSONDecodeError:
+        raise ValueError("Failed to parse JSON from decompressed string")

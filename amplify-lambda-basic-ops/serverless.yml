@@ -28,10 +28,11 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
   environment:
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    CHAT_ENDPOINT: "http://localhost:8000" #${self:custom.stageVariables.CHAT_ENDPOINT}
+    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "anthropic.claude-3-5-sonnet-20240620-v1:0"
@@ -42,7 +43,9 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     DYNAMO_DYNAMIC_CODE_TABLE: vu-amplify-${sls:stage}-dynamic-code
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     DYNAMIC_CODE_BUCKET: vu-amplify-${sls:stage}-dynamic-code
+    LAMBDA_BASIC_OPS_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
 
   apiGateway:
     restApiId:
@@ -52,38 +55,9 @@ provider:
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - dynamodb:PutItem
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - dynamodb:Query
-          Resource:
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-            - s3:GetObject
-            - s3:DeleteObject
-          Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
-            - dynamodb:Query
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-            - s3:GetObject
-            - s3:DeleteObject
-          Resource: arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole      
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_BASIC_OPS_POLICY_NAME}
 
 functions:
 
@@ -120,6 +94,15 @@ functions:
     events:
       - http:
           path: llm/query
+          method: post
+          cors: true
+
+  llm_rag_prompt_datasource:
+    handler: service/core.llm_prompt_datasource_rag
+    timeout: 30
+    events:
+      - http:
+          path: llm/rag_query
           method: post
           cors: true
 
@@ -187,6 +170,41 @@ functions:
 
 resources:
   Resources:
+    LambdaBasicOpsIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_BASIC_OPS_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+              Resource:
+                - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}
+                - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: 
+                - arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
+                - arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
+
+
     UserSessionsTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -202,6 +220,8 @@ resources:
           - AttributeName: session_id
             KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
 
     UserRecordsTable:
       Type: AWS::DynamoDB::Table
@@ -218,6 +238,8 @@ resources:
           - AttributeName: record_id
             KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
 
     DynamicCodeTable:
       Type: AWS::DynamoDB::Table
@@ -232,6 +254,8 @@ resources:
           - AttributeName: uuid
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
         GlobalSecondaryIndexes:
           - IndexName: CreatorIndex
             KeySchema:

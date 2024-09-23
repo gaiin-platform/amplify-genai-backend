@@ -171,7 +171,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                     extraMessages.push({
                         role: "user",
-                        content:"You can references or have prior messages inserted into your response by " +
+                        content:"You can have references or prior messages inserted into your response by " +
                             "referencing the MsgId like this %^MsgID. Examples %^0, %^1, etc. The reference" +
                             "will be replaced with the content of that message. DO NOT OUTPUT OR TALK ABOUT " +
                             "THESE IDS TO THE USER."
@@ -205,14 +205,19 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             const dsid =  (ds.metadata && ds.metadata.userDataSourceId) ?
                                 ds.metadata.userDataSourceId : ds.id;
 
-                            return {id: dsid, name: ds.name, type:ds.type};
+                            return {id: dsid, name: ds.name, type:ds.type, metadata:(ds.metadata || {})};
                         });
 
                         addAllReferences(references, DATASOURCE_TYPE, dataSourceSummaries);
                         const dsR = getReferencesByType(references, DATASOURCE_TYPE);
 
-                        const dataSourceText = "Short_ID,NAME,TYPE\n" + dsR.map(
-                            r => r.type+r.id +","+r.object.name+","+r.object.type).join("\n");
+                        const metadataStr = (r) => {
+                            return Object.entries(r.object.metadata).map(
+                                ([k,v]) => `${k}:${v}`).join("; ");
+                        }
+
+                        const dataSourceText = "Short_ID,NAME,TYPE,METADATA\n" + dsR.map(
+                            r => r.type+r.id +","+r.object.name+","+r.object.type+","+metadataStr(r)).join("\n");
 
                         extraMessages.push({
                             role: "user",
@@ -238,6 +243,15 @@ but otherwise don't describe them in your answers as it might confuse the user.
                 (message) => message.role !== "system"
             );
 
+            const groupType = body.options.groupType;
+            if (groupType) {
+                const groupTypeData = assistant.data.groupTypeData[groupType];
+                if (!groupTypeData.isDisabled) {
+                    assistant.instructions += "\n\n" + groupTypeData.additionalInstructions;
+                    assistant.dataSources = [...assistant.dataSources, ...groupTypeData.dataSources];
+                }
+            }
+
             const instructions = await fillInTemplate(
                 llm,
                 params,
@@ -248,7 +262,6 @@ but otherwise don't describe them in your answers as it might confuse the user.
                     assistant: assistant,
                 }
             );
-
 
                 llm.sendStateEventToStream({
                     references: getReferences(references),

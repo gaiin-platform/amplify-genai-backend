@@ -67,17 +67,21 @@ def create_user_session(event, context, current_user, name, data):
 @validated(op="add_record")
 def add_user_record(event, context, current_user, name, data):
     try:
+        print(f"Adding record to session with data: {data}")
         # Extract data from the request
         session_id = int(data['data'].get('session_id'))
+        print(f"Adding record to session {session_id}")
         record_data = data['data'].get('record_data', {})
         attachments = data['data'].get('attachments', {})
 
         if not session_id:
+            print(f"The session_id is required and was not provided")
             return {
                 'success': False,
                 'message': "session_id is required"
             }
 
+        print(f"Adding record to session {session_id} with data: {record_data}")
         # Add the record using the function from work.session
         new_record = add_record(
             username=current_user,
@@ -85,6 +89,8 @@ def add_user_record(event, context, current_user, name, data):
             record_data=record_data,
             attachments=attachments
         )
+
+        print(f"Added record to session {session_id} with data: {new_record['data']}")
 
         return {
             'success': True,
@@ -244,8 +250,8 @@ def echo(event, context, current_user, name, data):
     name="stitchWorkProductRecords",
     description="Stitch records from a session into a template, or concatenate all records with an optional separator if no template is provided.",
     params={
-        "template": "Optional string template with placeholders for records as ?>someRecordId. If not provided, all records will be concatenated. The placeholder to insert a record is this:\n?><Insert Record ID>\n\nExamples:\n?>234234\n?>2asw4r2\n\nI will pull in all the records and put them in the content of the record where you put these placeholders. If you also output the content of the record yourself, it will get duplicated.\n\nHere are some examples of valid templates:\n=========\nExample 1:\n## Report on Vanderbilt\n?>a23r23a\n### Vanderbilt Endowment\n?>24rsae\n\nExample 2:\n## Authors and Prompts\n| Author | Prompt |\n-------------------\n| ?>awe22 | ?>a22ff |\n--------------------\n| ?>asf3e | ?>wef4 |\n=========\n\nYou can mix in any markdown and explanation you want, but don't repeat the content. Instead, use placeholders to have the content inserted.",
         "session_id": "ID of the session containing the records.",
+        "template": "Optional single-line string template with placeholders for records as ?>someRecordId. It may include \\n for line breaks. If not provided, all records will be concatenated. The placeholder to insert a record is this:\n?><Insert Record ID>\n\nExamples:\n?>234234\n?>2asw4r2\n\nI will pull in all the records and put them in the content of the record where you put these placeholders. If you also output the content of the record yourself, it will get duplicated.\n\nHere are some examples of valid templates:\n=========\nExample 1:\n## Report on Vanderbilt\n?>a23r23a\n### Vanderbilt Endowment\n?>24rsae\n\nExample 2:\n## Authors and Prompts\n| Author | Prompt |\n-------------------\n| ?>awe22 | ?>a22ff |\n--------------------\n| ?>asf3e | ?>wef4 |\n=========\n\nYou can mix in any markdown and explanation you want, but don't repeat the content. Instead, use placeholders to have the content inserted.",
         "separator": "Optional separator to use when concatenating records if no template is provided. Default is an empty string."
     }
 )
@@ -280,7 +286,7 @@ def stitch_records(event, context, current_user, name, data):
             rendered_template = concatenated_text
         else:
             # If a template is provided, use it to stitch records
-            record_dict = {record['record_id']: record for record in records}
+            record_dict = {f"{record['record_id']}": record for record in records}
 
             def replace_record(match):
                 record_id = match.group(1)

@@ -389,7 +389,10 @@ file_upload_schema = {
         },
         "data": {
             "type": "object"
-        }
+        },
+        "groupId": {
+            "type": ["string", "null"]
+        },
     },
     "required": ["type", "name", "knowledgeBase", "tags", "data"],
 }
@@ -515,6 +518,10 @@ key_request_schema = {
         "key": {
             "type": "string",
             "description": "Key."
+        },
+        "groupId": {
+            "type": "string",
+            "description": "Group Id."
         }
     },
     "required": ["key"]
@@ -743,7 +750,7 @@ validators = {
         "save": save_accounts_schema
     },
     "/state/accounts/get": {
-    "get": {}
+        "get": {}
     },
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
@@ -1019,8 +1026,8 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('file_upload' not in access and 'share' not in access 
-                                        and'full_access' not in access):
+        if ('file_upload' not in access and 'share' not in access  and
+            'chat' not in access and 'full_access' not in access):
             print("API key doesn't have access to the functionality")
             raise PermissionError("API key does not have access to the required functionality")
         
@@ -1068,11 +1075,10 @@ def determine_api_user(data):
 def is_rate_limited(current_user, rate_limit): 
     print(rate_limit)
     if rate_limit['period'] == 'Unlimited': return False
-    #lookups COST_CALCULATIONS_DYNAMODB_TABLE
-
-    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMODB_TABLE')
+    
+    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMO_TABLE')
     if not cost_calc_table:
-        raise ValueError("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.")
+        raise ValueError("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.")
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(cost_calc_table)

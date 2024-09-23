@@ -29,6 +29,9 @@ permissions_by_state_type = {
     "/apiKeys/get_key": {
         "read": can_read
     },
+     "/apiKeys/get_keys_ast": {
+        "read": can_read
+    },
     "/apiKeys/create_keys": {
         "create": can_save
     },

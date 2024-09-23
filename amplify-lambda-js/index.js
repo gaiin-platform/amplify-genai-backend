@@ -25,7 +25,6 @@ class AggregatorStream extends Writable {
       if (this.requestStateTerminated) {
         this.aggregatedData = chunk;
       } else {
-        logger.debug("chunk")
         const chunkStr = chunk.toString();
         if (chunkStr.startsWith('data:')) {
             const dataObject = JSON.parse(chunkStr.slice(5));
@@ -40,7 +39,7 @@ class AggregatorStream extends Writable {
     sendFinalDataResponse(responseStream) {
       if (this.terminatedRequestState) this.sendFinalResponse(responseStream, this.terminatedRequestState || '');
       const finalMessage = `data: ${JSON.stringify({ d: this.aggregatedData })}\n\n`;
-      logger.debug("Final Message: ", finalMessage);
+      // logger.debug("Final Message: ", finalMessage);
       this.sendFinalResponse(responseStream, finalMessage);
     }
 

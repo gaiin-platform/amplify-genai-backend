@@ -22,16 +22,14 @@ custom:
     - staging
     - prod
 
-  
 
-
-    
 provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
+  logRetentionInDays: 365
 
   apiGateway:
     restApiId:
@@ -46,23 +44,15 @@ provider:
     QI_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-qi-files
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
-
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    QI_SUMMARY_IAM_POLICY: ${self:service}-${sls:stage}-iam-policy
+  
 
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-            - dynamodb:Query
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-          Resource:
-            -  "arn:aws:s3:::${self:provider.environment.QI_FILES_BUCKET_NAME}/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.QI_SUMMARY_IAM_POLICY}
 
 functions:
       
@@ -91,4 +81,26 @@ resources:
           BucketEncryption:
             ServerSideEncryptionConfiguration:
               - ServerSideEncryptionByDefault:
-                  SSEAlgorithm: AES256        
+                  SSEAlgorithm: AES256
+
+    QISummaryIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.QI_SUMMARY_IAM_POLICY}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !Sub "arn:aws:s3:::${self:provider.environment.QI_FILES_BUCKET_NAME}/*"
+                - !Sub "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - !Sub "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - !Sub "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - !Sub "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - !Sub "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - !Sub "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"                          

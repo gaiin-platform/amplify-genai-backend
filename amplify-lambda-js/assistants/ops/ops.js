@@ -1,7 +1,7 @@
 import Handlebars from "handlebars";
 
 
-const apiUrl = process.env.OPS_ENDPOINT;
+const apiUrl = process.env.API_BASE_URL + '/ops';
 
 const opFormats = {
     "default": `

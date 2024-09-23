@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 import boto3
 from datetime import datetime
 import re
-# from cognito_user_groups import get_user_cognito_amplify_groups
 
 load_dotenv(dotenv_path=".env.local")
 
@@ -49,6 +48,13 @@ delete_assistant_schema = {
             "type": "string",
             "description": "The public id of the assistant"
         },
+        "removePermsForUsers": {
+            "type": "array",
+            "description": "A list of user who have access to this ast",
+            "items": {
+                "type": "string"
+            }
+        }
     },
     "required": ["assistantId"]
 }
@@ -154,6 +160,7 @@ share_assistant_schema = {
         "accessType": {"type": "string"},
         "policy": {"type": "string", "default": ""},
         "note": {"type": "string"},
+        "shareToS3": {"type": "boolean"}
     },
     "required": ["assistantId", "recipientUsers"],
     "additionalProperties": False
@@ -270,7 +277,6 @@ chat_assistant_schema = {
 }
 
 
-
 download_ci_files_schema = {
     "type": "object",
     "properties": {
@@ -286,6 +292,82 @@ download_ci_files_schema = {
     "required": ["key"]
 }
 
+remove_astp_perms_schema = {
+     "type": "object",
+    "properties": {
+        "assistant_public_id": {
+            "type": "string",
+            "description": "astp assistantId."
+        },
+        "users": {
+            "type": "array",
+            "description": "Remove astp permissions for each user",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "required": ["assistant_public_id", "users"]
+}
+
+get_group_assistant_conversations_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The id of the assistant",
+        }
+    },
+    "required": ["assistantId"],
+}
+
+get_group_assistant_dashboards_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The id of the assistant",
+        },
+        "startDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional start date for filtering conversations",
+        },
+        "endDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional end date for filtering conversations",
+        },
+        "includeConversationData": {
+            "type": "boolean",
+            "description": "Whether to include conversation data in CSV format",
+        },
+        "includeConversationContent": {
+            "type": "boolean",
+            "description": "Whether to include full conversation content",
+        },
+    },
+    "required": ["assistantId"],
+}
+
+save_user_rating_schema = {
+    "type": "object",
+    "properties": {
+        "conversationId": {
+            "type": "string",
+            "description": "The id of the conversation",
+        },
+        "userRating": {
+            "type": "number",
+            "description": "The user's rating",
+        },
+        "userFeedback": {
+            "type": "string",
+            "description": "Optional user feedback on the conversation",
+        },
+    },
+    "required": ["conversationId", "userRating"],
+}
 
 """
 Every service must define the permissions for each operation here. 
@@ -321,6 +403,18 @@ validators = {
     },
     "/assistant/openai/delete": {
         "delete" :{}
+    },
+    "/assistant/remove_astp_permissions": {
+        "remove_astp_permissions": remove_astp_perms_schema
+    },
+    "/assistant/get_group_assistant_conversations": {
+        "get_group_assistant_conversations": get_group_assistant_conversations_schema
+    },
+    "/assistant/get_group_assistant_dashboards": {
+        "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
+    },
+    "/assistant/save_user_rating": {
+        "save_user_rating": save_user_rating_schema
     }
 
 }
@@ -355,6 +449,21 @@ api_validators = {
     },
     "/assistant/openai/delete": {
         "delete" :{}
+    },
+    "/assistant/remove_astp_permissions": {
+        "remove_astp_permissions": remove_astp_perms_schema
+    },
+    "/assistant/get/system_user": {
+        "get":{}
+    },
+    "/assistant/get_group_assistant_conversations": {
+        "get_group_assistant_conversations": get_group_assistant_conversations_schema
+    },
+    "/assistant/get_group_assistant_dashboards": {
+        "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
+    },
+    "/assistant/save_user_rating": {
+        "save_user_rating": save_user_rating_schema
     }
 }
 
@@ -406,7 +515,6 @@ def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 token = parseToken(event)
                 api_accessed = token[:4] == 'amp-'
 
@@ -423,8 +531,10 @@ def validated(op, validate_body=True):
                 data['account'] = claims['account']
                 data['allowed_access'] = claims['allowed_access']
                 data['api_accessed'] = api_accessed
-                data['groups'] = get_groups(current_user, token)
-            
+
+                # additional validator change from other lambdas
+                data["is_group_sys_user"] = claims.get('is_group_sys_user', False) 
+                ###
 
                 result = f(event, context, current_user, name, data)
 
@@ -517,7 +627,6 @@ def get_claims(event, context, token):
     raise Unauthorized("No Valid Access Token Found")
 
 
-
 def parseToken(event):
     token = None
     normalized_headers = {k.lower(): v for k, v in event['headers'].items()}
@@ -601,7 +710,10 @@ def api_claims(event, context, token):
         )
         print("Last Access updated")
 
-        return {'username': current_user, 'account': item['account']['id'], 'allowed_access': access}
+         # additional validator change from other lambdas
+        is_group_sys_user = item.get('purpose', '') == 'group'
+        ###
+        return {'username': current_user, 'account': item['account']['id'], 'allowed_access': access, 'is_group_sys_user': is_group_sys_user}
 
     except Exception as e:
         print("Error during DynamoDB operation:", str(e))
@@ -622,7 +734,6 @@ def determine_api_user(data):
     else:
         print("Unknown or missing key type in api_owner_id:", key_type)
         raise Exception("Invalid or unrecognized key type.")
-    
 
 
 def get_groups(user, token):
@@ -631,15 +742,12 @@ def get_groups(user, token):
     # return amplify_groups
 
 
-
 def is_rate_limited(current_user, rate_limit): 
     print(rate_limit)
     if rate_limit['period'] == 'Unlimited': return False
-    #lookups COST_CALCULATIONS_DYNAMODB_TABLE
-
-    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMODB_TABLE')
+    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMO_TABLE')
     if not cost_calc_table:
-        raise ValueError("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.")
+        raise ValueError("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.")
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(cost_calc_table)

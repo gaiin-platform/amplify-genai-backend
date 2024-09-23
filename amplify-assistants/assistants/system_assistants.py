@@ -21,7 +21,7 @@ RESERVED_TAGS = [
     AMPLIFY_API_DOC_HELPER_TAG
 ]
 
-def get_system_assistants(groups, current_user):
+def get_system_assistants(current_user):
     sys_assistants = []
     sys_assistants.append(get_assistant_builder_assistant())
     # sys_assistants.append(get_amplify_automation_assistant())

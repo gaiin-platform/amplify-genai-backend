@@ -74,6 +74,16 @@ dual_retrieval_schema = {
             "type": "array",
             "description": "A list of data sources to search for related documents."
         },
+        "groupDataSources": {
+            "type": "object",
+            "description": "A dict of group data sources to search for related documents. Group is the key, list of globals is the value.",
+            "additionalProperties": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        },
         "limit": {
             "type": "integer",
             "description": "The maximum number of documents to return."
@@ -318,9 +328,9 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('dual_embedding' not in access and 'full_access' not in access):
-            print("API doesn't have access to file uploads")
-            raise PermissionError("API key does not have access to file upload functionality")
+        if ('chat' not in access and 'dual_embedding' not in access and 'full_access' not in access):
+            print("API doesn't have access to embeddings")
+            raise PermissionError("API key does not have access to embedding functionality")
         
         # Determine API user
         current_user = determine_api_user(item)
@@ -366,11 +376,10 @@ def determine_api_user(data):
 def is_rate_limited(current_user, rate_limit): 
     print(rate_limit)
     if rate_limit['period'] == 'Unlimited': return False
-    #lookups COST_CALCULATIONS_DYNAMODB_TABLE
 
-    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMODB_TABLE')
+    cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMO_TABLE')
     if not cost_calc_table:
-        raise ValueError("COST_CALCULATIONS_DYNAMODB_TABLE is not provided in the environment variables.")
+        raise ValueError("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.")
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(cost_calc_table)
