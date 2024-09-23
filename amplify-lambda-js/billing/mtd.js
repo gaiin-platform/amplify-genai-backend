@@ -82,17 +82,17 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
         if (params.statusCode) return params;
 
         const { body } = params;
-        if (!body || !body.data || !body.data.apiKey || !body.data.email) {
+        if (!body || !body.data || !Array.isArray(body.data.apiKeys) || !body.data.email) {
             return {
                 statusCode: 400,
-                body: JSON.stringify({ error: 'API key and email are required' }),
+                body: JSON.stringify({ error: 'API keys array and email are required' }),
             };
         }
 
-        const apiKey = body.data.apiKey;
+        const apiKeys = body.data.apiKeys;
         const email = body.data.email;
 
-        if (!historyCostDynamoTableName || !costDynamoTableName || !email || !apiKey) {
+        if (!historyCostDynamoTableName || !costDynamoTableName || !email || apiKeys.length === 0) {
             logger.error("Missing required parameters");
             return {
                 statusCode: 500,
@@ -100,76 +100,83 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
             };
         }
 
-        let totalApiKeyCost = 0;
-        let userApiKeyCost = 0;
-        let lastEvaluatedKey = null;
+        let results = {};
 
-        // Query historyCostDynamoTableName
-        do {
-            const scanParams = {
-                TableName: historyCostDynamoTableName,
-                FilterExpression: 'contains(#accountInfo, :apiKey) AND attribute_exists(#accountInfo)',
-                ExpressionAttributeNames: {
-                    '#accountInfo': 'accountInfo'
-                },
-                ExpressionAttributeValues: {
-                    ':apiKey': apiKey
+        for (const apiKey of apiKeys) {
+            let totalApiKeyCost = 0;
+            let userApiKeyCost = 0;
+            let lastEvaluatedKey = null;
+
+            // Query historyCostDynamoTableName
+            do {
+                const scanParams = {
+                    TableName: historyCostDynamoTableName,
+                    FilterExpression: 'contains(#accountInfo, :apiKey) AND attribute_exists(#accountInfo)',
+                    ExpressionAttributeNames: {
+                        '#accountInfo': 'accountInfo'
+                    },
+                    ExpressionAttributeValues: {
+                        ':apiKey': apiKey
+                    }
+                };
+
+                if (lastEvaluatedKey) {
+                    scanParams.ExclusiveStartKey = lastEvaluatedKey;
                 }
+
+                try {
+                    const command = new ScanCommand(scanParams);
+                    const result = await dynamoDB.send(command);
+
+                    result.Items.forEach(item => {
+                        const dailyCost = parseFloat(item.dailyCost) || 0;
+                        totalApiKeyCost += dailyCost;
+
+                        if (item.userDate && item.userDate.startsWith(email)) {
+                            userApiKeyCost += dailyCost;
+                        }
+                    });
+
+                    lastEvaluatedKey = result.LastEvaluatedKey;
+                } catch (error) {
+                    logger.error("Error executing DynamoDB scan:", error);
+                    throw error;
+                }
+            } while (lastEvaluatedKey);
+
+            // Query costDynamoTableName
+            const queryParams = {
+                TableName: costDynamoTableName,
+                KeyConditionExpression: 'id = :email',
+                ExpressionAttributeValues: {
+                    ':email': email,
+                },
             };
 
-            if (lastEvaluatedKey) {
-                scanParams.ExclusiveStartKey = lastEvaluatedKey;
-            }
-
             try {
-                const command = new ScanCommand(scanParams);
+                const command = new QueryCommand(queryParams);
                 const result = await dynamoDB.send(command);
 
                 result.Items.forEach(item => {
-                    const dailyCost = parseFloat(item.dailyCost) || 0;
-                    totalApiKeyCost += dailyCost;
-
-                    if (item.userDate && item.userDate.startsWith(email)) {
+                    if (item.accountInfo && item.accountInfo.includes(apiKey)) {
+                        const dailyCost = parseFloat(item.dailyCost) || 0;
+                        totalApiKeyCost += dailyCost;
                         userApiKeyCost += dailyCost;
                     }
                 });
-
-                lastEvaluatedKey = result.LastEvaluatedKey;
             } catch (error) {
-                logger.error("Error executing DynamoDB scan:", error);
+                logger.error("Error executing DynamoDB query:", error);
                 throw error;
             }
-        } while (lastEvaluatedKey);
 
-        // Query costDynamoTableName
-        const queryParams = {
-            TableName: costDynamoTableName,
-            KeyConditionExpression: 'id = :email',
-            ExpressionAttributeValues: {
-                ':email': email,
-            },
-        };
-
-        try {
-            const command = new QueryCommand(queryParams);
-            const result = await dynamoDB.send(command);
-
-            result.Items.forEach(item => {
-                if (item.accountInfo && item.accountInfo.includes(apiKey)) {
-                    const dailyCost = parseFloat(item.dailyCost) || 0;
-                    totalApiKeyCost += dailyCost;
-                    userApiKeyCost += dailyCost;
-                }
-            });
-        } catch (error) {
-            logger.error("Error executing DynamoDB query:", error);
-            throw error;
+            results[apiKey] = { totalApiKeyCost, userApiKeyCost };
         }
 
         return {
             statusCode: 200,
             body: JSON.stringify({
-                apiKey, email, totalApiKeyCost, userApiKeyCost,
+                email,
+                results,
             }),
         };
     } catch (error) {
