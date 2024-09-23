@@ -12,6 +12,8 @@ import boto3
 import rag.util
 import images.core
 from boto3.dynamodb.conditions import Key
+from common.data_sources import translate_user_data_sources_to_hash_data_sources
+from common.object_permissions import can_access_objects
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -29,8 +31,10 @@ IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 )
 @validated(op="download")
 def get_presigned_download_url(event, context, current_user, name, data):
+    access_token = data['access_token']
     data = data['data']
     key = data['key']
+    group_id = data.get('groupId', None)
 
     if "://" in key:
         key = key.split("://")[1]
@@ -43,6 +47,10 @@ def get_presigned_download_url(event, context, current_user, name, data):
     files_table = dynamodb.Table(files_table_name)
 
     print(f"Getting presigned download URL for {key} for user {current_user}")
+
+    # Since groups can have documents that belongs to other and the group itself only has permission we need to check this instead of if they are owner
+    # In case of wordpress plugin we will always be a system user so we will never be the owner
+    # 
 
     # Retrieve the item from DynamoDB to check ownership
     try:
@@ -57,10 +65,18 @@ def get_presigned_download_url(event, context, current_user, name, data):
         print(f"File not found for user {current_user}: {response}")
         return {'success': False, 'message': 'File not found'}
 
-    if response['Item']['createdBy'] != current_user:
-        # User doesn't match or item doesn't exist
-        print(f"User doesn't match for file for {current_user}: {response['Item']}")
-        return {'success': False, 'message': 'File not found'}
+    if response['Item']['createdBy'] != current_user and response['Item']['createdBy'] != group_id:
+        translated_ds = None
+        if (group_id):# check group_id has perms 
+            try:# need global 
+                translated_ds = translate_user_data_sources_to_hash_data_sources({"key" : key, 'type': response['Item']['type']})
+            except:
+                print("Translation for unauthorized user using group id failed")
+        if (not (translated_ds and can_access_objects(access_token, translated_ds))):
+            # User doesn't match or item doesn't exist
+            print(f"User doesn't match for file for {current_user}: {response['Item']}")
+            print(f"groupId attached? {group_id}")
+            return {'success': False, 'message': 'User does not have access'}
 
     download_filename = response['Item']['name']
     is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES

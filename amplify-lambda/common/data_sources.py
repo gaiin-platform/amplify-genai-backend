@@ -71,7 +71,7 @@ def get_data_source_keys(data_sources):
                 if ('key' in ds):
                     ds_copy['id'] = ds["key"]
 
-                key = translate_user_data_sources_to_hash_data_sources([ds_copy])[0]['id']  # cant
+                key = translate_user_data_sources_to_hash_data_sources([ds_copy])[0]['id']  
 
             print("Updated Key: ", key)
 

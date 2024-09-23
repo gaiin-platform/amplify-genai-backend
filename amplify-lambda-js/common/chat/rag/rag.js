@@ -171,6 +171,8 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                                 score: score || 0.5,
                                 name: ds.name,
                                 key,
+                                contentKey: ds.metadata.userDataSourceId ?? ds.key,
+                                groupId: ds.groupId,
                                 type: ds.type,
                                 locations,
                                 indexes,

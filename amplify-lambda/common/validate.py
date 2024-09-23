@@ -518,6 +518,10 @@ key_request_schema = {
         "key": {
             "type": "string",
             "description": "Key."
+        },
+        "groupId": {
+            "type": "string",
+            "description": "Group Id."
         }
     },
     "required": ["key"]

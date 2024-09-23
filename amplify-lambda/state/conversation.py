@@ -65,7 +65,7 @@ def get_conversation(event, context, current_user, name, data):
     
 
 def pick_conversation_attributes(conversation):
-    attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal']
+    attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal', 'groupType', 'artifacts']
     return {attr: conversation.get(attr, None) for attr in attributes}
 
 

@@ -40,21 +40,6 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-"""
-Every service must define a schema each operation here. The schema is applied to the data field of the request
-body. You do NOT need to include the top-level "data" key in the schema.
-"""
-sample_schema = {
-    "type": "object",
-    "properties": {
-        "msg": {
-            "type": "string",
-            "description": "The msg to echo"
-        }
-    },
-    "required": ["msg"]
-}
-
 create_api_keys_schema = {
     "type": "object",
     "properties": {

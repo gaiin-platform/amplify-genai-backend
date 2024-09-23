@@ -363,7 +363,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                     }
                     else if(dataSource && isDocument(dataSource)){
                         const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
-                        const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations};
+                        const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations, contentKey: dataSource.metadata.userDataSourceId};
                         return {type: 'documentContext', source};
                     }
                     else if(dataSource) {
