@@ -1234,8 +1234,8 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 total_system_rating += system_rating
                 system_rating_count += 1
 
-        average_user_rating = total_user_rating / user_rating_count if user_rating_count > 0 else None
-        average_system_rating = total_system_rating / system_rating_count if system_rating_count > 0 else None
+        average_user_rating = float(total_user_rating) / float(user_rating_count) if user_rating_count > 0 else None
+        average_system_rating = float(total_system_rating) / float(system_rating_count) if system_rating_count > 0 else None
 
         dashboard_data = {
             "assistantId": assistant_id,
