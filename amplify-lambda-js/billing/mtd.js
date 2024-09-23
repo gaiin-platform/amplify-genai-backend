@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
 
@@ -8,6 +8,7 @@ const client = new DynamoDBClient({});
 const dynamoDB = DynamoDBDocumentClient.from(client);
 
 const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
+const historyCostDynamoTableName = process.env.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE;
 
 export const handler = async (event, context, callback) => {
     try {
@@ -68,6 +69,111 @@ export const handler = async (event, context, callback) => {
         };
     } catch (error) {
         logger.error("Error processing request: " + error.message, error);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: 'Internal server error' }),
+        };
+    }
+};
+
+export const apiKeyUserCostHandler = async (event, context, callback) => {
+    try {
+        const params = await extractParams(event);
+        if (params.statusCode) return params;
+
+        const { body } = params;
+        if (!body || !body.data || !body.data.apiKey || !body.data.email) {
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: 'API key and email are required' }),
+            };
+        }
+
+        const apiKey = body.data.apiKey;
+        const email = body.data.email;
+
+        if (!historyCostDynamoTableName || !costDynamoTableName || !email || !apiKey) {
+            logger.error("Missing required parameters");
+            return {
+                statusCode: 500,
+                body: JSON.stringify({ error: 'Server configuration error' }),
+            };
+        }
+
+        let totalApiKeyCost = 0;
+        let userApiKeyCost = 0;
+        let lastEvaluatedKey = null;
+
+        // Query historyCostDynamoTableName
+        do {
+            const scanParams = {
+                TableName: historyCostDynamoTableName,
+                FilterExpression: 'contains(#accountInfo, :apiKey) AND attribute_exists(#accountInfo)',
+                ExpressionAttributeNames: {
+                    '#accountInfo': 'accountInfo'
+                },
+                ExpressionAttributeValues: {
+                    ':apiKey': apiKey
+                }
+            };
+
+            if (lastEvaluatedKey) {
+                scanParams.ExclusiveStartKey = lastEvaluatedKey;
+            }
+
+            try {
+                const command = new ScanCommand(scanParams);
+                const result = await dynamoDB.send(command);
+
+                result.Items.forEach(item => {
+                    const dailyCost = parseFloat(item.dailyCost) || 0;
+                    totalApiKeyCost += dailyCost;
+
+                    if (item.userDate && item.userDate.startsWith(email)) {
+                        userApiKeyCost += dailyCost;
+                    }
+                });
+
+                lastEvaluatedKey = result.LastEvaluatedKey;
+            } catch (error) {
+                logger.error("Error executing DynamoDB scan:", error);
+                throw error;
+            }
+        } while (lastEvaluatedKey);
+
+        // Query costDynamoTableName
+        const queryParams = {
+            TableName: costDynamoTableName,
+            KeyConditionExpression: 'id = :email',
+            ExpressionAttributeValues: {
+                ':email': email,
+            },
+        };
+
+        try {
+            const command = new QueryCommand(queryParams);
+            const result = await dynamoDB.send(command);
+
+            result.Items.forEach(item => {
+                if (item.accountInfo && item.accountInfo.includes(apiKey)) {
+                    const dailyCost = parseFloat(item.dailyCost) || 0;
+                    totalApiKeyCost += dailyCost;
+                    userApiKeyCost += dailyCost;
+                }
+            });
+        } catch (error) {
+            logger.error("Error executing DynamoDB query:", error);
+            throw error;
+        }
+
+        return {
+            statusCode: 200,
+            body: JSON.stringify({
+                apiKey, email, totalApiKeyCost, userApiKeyCost,
+            }),
+        };
+    } catch (error) {
+        logger.error("Error processing request:", error);
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal server error' }),

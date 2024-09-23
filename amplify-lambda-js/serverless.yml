@@ -139,6 +139,14 @@ functions:
           method: post
           cors: true
 
+  api_key_user_cost:
+    handler: billing/mtd.apiKeyUserCostHandler
+    memorySize: 128
+    events:
+      - http:
+          path: billing/api-key-user-cost
+          method: post
+          cors: true
 
 resources:
   Resources:
