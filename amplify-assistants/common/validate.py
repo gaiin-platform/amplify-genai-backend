@@ -369,7 +369,7 @@ save_user_rating_schema = {
     "required": ["conversationId", "userRating"],
 }
 
-get_group_assistant_conversations_content_schema = {
+get_group_assistant_conversations_data_schema = {
     "type": "object",
     "properties": {
         "conversationId": {
@@ -431,8 +431,8 @@ validators = {
     "/assistant/save_user_rating": {
         "save_user_rating": save_user_rating_schema
     },
-    "/assistant/get_group_assistant_conversations_content": {
-        "get_group_assistant_conversations_content": get_group_assistant_conversations_content_schema
+    "/assistant/get_group_assistant_conversations_data": {
+        "get_group_assistant_conversations_data": get_group_assistant_conversations_data_schema
     },
 
 }
@@ -483,8 +483,8 @@ api_validators = {
     "/assistant/save_user_rating": {
         "save_user_rating": save_user_rating_schema
     },
-    "/assistant/get_group_assistant_conversations_content": {
-        "get_group_assistant_conversations_content": get_group_assistant_conversations_content_schema
+    "/assistant/get_group_assistant_conversations_data": {
+        "get_group_assistant_conversations_data": get_group_assistant_conversations_data_schema
     },
 }
 

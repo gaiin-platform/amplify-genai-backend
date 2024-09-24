@@ -131,6 +131,7 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
     }
 
     if ((chatRequest.options.assistantId) && (chatRequest.options.assistantId.startsWith('astgp')) && !(chatRequest.options.ragOnly)) {
-        await analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user);
+        logger.debug("Performing AI analysis and recording conversation.");
+        analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user);
     }
 }

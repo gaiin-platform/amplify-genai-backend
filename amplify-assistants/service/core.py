@@ -1138,8 +1138,8 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
 
 
-@validated(op="get_group_assistant_conversations_content")
-def get_group_assistant_conversations_content(event, context, current_user, name, data):
+@validated(op="get_group_assistant_conversations_data")
+def get_group_assistant_conversations_data(event, context, current_user, name, data):
     if (
         "data" not in data
         or "conversationId" not in data["data"]

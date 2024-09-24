@@ -109,6 +109,7 @@ const analysisSchema = {
 };
 
 export async function analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user) {
+    logger.debug("Parsing chatRequest:", chatRequest);
     if (chatRequest.options.assistantId &&
         chatRequest.options.assistantId.startsWith('astgp') &&
         !chatRequest.options.ragOnly) {
@@ -120,8 +121,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
         const numberPrompts = chatRequest.options.numPrompts;
         const employeeType = chatRequest.options.groupType;
         const entryPoint = chatRequest.options.source || "Amplify";
-        const s3Location = "vu-amplify-dev-chat-traces/traces/email/yyyy-mm-dd/uuid.json";
-
+        
         let userEmail = user;
         if (chatRequest.options.source) { // save user email from wordpress
             userEmail = chatRequest.options.user;
