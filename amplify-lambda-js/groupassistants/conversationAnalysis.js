@@ -6,12 +6,17 @@ import { getDefaultLLM } from "../common/llm.js";
 import { StreamResultCollector } from "../common/streams.js";
 import { transform as fnTransformer } from "../common/chat/events/openaifn.js";
 import { Models } from "../models/models.js";
+import { createHash } from 'crypto';
 
 const logger = getLogger("conversationAnalysis");
 
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
 const s3Client = new S3Client({ region: "us-east-1" });
+
+function calculateMD5(content) {
+    return createHash('md5').update(content).digest('base64');
+}
 
 async function uploadToS3(assistantId, conversationId, content) {
     const bucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME;
@@ -39,7 +44,8 @@ async function uploadToS3(assistantId, conversationId, content) {
             Bucket: bucketName,
             Key: key,
             Body: content,
-            ContentType: 'text/plain'
+            ContentType: 'text/plain',
+            ContentMD5: calculateMD5(content)
         }));
 
         logger.debug(`Successfully uploaded conversation to S3: ${key}`);
@@ -126,7 +132,8 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     // logger.debug("VARS COLLECTED:", conversationId, assistantId, assistantName, modelUsed, numberPrompts, employeeType, entryPoint, userEmail);
 
     const content = `User Prompt:\n${userPrompt}\nAI Response:\n${llmResponse}\n`;
-    const s3Location = await uploadToS3(assistantId, conversationId, content);
+    // const s3Location = await uploadToS3(assistantId, conversationId, content);
+    const s3Location = "tmp";
 
     const resultCollector = new StreamResultCollector();
     resultCollector.addTransformer(fnTransformer);
