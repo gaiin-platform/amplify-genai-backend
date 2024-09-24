@@ -130,8 +130,8 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             status);
     }
 
-    if ((chatRequest.options.assistantId) && (chatRequest.options.assistantId.startsWith('astgp')) && !(chatRequest.options.ragOnly)) {
-        logger.debug("Performing AI analysis and recording conversation.");
+    // if (chatRequest.options.assistantId.startsWith('astgp')) {
+    if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && (!chatRequest.options.ragOnly || chatRequest.options.skipRag)) {
         analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user);
     }
 }
