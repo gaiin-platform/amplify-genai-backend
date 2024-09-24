@@ -1,5 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getLogger } from "../common/logging.js";
 import { getDefaultLLM } from "../common/llm.js";
 import { StreamResultCollector } from "../common/streams.js";
@@ -10,6 +11,45 @@ const logger = getLogger("conversationAnalysis");
 
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
+const s3Client = new S3Client({ region: "us-east-1" });
+
+async function uploadToS3(assistantId, conversationId, content) {
+    const bucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME;
+    const key = `${assistantId}/${conversationId}.txt`;
+
+    try {
+        // Check if the file already exists
+        try {
+            const existingObject = await s3Client.send(new GetObjectCommand({
+                Bucket: bucketName,
+                Key: key,
+            }));
+
+            // If file exists, append new content
+            const existingContent = await existingObject.Body.transformToString();
+            content = existingContent + '\n' + content;
+        } catch (error) {
+            // If file doesn't exist, we'll create a new one
+            if (error.name !== 'NoSuchKey') {
+                throw error;
+            }
+        }
+
+        // Upload the content
+        await s3Client.send(new PutObjectCommand({
+            Bucket: bucketName,
+            Key: key,
+            Body: content,
+            ContentType: 'text/plain'
+        }));
+
+        console.log(`Successfully uploaded conversation to S3: ${key}`);
+        return `s3://${bucketName}/${key}`;
+    } catch (error) {
+        console.error(`Error uploading to S3: ${error}`);
+        throw error;
+    }
+}
 
 async function writeToGroupAssistantConversations(conversationId, assistantId, assistantName, modelUsed, numberPrompts, user, employeeType, entryPoint, s3Location, category, systemRating) {
     const params = {
@@ -88,6 +128,9 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
         }
 
         const userPrompt = chatRequest.messages[chatRequest.messages.length - 1].content.substring(61);
+
+        const content = `User Prompt:\n${userPrompt}\nAI Response:\n${llmResponse}\n`;
+        const s3Location = await uploadToS3(assistantId, conversationId, content);
 
         const resultCollector = new StreamResultCollector();
         resultCollector.addTransformer(fnTransformer);

@@ -1138,6 +1138,48 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
 
 
+@validated(op="get_group_assistant_conversations_content")
+def get_group_assistant_conversations_content(event, context, current_user, name, data):
+    if (
+        "data" not in data
+        or "conversationId" not in data["data"]
+        or "assistantId" not in data["data"]
+    ):
+        return {
+            "statusCode": 400,
+            "body": json.dumps(
+                {"error": "conversationId and assistantId are required"}
+            ),
+        }
+
+    conversation_id = data["data"]["conversationId"]
+    assistant_id = data["data"]["assistantId"]
+
+    s3 = boto3.client("s3")
+    bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
+    key = f"{assistant_id}/{conversation_id}.txt"
+
+    try:
+        response = s3.get_object(Bucket=bucket_name, Key=key)
+        content = response["Body"].read().decode("utf-8")
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"content": content}),
+        }
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchKey":
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Conversation not found"}),
+            }
+        else:
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Error retrieving conversation content"}),
+            }
+
+
 # accessible via API gateway for users to collect data on a group assistant
 # user MUST provide assistantId
 # optional parameters to specify:

@@ -369,6 +369,21 @@ save_user_rating_schema = {
     "required": ["conversationId", "userRating"],
 }
 
+get_group_assistant_conversations_content_schema = {
+    "type": "object",
+    "properties": {
+        "conversationId": {
+            "type": "string",
+            "description": "The id of the conversation",
+        },
+        "assistantId": {
+            "type": "string",
+            "description": "The id of the assistant",
+        },
+    },
+    "required": ["conversationId", "assistantId"],
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -415,7 +430,10 @@ validators = {
     },
     "/assistant/save_user_rating": {
         "save_user_rating": save_user_rating_schema
-    }
+    },
+    "/assistant/get_group_assistant_conversations_content": {
+        "get_group_assistant_conversations_content": get_group_assistant_conversations_content_schema
+    },
 
 }
 
@@ -464,7 +482,10 @@ api_validators = {
     },
     "/assistant/save_user_rating": {
         "save_user_rating": save_user_rating_schema
-    }
+    },
+    "/assistant/get_group_assistant_conversations_content": {
+        "get_group_assistant_conversations_content": get_group_assistant_conversations_content_schema
+    },
 }
 
 

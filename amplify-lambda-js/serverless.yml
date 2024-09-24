@@ -71,6 +71,7 @@ provider:
     MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: vu-amplify-assistants-${sls:stage}-group-assistant-conversations
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: vu-amplify-assistants-${sls:stage}-group-assistant-conversations-content
     # STREAM: false # optional 
     
 

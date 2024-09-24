@@ -67,6 +67,7 @@ provider:
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
     GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-assistant-conversations-content
 
 
   iam:
@@ -180,6 +181,15 @@ functions:
     events:
       - http:
           path: assistant/get_group_assistant_conversations
+          method: post
+          cors: true
+  
+  get_group_assistant_conversations_content:
+    handler: service/core.get_group_assistant_conversations_content
+    timeout: 30
+    events:
+      - http:
+          path: assistant/get_group_assistant_conversations_content
           method: post
           cors: true
           
@@ -444,6 +454,21 @@ resources:
       Type: 'AWS::S3::Bucket'
       Properties:
         BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET']
+              AllowedHeaders: ['*']
+              MaxAge: 3000     
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+    
+    GroupAssistantConversationsBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}
         CorsConfiguration:
           CorsRules:
             - AllowedOrigins: ['*']
