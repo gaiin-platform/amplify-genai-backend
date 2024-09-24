@@ -113,54 +113,26 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
-
-    # Query the GSI to see if a file with the same name and createdBy exists
-    response = files_table.query(
-        IndexName='createdByAndName',  # Specify the GSI name
-        KeyConditionExpression = Key('createdBy').eq(current_user) & Key('name').eq(name)
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': file_type,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': knowledge_base,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
     )
 
-    if response['Count'] == 0:
-        # If the item does not exist, create a new one
-        files_table.put_item(
-            Item={
-                'id': key,
-                'name': name,
-                'type': file_type,
-                'tags': tags,
-                'data': data_props,
-                'knowledgeBase': knowledge_base,
-                'createdAt': datetime.now().isoformat(),
-                'updatedAt': datetime.now().isoformat(),
-                'createdBy': current_user,
-                'updatedBy': current_user
-            }
-        )
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
 
-        if tags is not None and len(tags) > 0:
-            update_file_tags(current_user, key, tags)
-        
-        print("File does not exist, created new entry.")
-        return bucket_name, key
-    else:
-        # If the item exists, update the `updatedAt` and `updatedBy` fields
-        existing_item = response['Items'][0]  # Get the first matching item (if any)
+    return bucket_name, key
 
-        files_table.update_item(
-            Key={
-                'id': existing_item['id']  # Use the item's id as the key for the update
-            },
-            UpdateExpression="""
-                SET updatedAt = :updatedAt, 
-                    updatedBy = :updatedBy
-            """,
-            ExpressionAttributeValues={
-                ':updatedAt': datetime.now().isoformat(),
-                ':updatedBy': current_user
-            }
-        )
-        print("File already exists, updated existing entry.")
-        return bucket_name, existing_item['id']
 
 @validated(op="set")
 def set_datasource_metadata_entry(event, context, current_user, name, data):
