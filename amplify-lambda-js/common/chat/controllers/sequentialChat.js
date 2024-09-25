@@ -129,8 +129,8 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
     }
 
     // if (chatRequest.options.assistantId.startsWith('astgp')) {
-    // if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && (!chatRequest.options.ragOnly || chatRequest.options.skipRag)) {
-    if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && (!chatRequest.options.ragOnly || chatRequest.options.source)) {
+    if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {        
+        logger.debug("Performing AI Analysis on conversationId:", chatRequest.options.conversationId);
         analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
             logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
         });
