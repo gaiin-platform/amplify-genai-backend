@@ -18,7 +18,7 @@ class ResponseStreamForStreamlessResponse extends Writable {
   }
 
   _write(chunk, encoding, callback) {
-    logger.debug("Received chunk");
+    // logger.debug("Received chunk");
     const chunkStr = chunk.toString();
     if (chunkStr.startsWith('data:')) {
       try {

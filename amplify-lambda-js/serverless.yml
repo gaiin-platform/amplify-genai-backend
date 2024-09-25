@@ -39,7 +39,6 @@ provider:
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
     S3_FILE_TEXT_BUCKET_NAME: vu-amplify-${sls:stage}-file-text
     S3_IMAGE_INPUT_BUCKET_NAME: vu-amplify-${sls:stage}-image-input
