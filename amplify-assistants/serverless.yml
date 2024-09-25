@@ -184,12 +184,12 @@ functions:
           method: post
           cors: true
   
-  get_group_assistant_conversations_data:
-    handler: service/core.get_group_assistant_conversations_data
+  get_group_conversations_data:
+    handler: service/core.get_group_conversations_data
     timeout: 30
     events:
       - http:
-          path: assistant/get_group_assistant_conversations_data
+          path: assistant/get_group_conversations_data
           method: post
           cors: true
           
