@@ -1462,25 +1462,25 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
         response_data = {"dashboardData": dashboard_data}
 
-        if include_conversation_data:
-            response_data["conversationData"] = conversations
-
-        if include_conversation_content:
+        if include_conversation_data or include_conversation_content:
             s3 = boto3.client("s3")
-            conversation_content = {}
+            bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
+            
             for conv in conversations:
-                if "s3Location" in conv:
-                    bucket, key = conv["s3Location"].split("/", 1)
-                    try:
-                        obj = s3.get_object(Bucket=bucket, Key=key)
-                        conversation_content[conv["conversationId"]] = (
-                            obj["Body"].read().decode("utf-8")
-                        )
-                    except Exception as e:
-                        print(
-                            f"Error retrieving S3 content for conversation {conv['conversationId']}: {str(e)}"
-                        )
-            response_data["conversationContent"] = conversation_content
+                if include_conversation_content:
+                    conversation_id = conv.get("conversationId")
+                    if conversation_id:
+                        key = f"{assistant_id}/{conversation_id}.txt"
+                        try:
+                            obj = s3.get_object(Bucket=bucket_name, Key=key)
+                            conv["conversationContent"] = obj["Body"].read().decode("utf-8")
+                        except ClientError as e:
+                            if e.response["Error"]["Code"] == "NoSuchKey":
+                                print(f"Conversation content not found for {conversation_id}")
+                            else:
+                                print(f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}")
+            
+            response_data["conversationData"] = conversations
 
         return {
             "statusCode": 200,
