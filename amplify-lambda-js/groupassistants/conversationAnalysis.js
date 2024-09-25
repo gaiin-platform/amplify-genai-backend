@@ -77,9 +77,9 @@ async function writeToGroupAssistantConversations(conversationId, assistantId, a
 
     try {
         await docClient.send(new PutCommand(params));
-        console.log(`Successfully wrote conversation data to DynamoDB for conversationId: ${conversationId}`);
+        logger.debug(`Successfully wrote conversation data to DynamoDB for conversationId: ${conversationId}`);
     } catch (error) {
-        console.log(`Error writing to DynamoDB: ${error}`);
+        logger.debug(`Error writing to DynamoDB: ${error}`);
     }
 }
 
@@ -129,11 +129,11 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
 
     const userPrompt = chatRequest.messages[chatRequest.messages.length - 1].content.substring(61);
 
-    // logger.debug("VARS COLLECTED:", conversationId, assistantId, assistantName, modelUsed, numberPrompts, employeeType, entryPoint, userEmail);
-
     const content = `User Prompt:\n${userPrompt}\nAI Response:\n${llmResponse}\n`;
-    // const s3Location = await uploadToS3(assistantId, conversationId, content);
-    const s3Location = "tmp";
+    // console.log(content);
+
+    const s3Location = await uploadToS3(assistantId, conversationId, content);
+    // const s3Location = "tmp";
 
     const resultCollector = new StreamResultCollector();
     resultCollector.addTransformer(fnTransformer);

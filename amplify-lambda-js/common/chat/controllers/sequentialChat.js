@@ -8,8 +8,6 @@ import { getLogger } from "../../logging.js";
 import { sendStatusEventToStream } from "../../streams.js";
 import { getUser, getModel, setModel, getCheapestModelEquivalent, getMostAdvancedModelEquivalent } from "../../../common/params.js";
 import { addContextMessage, createContextMessage } from "./common.js";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
 
 const logger = getLogger("sequentialChat");
@@ -105,8 +103,8 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
                     }
                 } catch (e) {
                     // Log the error and the problematic chunk, but don't throw
-                    console.warn(`Warning: Error parsing chunk: ${e.message}`);
-                    console.warn(`Problematic chunk: ${jsonStr}`);
+                    logger.debug(`Warning: Error parsing chunk: ${e.message}`);
+                    logger.debug(`Problematic chunk: ${jsonStr}`);
                 }
             }
         });
@@ -131,7 +129,10 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
     }
 
     // if (chatRequest.options.assistantId.startsWith('astgp')) {
-    if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && (!chatRequest.options.ragOnly || chatRequest.options.skipRag)) {
-        analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user);
+    // if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && (!chatRequest.options.ragOnly || chatRequest.options.skipRag)) {
+    if (chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' && (!chatRequest.options.ragOnly || chatRequest.options.source)) {
+        analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
+            logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
+        });
     }
 }
