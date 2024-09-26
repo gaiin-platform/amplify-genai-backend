@@ -18,13 +18,13 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
-    slim: true
+    slim: false
 
 
   prune:
     automatic: true
     includeLayers: true
-    number: 5
+    number: 1
 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   
