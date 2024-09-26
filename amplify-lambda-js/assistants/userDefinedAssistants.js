@@ -247,6 +247,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                             - Original Filename: monthly_report.pdf
                               Formatted: [monthly_report.pdf)](#dataSource:monthly_report.pdf)
+                        
+                        Never under any circumstance make up document names. If you are not made aware of any documents then assume you do not have any to reference.
                         `});
                 }
             }
