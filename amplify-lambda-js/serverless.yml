@@ -170,6 +170,7 @@ resources:
                 - dynamodb:Scan
                 - sqs:SendMessage
                 - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
               Resource:
