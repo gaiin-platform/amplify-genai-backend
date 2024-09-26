@@ -80,6 +80,7 @@ resources:
                 - dynamodb:Query
                 - dynamodb:Scan
                 - dynamodb:GetItem
+                - dynamodb:UpdateItem
                 - s3:GetObject
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
