@@ -39,7 +39,7 @@ provider:
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-    S3_ARTIFACTS_BUCKET: ${self:service}-${sls:stage}-artifacts-bucket
+    S3_ARTIFACTS_BUCKET: ${self:service}-${sls:stage}-bucket
     ARTIFACTS_DYNAMODB_TABLE:  ${self:service}-${sls:stage}-user-artifacts
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
@@ -117,6 +117,7 @@ resources:
                 - dynamodb:UpdateItem
                 - s3:GetObject
                 - s3:PutObject
+                - s3:ListBucket
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -130,8 +131,9 @@ resources:
 
     
     
-    ArtifactsBucket:
+    AmplifyArtifactsBucket:
         Type: 'AWS::S3::Bucket'
+        DeletionPolicy: Retain
         Properties:
           BucketName: ${self:provider.environment.S3_ARTIFACTS_BUCKET}
           CorsConfiguration:
@@ -145,11 +147,11 @@ resources:
               - ServerSideEncryptionByDefault:
                   SSEAlgorithm: AES256        
 
-    AmplifyGroupsTable:
+    AmplifyArtifactsTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
-        TableName: ${self:service}-${sls:stage}-amplify-groups
+        TableName: ${self:service}-${sls:stage}-amplify-artifacts
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
