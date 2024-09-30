@@ -151,7 +151,7 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
-        TableName: ${self:service}-${sls:stage}-amplify-artifacts
+        TableName: ${self:service}-${sls:stage}-user-artifacts
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
