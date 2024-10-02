@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -323,6 +324,7 @@ def get_presigned_url(event, context, current_user, name, data):
     s3 = boto3.client('s3')
 
     name = data['name']
+    name = re.sub(r'[_\s]+', '_', name)
     file_type = data['type']
     tags = data['tags']
     props = data['data']
