@@ -12,8 +12,8 @@ import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
-import {isSystemAssistant, getSystemAssistant} from "./systemAssistants.js";
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
+import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 
 const logger = getLogger("assistants");
 
@@ -118,10 +118,9 @@ export const defaultAssistants = [
     //batchAssistant,
     //documentAssistant,
     //reportWriterAssistant,
-    csvAssistant,
+    // csvAssistant,
     //documentSearchAssistant
     //mapReduceAssistant
-
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {
@@ -276,13 +275,13 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         logger.info(`Client Selected Assistant`);
         // For group ast
         const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : llm.params.account.user;
-
-        // selectedAssistant = isSystemAssistant(clientSelectedAssistant) ? getSystemAssistant(defaultAssistant, clientSelectedAssistant) 
-        //                                      : await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
         selectedAssistant = await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
 
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = codeInterpreterAssistant;
+    } else if (body.options.artifactsMode && (!body.options.api_accessed)) {
+        selectedAssistant = ArtifactModeAssistant;
+        console.log("ARTIFACT MODE DETERMINED")
     }
 
     const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});

@@ -1,13 +1,10 @@
 from datetime import datetime, timezone
 import json
 import re
+import time
 from common.validate import validated
-from botocore.exceptions import ClientError
-from decimal import Decimal
 import boto3
 import os
-import uuid
-import random
 import boto3
 import json
 import re
@@ -18,12 +15,12 @@ dynamodb = boto3.resource('dynamodb')
 s3 = boto3.client('s3')
 artifacts_table_name = os.environ['ARTIFACTS_DYNAMODB_TABLE']
 artifact_table = dynamodb.Table(artifacts_table_name)
-
+artifact_bucket = os.environ['S3_ARTIFACTS_BUCKET']
 
 @validated("read")
 def get_artifact(event, context, current_user, name, data):
     validated_key = validate_query_param(event.get('queryStringParameters', {}))
-    if (not validate_query_param['success']):
+    if (not validated_key['success']):
         return validated_key
     
     artifact_key = validated_key['key']
@@ -36,7 +33,6 @@ def get_artifact(event, context, current_user, name, data):
 
     try:
         print("Retrieve the artifact from S3 using the artifact_key")
-        artifact_bucket = os.environ['S3_ARTIFACTS_BUCKET']
         
         response = s3.get_object(
             Bucket=artifact_bucket,
@@ -45,7 +41,7 @@ def get_artifact(event, context, current_user, name, data):
         
         # Read the artifact contents
         contents = response['Body'].read().decode('utf-8')
-
+        
         # Return the artifact data
         return {
             'success': True,
@@ -95,7 +91,7 @@ def get_artifacts_info(event, context, current_user, name, data):
 @validated("delete")
 def delete_artifact(event, context, current_user, name, data):
     validated_key = validate_query_param(event.get('queryStringParameters', {}))
-    if (not validate_query_param['success']):
+    if (not validated_key['success']):
         return validated_key
     
     artifact_key = validated_key['key']
@@ -107,8 +103,8 @@ def delete_artifact(event, context, current_user, name, data):
         }
 
     try:
-        # Retrieve the artifact from S3 using the artifact_key
-        artifact_bucket = os.environ['S3_ARTIFACTS_BUCKET']
+        # delete the artifact from S3 using the artifact_key
+        print("delete the artifact from S3 using the artifact_key")
         
         s3.delete_object(
             Bucket=artifact_bucket,
@@ -116,16 +112,20 @@ def delete_artifact(event, context, current_user, name, data):
         )
 
         # After successfully deleting from S3, remove the artifact from the DynamoDB table
+        print("Remove artifact from table")
         response = artifact_table.get_item(Key={"user_id": current_user})
         if 'Item' in response:
             artifacts = response['Item'].get('artifacts', [])
+            createdAt = response['Item'].get("createdAt")
             updated_artifacts = [artifact for artifact in artifacts if artifact['key'] != artifact_key]
             
             # Update the DynamoDB table with the new artifact list
             artifact_table.put_item(
                 Item={
                     "user_id": current_user,
-                    "artifacts": updated_artifacts
+                    "artifacts": updated_artifacts,
+                    "createdAt": createdAt,
+                    "lastAccessed": time.strftime('%Y-%m-%dT%H:%M:%S')
                 }
             )
         return {
@@ -157,7 +157,7 @@ def save_artifact(event, context, current_user, name, data):
     return save_artifact_for_user(current_user, data['data']['artifact'] )
 
 
-def save_artifact_for_user(current_user, artifact):
+def save_artifact_for_user(current_user, artifact, sharedBy=None):
 
     artifact_key, artifact_id, created_at_str = create_artifact_keys(current_user, artifact)
 
@@ -170,28 +170,34 @@ def save_artifact_for_user(current_user, artifact):
         "createdAt": created_at_str,
         "tags": artifact.get('tags', [])
     }
+    if (sharedBy): artifact_table_data["sharedBy"] = sharedBy
     try:
         print("Adding artifact details to the table")
+        createdAt = ''
         response = artifact_table.get_item(Key={"user_id": current_user})
         if 'Item' in response:
             item = response['Item']
             artifacts = item.get('artifacts', [])
+            createdAt = item.get('createdAt', time.strftime('%Y-%m-%dT%H:%M:%S'))
         else:
             artifacts = []
+            createdAt = time.strftime('%Y-%m-%dT%H:%M:%S')
 
         # Append the new artifact data
         artifacts.append(artifact_table_data)
+
 
         # Update DynamoDB with new artifact
         artifact_table.put_item(
             Item={
                 "user_id": current_user,
-                "artifacts": artifacts
+                "artifacts": artifacts,
+                "createdAt": createdAt,
+                "lastAccessed": createdAt
             }
         )
 
         print("Store artifact in s3 bucket")
-        artifact_bucket = os.environ['S3_ARTIFACTS_BUCKET']
         
         # Store the contents in S3
         artifact["artifactId"] = artifact_id
@@ -222,7 +228,7 @@ def share_artifact(event, context, current_user, name, data):
     for email in email_list:
         try:
             print(f"Sharing artifact with user {email}")
-            save_artifact_for_user(email, artifact)
+            save_artifact_for_user(email, artifact, current_user)
         except Exception as e:
             print(f"Error sharing artifact with {email}: {e}")
             errors.append({
@@ -266,10 +272,9 @@ def validate_user(current_user, artifact_key):
 
 def validate_query_param(query_params):
     print("Query params: ", query_params)
-    artifact_key = query_params.get('artfact_key', '')
-    
-    if not artifact_key:
-        return {'success': False, 'message': 'Missing artifact_key parameter'}
+    if (not query_params or not query_params.get('artifact_id')):
+        return {'success': False, 'message': 'Missing artifact_id parameter'}
+    artifact_key = query_params.get('artifact_id')
 
     # Expected artifact_key format: current_user/created_at_num/name:vversion
     key_pattern = r'^[^/]+/\d{8}/[^/]+:v\d+$'
