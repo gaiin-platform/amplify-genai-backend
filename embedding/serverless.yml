@@ -308,11 +308,11 @@ resources:
         QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
 
     RagPostgresDbCluster2:
-      DependsOn: RagPostgresDbSecurityGroup
-      DeletionProtection: true
-      DeletionPolicy: Snapshot
       Type: AWS::RDS::DBCluster
+      DependsOn: RagPostgresDbSecurityGroup
+      DeletionPolicy: Snapshot
       Properties:
+        DeletionProtection: true
         DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
         DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}-2
         Engine: aurora-postgresql
