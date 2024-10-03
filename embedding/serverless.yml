@@ -309,6 +309,7 @@ resources:
 
     RagPostgresDbCluster2:
       DependsOn: RagPostgresDbSecurityGroup
+      DeletionProtection: true
       DeletionPolicy: Snapshot
       Type: AWS::RDS::DBCluster
       Properties:
