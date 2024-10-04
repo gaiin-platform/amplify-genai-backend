@@ -1358,6 +1358,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+    # table = dynamodb.Table("group-assistant-conversations-content-test")
 
     try:
         response = table.query(
@@ -1390,7 +1391,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             conversations[0].get("assistantName", "") if conversations else ""
         )
         unique_users = set(conv.get("user", "") for conv in conversations)
-        total_prompts = sum(conv.get("numberPrompts", 0) for conv in conversations)
+        total_prompts = sum(int(conv.get("numberPrompts", 0)) for conv in conversations)
         total_conversations = len(conversations)
 
         entry_points = {}
@@ -1423,14 +1424,20 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             # Calculate user rating
             user_rating = conv.get("userRating")
             if user_rating is not None:
-                total_user_rating += user_rating
-                user_rating_count += 1
+                try:
+                    total_user_rating += float(user_rating)
+                    user_rating_count += 1
+                except ValueError:
+                    print(f"Invalid user rating value: {user_rating}")
 
             # Calculate system rating
             system_rating = conv.get("systemRating")
             if system_rating is not None:
-                total_system_rating += system_rating
-                system_rating_count += 1
+                try:
+                    total_system_rating += float(system_rating)
+                    system_rating_count += 1
+                except ValueError:
+                    print(f"Invalid system rating value: {system_rating}")
 
         average_user_rating = (
             float(total_user_rating) / float(user_rating_count)
@@ -1465,7 +1472,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         if include_conversation_data or include_conversation_content:
             s3 = boto3.client("s3")
             bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
-            
+
             for conv in conversations:
                 if include_conversation_content:
                     conversation_id = conv.get("conversationId")
@@ -1479,8 +1486,28 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                                 print(f"Conversation content not found for {conversation_id}")
                             else:
                                 print(f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}")
-            
-            response_data["conversationData"] = conversations
+
+            # response_data["conversationData"] = conversations
+
+            # Generate a unique filename
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"conversation_data_{assistant_id}_{timestamp}.json"
+
+            # Upload conversation data to S3
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=filename,
+                Body=json.dumps(conversations, cls=CombinedEncoder),
+                ContentType='application/json'
+            )
+
+            # Generate a pre-signed URL that's valid for 1 hour
+            presigned_url = s3.generate_presigned_url('get_object',
+                                                    Params={'Bucket': bucket_name,
+                                                            'Key': filename},
+                                                    ExpiresIn=3600)
+
+            response_data["conversationDataUrl"] = presigned_url
 
         return {
             "statusCode": 200,
