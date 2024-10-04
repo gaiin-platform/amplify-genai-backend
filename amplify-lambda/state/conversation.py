@@ -106,9 +106,10 @@ def get_all_conversations(event, context, current_user, name, data):
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve : {obj} with error: {str(e)}")
         print("Number of conversations retrieved: ", len(conversations))
+        compressed_conversations = lzw_compress(json.dumps(conversations))
         return {
             'statusCode': 200,
-            'body': json.dumps({'success': True, 'conversationsData': conversations})
+            'body': json.dumps({'success': True, 'conversationsData': compressed_conversations})
         }
 
     except (BotoCoreError, ClientError) as e:
@@ -266,3 +267,33 @@ def lzw_uncompress(compressed_data):
         return json.loads(output)
     except json.JSONDecodeError:
         raise ValueError("Failed to parse JSON from decompressed string")
+
+
+
+def lzw_compress(compressed_data):
+    if not compressed_data:
+        return []
+    dictionary = {chr(i): i for i in range(256)}
+    next_code = 256
+    compressed_output = []
+
+    # Preprocessing to convert Unicode characters to a unique format
+    processed_input = ''.join(
+        f'U+{ord(char):x}' if ord(char) > 255 else char for char in compressed_data
+    )
+
+    current_pattern = ''
+    for character in processed_input:
+        new_pattern = current_pattern + character
+        if new_pattern in dictionary:
+            current_pattern = new_pattern
+        else:
+            compressed_output.append(dictionary[current_pattern])
+            dictionary[new_pattern] = next_code
+            next_code += 1
+            current_pattern = character
+
+    if current_pattern:
+        compressed_output.append(dictionary[current_pattern])
+
+    return compressed_output
