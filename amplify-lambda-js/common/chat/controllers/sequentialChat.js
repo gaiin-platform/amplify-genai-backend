@@ -130,7 +130,12 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             status);
     }
 
-    if ((chatRequest.options.assistantId) && (chatRequest.options.assistantId.startsWith('astgp')) && !(chatRequest.options.ragOnly)) {
-        await analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user);
+    logger.debug("Chat Request:", chatRequest);
+    
+    if ((chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {
+        logger.debug("Performing AI Analysis on conversationId:", chatRequest.options.conversationId);
+        analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
+            logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
+        });
     }
 }
