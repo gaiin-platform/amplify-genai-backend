@@ -67,6 +67,7 @@ provider:
     ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
     GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-assistant-conversations-content
 
 
   iam:
@@ -180,6 +181,15 @@ functions:
     events:
       - http:
           path: assistant/get_group_assistant_conversations
+          method: post
+          cors: true
+  
+  get_group_conversations_data:
+    handler: service/core.get_group_conversations_data
+    timeout: 30
+    events:
+      - http:
+          path: assistant/get_group_conversations_data
           method: post
           cors: true
           
@@ -454,6 +464,21 @@ resources:
           ServerSideEncryptionConfiguration:
             - ServerSideEncryptionByDefault:
                 SSEAlgorithm: AES256
+    
+    GroupAssistantConversationsBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET', 'PUT']
+              AllowedHeaders: ['*']
+              MaxAge: 3000     
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
 
     AssistantsLambdaPolicy:
       Type: 'AWS::IAM::ManagedPolicy'
@@ -502,6 +527,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
 
             - Effect: Allow
               Action:
