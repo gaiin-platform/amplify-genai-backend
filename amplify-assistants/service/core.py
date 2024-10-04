@@ -1135,7 +1135,52 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
-        return {"statusCode": 500, "body": json.dumps({"error": "An unexpected error occurred"})}
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "An unexpected error occurred"}),
+        }
+
+
+@validated(op="get_group_conversations_data")
+def get_group_conversations_data(event, context, current_user, name, data):
+    if (
+        "data" not in data
+        or "conversationId" not in data["data"]
+        or "assistantId" not in data["data"]
+    ):
+        return {
+            "statusCode": 400,
+            "body": json.dumps(
+                {"error": "conversationId and assistantId are required"}
+            ),
+        }
+
+    conversation_id = data["data"]["conversationId"]
+    assistant_id = data["data"]["assistantId"]
+
+    s3 = boto3.client("s3")
+    bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
+    key = f"{assistant_id}/{conversation_id}.txt"
+
+    try:
+        response = s3.get_object(Bucket=bucket_name, Key=key)
+        content = response["Body"].read().decode("utf-8")
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"content": content}),
+        }
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchKey":
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Conversation not found"}),
+            }
+        else:
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Error retrieving conversation content"}),
+            }
 
 
 # accessible via API gateway for users to collect data on a group assistant
@@ -1160,6 +1205,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE"])
+    # table = dynamodb.Table("group-assistant-conversations-content-test")
 
     try:
         response = table.query(
@@ -1192,7 +1238,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             conversations[0].get("assistantName", "") if conversations else ""
         )
         unique_users = set(conv.get("user", "") for conv in conversations)
-        total_prompts = sum(conv.get("numberPrompts", 0) for conv in conversations)
+        total_prompts = sum(int(conv.get("numberPrompts", 0)) for conv in conversations)
         total_conversations = len(conversations)
 
         entry_points = {}
@@ -1223,19 +1269,33 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 employee_types[employee_type] = employee_types.get(employee_type, 0) + 1
 
             # Calculate user rating
-            user_rating = conv.get('userRating')
+            user_rating = conv.get("userRating")
             if user_rating is not None:
-                total_user_rating += user_rating
-                user_rating_count += 1
+                try:
+                    total_user_rating += float(user_rating)
+                    user_rating_count += 1
+                except ValueError:
+                    print(f"Invalid user rating value: {user_rating}")
 
             # Calculate system rating
-            system_rating = conv.get('systemRating')
+            system_rating = conv.get("systemRating")
             if system_rating is not None:
-                total_system_rating += system_rating
-                system_rating_count += 1
+                try:
+                    total_system_rating += float(system_rating)
+                    system_rating_count += 1
+                except ValueError:
+                    print(f"Invalid system rating value: {system_rating}")
 
-        average_user_rating = float(total_user_rating) / float(user_rating_count) if user_rating_count > 0 else None
-        average_system_rating = float(total_system_rating) / float(system_rating_count) if system_rating_count > 0 else None
+        average_user_rating = (
+            float(total_user_rating) / float(user_rating_count)
+            if user_rating_count > 0
+            else None
+        )
+        average_system_rating = (
+            float(total_system_rating) / float(system_rating_count)
+            if system_rating_count > 0
+            else None
+        )
 
         dashboard_data = {
             "assistantId": assistant_id,
@@ -1256,25 +1316,52 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
         response_data = {"dashboardData": dashboard_data}
 
-        if include_conversation_data:
-            response_data["conversationData"] = conversations
-
-        if include_conversation_content:
+        if include_conversation_data or include_conversation_content:
             s3 = boto3.client("s3")
-            conversation_content = {}
+            bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
+
             for conv in conversations:
-                if "s3Location" in conv:
-                    bucket, key = conv["s3Location"].split("/", 1)
-                    try:
-                        obj = s3.get_object(Bucket=bucket, Key=key)
-                        conversation_content[conv["conversationId"]] = (
-                            obj["Body"].read().decode("utf-8")
-                        )
-                    except Exception as e:
-                        print(
-                            f"Error retrieving S3 content for conversation {conv['conversationId']}: {str(e)}"
-                        )
-            response_data["conversationContent"] = conversation_content
+                if include_conversation_content:
+                    conversation_id = conv.get("conversationId")
+                    if conversation_id:
+                        key = f"{assistant_id}/{conversation_id}.txt"
+                        try:
+                            obj = s3.get_object(Bucket=bucket_name, Key=key)
+                            conv["conversationContent"] = (
+                                obj["Body"].read().decode("utf-8")
+                            )
+                        except ClientError as e:
+                            if e.response["Error"]["Code"] == "NoSuchKey":
+                                print(
+                                    f"Conversation content not found for {conversation_id}"
+                                )
+                            else:
+                                print(
+                                    f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}"
+                                )
+
+            # response_data["conversationData"] = conversations
+
+            # Generate a unique filename
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"conversation_data_{assistant_id}_{timestamp}.json"
+
+            # Upload conversation data to S3
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=filename,
+                Body=json.dumps(conversations, cls=CombinedEncoder),
+                ContentType="application/json",
+            )
+
+            # Generate a pre-signed URL that's valid for 1 hour
+            presigned_url = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket_name, "Key": filename},
+                ExpiresIn=3600,
+            )
+
+            response_data["conversationDataUrl"] = presigned_url
 
         return {
             "statusCode": 200,
@@ -1301,9 +1388,7 @@ def save_user_rating(event, context, current_user, name, data):
     ):
         return {
             "statusCode": 400,
-            "body": json.dumps(
-                {"error": "conversationId and userRating are required"}
-            ),
+            "body": json.dumps({"error": "conversationId and userRating are required"}),
         }
 
     conversation_id = data["data"]["conversationId"]
