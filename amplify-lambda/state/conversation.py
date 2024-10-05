@@ -75,6 +75,8 @@ def get_all_conversations(event, context, current_user, name, data):
     conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
     user_prefix = current_user + '/'
 
+    temp_path = f'temp/{current_user}/conversations.json'
+
     try:
         print("Listing s3 pbjects")
         # List all objects in the bucket with the given prefix
@@ -106,10 +108,26 @@ def get_all_conversations(event, context, current_user, name, data):
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve : {obj} with error: {str(e)}")
         print("Number of conversations retrieved: ", len(conversations))
-        compressed_conversations = lzw_compress(json.dumps(conversations))
+
+
+        conversations_data = json.dumps(conversations)
+        s3.put_object(
+            Bucket=conversations_bucket,
+            Key=temp_path,
+            Body=conversations_data,
+            ContentType='application/json'
+        )
+        
+        # Generate a pre-signed URL for the uploaded file
+        presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': conversations_bucket, 'Key': temp_path},
+            ExpiresIn=3600  # URL valid for 1 hour
+        )
+
         return {
             'statusCode': 200,
-            'body': json.dumps({'success': True, 'conversationsData': compressed_conversations})
+            'body': json.dumps({'success': True, 'presignedUrl': presigned_url})
         }
 
     except (BotoCoreError, ClientError) as e:
@@ -269,31 +287,3 @@ def lzw_uncompress(compressed_data):
         raise ValueError("Failed to parse JSON from decompressed string")
 
 
-
-def lzw_compress(compressed_data):
-    if not compressed_data:
-        return []
-    dictionary = {chr(i): i for i in range(256)}
-    next_code = 256
-    compressed_output = []
-
-    # Preprocessing to convert Unicode characters to a unique format
-    processed_input = ''.join(
-        f'U+{ord(char):x}' if ord(char) > 255 else char for char in compressed_data
-    )
-
-    current_pattern = ''
-    for character in processed_input:
-        new_pattern = current_pattern + character
-        if new_pattern in dictionary:
-            current_pattern = new_pattern
-        else:
-            compressed_output.append(dictionary[current_pattern])
-            dictionary[new_pattern] = next_code
-            next_code += 1
-            current_pattern = character
-
-    if current_pattern:
-        compressed_output.append(dictionary[current_pattern])
-
-    return compressed_output
