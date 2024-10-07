@@ -248,7 +248,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user):
             if 'Item' in response:
                 item = response['Item']
                 # Check if the group is public or if the user is in the members
-                if item.get('isPublic', False) or current_user in item.get('members', {}).keys():
+                if item.get('isPublic', False) or current_user in item.get('members', {}).keys() or current_user in item.get('systemUsers', []):
                     accessible_src_ids.extend(accessible_to_group_ds_ids)
                 else:
                     access_denied_src_ids.extend(accessible_to_group_ds_ids)
