@@ -185,15 +185,15 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 const dataSourceMetadataForInsertion = [];
                 const available = await getDataSourcesByUse(params, body, ds);
 
-                    if(assistant.data.dataSourceOptions.insertConversationDocumentsMetadata){
+                if (assistant.data.dataSourceOptions.insertConversationDocumentsMetadata) {
                         dataSourceMetadataForInsertion.push(...(assistant.dataSources || []));
                         dataSourceMetadataForInsertion.push(...(available.conversationDataSources || []));
-                    }
-                    if(assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata){
-                        dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
-                    }
+                }
+                if (assistant.data.dataSourceOptions.insertAttachedDocumentsMetadata ){
+                    dataSourceMetadataForInsertion.push(...(available.attachedDataSources || []));
+                }
 
-                if(dataSourceMetadataForInsertion.length > 0) {
+                if (dataSourceMetadataForInsertion.length > 0) {
 
                         const dataSourceSummaries = dataSourceMetadataForInsertion.map(ds => {
 
@@ -222,22 +222,38 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         extraMessages.push({
                             role: "user",
                             content:
-`You have the following data sources and documents available:
--------------                        
-${dataSourceText}
--------------
-Any operation that asks for an ID or Key should be supplied with the Short_ID from the list above
-of the corresponding data source or document. Avoid discussing these IDs, keys, etc. with the user
-as they can't see them. If they ask you about them, it is OK to tell them and use them for operations, 
-but otherwise don't describe them in your answers as it might confuse the user.
-`,
+                            `You have the following data sources and documents available:
+                            -------------                        
+                            ${dataSourceText}
+                            -------------
+                            Any operation that asks for an ID or Key should be supplied with the Short_ID from the list above
+                            of the corresponding data source or document. Avoid discussing these IDs, keys, etc. with the user
+                            as they can't see them. If they ask you about them, it is OK to tell them and use them for operations, 
+                            but otherwise don't describe them in your answers as it might confuse the user.
+                            `,
                         });
-                    }
                 }
+                if (assistant.data.dataSourceOptions.includeDownloadLinks ) { 
+                    extraMessages.push({
+                        role: "user",
+                        content: `
+                        Any documents you reference in your response MUST be formatted in the following way:
+                            [<filename>](#dataSource:<filename>)
 
-            if (body.options.addMsgContent) {
-                body.messages[body.messages.length - 1].content += body.options.addMsgContent;
+                            - Any spaces in the file name must be converted to '&' in the (#dataSource:<filename>)
+                            Examples:
+                            - Original Filename: Project Plan 2023.docx
+                              Formatted: [Project Plan 2023.docx](#dataSource:Project&Plan&2023.docx)
+
+                            - Original Filename: monthly_report.pdf
+                              Formatted: [monthly_report.pdf)](#dataSource:monthly_report.pdf)
+                        
+                        Never under any circumstance make up document names. If you are not made aware of any documents then assume you do not have any to reference.
+                        `});
+                }
             }
+
+           
 
             const messagesWithoutSystem = body.messages.filter(
                 (message) => message.role !== "system"
