@@ -805,7 +805,10 @@ api_validators = {
     },
     "/chat": {
         "chat": chat_input_schema
-    }
+    },
+    "/assistant/files/download": {
+        "download": key_request_schema
+    },
 }
 
 def validate_data(name, op, data, api_accessed):
