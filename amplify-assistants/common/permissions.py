@@ -33,6 +33,8 @@ def can_get_group_assistant_dashboards(user, data):
 def can_save_user_rating(user, data):
     return True
 
+def can_get_group_conversations_data(user, data):
+    return True
 
 """
 Every service must define the permissions for each operation
@@ -87,5 +89,8 @@ permissions_by_state_type = {
     },
     "/assistant/save_user_rating": {
         "save_user_rating": can_save_user_rating
+    },
+    "/assistant/get_group_conversations_data": {
+        "get_group_conversations_data": can_get_group_conversations_data
     }
 }
