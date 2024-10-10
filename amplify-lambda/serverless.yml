@@ -340,6 +340,24 @@ functions:
           method: post
 
 
+  settings_get:
+    handler: state/usersettings.get_settings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/settings/get
+          method: get
+
+  settings_save:
+    handler: state/usersettings.save_settings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/settings/save
+          method: post
+
   convert:
     handler: converters/docconverter.handler
     layers:

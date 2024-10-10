@@ -619,6 +619,35 @@ conversation_ids_schema = {
     "required": ["conversationIds"]
 }
 
+save_settings_schema = {
+    "type": "object",
+    "properties": {
+        "settings": {
+            "type": "object",
+            "properties": {
+                "theme": {
+                    "type": "string",
+                    "enum": ["light", "dark"]
+                },
+                "modelOptions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "featureOptions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "required": ["theme", "modelOptions", "featureOptions"]
+        }
+    },
+    "required": ["settings"]
+}
+
 
 compressed_conversation_schema = {
     "type": "object",
@@ -772,7 +801,14 @@ validators = {
     },
     "/chat": {
         "chat": chat_input_schema
-    }
+    },
+    "/state/settings/save": {
+        "save": save_settings_schema
+    },
+    "/state/settings/get": {
+        "get": {}
+    },
+
 }
 
 api_validators = {

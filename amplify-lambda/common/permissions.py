@@ -110,5 +110,11 @@ permissions_by_state_type = {
   },
   "/chat": {
     "chat": can_chat
-  }
+  },
+   "/state/settings/save": {
+        "save": can_upload
+    },
+    "/state/settings/get": {
+        "get": can_read
+    },
 }
