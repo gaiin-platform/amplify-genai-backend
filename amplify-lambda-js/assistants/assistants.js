@@ -278,7 +278,8 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         selectedAssistant = await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
 
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
-        selectedAssistant = codeInterpreterAssistant;
+        selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
+        //codeInterpreterAssistant;
     } else if (body.options.artifactsMode && (!body.options.api_accessed)) {
         selectedAssistant = ArtifactModeAssistant;
         console.log("ARTIFACT MODE DETERMINED")
