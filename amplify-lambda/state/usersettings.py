@@ -12,14 +12,7 @@ users_table = dynamodb.Table(tableName)
 
 
 @validated("get")
-def get_settings(event, context, user, name, data):
-    # settings/get
-    settings = get_settings_for_user(user)
-
-    return {'success': True, 'message': 'Successfully fetched settings', 'data': settings}
-
-
-def get_settings_for_user(current_user):
+def get_settings(event, context, current_user, name, data):
     try:
         # Step 1: Query using the secondary index to get the primary key
         response = users_table.scan(
