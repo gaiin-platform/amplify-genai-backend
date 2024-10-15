@@ -31,14 +31,15 @@ const reviewPrompt = (userPrompt, response) =>
 
     User asked prompt:
     ${userPrompt}
-
+    _____________________________
     Response to be reviewed:
     ${response}
-    
+    _____________________________
     
     Your response will be your refined version of the Response to be reviewed.
     You are NOT permitted to offer any thoughts, reasoning, or explanation about any refinements applied to the Response
-    Your top priority is returning the refined Response so it seamlessly fits into the on-going conversation as to hide the fact it has undergone this refinement process.
+    Your top priority is returning the refined Response so it seamlessly fits into the on-going conversation as to hide the fact it has undergone this refinement process. 
+    Try to keep as much of the original Response content as possible. In cases where the Response does not make sense given the userPrompt, you may rewrite it with a more appropriate response. 
     `;
 
 
@@ -62,7 +63,7 @@ async function fetchRequest(token, data, url) {
     }
 }
 
-const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 7000) => {
+const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 10000) => {
     return new Promise((resolve, reject) => {
         let timer;
 
@@ -151,7 +152,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             }
             //ensure that assistant_id is not null (in case assistant creation was necessary and failed)
             if (assistantId) {
-                messages.at(-1)['content'] += "\nAlways include any code you write in your response inside code blocks in markdown. Do not include mock download links. Always generate files when asked. ALWAYS ATTACH your generated files to your response."
+                // messages.at(-1)['content'];
                 const chat_data = {
                     assistantId: assistantId,
                     messages: messages.slice(1),
@@ -175,7 +176,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     // check for successfull response
                     if (responseData && responseData.success && responseData.data) {
                         const response = responseData.data.data.textContent;
-                        console.log(responseData);
+                        // console.log(response);
                         codeInterpreterResponse = response;
                         responseData.data.data.textContent = '';
                         sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterResponseData=${JSON.stringify(responseData)}`);
@@ -190,6 +191,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     role: 'user',
                     content: reviewPrompt(userPrompt, codeInterpreterResponse),
                 });
+                // console.log(updatedMessages.at(-1)['content']);
             } else {
                 console.log("Code interpreter was unavailable...");
                 updatedMessages.push({
@@ -203,9 +205,11 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             const updatedBody = {
                 ...body,
                 messages: updatedMessages,
+                max_tokens: 4000,
                 options: {
                     ...body.options,
                     ...dataSourceOptions,
+                    maxTokens: 4000
                 }
             };
         
