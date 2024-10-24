@@ -13,7 +13,7 @@ const dynamodbClient = new DynamoDBClient();
 
 export const additionalImageInstruction = "\n\n Additional Image Instructions:\n If given an encode image, describe the image in vivid detail, capturing every element, including the subjects, colors, textures, and emotions. Provide enough information so that someone can visualize the image perfectly without seeing it, using precise and rich language. This should be its own block of text."
 
-const dataSourcesQueryEndpoint = process.env.API_BASE_URL + "/assistant/files/query";
+const dataSourcesQueryEndpoint = process.env.API_BASE_URL + "/files/query";
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
 const dataSourcesWithTagCache = lru(500, 30000, false);
