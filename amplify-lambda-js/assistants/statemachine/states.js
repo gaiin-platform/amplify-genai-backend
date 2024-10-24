@@ -15,7 +15,7 @@ import Handlebars from "handlebars";
 import yaml from 'js-yaml';
 import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
-import {getCheapestModelEquivalent, getUser, getModel} from "../../common/params.js";
+import {getCheapestModelEquivalent, getUser, getModel, getMostAdvancedModelEquivalent} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
 
 const formatStateNamesAsEnum = (transitions) => {
@@ -219,9 +219,9 @@ export const updateStatus = (id, status, contextDataKey = null) => {
     return {
         execute: async (llm, context, dataSources) => {
             // we can get new saved context data and use it as the summary info
-            if (status.summary === undefined && typeof contextDataKey === "string") {
-                const data = context.data[contextDataKey]
-               // if the data message is too long for a summary then just do it as a message
+            if (contextDataKey && typeof contextDataKey === "string") {
+                const data = context.data[contextDataKey] || "We were unable to provide entertainment at this time..."
+                // if the data message is too long for a summary then just do it as a message
                 if (data.length > 60) {
                     status.summary = "View Contents"
                     status.message = data
@@ -229,7 +229,6 @@ export const updateStatus = (id, status, contextDataKey = null) => {
                     status.summary = data
                 }
             }
-
 
             const statusEvent = (context.status[id]) ? context.status[id] : newStatus(status);
 
@@ -724,7 +723,15 @@ const configureLLM = (config, llm) => {
 
     if (config.isEntertainment) { 
         // use the cheaper model!
-        llm.setModel(Models["anthropic.claude-3-haiku-20240307-v1:0"])
+        llm.params.options.model = getCheapestModelEquivalent(llm.params.model);
+        // remove any custom instruction prompts since it is messing up the output 
+        llm.params.options.prompt = "Provide a enjoyable, friendly, make me smile response. Only view the history but, do not address it. Only respond to the prompt that involves entertainment and nothing else.";
+        
+    }
+
+    if (config.isReviewingCIResponse)  {
+        llm.params.options.model = getMostAdvancedModelEquivalent(llm.params.model);
+        llm.params.options.prompt = "Please strictly adhere to the response formats provided and avoid adding any personal commentary or evaluative statements. Focus solely on verifying the criteria listed and directly stating whether the response should be updated or is unchanged";
     }
 }
 
@@ -757,7 +764,8 @@ export class PromptAction {
                         ragOnly: false,
                         retries: 3,
                         streamResults: true,
-                        isEntertainment: false
+                        isEntertainment: false,
+                        isReviewingCIResponse: false
                     }) {
 
         this.messages = getMessagesArray(messages);
@@ -765,7 +773,8 @@ export class PromptAction {
         this.streamResults = getParam(config, "streamResults", true);
         this.retries = getParam(config, "retries", 3);
         this.appendMessages = getParam(config, "appendMessages", true);
-        this.isEntertainment = getParam(config, "isEntertainment", false); // added so temp switch the model 
+        this.isEntertainment = getParam(config, "isEntertainment", false); 
+        this.isReviewingCIResponse = getParam(config, "isReviewingCIResponse", false); // added so temp switch the model and to grab entertainment history
         this.config = config;
     }
 
@@ -780,11 +789,30 @@ export class PromptAction {
             dataSources = context.activeDataSources;
         }
 
+        if (this.isEntertainment && this.outputKey !== 'riddleAnswer') {
+            // Ensure entertainment is not repeated
+            const entertainmentHistory = context.data['entertainmentHistory'][this.outputKey]; 
+            if (entertainmentHistory.length > 0) {
+                const msgLen = this.messages.length - 1;
+                const lastMsgContent = this.messages[msgLen].content;
+
+                this.messages[msgLen].content = `Provide new information on the topic of entertainment, avoiding any content previously mentioned. Here are the topics discussed before: [${entertainmentHistory}] ` + lastMsgContent;
+            }
+            
+        }
+
         const updatedMessages = fillInTemplateMessages(this.messages, context.data);
 
         let newMessages = this.appendMessages ?
             [...context.history, ...updatedMessages] :
             [...updatedMessages];
+
+         //remove all datasources from the messages
+         if (this.appendMessages && this.isEntertainment) {
+            newMessages.forEach((m) => {
+                if (m.data && m.data.dataSources) delete m.data.dataSources;
+            })
+         }
 
         const result = await llm.promptForString(
             {messages: newMessages},
@@ -832,6 +860,10 @@ export class AssistantState {
 
     addTransition(toStateName, description) {
         this.transitions.push({to: toStateName, description: description});
+    }
+
+    removeTransitions() {
+        this.transitions = [];
     }
 
     buildPrompt(context, dataSources) {

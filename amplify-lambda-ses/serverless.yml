@@ -1,0 +1,96 @@
+service: amplify-ses
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+    
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  logRetentionInDays: 365 #Set the log retention to 365 days for 800-171 Compliance
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+
+  environment:
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    AMPLIFY_SES_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    COGNITO_USERS_TABLE:  vu-amplify-object-access-${sls:stage}-cognito-users
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+
+  iam:
+    role:
+      managedPolicies: #attach the managed policy to the Lambda functions for 800-171 Compliance
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.AMPLIFY_SES_IAM_POLICY_NAME}
+
+
+functions:
+
+  send_email:
+    handler: service/core.send_email
+    events:
+      - http:
+          path: ses/send-email
+          method: post
+          cors: true
+resources:
+  Resources:
+    # Set up a managed policy for the Lambda functions for 800-171 Compliance
+    AmplifyUtilitiesIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.AMPLIFY_SES_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - s3:GetObject
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+
+
+        
+           

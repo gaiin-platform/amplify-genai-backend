@@ -75,8 +75,8 @@ def simulate_access_to_objects(event, context, current_user, name, data):
 
                 print(f"User has access to objectId {object_id} with access type {access_type}.")
                 add_access_response(access_responses, object_id, access_type, True)
-            except:
-                print(f"Error in simulate_access_to_objects.")
+            except Exception as e:
+                print(f"Error in simulate_access_to_objects: {e}")
                 add_access_response(access_responses, object_id, access_type, False)
 
     return {
@@ -191,7 +191,7 @@ def update_object_permissions(event, context, current_user, name, data):
             print("check if the current_user has 'owner' or 'write' permissions for the object_id")
             if owner_item and owner_item.get('permission_level') in ['owner', 'write']:
                 # If current_user is the owner or has write permission, proceed with updates
-                print("current_user foes have permissions to proceed with updates")
+                print("current_user does have permissions to proceed with updates")
                 for principal_id in email_list:
                     if (current_user != principal_id):  # edge case
                         print("Object ID: ", object_id, " for user: ", principal_id)
@@ -238,44 +238,3 @@ def update_object_permissions(event, context, current_user, name, data):
         'body': json.dumps('Permissions updated successfully.')
     }
 
-@validated("create_cognito_group")
-def create_cognito_group(event, context, current_user, name, data, username, cognito_groups):
-    """
-    Create a Cognito user group in the specified user pool and add the current user to it.
-
-    :param event: AWS Lambda event object.
-    :param context: AWS Lambda context object.
-    :param current_user: The username or sub of the current user.
-    :param name: The name of the user pool (not used in this function).
-    :param data: The data containing the groupName and description.
-    :return: The response from the create_group call or None if an error occurred.
-    """
-    data = data['data']
-    user_pool_id = os.environ['COGNITO_USER_POOL_ID']
-    group_name = data['groupName']
-    description = data['groupDescription']
-
-    # Initialize a Cognito Identity Provider client
-    cognito_idp = boto3.client('cognito-idp')
-
-    try:
-        # Create the group
-        response = cognito_idp.create_group(
-            GroupName=group_name,
-            UserPoolId=user_pool_id,
-            Description=description
-        )
-        print(f"Group '{group_name}' created successfully.")
-
-        # Add the current user to the group
-        cognito_idp.admin_add_user_to_group(
-            UserPoolId=user_pool_id,
-            Username=username,
-            GroupName=group_name
-        )
-        print(f"User '{current_user}' added to group '{group_name}' successfully.")
-
-        return response
-    except ClientError as e:
-        print(f"An error occurred: {e}")
-        return None

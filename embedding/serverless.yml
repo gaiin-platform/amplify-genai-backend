@@ -17,6 +17,7 @@ plugins:
 custom:
   pythonRequirements:
     dockerizePip: true
+    dockerizePip: true
     layer: true
     slim: true
     zip: true
@@ -47,7 +48,8 @@ provider:
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: true
+  versionFunctions: false
+  logRetentionInDays: 365
   deploymentBucket:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256
@@ -69,33 +71,17 @@ provider:
     RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
+    OBJECT_ACCESS_TABLE: vu-amplify-object-access-${sls:stage}-object-access
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+    CHAT_USAGE_DYNAMO_TABLE: vu-amplify-${sls:stage}-chat-usage
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    GROUPS_DYNAMO_TABLE: vu-amplify-object-access-${sls:stage}-amplify-groups
+    EMBEDDING_CHUNKS_INDEX_DLQ: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
+    EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    REGION: ${self:provider.region}
     
-   
-    #Reference Resources created by other users
-    OBJECT_ACCESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
-    S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
-    USER_FILES_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-user-files
-
-    #Stand Alone Vars references from local vars file
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    MIN_ACU: ${self:custom.stageVars.MIN_ACU}
-    MAX_ACU: ${self:custom.stageVars.MAX_ACU}
-    VPC_ID: ${self:custom.stageVars.VPC_ID}
-    PRIVATE_SUBNET_ONE: ${self:custom.stageVars.PRIVATE_SUBNET_ONE}
-    PRIVATE_SUBNET_TWO: ${self:custom.stageVars.PRIVATE_SUBNET_TWO}
-    VPC_CIDR: ${self:custom.stageVars.VPC_CIDR}
-    QA_MODEL_NAME: ${self:custom.stageVars.QA_MODEL_NAME}
-    API_VERSION: ${self:custom.stageVars.API_VERSION}
-    OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY}
-    EMBEDDING_MODEL_NAME: ${self:custom.stageVars.EMBEDDING_MODEL_NAME}
-    ENDPOINTS_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
-
-
   iam:
     role:
       statements:
@@ -122,6 +108,9 @@ provider:
             - !GetAtt RagPostgresDbCluster.DBClusterArn
             - !Ref RagPostgresDbSecret            
             
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.EMBEDDING_IAM_POLICY_NAME}
 
 functions:
   create_table:
@@ -215,63 +204,93 @@ resources:
         - 'prod'
 
   Resources:
-    RagPostgresDbCluster:
-      DependsOn: RagPostgresDbSecurityGroup
-      DeletionPolicy: Snapshot
-      Type: AWS::RDS::DBCluster
+    EmbeddingIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
       Properties:
-        DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
-        DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
-        Engine: aurora-postgresql
-        EngineVersion: '15.4' # Specify the compatible engine version for Serverless v2
-        ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
-          MinCapacity: ${self:provider.environment.MIN_ACU}
-          MaxCapacity: ${self:provider.environment.MAX_ACU}
-        EnableHttpEndpoint: true
-        EnableCloudwatchLogsExports:
-          - postgresql
-        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
-        MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
-        VpcSecurityGroupIds:
-          - !Ref RagPostgresDbSecurityGroup
-        DBSubnetGroupName: !Ref RagPostgresDbSubnetGroup
-        BackupRetentionPeriod: 7
-        StorageEncrypted: true
-        KmsKeyId: !Ref RagPostgresDbEncryptionKey # Add the ARN or Alias of your existing KMS key or create a new one
-
-      # Add a new AWS KMS Key resource for encryption
-    RagPostgresDbEncryptionKey:
-      Type: 'AWS::KMS::Key'
-      Properties:
-        Description: 'KMS key for encrypting the RAG Postgres DB cluster'
-        Enabled: true
-        EnableKeyRotation: true
-        KeyPolicy:
+        ManagedPolicyName: ${self:provider.environment.EMBEDDING_IAM_POLICY_NAME}
+        PolicyDocument:
           Version: '2012-10-17'
           Statement:
-            - Sid: 'Allow administration of the key'
-              Effect: 'Allow'
-              Principal:
-                AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            - Effect: Allow
               Action:
-                - 'kms:*'
-              Resource: '*'
+                - secretsmanager:GetSecretValue
+                - s3:GetObject  # for accessing S3
+                - s3:ListBucket # for listing objects in S3
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
 
-    RagPostgresDbInstance1:
-      Type: 'AWS::RDS::DBInstance'
-      Properties:
-        Engine: aurora-postgresql
-        DBInstanceClass: db.serverless
-        DBClusterIdentifier: !Ref RagPostgresDbCluster
-        
-    #Only create the second instance if the stage is prod
-    RagPostgresDbInstance2:
-      Type: 'AWS::RDS::DBInstance'
-      Condition: IsProd
-      Properties:
-        Engine: aurora-postgresql
-        DBInstanceClass: db.serverless
-        DBClusterIdentifier: !Ref RagPostgresDbCluster
+              Resource:
+                - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+                - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
+                - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+                - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+              # - !GetAtt RagPostgresDbCluster.DBClusterArn
+                - !GetAtt RagPostgresDbCluster2.DBClusterArn
+                - !Ref RagPostgresDbSecret
+                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
+                - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
+                - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
+                - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+  
+          
+#    RagPostgresDbCluster:
+#      DependsOn: RagPostgresDbSecurityGroup
+#      DeletionPolicy: Snapshot
+#      Type: AWS::RDS::DBCluster
+#      Properties:
+#        DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+#        DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
+#        Engine: aurora-postgresql
+#        EngineVersion: '15.4' # Specify the compatible engine version for Serverless v2
+#        ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
+#          MinCapacity: ${self:provider.environment.MIN_ACU}
+#          MaxCapacity: ${self:provider.environment.MAX_ACU}
+#        EnableHttpEndpoint: true
+#        EnableCloudwatchLogsExports:
+#          - postgresql
+#        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
+#        MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
+#        VpcSecurityGroupIds:
+#          - !Ref RagPostgresDbSecurityGroup
+#        DBSubnetGroupName: !Ref RagPostgresDbSubnetGroup
+#        BackupRetentionPeriod: 7
+#
+#    RagPostgresDbInstance1:
+#      Type: 'AWS::RDS::DBInstance'
+#      Properties:
+#        Engine: aurora-postgresql
+#        DBInstanceClass: db.serverless
+#        DBClusterIdentifier: !Ref RagPostgresDbCluster
+#        
+#    #Only create the second instance if the stage is prod
+#    RagPostgresDbInstance2:
+#      Type: 'AWS::RDS::DBInstance'
+#      Condition: IsProd
+#      Properties:
+#        Engine: aurora-postgresql
+#        DBInstanceClass: db.serverless
+#        DBClusterIdentifier: !Ref RagPostgresDbCluster
 
       
 
@@ -320,6 +339,10 @@ resources:
           Type: 'AWS::DynamoDB::Table'
           Properties:
             BillingMode: PAY_PER_REQUEST
+            PointInTimeRecoverySpecification:
+              PointInTimeRecoveryEnabled: true
+            SSESpecification:
+              SSEEnabled: true
             TableName: ${self:provider.environment.EMBEDDING_PROGRESS_TABLE}
             AttributeDefinitions:
               - AttributeName: 'object_id'
@@ -329,10 +352,79 @@ resources:
                 KeyType: 'HASH'  # Partition key
 
     EmbeddingChunksIndexQueue:
-          Type: "AWS::SQS::Queue"
-          Properties:
-            VisibilityTimeout: 900
-            QueueName: ${self:provider.environment.EMBEDDING_CHUNKS_INDEX_QUEUE}           
-    
+      Type: "AWS::SQS::Queue"
+      Properties:
+        VisibilityTimeout: 120
+        QueueName: ${self:provider.environment.EMBEDDING_CHUNKS_INDEX_QUEUE}
+        MessageRetentionPeriod: 86400 # 1 day
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [EmbeddingChunksIndexDLQ, Arn]
+          maxReceiveCount: 5
 
+    EmbeddingChunksIndexDLQ:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
+
+    RagPostgresDbCluster2:
+      Type: AWS::RDS::DBCluster
+      DependsOn: RagPostgresDbSecurityGroup
+      DeletionPolicy: Snapshot    
+      Properties:
+        DeletionProtection: true
+        DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+        DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}-2
+        Engine: aurora-postgresql
+        EngineVersion: '15.4' # Specify the compatible engine version for Serverless v2
+        ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
+          MinCapacity: ${self:provider.environment.MIN_ACU}
+          MaxCapacity: ${self:provider.environment.MAX_ACU}
+        EnableHttpEndpoint: true
+        EnableCloudwatchLogsExports:
+          - postgresql
+        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}  
+        MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
+        VpcSecurityGroupIds:
+          - !Ref RagPostgresDbSecurityGroup
+        DBSubnetGroupName: !Ref RagPostgresDbSubnetGroup
+        BackupRetentionPeriod: 7
+        StorageEncrypted: true
+        KmsKeyId: !Ref RagPostgresDbEncryptionKey # Add the ARN or Alias of your existing KMS key or create a new one
+        SnapshotIdentifier: 'migration'
+        SourceRegion: !Ref 'AWS::Region'
+
+      # Add a new AWS KMS Key resource for encryption
+    RagPostgresDbEncryptionKey:
+      Type: 'AWS::KMS::Key'
+      Properties:
+        Description: 'KMS key for encrypting the RAG Postgres DB cluster'
+        Enabled: true
+        EnableKeyRotation: true
+        KeyPolicy:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: 'Allow administration of the key'
+              Effect: 'Allow'
+              Principal:
+                AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+              Action:
+                - 'kms:*'
+              Resource: '*'
+
+    RagPostgresDbInstance3:
+      Type: 'AWS::RDS::DBInstance'
+      Properties:
+        Engine: aurora-postgresql
+        DBInstanceClass: db.serverless
+        DBClusterIdentifier: !Ref RagPostgresDbCluster2
         
+    #Only create the second instance if the stage is prod
+    RagPostgresDbInstance4:
+      Type: 'AWS::RDS::DBInstance'
+      Condition: IsProd
+      Properties:
+        Engine: aurora-postgresql
+        DBInstanceClass: db.serverless
+        DBClusterIdentifier: !Ref RagPostgresDbCluster2
+       

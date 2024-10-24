@@ -10,10 +10,8 @@ from urllib.parse import unquote
 # Required Libraries
 import os
 import boto3
-import requests
 from botocore.exceptions import NoCredentialsError
 import os
-import re
 
 from common.validate import validated
 

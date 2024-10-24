@@ -24,6 +24,8 @@ Scripts/
 # Environment
 .*venv
 .env*
+.*venv
+*
 .requirements.zip
 
 # Serverless

@@ -185,7 +185,7 @@ States.answerWithReadingEntireDocument.addTransition(States.done.name, "Done");
 // We create the assistant with the state machine and the current state.
 export const documentAssistant = new StateBasedAssistant(
     "Document Assistant",
-    "Document Assistant",
+    "Document",
     "This assistant helps determine the best way to accomplish a task that involves documents.",
     (m) => {
         return true
