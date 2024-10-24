@@ -27,21 +27,20 @@ def sync_users_to_dynamo(event, context):
                     'user_id': user_id,
                     'family_name': user_attributes.get('family_name'),
                     'given_name': user_attributes.get('given_name'),
+                    'custom:vu_groups': user_attributes.get('custom:vu_groups'),
                     'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                 }
-                
-                # Add custom:saml_groups only if it exists
-                if 'custom:saml_groups' in user_attributes:
-                    filtered_attributes['custom:saml_groups'] = user_attributes['custom:saml_groups']
                 
                 existing_user = dynamo_table.get_item(Key={'user_id': user_id}).get('Item')
                 if existing_user:
                     if any(existing_user.get(attr) != filtered_attributes.get(attr) for attr in filtered_attributes):
+                        filtered_attributes.pop('user_id', None)
+                        # update dynamo expression can not handle ':' so we need to replace with a placeholder '_'
                         dynamo_table.update_item(
                             Key={'user_id': user_id},
-                            UpdateExpression='SET ' + ', '.join(f'#{k}=:{k}' for k in filtered_attributes),
-                            ExpressionAttributeNames={f'#{k}': k for k in filtered_attributes},
-                            ExpressionAttributeValues={f':{k}': v for k, v in filtered_attributes.items()}
+                            UpdateExpression='SET ' + ', '.join(f'#{k.replace(":", "_")}=:{k.replace(":", "_")}' for k in filtered_attributes),
+                            ExpressionAttributeNames={f'#{k.replace(":", "_")}': k for k in filtered_attributes},
+                            ExpressionAttributeValues={f':{k.replace(":", "_")}': v for k, v in filtered_attributes.items()}
                         )
                         print(f"Updated user: {user_id}")
                 else:

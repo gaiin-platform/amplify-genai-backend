@@ -49,6 +49,7 @@ export class LLM {
             "n": 1,
             "stream": true
         };
+        console.log("Create LLM Instance")
     }
 
     clone() {

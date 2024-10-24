@@ -2,18 +2,21 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {newStatus} from "../common/status.js";
+import {getMostAdvancedModelEquivalent} from "../common/params.js"
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
-import {mapReduceAssistant} from "./mapReduceAssistant.js";
+// import {mapReduceAssistant} from "./mapReduceAssistant.js";
+import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {sendDeltaToStream} from "../common/streams.js";
 import {createChatTask, sendAssistantTaskToQueue} from "./queue/messages.js";
 import { v4 as uuidv4 } from 'uuid';
-import {getDataSourcesByUse} from "../datasource/datasources.js";
+import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {getUserDefinedAssistant} from "./userDefinedAssistants.js";
-import {getMostAdvancedModelEquivalent} from "../common/params.js"
+import { mapReduceAssistant } from "./mapReduceAssistant.js";
+import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 
 const logger = getLogger("assistants");
 
@@ -39,7 +42,7 @@ const defaultAssistant = {
         const {dataSources} = await getDataSourcesByUse(params, body, ds);
 
         const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
-        const requiredTokens = dataSources.reduce((acc, ds) => acc + getTokenCount(ds), 0);
+        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
         const aboveLimit = requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.tokenLimit}`)
@@ -104,13 +107,23 @@ const batchAssistant = {
     }
 };
 
+// These assistants should NOT be in the list
+// right now
+//documentSearchAssistant
+//mapReduceAssistant
+//batchAssistant,
+//documentAssistant,
+//reportWriterAssistant,
+//csvAssistant,
+
 export const defaultAssistants = [
     defaultAssistant,
     //batchAssistant,
     //documentAssistant,
     //reportWriterAssistant,
-    csvAssistant,
+    // csvAssistant,
     //documentSearchAssistant
+    //mapReduceAssistant
 ];
 
 export const buildDataSourceDescriptionMessages = (dataSources) => {
@@ -148,6 +161,7 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 }
 
 export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, assistants = defaultAssistants) => {
+    // console.log(chooseAssistantForRequestWithLLM);
 
     const messages = [
         {
@@ -211,9 +225,17 @@ ${body.messages.slice(-1)[0].content}
     return result.bestAssistant || defaultAssistant.name;
 }
 
-const getTokenCount = (dataSource) => {
-    if(dataSource.metadata && dataSource.metadata.totalTokens && !dataSource.metadata.ragOnly){
-        return dataSource.metadata.totalTokens;
+const getTokenCount = (dataSource, model) => {
+    if (dataSource.metadata && dataSource.metadata.totalTokens ) {
+        const totalTokens = dataSource.metadata.totalTokens;
+        if (isImage(dataSource)) {
+            return model.id.includes("gpt") ? totalTokens.gpt : 
+                   model.id.includes("anthropic") ? totalTokens.claude : "";
+        }
+        if (!dataSource.metadata.ragOnly) return totalTokens;
+    }
+    else if(dataSource.metadata && dataSource.metadata.ragOnly){
+        return 0;
     }
     else if(dataSource.metadata && dataSource.metadata.ragOnly){
         return 0;
@@ -222,6 +244,7 @@ const getTokenCount = (dataSource) => {
 }
 
 export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {
+    console.log("getAvailableAssistantsForDataSources function")
 
     // if (!dataSources || dataSources.length === 0) {
     //     return [defaultAssistant];
@@ -237,15 +260,35 @@ const isUserDefinedAssistant = (assistantId) => {
 }
 
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
+    logger.info(`Choose Assistant for Request `);
 
-    let selected = defaultAssistant;
+    // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
+    const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
+
+    // if (body.options && body.options.skipCodeInterpreter || body.options.api_accessed) {
+    //     if (index !== -1) assistants.splice(index, 1);
+    // } else {
+    //     if (index === -1) assistants.push(codeInterpreterAssistant);
+    // }
+
+
 
     const clientSelectedAssistant = (body.options && body.options.assistantId) ?
         body.options.assistantId : null;
 
     let selectedAssistant = null;
     if(clientSelectedAssistant) {
-        selectedAssistant = await getUserDefinedAssistant(defaultAssistant, llm.params.account.user, clientSelectedAssistant);
+        logger.info(`Client Selected Assistant`);
+        // For group ast
+        const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : llm.params.account.user;
+        selectedAssistant = await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
+
+    } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
+        selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
+        //codeInterpreterAssistant;
+    } else if (body.options.artifactsMode && (!body.options.api_accessed)) {
+        selectedAssistant = ArtifactModeAssistant;
+        console.log("ARTIFACT MODE DETERMINED")
     }
 
     const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
@@ -281,9 +324,16 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     }
 
-    selected = selectedAssistant || defaultAssistant;
+    const selected = selectedAssistant || defaultAssistant;
 
-    llm.sendStateEventToStream({currentAssistant: selectedAssistant.name})
+    logger.info("Sending State Event to Stream ", selectedAssistant.name);
+    let stateInfo = {
+        currentAssistant: selectedAssistant.name,
+        currentAssistantId: clientSelectedAssistant || selectedAssistant.name,
+    }
+    if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
+    
+    llm.sendStateEventToStream(stateInfo);
 
     status.inProgress = false;
     llm.sendStatus(status);
