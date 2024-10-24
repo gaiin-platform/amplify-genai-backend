@@ -28,10 +28,6 @@ provider:
   stage: ${opt:stage, 'dev'}
   region: us-east-1
   versionFunctions: false
-  logs:
-    httpApi: true
-    restApi: true
-    websocket: true
   logRetentionInDays: 365  
   apiGateway:
     restApiId:
@@ -469,6 +465,7 @@ resources:
     
     GroupAssistantConversationsBucket:
       Type: 'AWS::S3::Bucket'
+      DeletionPolicy: Retain
       Properties:
         BucketName: ${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}
         CorsConfiguration:
