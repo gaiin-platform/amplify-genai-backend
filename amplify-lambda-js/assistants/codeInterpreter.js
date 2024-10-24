@@ -131,7 +131,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
                 }
     
-                const responseData = await fetchRequest(token, createData, process.env.ASSISTANTS_API_BASE_URL + '/assistant/create/codeinterpreter'); 
+                const responseData = await fetchRequest(token, createData, process.env.API_BASE_URL + '/assistant/create/codeinterpreter'); 
                 
                 if (responseData && responseData && responseData.success) {
                     assistantId = responseData.data.assistantId
@@ -161,7 +161,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 }
     
 
-                    const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT);
+                    const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
                     
                     llm.sendStatus(newStatus(
                         {

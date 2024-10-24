@@ -64,8 +64,7 @@ permissions_by_state_type = {
     "/assistant/share": {"share_assistant": can_create_assistant},
     "/assistant/openai/delete": {"delete": can_delete_assistant},
     "/assistant/openai/thread/delete": {"delete": can_delete_assistant},
-    "/assistant/chat_with_code_interpreter": {"chat": can_chat_with_code_interpreter},
-    "/": {"chat": can_chat_with_code_interpreter},
+    "/assistant/chat/codeinterpreter": {"chat": can_chat_with_code_interpreter},
     "/assistant/create/codeinterpreter": {"create": can_create_assistant},
     "/assistant/files/download/codeinterpreter": {"download": can_download},
     "/assistant/remove_astp_permissions": {

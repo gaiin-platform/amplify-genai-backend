@@ -61,10 +61,8 @@ provider:
     ASSISTANT_QUEUE_NAME: vu-amplify-${sls:stage}-assistant-tasks
     TRACING_ENABLED: true
     DATASOURCE_REGISTRY_DYNAMO_TABLE: vu-amplify-${sls:stage}-datasource-registry
-    ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT: ${self:custom.stageVariables.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT}
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
-    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-history-cost-calculations
     MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates

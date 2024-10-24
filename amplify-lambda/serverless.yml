@@ -80,7 +80,6 @@ provider:
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
-    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
     FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
@@ -169,12 +168,12 @@ functions:
 
 
   upload_file:
-    handler: assistant/assistant.get_presigned_url
+    handler: files/file.get_presigned_url
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/upload
+          path: files/upload
           method: post
           cors: true
     environment:
@@ -182,68 +181,68 @@ functions:
     timeout: 9    
 
   download_file:
-    handler: assistant/assistant.get_presigned_download_url
+    handler: files/file.get_presigned_download_url
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/download
+          path: files/download
           method: post
           cors: true
 
   list_tags_user:
-    handler: assistant/assistant.list_tags_for_user
+    handler: files/file.list_tags_for_user
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/list
+          path: files/tags/list
           method: post
           cors: true
 
   create_tags_user:
-    handler: assistant/assistant.create_tags
+    handler: files/file.create_tags
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/create
+          path: files/tags/create
           method: post
           cors: true
 
   delete_tag_user:
-    handler: assistant/assistant.delete_tag_from_user
+    handler: files/file.delete_tag_from_user
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/delete
+          path: files/tags/delete
           method: post
           cors: true
 
   set_tags_user_files:
-    handler: assistant/assistant.update_item_tags
+    handler: files/file.update_item_tags
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/set_tags
+          path: files/set_tags
           method: post
           cors: true
 
   query_user_files:
-    handler: assistant/assistant.query_user_files
+    handler: files/file.query_user_files
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
-          path: assistant/files/query
+          path: files/query
           method: post
           cors: true
 
   set_datasource_metadata:
-    handler: assistant/assistant.set_datasource_metadata_entry
+    handler: files/file.set_datasource_metadata_entry
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30

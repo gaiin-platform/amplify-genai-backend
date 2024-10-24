@@ -55,6 +55,7 @@ chat_input_schema = {
       "enum": [
         "gpt-35-turbo",
         "gpt-4o",
+        "gpt-4o-mini",
         "gpt-4-1106-Preview",
         "anthropic.claude-3-haiku-20240307-v1:0",
         "anthropic.claude-3-5-sonnet-20240620-v1:0",
@@ -73,7 +74,7 @@ chat_input_schema = {
     "dataSources": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "object"
       }
     },
     "messages": {
@@ -305,51 +306,6 @@ share_load_schema = {
     "required": ["key"]
 }
 
-create_assistant_schema = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string",
-            "description": "The name of the item"
-        },
-        "description": {
-            "type": "string",
-            "description": "A brief description of the item"
-        },
-        "tags": {
-            "type": "array",
-            "description": "A list of tags associated with the item",
-            "items": {
-                "type": "string"
-            }
-        },
-        "instructions": {
-            "type": "string",
-            "description": "Instructions related to the item"
-        },
-        "fileKeys": {
-            "type": "array",
-            "description": "A list of file keys associated with the item",
-            "items": {
-                "type": "string"
-            }
-        },
-        "tools": {
-            "type": "array",
-            "description": "A list of tools associated with the item",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "description": "The type of tool"
-                    }
-                }
-            }
-        }
-    },
-    "required": ["name", "description", "tags", "instructions", "fileKeys", "tools"]
-}
 
 file_upload_schema = {
     "type": "object",
@@ -742,32 +698,26 @@ validators = {
     "/datasource/metadata/set": {
         "set": set_metdata_schema
     },
-    "/assistant/files/upload": {
+    "/files/upload": {
         "upload": file_upload_schema
     },
-    "/assistant/files/download": {
+    "/files/download": {
         "download": key_request_schema
     },
-    "/assistant/files/set_tags": {
+    "/files/set_tags": {
         "set_tags": file_set_tags_schema
     },
-    "/assistant/tags/delete": {
+    "/files/tags/delete": {
         "delete": user_delete_tag_schema
     },
-    "/assistant/tags/create": {
+    "/files/tags/create": {
         "create": create_tags_schema
     },
-    "/assistant/tags/list": {
+    "/files/tags/list": {
         "list": user_list_tags_schema
     },
-    "/assistant/files/query": {
+    "/files/query": {
         "query": file_query_schema
-    },
-    "/assistant/create": {
-        "create": create_assistant_schema
-    },
-    "/assistant/delete": {
-    "delete": {}
     },
     "/chat/convert": {
         "convert": convert_schema
@@ -818,31 +768,28 @@ api_validators = {
     "/state/share/load": {
         "load": share_load_schema
     },
-    "/assistant/files/upload": {
+    "/files/upload": {
         "upload": file_upload_schema
     },
-    "/assistant/files/set_tags": {
+    "/files/set_tags": {
         "set_tags": file_set_tags_schema
     },
-    "/assistant/tags/delete": {
+    "/files/tags/delete": {
         "delete": user_delete_tag_schema
     },
-    "/assistant/tags/create": {
+    "/files/tags/create": {
         "create": create_tags_schema
     },
-    "/assistant/tags/list": {
+    "/files/tags/list": {
         "list": user_list_tags_schema
     },
-    "/assistant/files/query": {
+    "/files/query": {
         "query": file_query_schema
-    },
-    "/assistant/create": {
-        "create": create_assistant_schema
     },
     "/chat": {
         "chat": chat_input_schema
     },
-    "/assistant/files/download": {
+    "/files/download": {
         "download": key_request_schema
     },
 }

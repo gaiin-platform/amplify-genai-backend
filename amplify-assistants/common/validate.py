@@ -354,8 +354,7 @@ validators = {
     "/assistant/delete": {"delete": delete_assistant_schema},
     "/assistant/share": {"share_assistant": share_assistant_schema},
     "/assistant/list": {"list": {}},  # Get
-    "/assistant/chat_with_code_interpreter": {"chat": chat_assistant_schema},
-    "/": {"chat": chat_assistant_schema},
+    "/assistant/chat/codeinterpreter": {"chat": chat_assistant_schema},
     "/assistant/create/codeinterpreter": {
         "create": create_code_interpreter_assistant_schema
     },

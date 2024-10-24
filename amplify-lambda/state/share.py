@@ -104,7 +104,7 @@ def handle_conversation_datasource_permissions(access_token, recipient_users, co
 
     print("All Datasource Keys: ", total_data_sources_keys)
 
-    if not update_object_permissions(
+    if len(total_data_sources_keys) != 0 and not update_object_permissions(
             access_token=access_token,
             shared_with_users=recipient_users,
             keys=total_data_sources_keys,
