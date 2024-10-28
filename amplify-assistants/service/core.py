@@ -1480,12 +1480,18 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                         key = f"{assistant_id}/{conversation_id}.txt"
                         try:
                             obj = s3.get_object(Bucket=bucket_name, Key=key)
-                            conv["conversationContent"] = obj["Body"].read().decode("utf-8")
+                            conv["conversationContent"] = (
+                                obj["Body"].read().decode("utf-8")
+                            )
                         except ClientError as e:
                             if e.response["Error"]["Code"] == "NoSuchKey":
-                                print(f"Conversation content not found for {conversation_id}")
+                                print(
+                                    f"Conversation content not found for {conversation_id}"
+                                )
                             else:
-                                print(f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}")
+                                print(
+                                    f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}"
+                                )
 
             # response_data["conversationData"] = conversations
 
@@ -1498,14 +1504,15 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                 Bucket=bucket_name,
                 Key=filename,
                 Body=json.dumps(conversations, cls=CombinedEncoder),
-                ContentType='application/json'
+                ContentType="application/json",
             )
 
             # Generate a pre-signed URL that's valid for 1 hour
-            presigned_url = s3.generate_presigned_url('get_object',
-                                                    Params={'Bucket': bucket_name,
-                                                            'Key': filename},
-                                                    ExpiresIn=3600)
+            presigned_url = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket_name, "Key": filename},
+                ExpiresIn=3600,
+            )
 
             response_data["conversationDataUrl"] = presigned_url
 

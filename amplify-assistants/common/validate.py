@@ -370,10 +370,12 @@ validators = {
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
     },
-    "/assistant/save_user_rating": {"save_user_rating": save_user_rating_schema},
+    "/assistant/save_user_rating": {
+        "save_user_rating": save_user_rating_schema
+    },
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
-    },
+    }
 }
 
 api_validators = {
@@ -401,10 +403,12 @@ api_validators = {
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
     },
-    "/assistant/save_user_rating": {"save_user_rating": save_user_rating_schema},
+    "/assistant/save_user_rating": {
+        "save_user_rating": save_user_rating_schema
+    },
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
-    },
+    }
 }
 
 
