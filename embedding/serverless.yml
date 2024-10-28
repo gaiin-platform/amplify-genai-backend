@@ -213,6 +213,7 @@ resources:
                 - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
                 - ${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}
                 - "arn:aws:s3:::${self:custom.stageVariables.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+              # - !GetAtt RagPostgresDbCluster.DBClusterArn
                 - !GetAtt RagPostgresDbCluster2.DBClusterArn
                 - !Ref RagPostgresDbSecret
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-${self:provider.stage}-user-files"
@@ -232,6 +233,46 @@ resources:
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
                 - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+  
+          
+#    RagPostgresDbCluster:
+#      DependsOn: RagPostgresDbSecurityGroup
+#      DeletionPolicy: Snapshot
+#      Type: AWS::RDS::DBCluster
+#      Properties:
+#        DatabaseName: ${self:provider.environment.RAG_POSTGRES_DB_NAME}
+#        DBClusterIdentifier: ${self:provider.environment.RAG_POSTGRES_DB_CLUSTER}
+#        Engine: aurora-postgresql
+#        EngineVersion: '15.4' # Specify the compatible engine version for Serverless v2
+#        ServerlessV2ScalingConfiguration: # This is a new property for Serverless v2
+#          MinCapacity: ${self:provider.environment.MIN_ACU}
+#          MaxCapacity: ${self:provider.environment.MAX_ACU}
+#        EnableHttpEndpoint: true
+#        EnableCloudwatchLogsExports:
+#          - postgresql
+#        MasterUsername: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME}
+#        MasterUserPassword: !Sub '{{resolve:secretsmanager:${RagPostgresDbSecret}:SecretString::}}'
+#        VpcSecurityGroupIds:
+#          - !Ref RagPostgresDbSecurityGroup
+#        DBSubnetGroupName: !Ref RagPostgresDbSubnetGroup
+#        BackupRetentionPeriod: 7
+#
+#    RagPostgresDbInstance1:
+#      Type: 'AWS::RDS::DBInstance'
+#      Properties:
+#        Engine: aurora-postgresql
+#        DBInstanceClass: db.serverless
+#        DBClusterIdentifier: !Ref RagPostgresDbCluster
+#        
+#    #Only create the second instance if the stage is prod
+#    RagPostgresDbInstance2:
+#      Type: 'AWS::RDS::DBInstance'
+#      Condition: IsProd
+#      Properties:
+#        Engine: aurora-postgresql
+#        DBInstanceClass: db.serverless
+#        DBClusterIdentifier: !Ref RagPostgresDbCluster
+
       
 
     RagPostgresDbSubnetGroup:

@@ -121,7 +121,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const numberPrompts = chatRequest.options.numPrompts;
     const employeeType = chatRequest.options.groupType;
     const entryPoint = chatRequest.options.source || "Amplify";
-
+    
     let userEmail = user;
     if (chatRequest.options.source) { // save user email from wordpress
         userEmail = chatRequest.options.user;

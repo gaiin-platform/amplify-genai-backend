@@ -124,6 +124,7 @@ def charge_request(event, context, user, name, data):
 @op(
     path="/state/accounts/get",
     name="getUserAccounts",
+    method="GET",
     tags=["accounts"],
     description="Get a list of the user's accounts that costs are charged to.",
     params={

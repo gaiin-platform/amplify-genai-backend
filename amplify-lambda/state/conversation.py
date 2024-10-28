@@ -65,7 +65,7 @@ def get_conversation(event, context, current_user, name, data):
     
 
 def pick_conversation_attributes(conversation):
-    attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal', 'groupType'] #, 'artifacts'
+    attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal', 'groupType', 'codeInterpreterAssistantId']
     return {attr: conversation.get(attr, None) for attr in attributes}
 
 
@@ -74,6 +74,8 @@ def get_all_conversations(event, context, current_user, name, data):
     s3 = boto3.client('s3')
     conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
     user_prefix = current_user + '/'
+
+    temp_path = f'temp/{current_user}/conversations.json'
 
     try:
         print("Listing s3 pbjects")
@@ -106,9 +108,13 @@ def get_all_conversations(event, context, current_user, name, data):
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve : {obj} with error: {str(e)}")
         print("Number of conversations retrieved: ", len(conversations))
+
+        # Generate a pre-signed URL for the uploaded file
+        presigned_url = get_presigned_url(current_user, conversations, conversations_bucket)
+
         return {
             'statusCode': 200,
-            'body': json.dumps({'success': True, 'conversationsData': conversations})
+            'body': json.dumps({'success': True, 'presignedUrl': presigned_url})
         }
 
     except (BotoCoreError, ClientError) as e:
@@ -141,10 +147,14 @@ def get_multiple_conversations(event, context, current_user, name, data):
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve conversation id: {id} with error: {str(e)}")
             
+        # Generate a pre-signed URL for the uploaded file
+        presigned_url = get_presigned_url(current_user, conversations, conversations_bucket)
+
         return {
             'statusCode': 200,
-            'body': json.dumps({'success': True, 'conversations': conversations})
+            'body': json.dumps({'success': True, 'presignedUrl': presigned_url})
         }
+
 
     except (BotoCoreError, ClientError) as e:
         print(str(e))
@@ -152,6 +162,26 @@ def get_multiple_conversations(event, context, current_user, name, data):
             'statusCode': 404,
             'body': json.dumps({'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)})
         }
+
+def get_presigned_url(current_user, conversations, conversations_bucket):
+    s3 = boto3.client('s3')
+    temp_path = f'temp/{current_user}/conversations.json'
+    conversations_data = json.dumps(conversations)
+    s3.put_object(
+        Bucket=conversations_bucket,
+        Key=temp_path,
+        Body=conversations_data,
+        ContentType='application/json'
+    )
+    
+    # Generate a pre-signed URL for the uploaded file
+    presigned_url = s3.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': conversations_bucket, 'Key': temp_path},
+        ExpiresIn=3600  # URL valid for 1 hour
+    )
+
+    return presigned_url
 
 
 @validated("delete")
@@ -266,3 +296,5 @@ def lzw_uncompress(compressed_data):
         return json.loads(output)
     except json.JSONDecodeError:
         raise ValueError("Failed to parse JSON from decompressed string")
+
+

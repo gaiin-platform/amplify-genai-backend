@@ -1,6 +1,24 @@
 # Amplify Support Service
 
-This repository contains the serverless deployment configuration for "amplify-support" service using the Serverless Framework.
+This repo is a baseline for createing a new service for the Amplify platform. It is a serverless service that is 
+deployed to AWS using the Serverless Framework. It is written in Python and uses AWS Lambda, DynamoDB, and S3 for 
+storage.
+
+The sample sets up an S3 bucket, a DynamoDB table, and a Lambda function. The Lambda function is triggered by an HTTP
+request using API Gateway. When the Lambda function is invoked it will return a JSON object with a "message" key.
+
+To create a new service:
+
+1. Clone this repo
+2. Create a Python virtual environment and pip install the requirements
+3. Rename the service in the `serverless.yml` file
+4. Update the service/core.py file with the new service logic
+5. Update the validate.py file with each API endpoint to provide the schema for validation
+6. Update the permissions.py file with the permissions for each API endpoint
+7. Make sure that in the parent mono repo in the var folder, you have dev-var.yml with at least
+    the following variables set to your OAuth info (likely Cognito):
+    - AUTH0_AUDIENCE
+    - AUTH0_ISSUER_BASE_URL
 
 ## Overview
 
@@ -38,48 +56,14 @@ sls plugin install -n serverless-python-requirements
 To deploy the service, use:
 
 ```bash
-sls deploy
+sls deploy --stage dev
 ```
 
-This will deploy to the `dev` stage by default. You can specify a different stage by using:
+This will deploy to the `dev` stage. You can specify a different stage by using:
 
 ```bash
 sls deploy --stage prod
 ```
-
-## Environment variables
-
-The following environment variables are used:
-
-- `DYNAMODB_TABLE`: The base DynamoDB table name for storing data.
-- `ASSISTANTS_DYNAMODB_TABLE`: Stores the assistants' data.
-- `S3_BUCKET_NAME`: The S3 bucket for shared files.
-- `S3_ASSISTANT_FILES_BUCKET_NAME`: The S3 bucket for assistant files.
-- `AUTH0_AUDIENCE`: The Auth0 audience for authentication.
-- `AUTH0_ISSUER_BASE_URL`: The base URL of the Auth0 issuer for authentication.
-
-## IAM Configuration
-
-The IAM role assumed by the functions has permissions for accessing secrets in Secrets Manager, performing CRUD operations on DynamoDB, and handling files in S3.
-
-Ensure that the correct permissions are set up as per the `serverless.yml` configuration.
-
-## Functions
-
-The service includes the following endpoints:
-
-----
-
-## Resources
-
-Resources for S3 and DynamoDB are defined within the `serverless.yml` configuration file and are provisioned during deployment.
-
-## Plugins
-
-The following Serverless Framework plugins are used:
-
-- `serverless-offline` for local testing.
-- `serverless-python-requirements` for handling Python dependencies.
 
 ## Custom Configurations
 
@@ -101,7 +85,7 @@ For local development and testing, you can use the `serverless-offline` plugin w
 To start the server locally, run:
 
 ```bash
-sls offline start
+sls offline
 ```
 
 ## Testing

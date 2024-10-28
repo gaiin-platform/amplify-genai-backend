@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import uuid
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -21,7 +22,7 @@ IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @op(
-    path="/assistant/files/download",
+    path="/files/download",
     name="getDownloadUrl",
     tags=["files"],
     description="Get a url to download the file associated with a datasource key / ID.",
@@ -113,54 +114,26 @@ def create_file_metadata_entry(current_user, name, file_type, tags, data_props, 
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE']) 
-
-    # Query the GSI to see if a file with the same name and createdBy exists
-    response = files_table.query(
-        IndexName='createdByAndName',  # Specify the GSI name
-        KeyConditionExpression = Key('createdBy').eq(current_user) & Key('name').eq(name)
+    files_table.put_item(
+        Item={
+            'id': key,
+            'name': name,
+            'type': file_type,
+            'tags': tags,
+            'data': data_props,
+            'knowledgeBase': knowledge_base,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+            'createdBy': current_user,
+            'updatedBy': current_user
+        }
     )
 
-    if response['Count'] == 0:
-        # If the item does not exist, create a new one
-        files_table.put_item(
-            Item={
-                'id': key,
-                'name': name,
-                'type': file_type,
-                'tags': tags,
-                'data': data_props,
-                'knowledgeBase': knowledge_base,
-                'createdAt': datetime.now().isoformat(),
-                'updatedAt': datetime.now().isoformat(),
-                'createdBy': current_user,
-                'updatedBy': current_user
-            }
-        )
+    if tags is not None and len(tags) > 0:
+        update_file_tags(current_user, key, tags)
 
-        if tags is not None and len(tags) > 0:
-            update_file_tags(current_user, key, tags)
-        
-        print("File does not exist, created new entry.")
-        return bucket_name, key
-    else:
-        # If the item exists, update the `updatedAt` and `updatedBy` fields
-        existing_item = response['Items'][0]  # Get the first matching item (if any)
+    return bucket_name, key
 
-        files_table.update_item(
-            Key={
-                'id': existing_item['id']  # Use the item's id as the key for the update
-            },
-            UpdateExpression="""
-                SET updatedAt = :updatedAt, 
-                    updatedBy = :updatedBy
-            """,
-            ExpressionAttributeValues={
-                ':updatedAt': datetime.now().isoformat(),
-                ':updatedBy': current_user
-            }
-        )
-        print("File already exists, updated existing entry.")
-        return bucket_name, existing_item['id']
 
 @validated(op="set")
 def set_datasource_metadata_entry(event, context, current_user, name, data):
@@ -214,7 +187,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
 
 
 @op(
-    path="/assistant/files/upload",
+    path="/files/upload",
     name="getUploadUrl",
     tags=["files"],
     description="Get a url to upload a file to.",
@@ -351,6 +324,7 @@ def get_presigned_url(event, context, current_user, name, data):
     s3 = boto3.client('s3')
 
     name = data['name']
+    name = re.sub(r'[_\s]+', '_', name)
     file_type = data['type']
     tags = data['tags']
     props = data['data']
@@ -437,7 +411,7 @@ def get_presigned_url(event, context, current_user, name, data):
     
 
 @op(
-    path="/assistant/tags/list",
+    path="/files/tags/list",
     name="listTagsForUser",
     tags=["files"],
     description="Get a list of all tags that can be added to files or used to search for groups of files.",
@@ -477,7 +451,7 @@ def list_tags_for_user(event, context, current_user, name, data):
 
 
 @op(
-    path="/assistant/tags/delete",
+    path="/files/tags/delete",
     name="deleteTagForUser",
     tags=["files"],
     description="Delete a tag from the list of the user's tags.",
@@ -529,7 +503,7 @@ def delete_tag_from_user(event, context, current_user, name, data):
 
 
 @op(
-    path="/assistant/tags/create",
+    path="/files/tags/create",
     name="createTagsForUser",
     tags=["files"],
     description="Create one or more tags for the user that can be added to files.",
@@ -593,7 +567,7 @@ def add_tags_to_user(current_user, tags_to_add):
 
 
 @op(
-    path="/assistant/tags/set_tags",
+    path="/files/tags/set_tags",
     name="setTagsForFile",
     tags=["files"],
     description="Set a file's list of tags.",
@@ -651,7 +625,7 @@ def update_file_tags(current_user, item_id, tags):
 
 
 @op(
-    path="/assistant/files/query",
+    path="/files/query",
     name="queryFilesByNameAndType",
     tags=["files"],
     description="Search a user's list of files with a query.",
@@ -661,7 +635,7 @@ def update_file_tags(current_user, item_id, tags):
     }
 )
 @op(
-    path="/assistant/files/query",
+    path="/files/query",
     name="queryFilesByName",
     tags=["files"],
     description="Search a user's list of files with a query.",
@@ -670,7 +644,7 @@ def update_file_tags(current_user, item_id, tags):
     }
 )
 @op(
-    path="/assistant/files/query",
+    path="/files/query",
     name="queryFilesByTags",
     tags=["files"],
     description="Search a user's list of files with a query.",

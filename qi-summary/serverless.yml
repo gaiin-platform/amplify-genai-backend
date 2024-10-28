@@ -70,6 +70,7 @@ resources:
   Resources:
     QiFilesBucket:
         Type: 'AWS::S3::Bucket'
+        DeletionPolicy: Retain
         Properties:
           BucketName: ${self:provider.environment.QI_FILES_BUCKET_NAME}
           CorsConfiguration:
