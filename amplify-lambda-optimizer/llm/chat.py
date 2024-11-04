@@ -26,7 +26,7 @@ def tag_file(api_url, file_key, access_token, tags):
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
-    response = requests.post(api_url+'/assistant/files/set_tags', headers=headers, data=json.dumps(data))
+    response = requests.post(api_url+'/files/set_tags', headers=headers, data=json.dumps(data))
     response.raise_for_status()  # Raise an exception for HTTP errors
     result = response.json()
     return result
@@ -57,7 +57,7 @@ def upload_file(api_url, access_token, file_path, tags=[]):
         }
     }
 
-    response = requests.post(api_url+'/assistant/files/upload', headers=headers, data=json.dumps(data))
+    response = requests.post(api_url+'/files/upload', headers=headers, data=json.dumps(data))
     response.raise_for_status()  # Raise an exception for HTTP errors
     presigned_data = response.json()
 

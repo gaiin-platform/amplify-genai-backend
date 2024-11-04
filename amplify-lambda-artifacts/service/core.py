@@ -66,7 +66,7 @@ def get_artifacts_info(event, context, current_user, name, data):
 
         if 'Item' in response:
             # Extract the artifacts column from the user's entry
-            artifacts = response['Item'].get('artifacts')
+            artifacts = response['Item'].get('artifacts', [])
             return {
                 'success': True,
                 'data': artifacts

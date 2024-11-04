@@ -22,7 +22,7 @@ IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @op(
-    path="/assistant/files/download",
+    path="/files/download",
     name="getDownloadUrl",
     tags=["files"],
     description="Get a url to download the file associated with a datasource key / ID.",
@@ -187,7 +187,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
 
 
 @op(
-    path="/assistant/files/upload",
+    path="/files/upload",
     name="getUploadUrl",
     tags=["files"],
     description="Get a url to upload a file to.",
@@ -411,7 +411,7 @@ def get_presigned_url(event, context, current_user, name, data):
     
 
 @op(
-    path="/assistant/tags/list",
+    path="/files/tags/list",
     name="listTagsForUser",
     tags=["files"],
     description="Get a list of all tags that can be added to files or used to search for groups of files.",
@@ -451,7 +451,7 @@ def list_tags_for_user(event, context, current_user, name, data):
 
 
 @op(
-    path="/assistant/tags/delete",
+    path="/files/tags/delete",
     name="deleteTagForUser",
     tags=["files"],
     description="Delete a tag from the list of the user's tags.",
@@ -503,7 +503,7 @@ def delete_tag_from_user(event, context, current_user, name, data):
 
 
 @op(
-    path="/assistant/tags/create",
+    path="/files/tags/create",
     name="createTagsForUser",
     tags=["files"],
     description="Create one or more tags for the user that can be added to files.",
@@ -567,7 +567,7 @@ def add_tags_to_user(current_user, tags_to_add):
 
 
 @op(
-    path="/assistant/tags/set_tags",
+    path="/files/tags/set_tags",
     name="setTagsForFile",
     tags=["files"],
     description="Set a file's list of tags.",
@@ -625,7 +625,7 @@ def update_file_tags(current_user, item_id, tags):
 
 
 @op(
-    path="/assistant/files/query",
+    path="/files/query",
     name="queryFilesByNameAndType",
     tags=["files"],
     description="Search a user's list of files with a query.",
@@ -635,7 +635,7 @@ def update_file_tags(current_user, item_id, tags):
     }
 )
 @op(
-    path="/assistant/files/query",
+    path="/files/query",
     name="queryFilesByName",
     tags=["files"],
     description="Search a user's list of files with a query.",
@@ -644,7 +644,7 @@ def update_file_tags(current_user, item_id, tags):
     }
 )
 @op(
-    path="/assistant/files/query",
+    path="/files/query",
     name="queryFilesByTags",
     tags=["files"],
     description="Search a user's list of files with a query.",

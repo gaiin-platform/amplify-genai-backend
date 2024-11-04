@@ -68,20 +68,7 @@ Ensure that the correct permissions are set up as per the `serverless.yml` confi
 
 The service includes the following endpoints:
 
-- **upload_file**: `POST /assistant/files/upload`
-- **create_assistant**: `POST /assistant/create`
-- **delete_assistant**: `POST /assistant/delete`
-- **add_message_assistant_thread**: `POST /assistant/thread/message/create`
-- **get_messages_assistant_thread**: `POST /assistant/thread/message/list`
-- **run_assistant_thread**: `POST /assistant/thread/run`
-- **run_status_assistant_thread**: `POST /assistant/thread/run/status`
-- **list_assistants**: `POST /assistant/list`
-- **create_assistant_thread**: `POST /assistant/thread/create`
-- **delete_assistant_thread**: `POST /assistant/thread/delete`
-- **create**: `POST /state`
-- **user_share_with_users**: `POST /state/share`
-- **user_share_load**: `POST /state/share/load`
-- **user_get_shares**: `GET /state/share`
+----
 
 ## Resources
 

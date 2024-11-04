@@ -41,7 +41,6 @@ custom:
   deploymentBucket:
     versioning: true
     accelerate: false
-    accelerate: false
     blockPublicAccess: true
     tags:
       - Key: Environment
@@ -237,7 +236,7 @@ functions:
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
     role: !GetAtt UpdateMembersRole.Arn
 
@@ -296,7 +295,7 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
       COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
     role: !GetAtt ListGroupsRole.Arn
   
@@ -317,7 +316,7 @@ functions:
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL} 
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
       HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
 
@@ -340,7 +339,6 @@ functions:
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-      ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
       API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     role: !GetAtt DeleteGroupRole.Arn
 

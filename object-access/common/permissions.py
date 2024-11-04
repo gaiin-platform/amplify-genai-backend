@@ -34,7 +34,6 @@ def get_permission_checker(user, type, op, data):
     return checker or (lambda user, data: False)
 
 
-
 def get_user(event, data):
     return data['user']
 

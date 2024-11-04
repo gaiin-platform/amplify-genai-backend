@@ -59,6 +59,19 @@ provider:
     "vu:environment": ${sls:stage}
     "vu:applicationName": "amplify"
     "vu:owner": "amplify@vanderbilt.edu"
+  logs:
+    httpApi: true
+    restApi: true
+    websocket: true
+  logRetentionInDays: 365  
+  stackTags:
+    "vu:environment": ${sls:stage}
+    "vu:applicationName": "amplify"
+    "vu:owner": "amplify@vanderbilt.edu"
+  tags:
+    "vu:environment": ${sls:stage}
+    "vu:applicationName": "amplify"
+    "vu:owner": "amplify@vanderbilt.edu"
   environment:
     #Local Resources Created in this service
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
@@ -74,7 +87,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
-    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share 
+    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
     S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
@@ -86,30 +99,14 @@ provider:
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
     PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
-    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
-    
-
-    # Var File
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    #OPENAI_API_KEY_ARN: ${self:custom.stageVars.OPENAI_API_KEY_ARN}
-    OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY}
-    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
-    PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    SHARE_ASSISTANTS_ENDPOINT: ${param:SHARE_ASSISTANTS_ENDPOINT}/assistant/share
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/update_object_permissions
-    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
+    OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
-    ASSISTANTS_API_BASE_URL: ${self:custom.stageVariables.ASSISTANTS_API_BASE_URL}
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
-
-
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
 
   iam:
     role:
@@ -195,12 +192,12 @@ functions:
 
 
   upload_file:
-    handler: assistant/assistant.get_presigned_url
+    handler: files/file.get_presigned_url
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/upload
+          path: files/upload
           method: post
           cors: true
     environment:
@@ -208,68 +205,68 @@ functions:
     timeout: 9    
 
   download_file:
-    handler: assistant/assistant.get_presigned_download_url
+    handler: files/file.get_presigned_download_url
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/download
+          path: files/download
           method: post
           cors: true
 
   list_tags_user:
-    handler: assistant/assistant.list_tags_for_user
+    handler: files/file.list_tags_for_user
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/list
+          path: files/tags/list
           method: post
           cors: true
 
   create_tags_user:
-    handler: assistant/assistant.create_tags
+    handler: files/file.create_tags
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/create
+          path: files/tags/create
           method: post
           cors: true
 
   delete_tag_user:
-    handler: assistant/assistant.delete_tag_from_user
+    handler: files/file.delete_tag_from_user
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/delete
+          path: files/tags/delete
           method: post
           cors: true
 
   set_tags_user_files:
-    handler: assistant/assistant.update_item_tags
+    handler: files/file.update_item_tags
     layers:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/set_tags
+          path: files/set_tags
           method: post
           cors: true
 
   query_user_files:
-    handler: assistant/assistant.query_user_files
+    handler: files/file.query_user_files
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
-          path: assistant/files/query
+          path: files/query
           method: post
           cors: true
 
   set_datasource_metadata:
-    handler: assistant/assistant.set_datasource_metadata_entry
+    handler: files/file.set_datasource_metadata_entry
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30
@@ -1119,33 +1116,4 @@ resources:
               Condition:
                 StringEquals:
                   'aws:SourceAccount': ${aws:accountId}
-  Outputs:
-    AccountingChatUsageDynamoStreamArn:
-      Description: "The ARN of the DynamoDB Stream for the ChatUsage table"
-      Value: !GetAtt AccountingChatUsageDynamoDbTable.StreamArn
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-AccountingChatUsageDynamoStreamArn"
-  
-    ApiGatewayId:
-      Description: "The ID of the API Gateway"
-      Value: !Ref ApiGatewayRestApi
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-RestApiId"
-  
-    ApiGatewayRootResourceId:
-      Description: "The ID of the API Gateway root resource"
-      Value: 
-        Fn::GetAtt: [ApiGatewayRestApi, "RootResourceId"]
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-RestApiRootResourceId"
-
-    BasePromptsBucketOutput:
-      Description: "The S3 bucket name for base prompts"
-      Value: !Ref BasePromptsBucket
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-BasePromptsBucket"                  
 
