@@ -5,7 +5,7 @@ import json
 def share_assistant(access_token, data):
     print("Initiate share assistant call")
 
-    share_assistant_endpoint = os.environ['ASSISTANTS_API_BASE_URL'] + '/assistant/share'
+    share_assistant_endpoint = os.environ['API_BASE_URL'] + '/assistant/share'
 
     request = {
         "data": data
@@ -39,7 +39,7 @@ def share_assistant(access_token, data):
 def list_assistants(access_token):
     print("Initiate list assistant call")
 
-    assistant_endpoint = os.environ['ASSISTANTS_API_BASE_URL'] + '/assistant/list'
+    assistant_endpoint = os.environ['API_BASE_URL'] + '/assistant/list'
 
     headers = {
         'Content-Type': 'application/json',
@@ -67,7 +67,7 @@ def list_assistants(access_token):
 def remove_astp_perms(access_token, data):
     print("Initiate remove astp perms assistant call")
 
-    assistant_endpoint = os.environ['ASSISTANTS_API_BASE_URL'] + '/assistant/remove_astp_permissions'
+    assistant_endpoint = os.environ['API_BASE_URL'] + '/assistant/remove_astp_permissions'
 
     request = {
         "data": data
@@ -100,7 +100,7 @@ def remove_astp_perms(access_token, data):
 def delete_assistant(access_token, data):
     print("Initiate delete assistant call")
 
-    assistant_endpoint = os.environ['ASSISTANTS_API_BASE_URL'] + '/assistant/delete'
+    assistant_endpoint = os.environ['API_BASE_URL'] + '/assistant/delete'
 
     request = {
         "data": data
@@ -134,7 +134,7 @@ def delete_assistant(access_token, data):
 def create_assistant(access_token, data):
     print("Initiate create assistant call")
 
-    assistant_endpoint = os.environ['ASSISTANTS_API_BASE_URL'] + '/assistant/create'
+    assistant_endpoint = os.environ['API_BASE_URL'] + '/assistant/create'
 
     request = {
         "data": data

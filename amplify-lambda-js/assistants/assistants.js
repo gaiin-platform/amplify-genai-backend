@@ -3,6 +3,7 @@
 
 import {newStatus} from "../common/status.js";
 import {getMostAdvancedModelEquivalent} from "../common/params.js"
+import {getMostAdvancedModelEquivalent} from "../common/params.js"
 import {csvAssistant} from "./csv.js";
 import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
@@ -233,9 +234,6 @@ const getTokenCount = (dataSource, model) => {
                    model.id.includes("anthropic") ? totalTokens.claude : "";
         }
         if (!dataSource.metadata.ragOnly) return totalTokens;
-    }
-    else if(dataSource.metadata && dataSource.metadata.ragOnly){
-        return 0;
     }
     else if(dataSource.metadata && dataSource.metadata.ragOnly){
         return 0;

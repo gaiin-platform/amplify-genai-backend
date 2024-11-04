@@ -55,32 +55,26 @@ permissions_by_state_type = {
   "/datasource/metadata/set": {
     "set": can_upload
   },
-  "/assistant/files/upload": {
+  "/files/upload": {
     "upload": can_upload
   },
-  "/assistant/files/set_tags": {
+  "/files/set_tags": {
     "set_tags": can_upload
   },
-  "/assistant/tags/create": {
+  "/files/tags/create": {
     "create": can_upload
   },
-  "/assistant/tags/delete": {
+  "/files/tags/delete": {
     "delete": can_upload
   },
-  "/assistant/tags/list": {
+  "/files/tags/list": {
     "list": can_upload
   },
-  "/assistant/files/query": {
+  "/files/query": {
     "query": can_upload
   },
-  "/assistant/files/download": {
+  "/files/download": {
     "download": can_upload
-  },
-  "/assistant/create": {
-    "create": can_create_assistant
-  },
-  "/assistant/delete": {
-    "delete": can_create_assistant
   },
   "/chat/convert": {
     "convert": can_publish_item

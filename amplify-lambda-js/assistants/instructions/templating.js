@@ -86,14 +86,6 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
             return process.env.API_BASE_URL;
         });
 
-        Handlebars.registerHelper('ASSISTANTS_API_BASE_URL', function () {
-            return process.env.ASSISTANTS_API_BASE_URL;
-        }); 
-
-        Handlebars.registerHelper('CODE_INTERPRETER_ENDPOINT', function () {
-            return process.env.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT;
-        });
-
         const template = Handlebars.compile(templateStr);
         result = template(contextData);
 

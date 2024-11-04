@@ -36,6 +36,9 @@ provider:
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
     OBJECT_ACCESS_API_ENDPOINT: https://${self:custom.stageVariables.CUSTOM_API_DOMAIN}/utilities/can_access_objects
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_OPTIMIZER_IAM_POLICY_NAME: amplify-${self:custom.stageVariables.DEP_NAME}-lambda-optimizer-${sls:stage}-iam-policy
 
   apiGateway:
