@@ -25,7 +25,6 @@ Scripts/
 .*venv
 .env*
 .*venv
-*
 .requirements.zip*
 .*venv
 
