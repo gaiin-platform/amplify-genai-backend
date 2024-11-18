@@ -11,6 +11,7 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets
 
 
 custom:
@@ -22,6 +23,9 @@ custom:
     
   pythonRequirements:
     dockerizePip: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   
   prune:
   automatic: true

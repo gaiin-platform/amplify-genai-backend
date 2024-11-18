@@ -21,7 +21,7 @@ custom:
     layer: true
 
   cf-changesets:
-    requireChangeSet: true
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   serverless-offline: 
     custom:
