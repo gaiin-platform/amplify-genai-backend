@@ -22,7 +22,7 @@ pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
-
+embedding_provider = os.environ['EMBEDDING_PROVIDER']
 qa_model_name = os.environ['QA_MODEL_NAME']
 api_version = os.environ['API_VERSION']
 object_access_table = os.environ['OBJECT_ACCESS_TABLE']

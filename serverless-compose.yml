@@ -5,17 +5,16 @@ services:
 
   amplify-lambda-js:
     path: ./amplify-lambda-js
-    params:
-      ASSISTANTS_AZURE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscorecodeUnderscoreintUnderscoreassistUnderscoreurlLambdaFunctionUrl}
-      ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscoreassistantUnderscoreurlLambdaFunctionUrl}
-      ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
+    #params:
+      #ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscoreassistantUnderscoreurlLambdaFunctionUrl}
+      #ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
     dependsOn:
       - amplify-assistants
   
   amplify-lambda:
     path: ./amplify-lambda
-    params:
-      SHARE_ASSISTANTS_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
+    #params:
+      #SHARE_ASSISTANTS_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
     dependsOn:
       - amplify-assistants
 
@@ -34,7 +33,7 @@ services:
     dependsOn:
       - amplify-lambda
   
-  amplify-object-accecss:
+  amplify-object-access:
     path: ./object-access
     dependsOn:
       - amplify-lambda
@@ -43,4 +42,15 @@ services:
     path: ./amplify-lambda-optimizer
     dependsOn:
       - amplify-lambda
+
+  amplify-lambda-api:
+    path: ./amplify-lambda-api
+    dependsOn:
+      - amplify-lambda
+  
+  amplify-lambda-artifacts:
+    path: ./amplify-lambda-artifacts
+    dependsOn:
+      - amplify-lambda
+  
 

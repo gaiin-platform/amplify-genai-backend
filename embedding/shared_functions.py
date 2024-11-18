@@ -4,7 +4,6 @@
 
 from openai import AzureOpenAI
 from openai import OpenAI
-from openai import OpenAI
 import tiktoken
 import re
 import os
@@ -14,6 +13,7 @@ from botocore.exceptions import ClientError
 import logging
 import uuid
 from datetime import datetime
+import json
 from common.credentials import get_credentials, get_json_credetials, get_endpoint
 
 
@@ -25,6 +25,9 @@ embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
 hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
 region = os.environ['REGION']
+openai_provider = os.environ['OPENAI_PROVIDER']
+keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
+
 
 
 
@@ -221,14 +224,10 @@ def generate_questions(content):
 
     logger.info(f"Questions: {questions}")
 
-        return {
-            "success": True,
-            "data": questions
-        }
-    except Exception as e:
-        logger.error(f"An error occurred: {e}", exc_info=True)
-        return {"success": False, "error": f"An error occurred: {str(e)}"}
-
+    return {
+        "success": True,
+        "data": questions
+    }
 
 
 def record_usage(account, requestId, user, model, input_tokens, output_tokens, details=None, api_key=None):

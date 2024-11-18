@@ -22,6 +22,7 @@ rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
 sender_email = os.environ['SENDER_EMAIL']
+embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
@@ -118,6 +119,9 @@ def update_parent_chunk_status(object_id):
     except Exception as e:
         print("Failed to update the parentChunkStatus in DynamoDB table.")
         print(e)
+def table_exists(cursor, table_name):
+    cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s);", (table_name,))
+    return cursor.fetchone()[0]
 
 
 #initially set db_connection to none/closed 
@@ -340,17 +344,36 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                         api_key = result['apiKey']
                         account = result['account']
                         user = result['originalCreator']
-                        logging.info(f"Account details retrieved for {trimmed_src}")
-                    else:
+                        logging.info(f"Account details: retrieved for {trimmed_src}")
+                        logging.info(f"Account: {account}, User: {user}, API Key: {api_key}")
+                    else:   
                         logging.error(f"Failed to retrieve account details for {trimmed_src}")
                         raise Exception("Account details not found")
 
-                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=qa_summary_input_tokens, output_tokens=None)
-                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=None, output_tokens=qa_summary_output_token_count)
-                    record_usage(account, src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
+                    try:
+                        record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=qa_summary_input_tokens, output_tokens=None)
+                        logging.info(f"Successfully recorded usage for qa_model_name input tokens. Account: {account}, User: {user}")
+                    except Exception as e:
+                        logging.error(f"Error recording usage for qa_model_name input tokens: {str(e)}")
+                        logging.exception("Full traceback:")
 
+                    try:
+                        record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=None, output_tokens=qa_summary_output_token_count)
+                        logging.info(f"Successfully recorded usage for qa_model_name output tokens. Account: {account}, User: {user}")
+                    except Exception as e:
+                        logging.error(f"Error recording usage for qa_model_name output tokens: {str(e)}")
+                        logging.exception("Full traceback:")
+
+                    try:
+                        record_usage(account, src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
+                        logging.info(f"Successfully recorded usage for embedding_model_name. Account: {account}, User: {user}")
+                    except Exception as e:
+                        logging.error(f"Error recording usage for embedding_model_name: {str(e)}")
+                        logging.exception("Full traceback:")
+                    
                     current_local_chunk_index += 1
                     db_connection.commit()
+                
                 except Exception as e:
                     logging.error(f"Error processing chunk {local_chunk_index} of {src}: {str(e)}")
                     update_child_chunk_status(trimmed_src, childChunk, "failed")

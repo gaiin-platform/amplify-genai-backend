@@ -440,42 +440,52 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
     return [name, data]
 
 
-idpPrefix = os.environ['IDP_PREFIX']
+
 def validated(op, validate_body=True, idpPrefix_variable=None):  # Note the added argument
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 token = parseToken(event)
-                api_accessed = token[:4] == 'amp-'
+                api_accessed = token[:4] == "amp-"
 
-                claims = api_claims(event, context, token) if (api_accessed) else get_claims(event, context, token)
+                claims = (
+                    api_claims(event, context, token)
+                    if (api_accessed)
+                    else get_claims(event, context, token)
+                )
+                # Updated get_email function to incorporate idpPrefix
+                idp_prefix = os.getenv('IDP_PREFIX')
+                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+                current_user = get_email(claims['username'])
 
-                current_user = claims['username']
+                current_user = claims["username"]
                 print(f"User: {current_user}")
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
-                [name, data] = parse_and_validate(current_user, event, op, api_accessed, validate_body)
-                
-                data['access_token'] = token
-                data['account'] = claims['account']
-                data['api_accessed'] = api_accessed
-                data['allowed_access'] = claims['allowed_access']
-                result = f(event, context, current_user, name, data)
+                [name, data] = parse_and_validate(
+                    current_user, event, op, api_accessed, validate_body
+                )
 
-                print(f"Result: {result}")
+                data["access_token"] = token
+                data["account"] = claims["account"]
+                data["allowed_access"] = claims["allowed_access"]
+                data["api_accessed"] = api_accessed
+
+                # additional validator change from other lambdas
+                data["is_group_sys_user"] = claims.get("is_group_sys_user", False)
+                ###
+
+                result = f(event, context, current_user, name, data)
 
                 return {
                     "statusCode": 200,
-                    "body": json.dumps(result, cls=CombinedEncoder)
+                    "body": json.dumps(result, cls=CombinedEncoder),
                 }
             except HTTPException as e:
                 return {
                     "statusCode": e.status_code,
-                    "body": json.dumps({
-                        "error": f"Error: {e.status_code} - {e}"
-                    })
+                    "body": json.dumps({"error": f"Error: {e.status_code} - {e}"}),
                 }
 
         return wrapper
@@ -513,9 +523,11 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
+        idp_prefix = os.getenv('IDP_PREFIX')
+        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
 
         user = get_email(payload['username'])
+        
         payload['full_username'] = payload['username']
 
         # grab deafault account from accounts table 

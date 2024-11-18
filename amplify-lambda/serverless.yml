@@ -45,33 +45,7 @@ provider:
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: false
-  logs:
-    httpApi: true
-    restApi: true
-    websocket: true
-  logRetentionInDays: 365  
-  stackTags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
-  tags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
-  logs:
-    httpApi: true
-    restApi: true
-    websocket: true
-  logRetentionInDays: 365  
-  stackTags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
-  tags:
-    "vu:environment": ${sls:stage}
-    "vu:applicationName": "amplify"
-    "vu:owner": "amplify@vanderbilt.edu"
+  versionFunctions: false 
   environment:
     #Local Resources Created in this service
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
@@ -79,7 +53,6 @@ provider:
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
-    USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
@@ -98,16 +71,22 @@ provider:
     S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
+    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
+    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
     PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
-    OBJECT_ACCESS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-object-access
+    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
-    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
-    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
-    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
-
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: ${self:service}/${sls:stage}/s3/metadata/encryption
+    PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+      
   iam:
     role:
       managedPolicies:
@@ -384,8 +363,8 @@ functions:
   convert:
     handler: converters/docconverter.handler
     layers:
-      - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
-      - Ref: PythonRequirementsLambdaLayer
+      - ${self:provider.environment.PANDOC_LAYER} 
+      #- Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
@@ -499,6 +478,7 @@ resources:
                 - s3:PutObject
                 - s3:DeleteObject
               Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
             - Effect: Allow
               Action:
@@ -527,7 +507,6 @@ resources:
                 - rds-data:CommitTransaction
                 - rds-data:RollbackTransaction
               Resource:
-                - 'arn:aws:secretsmanager:us-east-1:*:secret:OPENAI_API_KEY-REUULJ'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -611,7 +590,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true
+          SSEEnabled: false
         AttributeDefinitions:
           -
             AttributeName: id
@@ -670,7 +649,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         GlobalSecondaryIndexes:
           -
             IndexName: UserIndex
@@ -699,7 +678,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -773,7 +752,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: user
@@ -791,7 +770,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -818,7 +797,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -835,7 +814,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: user
@@ -852,7 +831,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: email
@@ -874,7 +853,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true
+          SSEEnabled: false
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
@@ -911,7 +890,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: true          
+          SSEEnabled: false          
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
@@ -1116,4 +1095,33 @@ resources:
               Condition:
                 StringEquals:
                   'aws:SourceAccount': ${aws:accountId}
+  Outputs:
+      AccountingChatUsageDynamoStreamArn:
+        Description: "The ARN of the DynamoDB Stream for the ChatUsage table"
+        Value: !GetAtt AccountingChatUsageDynamoDbTable.StreamArn
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-AccountingChatUsageDynamoStreamArn"
+    
+      ApiGatewayId:
+        Description: "The ID of the API Gateway"
+        Value: !Ref ApiGatewayRestApi
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RestApiId"
+    
+      ApiGatewayRootResourceId:
+        Description: "The ID of the API Gateway root resource"
+        Value: 
+          Fn::GetAtt: [ApiGatewayRestApi, "RootResourceId"]
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RestApiRootResourceId"
+
+      BasePromptsBucketOutput:
+        Description: "The S3 bucket name for base prompts"
+        Value: !Ref BasePromptsBucket
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-BasePromptsBucket"
 
