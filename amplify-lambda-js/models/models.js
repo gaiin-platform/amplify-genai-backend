@@ -13,9 +13,11 @@
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
-    CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
-    CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
-    CLAUDE_3_OPUS: 'anthropic.claude-3-opus-20240229-v1:0',
+    //CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0', Moved to Inference Endpoint
+    CLAUDE_3_5_SONNET: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+    //CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0', Moved to Inference Endpoint
+    CLAUDE_3_5_HAIKU: 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    CLAUDE_3_OPUS: 'us.anthropic.claude-3-opus-20240229-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
     MIXTRAL_8X7B: 'mistral.mixtral-8x7b-instruct-v0:1',
     MISTRAL_LARGE: 'mistral.mistral-large-2402-v1:0'
@@ -113,12 +115,20 @@ export const Models = {
     },
     [ModelID.CLAUDE_3_HAIKU]: {
         id: ModelID.CLAUDE_3_HAIKU,
-        name: 'Claude-3-Haiku (bedrock)',
+        name: 'Claude-3.0-Haiku (bedrock)',
         tokenLimit: 200000,
         visible: false,
         outputCost: 0.00125,
         inputCost: 0.00025,
     },
+    [ModelID.CLAUDE_3_5_HAIKU]: {
+        id: ModelID.CLAUDE_3_5_HAIKU,
+        name: 'Claude-3.5-Haiku (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
+        outputCost: 0.001,
+        inputCost: 0.0005,
+    },    
     [ModelID.CLAUDE_3_OPUS]: {
         id: ModelID.CLAUDE_3_OPUS,
         name: 'Claude-3-OPUS (bedrock)',
