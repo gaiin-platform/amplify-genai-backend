@@ -185,7 +185,7 @@ def can_create_api_key(user, account):
 
 def is_valid_account(coa):
     # here we want to check valid coa string, 
-    pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{3}\.\w{1})$')
+    pattern = r'^[a-zA-Z0-9._]+$'
     return bool(pattern.match(coa))
     
 
