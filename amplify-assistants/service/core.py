@@ -252,9 +252,7 @@ def list_assistants(event, context, current_user, name, data):
     assistant_ids = [assistant["id"] for assistant in assistants]
 
     access_rights = {}
-    if not data[
-        "is_group_sys_user"
-    ]:  # saves us the call, access is determined by group members access list
+    if not data[ "is_group_sys_user" ]:  # saves us the call, access is determined by group members access list
         access_rights = simulate_can_access_objects(
             data["access_token"], assistant_ids, ["read", "write"]
         )
@@ -302,6 +300,8 @@ def list_user_assistants(user_id):
     # Create a list of dictionaries representing the assistants
     assistants = [item for item in response["Items"]]
 
+
+    # filter out old versions 
     return get_latest_assistants(assistants)
 
 
