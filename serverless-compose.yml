@@ -18,11 +18,6 @@ services:
     dependsOn:
       - amplify-assistants
 
-  amplify-utilities:
-    path: ./utilities
-    dependsOn:
-      - amplify-lambda
-
   chat-billing:
     path: ./chat-billing
     dependsOn:
