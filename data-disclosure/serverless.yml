@@ -11,10 +11,14 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets  
 
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
