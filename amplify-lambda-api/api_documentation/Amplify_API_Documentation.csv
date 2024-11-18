@@ -1,0 +1,465 @@
+Path,Method,Summary,Expected Data,Responses,Example Body,Example Response,
+https://prod-api.vanderbilt.ai,,,,,,,
+          /chat,POST," Offers real-time chat capabilities exclusively through streaming. Interact with a selection of the most advanced AI chat models available, including GPT, Claude, and Mistral.","model (string): Required. Options include gpt-35-turbo, gpt-4o, gpt-4o-mini, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0
+temperature (number)
+max_tokens (integer)
+dataSources (array of strings)
+messages (array of objects):
+ - role (string): Required. Options include system, assistant, user.
+ -content (string): Required.
+type (string): Options include prompt.
+options (object):
+ - dataSourceOptions (object)
+ - ragOnly (boolean)
+ - skipRag (boolean)
+ - assistantId (string)
+ - model (object):
+      - id (string)
+ - prompt (string)","200: Chat stream response.
+Content: application/json
+data (string)
+400: Bad request, invalid or missing fields.
+401: Unauthorized, invalid authentication credentials.
+403: Forbidden, request refused.
+404: Not found, resource not found.","{
+    ""data"":{
+        ""model"": ""gpt-4o"",
+        ""temperature"": 0.7,
+        ""max_tokens"": 150,
+        ""dataSources"": [
+	{
+	“id”: “s3://user@vanderbilt.edu/56789876rtfghjkbvder5678"", 
+	“type”:”application/pdf”
+	}
+        ],
+        ""messages"": [
+            {
+            ""role"": ""user"",
+            ""content"": ""What is the capital of France?""
+            }
+        ],
+        ""options"": {
+            ""ragOnly"": false,
+            ""skipRag"": true,
+            ""model"": [“gpt-4o”],
+ 	“assistantId”: “astp/abcdefghi”
+            ""prompt"": ""What is the capital of France?""
+        }
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Chat completed successfully"",
+    ""data"": ""The capital of France is Paris.""
+}",
+          /state/share,GET,"View a list of shared resources, including assistants, conversations, and organizational folders, distributed by other Amplify platform users",,"200: List of shared data records.
+Content: application/json
+sharedBy (string)
+note (string)
+sharedAt (string, date-time)
+key (string)",,"[{
+        ""note"": ""testing share wit a doc "",
+        ""sharedAt"": 1720714099836,
+        ""key"": ""yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932804035837948202934805-24382.json"",
+        ""sharedBy"": ""sharedByEmail@vanderbilt.edu""
+    }],",
+          /state/share/load,POST,"Once the shared data is accessed, individual elements can be retrieved and examined using a unique identifier key associated with each entry in the shared resource list.",key (string): Required.,"200: Shared data loaded successfully.
+Content: application/json
+exportSchema
+401: User does not have access to the share functionality.
+404: Data not found.","{
+    ""data"": {
+        ""key"": ""yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932804035837948202934805-24382.json""
+    }
+}","{
+  ""version"": 1,
+  ""prompts"": [
+    {
+      ""id"": ""ast/7b32fc3f-fe93-4026-b358-0e286e4a6013"",
+      ""name"": ""api share test"",
+      ""content"": ""<content>"",
+      ""data"": {
+        ""assistant"": {
+          ""definition"": {
+            ""instructions"": ""<instructions>"",
+            ""user"": ""sampleUser@vanderbilt.edu"",
+            ""dataSources"": [{""name"": ""car_sales.csv""}],
+            ""name"": ""api share test""
+          }
+        },
+        ""provider"": ""amplify"",
+        ""noCopy"": true,
+        ""noEdit"": true,
+        ""noDelete"": true,
+        ""noShare"": true
+...<More Data>...",
+          /files/upload,POST,"Initiate a file upload to the Amplify platform, enabling interaction via prompts and assistants. The endpoint generates and returns a time-limited, pre-authenticated URL, facilitating secure transmission of file contents.","actions (array of objects): Required.
+name (string): Required. Options include saveAsData, createChunks, etc.
+params (object)
+type (string): Required.
+name (string): Required.
+knowledgeBase (string): Required.
+tags (array of strings): Required.
+data (object): Required.","200: File upload process initiated or completed successfully.
+Content: application/json
+success (boolean)
+uploadUrl (string, nullable)
+statusUrl (string, nullable)
+contentUrl (string, nullable)
+metadataUrl (string, nullable)
+key (string, nullable)
+400: Bad request, incorrect or missing parameters.
+401: User does not have access to the file upload functionality.","{
+    ""data"":{
+        ""actions"": [
+            {""name"": ""saveAsData"",
+            ""params"": {}},
+            {""name"": ""createChunks"",
+            ""params"": {}},
+            {""name"": ""ingestRag"",
+            ""params"": {}},
+            {""name"": ""makeDownloadable"",
+            ""params"": {}},
+            {""name"": ""extractText"",
+            ""params"": {}}
+        ],
+        ""type"": ""application/fileExtension"",
+        ""name"": ""fileName.pdf"",
+        ""knowledgeBase"": ""default"",
+        ""tags"": [],
+        ""data"": {}
+    }
+}","{
+    ""success"": true,
+    ""uploadUrl"": ""<uploadUrl>"",
+    ""statusUrl"": ""<statusUrl>"",
+    ""contentUrl"": ""<contentUrl>"",
+    ""metadataUrl"": ""<metadataUrl>"",
+    ""key"": ""yourEmail@vanderbilt.edu/date/2930497329-490823.json""
+}",
+          /files/tags/list,POST,"View a list of your Amplify tags that can be tied to your data sources, conversations, and assistants.",,"200: A list of tags.
+Content: application/json
+success (boolean)
+data (object)
+tags (array of strings)","{
+    ""data"": {}
+}","{
+    ""success"": true,
+    ""data"": {
+        ""tags"": [
+            ""NewTag""
+        ]
+    }
+}",
+          /files/tags/create,POST,"Create new Amplify tags that can be tied to your data sources, conversations, and assistants.",tags (array of strings): Default is an empty array.,"200: Result of tag creation.
+Content: application/json
+success (boolean)
+message (string)","{
+    ""data"": {
+        ""tags"": [""NewTag""]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Tags added successfully""
+}",
+          /files/tags/delete,POST,Delete an Amplify tag.,tag (string): Required.,"200: Result of tag deletion.
+Content: application/json
+success (boolean)
+message (string)","{
+    ""data"":{
+        ""tag"": ""NewTag""
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Tag deleted successfully""
+}",
+          /files/set_tags,POST,"Associate an Amplify tag with a specific data source, conversation, or assistant.","id (string): Required.
+tags (array of strings): Default is an empty array.","200: Result of setting file tags.
+Content: application/json
+success (boolean)
+message (string)","{
+    ""data"":{
+        ""id"": ""yourEmail@vanderbilt.edu/date/23094023573924890-208.json"",
+        ""tags"": [""NewTag""]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Tags updated and added to user""
+}",
+          /files/query,POST,View a list of uplaoded Amplify data sources.,"startDate (string, date-time): Default is 2021-01-01T00:00:00Z.
+pageSize (integer): Default is 10.
+pageKey (object):
+- id (string)
+ - createdAt (string)
+ - type (string)
+namePrefix (string or null)
+createdAtPrefix (string or null)
+typePrefix (string or null)
+types (array of strings): Default is an empty array.
+tags (array of strings): Default is an empty array.
+pageIndex (integer): Default is 0.
+forwardScan (boolean): Default is false.
+sortIndex (string): Default is createdAt.","200: Returns a list of files that match the query criteria.
+Content: application/json
+success (boolean)
+data (object)
+items (array of objects)
+pageKey (object): Key to retrieve the next page of results","{
+    ""data"":{
+        ""pageSize"": 2,
+        ""sortIndex"": """",
+        ""forwardScan"": false
+        }
+}","{
+    ""success"": true,
+    ""data"": {
+        ""items"": [
+            {
+                ""createdAt"": ""2024-07-15T17:12:45.046682"",
+                ""updatedBy"": ""yourEmail@vanderbilt.edu"",
+                ""createdBy"": ""yourEmail@vanderbilt.edu"",
+                ""name"": ""fileName.doc"",
+                ""knowledgeBase"": ""default"",
+                ""data"": {},
+                ""updatedAt"": ""2024-07-15T17:12:45.046700"",
+                ""totalTokens"": 12644,
+                ""dochash"": ""25ef6a3e472d8d90a3784d1df9abe0ae390cf4da2c2f9a4f82d91cbe501915c1"",
+                ""id"": ""yourEmail@vanderbilt.edu/date/238904934298030943.json"",
+                ""tags"": [],
+                ""totalItems"": 1025,
+                ""type"": ""application/fileExtension""
+            },",
+          /embedding-dual-retrieval,POST,Retrieve Amplify data source embeddings based on user input through dual retrieval method.,"userInput (string): Required.
+dataSources (array of strings): Required.
+ - id (string): global
+limit (integer)","200: A list of documents related to the user input.
+Content: application/json
+result (array)","{
+    ""data"" : {
+        ""userInput"":""Can you describe the policies outlined in the document?"",
+        ""dataSources"": [""global/09342587234089234890.content.json""],
+        ""limit"": 10
+    }
+}","{
+  ""rH12esult"": [
+    {
+      ""content"": ""xmlns:w=3D'urn:schemas-microsoft-com:office:word' ..."",
+      ""file"": ""global/2405939845893094580341.content.json"",
+      ""line_numbers"": [15-30],
+      ""score"": 0.7489801645278931
+    },
+    {
+      ""content"": ""Date: Wed, 8 May 2024 17:45:21 +0000 (UTC) ..."",
+      ""file"": ""global/093442892398492349.content.json"",
+      ""line_numbers"": [1-11],
+      ""score"": 0.7464098930358887
+    },
+  ]
+}",
+          /assistant/create,POST,Create or update a customizable Amplify assistant.,"name (string): Required.
+description (string): Required.
+assistantId (string): Needed if updating an existing assistant. Will provide you with one if creating a new assitant
+tags (array of strings): Required.
+instructions (string): Required.
+disclaimer (string)
+uri (string or null)
+dataSources (array of objects): Required.
+ - entire Data Source object
+dataSourceOptions (array of objects):
+ - insertAttachedDocumentsMetadata (boolean) Include Attached Data Source Metadata in Prompt
+ - insertAttachedDocuments (boolean) Include Attached Documents in Prompt
+ - insertConversationDocuments (boolean) Include Conversation Documents in Prompt
+ - disableDataSources (boolean) Disable Data Source Insertion
+ - insertConversationDocumentsMetadata (boolean) Include Conversation Data Source Metadata in Prompt
+ - ragConversationDocuments (boolean) Include Conversation Documents in RAG
+ - ragAttachedDocuments (boolean) Include Attached Documents in RAG","200: Assistant creation response.
+Content: application/json
+success (boolean)
+message (string)
+data (object)","{
+    ""data"": {
+        ""name"": ""Sample Assistant 3"",
+        ""description"": ""This is a sample assistant for demonstration purposes"",
+        ""assistantId"": """",
+        ""tags"": [""test""],
+        ""instructions"": ""Respond to user queries about general knowledge topics"",
+        ""disclaimer"": ""This assistant's responses are for informational purposes only"",
+        ""dataSources"": [{'id': 'e48759073324384kjsf', 'name': 'api_paths_summary.csv', 'type': 'text/csv', 'raw': '', 'data': '', 'key': 'yourEmail@vanderbilt.edu/date/w3ou009we3.json', 'metadata': {'name': 'api_paths_summary.csv', 'totalItems': 20, 'locationProperties': ['row_number'], 'contentKey': 'yourEmail@vanderbilt.edu/date/w3ou009we3.json.content.json', 'createdAt': '2024-07-15T18:58:24.912235', 'totalTokens': 3750, 'tags': [], 'props': {}}}],
+        ""tools"": []
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Assistant created successfully"",
+    ""data"": {
+        ""assistantId"": ""astp/3io4u5ipy34jkelkdfweiorwur"",
+        ""id"": ""ast/03uio3904583049859482"",
+        ""version"": 1
+    }
+}",
+          /assistant/list,GET,Retrieve a list of all Amplify assistants.,,"200: List of assistants retrieved successfully.
+Content: application/json
+success (boolean)
+message (string)
+data (array)",,"{
+  ""success"": true,
+  ""message"": ""Assistants retrieved successfully"",
+  ""data"": [
+    {
+      ""assistantId"": ""astp/498370528-38594"",
+      ""version"": 3,
+      ""instructions"": ""<instructions>"",
+      ""disclaimerHash"": ""348529340098580234959824580-pueiorupo4"",
+      ""coreHash"": ""eiouqent84832n8989pdeer"",
+      ""user"": ""yourEmail@vanderbilt.edu"",
+      ""uri"": null,
+      ""createdAt"": ""2024-07-15T19:07:57"",
+      ""dataSources"": [
+        {
+          ""metadata"": ""<metadata>"",
+          ""data"": """",
+          ""name"": ""api_documentation.yml"",
+          ""raw"": """",
+          ""id"": ""global/7834905723785897982345088927.content.json"",
+          ""type"": ""application/x-yaml"",
+...<More Data>...",
+          /assistant/share,POST,Share an Amplify assistant with other Amplify users.,"assistantId (string): Required.
+recipientUsers (array of strings): Required.
+note (string)","200: Assistant sharing response.
+Content: application/json
+success (boolean)
+message (string)","{
+    ""data"":{
+        ""assistantId"": ""ast/8934572093982034020-9"",
+        ""recipientUsers"": [""yourEmail@vanderbilt.edu""],
+        ""note"": ""check this out!""
+    }
+}","{
+    ""success"": false,
+    ""message"": ""Unable to share with some users"",
+    ""failedShares"": [
+        ""yourEmail@vanderbilt.edu""
+    ]
+}",
+          /assistant/delete,POST,Delete an Amplify assistant.,assistantId (string): Required.,"200: Assistant deletion response.
+Content: application/json
+success (boolean)
+message (string)","{
+    ""data"":{
+        ""assistantId"": ""astp/3209457834985793094""
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Assistant deleted successfully.""
+}",
+          /assistant/create/codeinterpreter,POST,Create a new Code Interpreter Assistant,"name (string): Required.
+description (string): Required.
+tags (array of strings): Required.
+instructions (string): Required.
+dataSources (array of strings): Required
+ - id (string): starts with your email  (find these by doing a file query call)","200: Response for creating a code Interpreter assistant.
+Content: application/json
+success (boolean)
+message (boolean)
+data (object):
+ - assistantId (string)
+ - provider (string)","{
+    ""data"":{
+        ""name"": ""Data Analysis Assistant"",
+        ""description"": ""An AI assistant specialized in data analysis and visualization"",
+        ""tags"": [""data analysis""],
+        ""instructions"": ""Analyze data files, perform statistical operations, and create visualizations as requested by the user"",
+        ""dataSources"": [""yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json""]
+        ""fileKeys"": [],
+        ""tools"": [{""type"": ""code_interpreter""}]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Assistant created successfully"",
+    ""data"": {
+        ""assistantId"": ""yourEmail@vanderbilt.edu/ast/39408573849029843""
+    }
+}",
+          /assistant/files/download/codeinterpreter,POST,Download Code Interpreter generated files via pre-authenticated URL,"key (string): Required.
+fileName (string): Not required, will automatically download if given the specific file name","200: File download for Code Interpreter.
+Content: application/json
+oneOf:
+FileNotFoundResponse
+FileDownloadResponse","{
+    ""data"": {
+        ""key"": ""yourEmail@vanderbilt.edu/ast/3498523804729""
+    }
+}","{
+    ""success"": true,
+    ""downloadUrl"": ""<Download URL>""
+}",
+          /assistant/openai/thread/delete,DELETE,"Delete a thread, deleting your existing conversation with code interpreter",?threadId = (Query Parameter),"200:
+success (boolean)
+message (string)",?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093,"{
+    ""success"": true,
+    ""message"": ""Thread deleted successfully""
+}",
+          /assistant/openai/delete,DELETE,Delete a code interpreter assistant instance,?assistantId= (Querey Parameter),"200:
+success (boolean)
+message (string)",?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823,"{
+    ""success"": true,
+    ""message"": ""Assistant deleted successfully""
+}",
+          /assistant/chat/codeinterpreter,POST,"Establishes a conversation with the Code Interpreter, returning a unique thread identifier, that contains your ongoing conversation. Subsequent API calls can utilize this thread ID to append only new messages to the existing conversation.","assistantId (string): Required
+threadId (string)
+messages (array of objects): Required
+ - role (string): Required, user or assistant
+ - content (string): Required
+ - dataSourceIds (list of strings): Required
+     - id (string): starts with your email (find these by doing a file query call)","200: Returns the chat response from the Code Interpreter assistant.
+success (boolean)
+message (string)
+data (object):
+ - data (object):
+     - threadId (string)
+     - role (string)
+     - textContent (string)
+     - content (array of objects):
+          - type (string)
+          - values (object):
+               - file_key (string)
+               - presigned_url (string)
+               - file_key_low_res (string)
+               - presigned_url_low_res (string)
+               - file_size (int)","{   ""data"": {
+        ""assistantId"": ""yourEmail@vanderbilt.edu/ast/43985037429849290398"",
+        ""messages"": [
+            { ""role"": ""user"",
+              ""content"" : ""Can you tell me something about the data analytics and what you are able to do?"",
+              ""dataSourceIds"" : [""yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json""]
+            }
+        ]
+    }
+}","{
+    ""success"": true,
+    ""message"": ""Chat completed successfully"",
+    ""data"": {
+        ""data"": {
+            ""threadId"": ""yourEmail@vanderbilt.edu/thr/892345790239402934234"",
+            ""role"": ""assistant"",
+            ""textContent"": ""<Text Content>"",
+            ""content"": []
+        }
+    }
+}","{
+  ""success"": true,
+  ""message"": ""Chat completed successfully"",
+  ""data"": {
+    ""threadId"": ""yourEmail@vanderbilt.edu/thr/442309eb-0772-42d0-b6ef-34e20ee2355e"",
+    ""role"": ""assistant"",
+    ""textContent"": ""I've saved the generated pie chart as a PNG file. You can download it using the link below:\n\n[Download Ice Cream Preferences Pie Chart](sandbox:/mnt/data/ice_cream_preferences_pie_chart.png)\n"",
+    ""content"": [
+      {
+        ""type"": ""image/png"",
+        ""values"": {
+          ""file_key"": ""yourEmail@vanderbilt.edu/msg_P0lpFUEY1EvRdiWMMKn7Rd0O-assistant-fS9RAGpbUa4A8ufKXnS2wSNh-FN-ice_cream_preferences_pie_chart.png"",
+          ""presigned_url"": ""https://vu-amplify-assistants-dev-code-interpreter-files.s3.amazonaws.com/..."",
+          ""file_size"": 149878
+        }
+      }
+    ]
+  }
+}"
