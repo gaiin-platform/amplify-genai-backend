@@ -125,9 +125,11 @@ def in_cognito_amplify_groups(event, context, current_user, name, data):
 
         if 'Item' not in response:
             return {
-                'status': 404,
-                'data': {'success': False, 'error': 'Failed to check cognito groups'}
-                }
+                    'statusCode': 404,
+                    'body': json.dumps({'success': False, 
+                                        'error': 'Failed to check cognito groups'
+                                        })
+                    }
 
 
         # Convert stored group strings to lists
