@@ -16,6 +16,7 @@ dynamodb = boto3.resource('dynamodb')
 groups_table = dynamodb.Table(os.environ['AMPLIFY_GROUPS_DYNAMODB_TABLE'])
 
 def addAdminInterfaceAccess(members):
+    # needs to be updated for the new admin config way
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['COGNITO_USERS_TABLE'])
 
@@ -554,19 +555,6 @@ def delete_group(event, context, current_user, name, data):
         return {"message": f"An error occurred: {str(e)}", "success": False}
 
 
-def get_latest_assistants(assistants):
-    latest_assistants = {}
-    for assistant in assistants:
-        # Set version to 1 if it doesn't exist
-        assistant.setdefault('version', 1)
-        assistant_id = assistant.get('assistantId', None)
-        # will exclude system ast since they dont have assistantId
-        if (assistant_id and (assistant_id not in latest_assistants or latest_assistants[assistant_id]['version'] < assistant['version'])):
-            latest_assistants[assistant_id] = assistant
-    
-    return list(latest_assistants.values())
-
-
 @validated(op='list')
 def list_groups(event, context, current_user, name, data):
     groups_result = get_my_groups(current_user)
@@ -586,7 +574,7 @@ def list_groups(event, context, current_user, name, data):
             continue
 
         #filter old versions
-        assistants = get_latest_assistants(ast_result['data'])
+        assistants = ast_result['data']
         published_assistants = []
         #append groupId and correct permissions if published
         for ast in assistants:

@@ -256,16 +256,10 @@ def list_assistants(event, context, current_user, name, data):
     assistant_ids = [assistant["id"] for assistant in assistants]
 
     access_rights = {}
-    if not data[
-        "is_group_sys_user"
-    ]:  # saves us the call, access is determined by group members access list
+    if not data[ "is_group_sys_user" ]:  # saves us the call, access is determined by group members access list
         access_rights = simulate_can_access_objects(
             data["access_token"], assistant_ids, ["read", "write"]
         )
-
-    # # Add the system assistants for Amplify requests only
-    # if (not data['api_accessed']):
-    #     assistants += get_system_assistants(current_user)
 
     # Make sure each assistant has a data field and initialize it if it doesn't
     for assistant in assistants:
@@ -310,8 +304,23 @@ def list_user_assistants(user_id):
     # Create a list of dictionaries representing the assistants
     assistants = [item for item in response["Items"]]
 
-    return assistants
 
+    # filter out old versions 
+    return get_latest_assistants(assistants)
+
+
+def get_latest_assistants(assistants):
+    latest_assistants = {}
+    for assistant in assistants:
+        # Set version to 1 if it doesn't exist
+        assistant.setdefault('version', 1)
+        assistant_id = assistant.get('assistantId', None)
+        # will exclude system ast since they dont have assistantId
+        if (assistant_id and (assistant_id not in latest_assistants or latest_assistants[assistant_id]['version'] < assistant['version'])):
+            latest_assistants[assistant_id] = assistant
+    
+    return list(latest_assistants.values())
+    
 
 def get_assistant(assistant_id):
     """
