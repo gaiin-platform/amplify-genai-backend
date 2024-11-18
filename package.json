@@ -7,5 +7,8 @@
     "serverless-offline": "^13.6.0",
     "serverless-prune-plugin": "^2.0.2",
     "serverless-python-requirements": "^6.1.0"
+  },
+  "dependencies": {
+    "serverless-cloudformation-changesets": "^0.0.2"
   }
 }

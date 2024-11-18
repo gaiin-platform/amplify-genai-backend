@@ -471,6 +471,9 @@ def validated(op, validate_body=True):
                     if (api_accessed)
                     else get_claims(event, context, token)
                 )
+                idp_prefix = os.getenv('IDP_PREFIX')
+                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+                current_user = get_email(claims['username'])
 
                 current_user = claims["username"]
                 print(f"User: {current_user}")
@@ -539,9 +542,10 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url,
         )
 
-        get_email = lambda text: text.split("_", 1)[1] if "_" in text else None
+        idp_prefix = os.getenv('IDP_PREFIX')
+        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
 
-        user = get_email(payload["username"])
+        user = get_email(payload['username'])
 
         # grab deafault account from accounts table
         dynamodb = boto3.resource("dynamodb")

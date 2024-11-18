@@ -1,13 +1,10 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
-
 import string
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from common.encoders import CombinedEncoder
+
 import os
 import requests
 from jose import jwt
@@ -797,7 +794,6 @@ api_validators = {
     },
 }
 
-
 def validate_data(name, op, data, api_accessed):
     # print(f"Name: {name} and Op: {op} and Data: {data}")
     validator = api_validators if api_accessed else validators
@@ -841,14 +837,9 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
         raise Unauthorized("User does not have permission to perform the operation.")
 
     return [name, data]
-    
 
 
-# Make sure ALGORITHMS is defined somewhere, e.g., ALGORITHMS = ["RS256"]
-
-idpPrefix = os.environ['IDP_PREFIX']
-
-def validated(op, validate_body=True, idpPrefix_variable=None):
+def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
@@ -858,7 +849,11 @@ def validated(op, validate_body=True, idpPrefix_variable=None):
 
                 claims = api_claims(event, context, token) if (api_accessed) else get_claims(event, context, token)
 
-                current_user = claims['username']
+
+                idp_prefix = os.getenv('IDP_PREFIX')
+                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+                current_user = get_email(claims['username'])
+
                 print(f"User: {current_user}")
                 if current_user is None:
                     raise Unauthorized("User not found.")
@@ -877,7 +872,6 @@ def validated(op, validate_body=True, idpPrefix_variable=None):
                     "body": json.dumps(result, cls=CombinedEncoder)
                 }
             except HTTPException as e:
-                print(f"HTTPException occurred: {e}")
                 return {
                     "statusCode": e.status_code,
                     "body": json.dumps({
@@ -895,14 +889,11 @@ def get_claims(event, context, token):
 
     oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
     oauth_audience = os.getenv('OAUTH_AUDIENCE')
-    print(f"OAUTH_ISSUER_BASE_URL: {oauth_issuer_base_url}\nOAUTH_AUDIENCE: {oauth_audience}")
 
     jwks_url = f'{oauth_issuer_base_url}/.well-known/jwks.json'
-    print(f"Retrieving JWKS from URL: {jwks_url}")
     jwks = requests.get(jwks_url).json()
 
     header = jwt.get_unverified_header(token)
-    print (token)
     rsa_key = {}
     for key in jwks["keys"]:
         if key["kid"] == header["kid"]:
@@ -913,7 +904,6 @@ def get_claims(event, context, token):
                 "n": key["n"],
                 "e": key["e"]
             }
-            break
 
     if rsa_key:
         payload = jwt.decode(
@@ -924,7 +914,9 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
+        idp_prefix = os.getenv('IDP_PREFIX')
+        
+        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
 
         user = get_email(payload['username'])
 
