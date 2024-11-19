@@ -20,7 +20,7 @@ custom:
     layer: true
 
   cf-changesets:
-    requireChangeSet: true
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     
 
   prune:
@@ -62,7 +62,7 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
   environment:
-
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     #Local Resources Created
     RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-${self:service}-rag-cluster
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}

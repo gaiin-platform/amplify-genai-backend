@@ -52,6 +52,7 @@ provider:
   versionFunctions: false 
   environment:
     #Local Resources Created in this service
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files

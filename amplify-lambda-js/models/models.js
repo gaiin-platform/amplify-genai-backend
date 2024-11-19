@@ -13,9 +13,9 @@
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
-    //CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0', Moved to Inference Endpoint
-    CLAUDE_3_5_SONNET: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-    //CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0', Moved to Inference Endpoint
+    CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0', //Move to Inference Endpoint
+    CLAUDE_3_5_SONNET_v2: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+    CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0', //Move to Inference Endpoint
     CLAUDE_3_5_HAIKU: 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
     CLAUDE_3_OPUS: 'us.anthropic.claude-3-opus-20240229-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
@@ -41,14 +41,14 @@ export const Models = {
         outputCost: .005,
         inputCost: .015,
         },
-        [ModelID.GPT_4o_MINI]: {
-            id: ModelID.GPT_4o_MINI,
-            name: 'GPT-4o',
-            actualTokenLimit: 128000,
-            visible: true,
-            outputCost: .00066,
-            inputCost: .000165,
-            },        
+    [ModelID.GPT_4o_MINI]: {
+        id: ModelID.GPT_4o_MINI,
+        name: 'GPT-4o',
+        actualTokenLimit: 128000,
+        visible: true,
+        outputCost: .00066,
+        inputCost: .000165,
+        },        
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',
@@ -105,9 +105,9 @@ export const Models = {
         outputCost: 0.01500,
         inputCost: 0.00300,
     },
-    [ModelID.CLAUDE_3_5_SONNET] : { 
-        id: ModelID.CLAUDE_3_5_SONNET,
-        name: 'Claude-3-5-Sonnet (bedrock)',
+    [ModelID.CLAUDE_3_5_SONNET_v2] : { 
+        id: ModelID.CLAUDE_3_5_SONNET_v2,
+        name: 'Claude-3-5-Sonnet-v2 (bedrock)',
         tokenLimit: 200000,
         visible: false,
         outputCost: 0.015,
@@ -153,7 +153,6 @@ export const Models = {
         outputCost: 0.00045,
         inputCost: 0.0007,
     },
-
     [ModelID.MISTRAL_LARGE]: {
         id: ModelID.MISTRAL_LARGE,
         name: 'Mistral-Large (bedrock)',
