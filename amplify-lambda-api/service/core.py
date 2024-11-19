@@ -184,9 +184,13 @@ def can_create_api_key(user, account):
         return {"success": False, "message": "Unable to verify user at this time"}
 
 def is_valid_account(coa):
-    # here we want to check valid coa string, 
-    pattern = r'^[a-zA-Z0-9._]+$'
-    return bool(pattern.match(coa))
+    return coa is not None
+
+# Use Function Below if you need to validate the COA string
+#def is_valid_account(coa):
+#    # here we want to check valid coa string, 
+#    pattern = r'^[a-zA-Z0-9._]+$'
+#    return bool(pattern.match(coa))
     
 
 @validated("create")
