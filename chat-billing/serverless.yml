@@ -58,6 +58,7 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
   environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
     ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
