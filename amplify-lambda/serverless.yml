@@ -1130,3 +1130,10 @@ resources:
           Name: 
             Fn::Sub: "${sls:stage}-BasePromptsBucket"
 
+      ConverstionTemplatesBucketOutput:
+        Description: "The S3 bucket name for ppt conversion templates"
+        Value: !Ref ConversionOutputBucket
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-ConversionOutputBucket"
+
