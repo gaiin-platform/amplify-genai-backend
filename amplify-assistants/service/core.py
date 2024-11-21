@@ -300,6 +300,7 @@ def list_user_assistants(user_id):
     # Create a list of dictionaries representing the assistants
     assistants = [item for item in response["Items"]]
 
+
     # filter out old versions 
     return get_latest_assistants(assistants)
 
@@ -315,7 +316,7 @@ def get_latest_assistants(assistants):
             latest_assistants[assistant_id] = assistant
     
     return list(latest_assistants.values())
-
+    
 
 def get_assistant(assistant_id):
     """
