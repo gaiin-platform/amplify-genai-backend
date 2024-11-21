@@ -11,7 +11,7 @@ import random
 import boto3
 import json
 import re
-from common.ops import op
+from common.ops import op, vop
 
 
 dynamodb = boto3.resource('dynamodb')
@@ -74,15 +74,6 @@ def get_api_key(event, context, user, name, data):
             'body': json.dumps({'success': False , 'error': 'Failed to fetch API key'})
         }
 
-@op(
-    path="/apiKeys/get_keys",
-    name="getApiKeys",
-    method='GET',
-    tags=["apiKeys"],
-    description="Get a list of the user's amplify api keys.",
-    params={
-    }
-)
 @validated("read")
 def get_api_keys_for_user(event, context, user, name, data):
     return get_api_keys(user)
@@ -127,8 +118,17 @@ def get_api_keys(user):
         # Handle potential errors
         print(f"An error occurred while retrieving API keys for user {user}: {e}")
         return {'success': False, 'data': [], 'message': str(e)}
+  
     
-
+@op(
+    path="/state/accounts/get",
+    name="getUserAccounts",
+    method="GET",
+    tags=["apiKeysAst"],
+    description="Get a list of the user's accounts that costs are charged to.",
+    params={
+    }
+)
 @op(
     path="/apiKeys/get_keys_ast",
     name="getApiKeysForAst",
