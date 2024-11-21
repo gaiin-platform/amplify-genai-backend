@@ -84,7 +84,6 @@ provider:
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
-    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
     FILE_UPLOAD_ENCRYPTION_PARAMETER: ${self:service}/${sls:stage}/s3/metadata/encryption
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
