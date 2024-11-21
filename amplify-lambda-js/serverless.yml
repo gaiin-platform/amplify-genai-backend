@@ -58,7 +58,7 @@
       COGNITO_CLIENT_ID: ${self:custom.stageVars.COGNITO_CLIENT_ID}
       HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
       ASSISTANT_QUEUE_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-queue
-      ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-results
+      ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-ast-results
       ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
       ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
       ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants

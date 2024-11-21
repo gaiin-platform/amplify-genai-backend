@@ -23,6 +23,7 @@ VPC_ID: "" #vpc_id of deployment from IAC output
 SENDER_EMAIL: ""
 KEYWORD_MODEL_NAME: "gpt-35-turbo"
 CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
+CHAT_ENDPOINT: "https://yourchatendpoint" # This will an output from the LambdaJS stack. For the initial deploy leave this value in. Then update after LambdaJS is deployed. 
 
 # Embeddings Configuration
 #
