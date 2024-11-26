@@ -319,7 +319,7 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                         raise Exception(f"Vector embedding generation failed: {response_vector_embedding['error']}")
                     vector_embedding = response_vector_embedding["data"]
 
-                    response_qa_summary = generate_questions(clean_text, qa_model_name)
+                    response_qa_summary = generate_questions(clean_text, embedding_provider)
                     if not response_qa_summary["success"]:
                         raise Exception(f"QA summary generation failed: {response_qa_summary['error']}")
                     qa_summary = response_qa_summary["data"]
