@@ -20,7 +20,7 @@ custom:
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
@@ -42,8 +42,8 @@ provider:
 
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     OPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-ops
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
