@@ -12,7 +12,6 @@ services:
       #ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
     dependsOn:
       - amplify-lambda
-
   
   amplify-lambda:
     path: ./amplify-lambda
@@ -44,6 +43,11 @@ services:
   
   amplify-lambda-artifacts:
     path: ./amplify-lambda-artifacts
+    dependsOn:
+      - amplify-lambda
+
+  amplify-lambda-ops:
+    path: ./amplify-lambda-ops
     dependsOn:
       - amplify-lambda
   
