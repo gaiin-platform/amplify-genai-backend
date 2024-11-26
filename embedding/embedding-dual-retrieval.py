@@ -27,6 +27,7 @@ qa_model_name = os.environ['QA_MODEL_NAME']
 api_version = os.environ['API_VERSION']
 object_access_table = os.environ['OBJECT_ACCESS_TABLE']
 groups_table = os.environ['GROUPS_DYNAMO_TABLE']
+embedding_provider = os.environ['EMBEDDING_PROVIDER']
 
 # Define the permission levels that grant access
 permission_levels = ['read', 'write', 'owner']
@@ -236,7 +237,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
 
     src_ids = accessible_src_ids + group_accessible_src_ids
 
-    response_embeddings = generate_embeddings(content)
+    response_embeddings = generate_embeddings(content, embedding_provider)
 
     if response_embeddings["success"]:
         embeddings = response_embeddings["data"]
