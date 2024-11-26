@@ -231,6 +231,7 @@ resources:
                 - sqs:ReceiveMessage
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
+                - bedrock:InvokeModel*
 
               Resource:
                 - !GetAtt RagPostgresDbCluster.DBClusterArn
@@ -254,7 +255,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
-  
+                - "arn:aws:bedrock:*::*foundation-model/*"
+                - "arn:aws:bedrock:*::*inference-profile/*"
           
 
     RagPostgresDbSubnetGroup:

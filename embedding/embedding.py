@@ -329,11 +329,12 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                         raise Exception(f"QA embedding generation failed: {response_qa_embedding['error']}")
                     qa_vector_embedding = response_qa_embedding["data"]
 
-                    qa_summary_input_tokens = num_tokens_from_text(clean_text, qa_model_name)
-                    qa_summary_output_token_count = num_tokens_from_text(qa_summary, qa_model_name)
-                    vector_token_count = num_tokens_from_text(clean_text, embedding_model_name)
-                    qa_vector_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
+                    qa_summary_input_tokens = response_qa_summary["input_tokens"]
+                    qa_summary_output_token_count = response_qa_summary["output_tokens"]
+                    vector_token_count = response_vector_embedding["token_count"]
+                    qa_vector_token_count = response_qa_embedding["token_count"]
                     total_vector_token_count = vector_token_count + qa_vector_token_count
+                    
 
                     logging.info(f"Embedding local chunk index: {current_local_chunk_index}")
                     insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_local_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
