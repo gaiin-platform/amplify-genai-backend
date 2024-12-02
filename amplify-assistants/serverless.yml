@@ -131,6 +131,7 @@ functions:
 
   delete_assistant:
     handler: service/core.delete_assistant
+    timeout: 30
     events:
       - http:
           path: assistant/delete
