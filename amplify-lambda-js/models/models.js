@@ -4,6 +4,7 @@
  export const ModelID = {
     GPT_4_TURBO_AZ: 'gpt-4-1106-Preview',
     GPT_4o_AZ: 'gpt-4o',
+    GPT_4o_MINI: 'gpt-4o-mini',
     GPT_4_TURBO: 'gpt-4-1106-preview',
     GPT_4o_MINI: 'gpt-4o-mini',
     GPT_3_5: 'gpt-3.5-turbo',

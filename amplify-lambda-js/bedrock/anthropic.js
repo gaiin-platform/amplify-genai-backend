@@ -7,6 +7,7 @@ import {getLogger} from "../common/logging.js";
 import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 
 const logger = getLogger("anthropic");
+const region = process.env.REGION || "us-east-1";
 
 export const chatAnthropic = async (chatBody, writable) => {
 

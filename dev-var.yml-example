@@ -1,9 +1,4 @@
 # amplify-lambda
-# 
-AWS_ACCOUNT_ID: ""
-COGNITO_CLIENT_ID: "" #Cognito Client ID provided by IAC output
-COGNITO_USER_POOL_ID: "" #Value provided by IAC output
-CUSTOM_API_DOMAIN: "" #domain used for API gateway; for example: <env>-api.<domain>.com
 DEP_NAME: "" #name of the deployment; must be less than 10 characters and not contain spaces
 HOSTED_ZONE_ID: "" #app_route53_zone_id from IAC output
 IDP_PREFIX: "AmplifyGenAI" #should match the value for provider_name in Cognito vars of the IAC deployment
