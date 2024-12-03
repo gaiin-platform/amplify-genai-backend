@@ -1,4 +1,4 @@
-service: vu-amplify-lambda-ops
+service: amplify-${self:custom.stageVars.DEP_NAME}-ops
 
 frameworkVersion: "3"
 
