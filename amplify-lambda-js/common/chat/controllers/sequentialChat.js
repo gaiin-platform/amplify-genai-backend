@@ -1,20 +1,21 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {countChatTokens} from "../../../azure/tokens.js";
-import {StreamMultiplexer} from "../../multiplexer.js";
-import {sendSourceMetadata} from "./meta.js";
+import { countChatTokens } from "../../../azure/tokens.js";
+import { StreamMultiplexer } from "../../multiplexer.js";
+import { sendSourceMetadata } from "./meta.js";
 import { PassThrough, Writable } from 'stream';
-import {newStatus} from "../../status.js";
-import {isKilled} from "../../../requests/requestState.js";
-import {getLogger} from "../../logging.js";
-import {sendStatusEventToStream} from "../../streams.js";
-import {getUser} from "../../params.js";
-import {addContextMessage, createContextMessage} from "./common.js";
+import { newStatus } from "../../status.js";
+import { isKilled } from "../../../requests/requestState.js";
+import { getLogger } from "../../logging.js";
+import { sendStatusEventToStream } from "../../streams.js";
+import { getUser, getModel, setModel, getCheapestModelEquivalent, getMostAdvancedModelEquivalent } from "../../../common/params.js";
+import { addContextMessage, createContextMessage } from "./common.js";
+import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
 
 const logger = getLogger("sequentialChat");
 
-export const handleChat = async ({account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer, tokenReporting}) => {
+export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer, tokenReporting }) => {
 
     // The multiplexer is used to multiplex the streaming responses from the LLM provider
     // back to the client. This is necessary because we are going to run multiple requests (potentially)
@@ -26,6 +27,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
 
     const user = account.user;
     const requestId = chatRequest.options.requestId;
+    let llmResponse = '';
 
     sendSourceMetadata(multiplexer, metaData);
 
@@ -37,7 +39,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             sticky: false
         });
 
-    if(contexts.length > 1) {
+    if (contexts.length > 1) {
         sendStatusEventToStream(
             responseStream,
             newStatus(
@@ -52,7 +54,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
     for (const [index, context] of contexts.entries()) {
 
 
-        if((await isKilled(user, responseStream, chatRequest))){
+        if ((await isKilled(user, responseStream, chatRequest))) {
             return;
         }
 
@@ -76,7 +78,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             context.id, tokenCount
         )
 
-        if(contexts.length > 1) {
+        if (contexts.length > 1) {
             status.message = `Sending prompt ${index + 1} of ${contexts.length}`;
             status.dataSource = context.id;
             sendStatusEventToStream(
@@ -86,6 +88,30 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
 
         logger.debug("Creating stream wrapper");
         const streamReceiver = new PassThrough();
+
+        // Capture data as it's written to the streamReceiver for AI analysis
+        streamReceiver.on('data', (chunk) => {
+            const chunkStr = chunk.toString();
+            const jsonStrings = chunkStr.split('\n').filter(str => str.startsWith('data: ')).map(str => str.replace('data: ', ''));
+
+            for (const jsonStr of jsonStrings) {
+                if (jsonStr === '[DONE]') {
+                    continue;
+                }
+
+                try {
+                    const chunkObj = JSON.parse(jsonStr);
+                    if (chunkObj?.d?.delta?.text) {
+                        llmResponse += chunkObj.d.delta.text;
+                    }
+                } catch (e) {
+                    // Log the error and the problematic chunk, but don't throw
+                    logger.debug(`Warning: Error parsing chunk: ${e.message}`);
+                    logger.debug(`Problematic chunk: ${jsonStr}`);
+                }
+            }
+        });
+
         multiplexer.addSource(streamReceiver, context.id, eventTransformer);
 
         logger.debug("Calling chat function");
@@ -97,7 +123,7 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
         logger.debug("Chat function streaming finished");
     }
 
-    if(contexts.length > 1) {
+    if (contexts.length > 1) {
         status.message = `Completed ${contexts.length} of ${contexts.length} prompts`;
         status.inProgress = false;
         sendStatusEventToStream(
@@ -105,4 +131,11 @@ export const handleChat = async ({account, chatFn, chatRequest, contexts, metaDa
             status);
     }
 
+    // if (chatRequest.options.assistantId.startsWith('astgp')) {
+    if ((chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {
+        logger.debug("Performing AI Analysis on conversationId:", chatRequest.options.conversationId);
+        analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
+            logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
+        });
+    }
 }

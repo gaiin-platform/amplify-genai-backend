@@ -4,6 +4,7 @@
 import AnthropicBedrock from '@anthropic-ai/bedrock-sdk';
 import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
+import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 
 const logger = getLogger("anthropic");
 const region = process.env.REGION || "us-east-1";
@@ -15,15 +16,17 @@ export const chatAnthropic = async (chatBody, writable) => {
     delete body.options; 
 
     const sanitizedMessages = sanitizeMessages(body.messages, options.prompt)
+
+    const updatedMessages = await includeImageSources(body.imageSources, sanitizedMessages.messages); 
     
     try {
+        const currentModel = options.model.id;
         // Ensure credentials are in ~/.aws/credentials
-        const client = new AnthropicBedrock({awsRegion: region}); // default to 1 if omitted
+        const client = new AnthropicBedrock({awsRegion:  currentModel === "anthropic.claude-3-5-sonnet-20240620-v1:0" ? 'us-east-1' : 'us-west-2'}); // default to 1 if omitted 
         
         logger.debug("Initiating call to Anthropic Bedrock");
 
         // safety gaurd 
-        const currentModel = options.model.id;
         const selectedModel = currentModel.includes("anthropic") ? currentModel : "anthropic.claude-3-haiku-20240307-v1:0";
         if (currentModel !== selectedModel) logger.debug("**Incompatible model entered CLAUDE!** ", currentModel);
 
@@ -31,8 +34,8 @@ export const chatAnthropic = async (chatBody, writable) => {
         const stream = await client.messages.create({
                     model: selectedModel,
                     system: sanitizedMessages.systemPrompt, 
-                    max_tokens: options.model.tokenLimit,
-                    messages: sanitizedMessages.messages, 
+                    max_tokens: options.model.tokenLimit || chatBody.max_tokens,
+                    messages: updatedMessages, 
                     stream: true, 
                     temperature: options.temperature,
                 });
@@ -98,6 +101,45 @@ function sanitizeMessages(oldMessages, system) {
     return {'messages': messages, 'systemPrompt': systemPrompt};
 
 }
+
+async function includeImageSources(dataSources, messages) {
+    if (!dataSources || dataSources.length === 0) return messages;
+
+    let imageMessageContent = []
+    for (let i = 0; i < dataSources.length; i++) {
+        const ds = dataSources[i];
+        const encoded_image = await getImageBase64Content(ds);
+        if (encoded_image) {
+            imageMessageContent.push(
+                    { "type": "text",
+                      "text": `Image ${i + 1}:`
+                    }
+            )
+            imageMessageContent.push( 
+                { "type": "image",
+                "source": {
+                        "type": "base64",
+                        "media_type": ds.type,
+                        "data": encoded_image
+                }
+                }, 
+            )
+        }
+    }
+
+    const msgLen = messages.length - 1;
+    messages[msgLen]['content'] = [{ "type": "text",
+                                    "text": additionalImageInstruction
+                                    }, 
+                                    ...imageMessageContent, 
+                                    { "type": "text",
+                                        "text": messages[msgLen]['content']
+                                    }
+                                  ]
+    return messages 
+}
+    
+
 
 
 

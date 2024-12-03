@@ -12,10 +12,16 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin 
   - serverless-domain-manager
+  - serverless-cloudformation-changesets  
 
 custom:
   pythonRequirements:
     dockerizePip: true
+    layer: true
+    slim: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -43,185 +49,210 @@ provider:
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-  versionFunctions: false
+  versionFunctions: false 
   environment:
     #Local Resources Created in this service
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
-    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
-    MARKET_CATEGORIES_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-categories
-    MARKET_ITEMS_DYNAMO_TABLE: ${self:service}-${sls:stage}-market-items
-    THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-thread-runs
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
-    HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
+    HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
-    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share 
-    S3_MARKET_INDEX_BUCKET_NAME: ${self:service}-${sls:stage}-market-index
+    CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
+    COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
+    S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
+    LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
+    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
     S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
     S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
+    S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
     S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
     S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
-    PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
-    S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME: ${self:service}-${sls:stage}-personal-assistant-email
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
-    
-
-    # Var File
+    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
+    PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
+    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
+    S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
+    S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    MAX_CHUNKS: 1000
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: ${self:service}/${sls:stage}/s3/metadata/encryption
+    PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    #OPENAI_API_KEY_ARN: ${self:custom.stageVars.OPENAI_API_KEY_ARN}
-    OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY}
-    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
-    PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    SHARE_ASSISTANTS_ENDPOINT: ${param:SHARE_ASSISTANTS_ENDPOINT}/assistant/share
-    OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/update_object_permissions
-    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
-    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
-
-
-
+    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
+      
   iam:
     role:
-      statements:
-        - Effect: Allow
-          Action:
-            - secretsmanager:GetSecretValue
-            - dynamodb:Query
-            - dynamodb:Scan
-            - dynamodb:GetItem
-            - dynamodb:PutItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - s3:GetObject  # for accessing S3
-            - s3:PutObject  # for putting objects into S3
-            - s3:DeleteObject
-            - s3:HeadObject # for getting metadata on objects in S3
-            - s3:ListBucket # for listing objects in S3
-            - s3:CreateBucket
-            - sqs:SendMessage
-            - sqs:DeleteMessage
-            - rds-data:ExecuteStatement
-            - rds-data:BatchExecuteStatement
-            - rds-data:BeginTransaction
-            - rds-data:CommitTransaction
-            - rds-data:RollbackTransaction
-          Resource:
-            #- "arn:aws:secretsmanager:us-east-1:*:secret:${self.provider.environment.OPENAI_API_KEY}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
-            - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
-            - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
-            - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"  # access to your s3 bucket
-            - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
-            - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}/*"
-            - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
-            - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
-            - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
-
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole      
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
 
 functions:
 
-  upload_file:
-    handler: assistant/assistant.get_presigned_url
+  chat_endpoint:
+    handler: chat/service.chat_endpoint
+    timeout: 180
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/upload
+          path: chat
+          method: post
+          cors: true
+    
+
+  upload_conversation:
+    handler: state/conversation.upload_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/upload
+          method: put
+          cors: true
+
+  delete_conversation:
+    handler: state/conversation.delete_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/delete
+          method: delete
+          cors: true
+
+  delete_multiple_conversations:
+    handler: state/conversation.delete_multiple_conversations
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/delete_multiple
+          method: POST
+          cors: true
+
+  get_conversation:
+    handler: state/conversation.get_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/get
+          method: get
+          cors: true
+
+  get_multiple_conversations:
+    handler: state/conversation.get_multiple_conversations
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/get_multiple
           method: post
           cors: true
 
-  download_file:
-    handler: assistant/assistant.get_presigned_download_url
+  get_all_conversation:
+    handler: state/conversation.get_all_conversations
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/download
+          path: state/conversation/get_all
+          method: get
+          cors: true
+
+
+  upload_file:
+    handler: files/file.get_presigned_url
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/upload
           method: post
           cors: true
-  list_tags_user:
-    handler: assistant/assistant.list_tags_for_user
+    environment:
+        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+    timeout: 9    
+
+  download_file:
+    handler: files/file.get_presigned_download_url
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/list
+          path: files/download
+          method: post
+          cors: true
+
+  list_tags_user:
+    handler: files/file.list_tags_for_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/tags/list
           method: post
           cors: true
 
   create_tags_user:
-    handler: assistant/assistant.create_tags
+    handler: files/file.create_tags
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/create
+          path: files/tags/create
           method: post
           cors: true
 
   delete_tag_user:
-    handler: assistant/assistant.delete_tag_from_user
+    handler: files/file.delete_tag_from_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/tags/delete
+          path: files/tags/delete
           method: post
           cors: true
 
   set_tags_user_files:
-    handler: assistant/assistant.update_item_tags
+    handler: files/file.update_item_tags
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: assistant/files/set_tags
+          path: files/set_tags
           method: post
           cors: true
 
   query_user_files:
-    handler: assistant/assistant.query_user_files
+    handler: files/file.query_user_files
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
-          path: assistant/files/query
+          path: files/query
           method: post
           cors: true
 
   set_datasource_metadata:
-    handler: assistant/assistant.set_datasource_metadata_entry
+    handler: files/file.set_datasource_metadata_entry
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -229,156 +260,20 @@ functions:
           method: post
           cors: true
 
-  create_assistant:
-    handler: assistant/assistant.create_assistant
-    timeout: 30
-    events:
-      - http:
-          path: assistant/create
-          method: post
-          cors: true
-
-  delete_assistant:
-    handler: assistant/assistant.delete_assistant
-    events:
-      - http:
-          path: assistant/delete
-          method: post
-          cors: true
-
-  add_message_assistant_thread:
-    handler: assistant/assistant.add_message_assistant_thread
-    timeout: 30
-    events:
-      - http:
-          path: assistant/thread/message/create
-          method: post
-          cors: true
-
-  get_messages_assistant_thread:
-    handler: assistant/assistant.get_messages_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/message/list
-          method: post
-          cors: true
-
-  chat_assistant:
-    handler: assistant/assistant.chat_with_assistant
-    timeout: 30
-    events:
-      - http:
-          path: assistant/chat
-          method: post
-          cors: true
-
-  run_assistant_thread:
-    handler: assistant/assistant.run_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run
-          method: post
-          cors: true
-
-  run_status_assistant_thread:
-    handler: assistant/assistant.get_run_status_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/run/status
-          method: post
-          cors: true
-
-  list_assistants:
-    handler: assistant/assistant.list_assistants
-    events:
-      - http:
-          path: assistant/list
-          method: post
-          cors: true
-
-  create_assistant_thread:
-    handler: assistant/assistant.create_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/create
-          method: post
-          cors: true
-
-  delete_assistant_thread:
-    handler: assistant/assistant.delete_assistant_thread
-    events:
-      - http:
-          path: assistant/thread/delete
-          method: post
-          cors: true
-
-
   create:
     handler: state/create.create
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state
           method: post
           cors: true
 
-  market_publish_item:
-    handler: market/market.publish_item
-    events:
-      - http:
-          path: market/item/publish
-          method: post
-          cors: true
-
-  market_delete_item:
-    handler: market/market.delete_item
-    events:
-      - http:
-          path: market/item/delete
-          method: post
-          cors: true
-
-  market_get_category:
-    handler: market/market.get_category
-    events:
-      - http:
-          path: market/category/get
-          method: post
-          cors: true
-
-  market_item_examples:
-    handler: market/market.get_item_examples
-    events:
-      - http:
-          path: market/item/examples/get
-          method: post
-          cors: true
-
-  market_get_item:
-    handler: market/market.get_item
-    events:
-      - http:
-          path: market/item/get
-          method: post
-          cors: true
-
-  market_list_categories:
-    handler: market/market.list_categories
-    events:
-      - http:
-          path: market/category/list
-          method: post
-          cors: true
-
-  market_ideate:
-    handler: market/market.ideate
-    events:
-      - http:
-          path: market/ideate
-          method: post
-          cors: true
-
   user_base_prompts:
     handler: state/share.get_base_prompts
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -387,6 +282,8 @@ functions:
 
   user_share_with_users:
     handler: state/share.share_with_users
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -395,6 +292,8 @@ functions:
 
   user_share_load:
     handler: state/share.load_data_from_s3
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/share/load
@@ -402,6 +301,8 @@ functions:
 
   user_get_shares:
     handler: state/share.get_share_data_for_user
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -410,6 +311,8 @@ functions:
 
   chat_convert:
     handler: converters/docconverter.submit_conversion_job
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 30
     events:
       - http:
@@ -418,6 +321,8 @@ functions:
 
   accounts_charge:
     handler: accounts/accounts.charge_request
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/accounts/charge
@@ -425,48 +330,46 @@ functions:
 
   accounts_get:
     handler: accounts/accounts.get_accounts
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/accounts/get
-          method: post
+          method: get
 
   accounts_save:
     handler: accounts/accounts.save_accounts
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
           path: state/accounts/save
           method: post
 
 
-  index_market_item:
-    handler: market/market.index_item
-    reservedConcurrency: 10
+  settings_get:
+    handler: state/usersettings.get_settings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - MarketItemsDynamoDbTable
-              - StreamArn
-          batchSize: 1
-          batchWindow: 60
+      - http:
+          path: state/settings/get
+          method: get
 
-  index_market_category:
-    handler: market/market.index_category
+  settings_save:
+    handler: state/usersettings.save_settings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - MarketCategoriesDynamoDbTable
-              - StreamArn
-          batchSize: 1
-          batchWindow: 60
+      - http:
+          path: state/settings/save
+          method: post
 
   convert:
     handler: converters/docconverter.handler
     layers:
-      - ${self:provider.environment.PANDOC_LAYER}  # replace this with the actual Pandoc layer ARN
+      - ${self:provider.environment.PANDOC_LAYER} 
+      #- Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
@@ -477,6 +380,8 @@ functions:
 
   queue_document_for_rag:
     handler: rag/core.queue_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
@@ -488,6 +393,8 @@ functions:
 
   process_document_for_rag:
     handler: rag/core.process_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -496,11 +403,14 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
+        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
-
+    
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
@@ -512,6 +422,8 @@ functions:
 
   process_document_for_chunking:
     handler: rag/core.chunk_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -525,11 +437,127 @@ functions:
 
   email_assistant:
     handler: personal/assistant.process_email
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 900
     events:
       - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
-      
+
+  process_images_for_chat:
+    handler: images/core.process_images_for_chat
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
+
+  archive_chat_usage:
+    handler: utilities/amplify-lambda/utilities/chat_usage_archive.archive_items
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - schedule: cron(0 0 ? * SUN *) # Run every Sunday at midnight          
+  
 resources:
   Resources:
+    LambdaIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:DescribeParameters
+                - ssm:PutParameter
+              Resource: 
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - s3:GetObject
+                - s3:PutObject
+                - s3:PutObjectHold
+                - s3:DeleteObject
+                - s3:HeadObject
+                - s3:ListBucket
+                - s3:CreateBucket
+                - sqs:SendMessage
+                - sqs:DeleteMessage
+                - sqs:ReceiveMessage
+                - sqs:GetQueueAttributes
+                - sqs:ChangeMessageVisibility
+                - rds-data:ExecuteStatement
+                - rds-data:BatchExecuteStatement
+                - rds-data:BeginTransaction
+                - rds-data:CommitTransaction
+                - rds-data:RollbackTransaction
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
+                - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
+                - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
+
     StateBucket:
       Type: AWS::S3::Bucket
       Properties:
@@ -540,6 +568,10 @@ resources:
               AllowedMethods: ['PUT', 'POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
+        LoggingConfiguration:
+          DestinationBucketName: 
+            Ref: AccessLogsBucket
+          LogFilePrefix: S3AccessLogs/
 
     AssistantUploadsBucket:
       Type: AWS::S3::Bucket
@@ -551,11 +583,19 @@ resources:
               AllowedMethods: ['PUT', 'POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
+        LoggingConfiguration:
+          DestinationBucketName: 
+            Ref: AccessLogsBucket
+          LogFilePrefix: S3AccessLogs/              
 
     AssistantsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
         AttributeDefinitions:
           -
             AttributeName: id
@@ -592,43 +632,6 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}
 
-    AssistantThreadsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: name
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: UserNameIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: name
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANT_THREADS_DYNAMODB_TABLE}
 
     UserStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -648,6 +651,10 @@ resources:
             AttributeName: id
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         GlobalSecondaryIndexes:
           -
             IndexName: UserIndex
@@ -668,103 +675,15 @@ resources:
               ProjectionType: ALL
         TableName: ${self:provider.environment.DYNAMODB_TABLE}
 
-    AssistantThreadRunsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.THREAD_RUNS_DYNAMODB_TABLE}
-
-    MarketItemsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        StreamSpecification:
-            StreamViewType: NEW_AND_OLD_IMAGES
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: category
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: type
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        BillingMode: PAY_PER_REQUEST
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: CategoryIndex
-            KeySchema:
-              - AttributeName: category
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: CategoryTypeIndex
-            KeySchema:
-              - AttributeName: category
-                KeyType: HASH
-              - AttributeName: type
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.MARKET_ITEMS_DYNAMO_TABLE}
-
-    MarketCategoriesDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        StreamSpecification:
-            StreamViewType: NEW_IMAGE
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        TableName: ${self:provider.environment.MARKET_CATEGORIES_DYNAMO_TABLE}
 
     UserFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -835,6 +754,10 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: user
@@ -844,24 +767,42 @@ resources:
             KeyType: HASH
         TableName: ${self:provider.environment.USER_TAGS_DYNAMO_TABLE}
 
+
     HashFilesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: id
             AttributeType: S
+          - AttributeName: textLocationKey
+            AttributeType: S  
         KeySchema:
           - AttributeName: id
             KeyType: HASH
         TableName: ${self:provider.environment.HASH_FILES_DYNAMO_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: TextLocationIndex
+            KeySchema:
+              - AttributeName: textLocationKey
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
 
 
     AccountingChargesDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: id
@@ -875,6 +816,10 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: user
@@ -888,6 +833,10 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
         AttributeDefinitions:
           -
             AttributeName: email
@@ -906,6 +855,10 @@ resources:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
@@ -926,99 +879,156 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
+          - IndexName: DateIndex
+            KeySchema:
+              - AttributeName: time
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
         StreamSpecification:  # enable streaming
-          StreamViewType: NEW_AND_OLD_IMAGES
+          StreamViewType: NEW_AND_OLD_IMAGES        
 
-
-    MarketIndexBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_MARKET_INDEX_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
-
-
-    PersonalAssistantEmailBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_PERSONAL_ASSISTANT_EMAIL_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET','PUT', 'POST']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+    AccountingChatUsageArchiveDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: time
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: UserUsageTimeIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+              - AttributeName: time
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
+          - IndexName: DateIndex
+            KeySchema:
+              - AttributeName: time
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL  # Or specify the attributes you want projected
 
 
     ConversionInputBucket:
          Type: AWS::S3::Bucket
          Properties:
-           BucketName: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+          BucketName: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket 
+            LogFilePrefix: S3AccessLogs/
 
     ConversionOutputBucket:
          Type: AWS::S3::Bucket
          Properties:
-           BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+          BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/      
 
     BasePromptsBucket:
          Type: AWS::S3::Bucket
          Properties:
-           BucketName: ${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+          BucketName: ${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+             - AllowedOrigins: ['*']
+               AllowedMethods: ['GET']
+               AllowedHeaders: ['*']
+               MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/      
+
 
     RagInputBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET','PUT', 'POST']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET','PUT', 'POST']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
+    
+    ImageInputBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET','PUT', 'POST']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
     RagChunksBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
     FileTextBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
-           CorsConfiguration:
-             CorsRules:
-               - AllowedOrigins: ['*']
-                 AllowedMethods: ['GET','HEAD']
-                 AllowedHeaders: ['*']
-                 MaxAge: 3000
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET','HEAD']
+                AllowedHeaders: ['*']
+                MaxAge: 3000
+          LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
     RagDocumentIndexQueue:
           Type: "AWS::SQS::Queue"
@@ -1031,33 +1041,99 @@ resources:
           Properties:
             VisibilityTimeout: 300
             QueueName: ${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}
+    
+    remoteConversationsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['PUT', DELETE, GET]
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+        LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
+    
+    ZipFileBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET','PUT','POST']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+        LoggingConfiguration:
+            DestinationBucketName: 
+              Ref: AccessLogsBucket
+            LogFilePrefix: S3AccessLogs/       
 
+    AccessLogsBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}
+
+    AccessLogsBucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        Bucket:
+          Ref: AccessLogsBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: 'S3ServerAccessLogsPolicy'
+              Effect: 'Allow'
+              Principal:
+                Service: 'logging.s3.amazonaws.com'
+              Action:
+                - 's3:PutObject'
+              Resource: 
+                Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: AccessLogsBucket
+                    - '/S3AccessLogs/*'
+              Condition:
+                StringEquals:
+                  'aws:SourceAccount': ${aws:accountId}
   Outputs:
-    AccountingChatUsageDynamoStreamArn:
-      Description: "The ARN of the DynamoDB Stream for the ChatUsage table"
-      Value: !GetAtt AccountingChatUsageDynamoDbTable.StreamArn
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-AccountingChatUsageDynamoStreamArn"
-  
-    ApiGatewayId:
-      Description: "The ID of the API Gateway"
-      Value: !Ref ApiGatewayRestApi
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-RestApiId"
-  
-    ApiGatewayRootResourceId:
-      Description: "The ID of the API Gateway root resource"
-      Value: 
-        Fn::GetAtt: [ApiGatewayRestApi, "RootResourceId"]
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-RestApiRootResourceId"
+      AccountingChatUsageDynamoStreamArn:
+        Description: "The ARN of the DynamoDB Stream for the ChatUsage table"
+        Value: !GetAtt AccountingChatUsageDynamoDbTable.StreamArn
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-AccountingChatUsageDynamoStreamArn"
+    
+      ApiGatewayId:
+        Description: "The ID of the API Gateway"
+        Value: !Ref ApiGatewayRestApi
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RestApiId"
+    
+      ApiGatewayRootResourceId:
+        Description: "The ID of the API Gateway root resource"
+        Value: 
+          Fn::GetAtt: [ApiGatewayRestApi, "RootResourceId"]
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RestApiRootResourceId"
 
-    BasePromptsBucketOutput:
-      Description: "The S3 bucket name for base prompts"
-      Value: !Ref BasePromptsBucket
-      Export:
-        Name: 
-          Fn::Sub: "${sls:stage}-BasePromptsBucket"
+      BasePromptsBucketOutput:
+        Description: "The S3 bucket name for base prompts"
+        Value: !Ref BasePromptsBucket
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-BasePromptsBucket"
+
+      ConverstionTemplatesBucketOutput:
+        Description: "The S3 bucket name for ppt conversion templates"
+        Value: !Ref ConversionOutputBucket
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-ConversionOutputBucket"
+

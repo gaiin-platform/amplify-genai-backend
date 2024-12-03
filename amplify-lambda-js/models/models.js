@@ -1,13 +1,12 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-
-
-export const ModelID = {
+ export const ModelID = {
     GPT_4_TURBO_AZ: 'gpt-4-1106-Preview',
     GPT_4o_AZ: 'gpt-4o',
     GPT_4o_MINI: 'gpt-4o-mini',
     GPT_4_TURBO: 'gpt-4-1106-preview',
+    GPT_4o_MINI: 'gpt-4o-mini',
     GPT_3_5: 'gpt-3.5-turbo',
     GPT_3_5_FN: 'gpt-3.5-turbo-1106',
     GPT_3_5_AZ: 'gpt-35-turbo',
@@ -15,9 +14,11 @@ export const ModelID = {
     CLAUDE_INSTANT_1_2: 'anthropic.claude-instant-v1',
     CLAUDE_2_1: 'anthropic.claude-v2:1',
     CLAUDE_3_SONNET: 'anthropic.claude-3-sonnet-20240229-v1:0',
-    CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
-    CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0',
-    CLAUDE_3_OPUS: 'anthropic.claude-3-opus-20240229-v1:0',
+    CLAUDE_3_5_SONNET: 'anthropic.claude-3-5-sonnet-20240620-v1:0', //Move to Inference Endpoint
+    CLAUDE_3_5_SONNET_v2: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+    CLAUDE_3_HAIKU: 'anthropic.claude-3-haiku-20240307-v1:0', //Move to Inference Endpoint
+    CLAUDE_3_5_HAIKU: 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    CLAUDE_3_OPUS: 'us.anthropic.claude-3-opus-20240229-v1:0',
     MISTRAL_7B: 'mistral.mistral-7b-instruct-v0:2',
     MIXTRAL_8X7B: 'mistral.mixtral-8x7b-instruct-v0:1',
     MISTRAL_LARGE: 'mistral.mistral-large-2402-v1:0'
@@ -48,7 +49,7 @@ export const Models = {
         visible: true,
         outputCost: .00066,
         inputCost: .000165,
-        },          
+        },        
     [ModelID.GPT_4_TURBO]: {
         id: ModelID.GPT_4_TURBO,
         name: 'GPT-4-Turbo',
@@ -105,9 +106,9 @@ export const Models = {
         outputCost: 0.01500,
         inputCost: 0.00300,
     },
-    [ModelID.CLAUDE_3_5_SONNET] : { 
-        id: ModelID.CLAUDE_3_5_SONNET,
-        name: 'Claude-3-5-Sonnet (bedrock)',
+    [ModelID.CLAUDE_3_5_SONNET_v2] : { 
+        id: ModelID.CLAUDE_3_5_SONNET_v2,
+        name: 'Claude-3-5-Sonnet-v2 (bedrock)',
         tokenLimit: 200000,
         visible: false,
         outputCost: 0.015,
@@ -115,12 +116,20 @@ export const Models = {
     },
     [ModelID.CLAUDE_3_HAIKU]: {
         id: ModelID.CLAUDE_3_HAIKU,
-        name: 'Claude-3-Haiku (bedrock)',
+        name: 'Claude-3.0-Haiku (bedrock)',
         tokenLimit: 200000,
         visible: false,
         outputCost: 0.00125,
         inputCost: 0.00025,
     },
+    [ModelID.CLAUDE_3_5_HAIKU]: {
+        id: ModelID.CLAUDE_3_5_HAIKU,
+        name: 'Claude-3.5-Haiku (bedrock)',
+        tokenLimit: 200000,
+        visible: false,
+        outputCost: 0.001,
+        inputCost: 0.0005,
+    },    
     [ModelID.CLAUDE_3_OPUS]: {
         id: ModelID.CLAUDE_3_OPUS,
         name: 'Claude-3-OPUS (bedrock)',
@@ -145,7 +154,6 @@ export const Models = {
         outputCost: 0.00045,
         inputCost: 0.0007,
     },
-
     [ModelID.MISTRAL_LARGE]: {
         id: ModelID.MISTRAL_LARGE,
         name: 'Mistral-Large (bedrock)',

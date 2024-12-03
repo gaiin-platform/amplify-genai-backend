@@ -1,6 +1,5 @@
 service: amplify-${self:custom.stageVars.DEP_NAME}-object-access
 
-
 frameworkVersion: '3'
 
 package:
@@ -14,21 +13,25 @@ plugins:
   - serverless-prune-plugin
   - serverless-deployment-bucket
   - serverless-iam-roles-per-function
+  - serverless-cloudformation-changesets
 
 custom:
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  pythonRequirements:
+    dockerizePip: true
+    layer: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
-  pythonRequirements:
-    dockerizePip: true
-    layer: true    
-
-  prune:
-  automatic: true
-  includeLayers: true
-  number: 5  
 
   deploymentBucket:
     versioning: true
@@ -43,33 +46,72 @@ provider:
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: us-east-1
-
-
+  versionFunctions: false
+  logRetentionInDays: 365
+  deploymentBucket:
+    name: ${self:service}-${sls:stage}-deployment-bucket
+    serverSideEncryption: AES256
   apiGateway:
     restApiId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
-            
+  environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+    API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    COGNITO_USERS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-cognito-users
+    AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+    AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}  
+    HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+  iam:
+    role:
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole    
+        - !Ref ObjectAccessLambdaPolicy
+
 functions:
 
-  user_get_shares:
+  cognito_users_get_emails:
     handler: cognito_users.get_emails
-    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer    
+    timeout: 15
     events:
       - http:
           path: /utilities/emails
           method: get
-    environment: 
-      OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-      COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
-      IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
+  get_cognito_amp_groups:
+    handler: cognito_users.get_user_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12   
+    events:
+      - http:
+          path: /utilities/get_user_groups
+          method: get
 
-  update_obj_perms:
+  in_cognito_amp_groups:
+    handler: cognito_users.in_cognito_amplify_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /utilities/in_cognito_amp_groups
+          method: post
+
+  update_ojbect_perms:
     runtime: python3.11
     handler: object_access.update_object_permissions
     layers:
@@ -80,28 +122,8 @@ functions:
           path: /utilities/update_object_permissions
           method: post
           cors: true
-    environment:
-      OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-      COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
-      IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
-    iamRoleStatements:
-          - Effect: Allow
-            Action:
-              - dynamodb:Query
-              - dynamodb:Scan
-              - dynamodb:GetItem
-              - dynamodb:PutItem
-              - dynamodb:UpdateItem
-              - dynamodb:DeleteItem
-
-            Resource:
-              - "arn:aws:dynamodb:${self:provider.region}:${self:custom.stageVars.AWS_ACCOUNT_ID}:table/${self:service}-${sls:stage}-object-access"
-
-
-  can_access_obj:
+  can_access_objects:
     runtime: python3.11
     handler: object_access.can_access_objects
     layers:
@@ -112,117 +134,151 @@ functions:
           path: /utilities/can_access_objects
           method: post
           cors: true
-    environment:
-      OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-      COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
-      IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-
-    iamRoleStatements:
-          - Effect: Allow
-            Action:
-              - dynamodb:Query
-              - dynamodb:Scan
-              - dynamodb:GetItem
-            Resource:
-              - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:service}-${sls:stage}-object-access"
 
   simulate_access:
-     runtime: python3.11
-     handler: object_access.simulate_access_to_objects
-     layers:
-       - Ref: PythonRequirementsLambdaLayer
-     timeout: 15
-     events:
-       - http:
-           path: /utilities/simulate_access_to_objects
-           method: post
-           cors: true
-     environment:
-       OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-       COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-       OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
-       IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-
-     iamRoleStatements:
-           - Effect: Allow
-             Action:
-               - dynamodb:Query
-               - dynamodb:Scan
-               - dynamodb:GetItem
-             Resource:
-               - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:service}-${sls:stage}-object-access"
-
-
-  create_cog_group:
-      runtime: python3.11
-      handler: object_access.create_cognito_group
-      layers:
-        - Ref: PythonRequirementsLambdaLayer
-  
-      timeout: 300
-      events:
-        - http:
-            path: /utilities/create_cognito_group
-            method: post
-            cors: true
-      environment:
-        OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-        OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-        COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-        IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-      
-  
-      iamRoleStatements:
-        - Effect: Allow
-          Action:
-            - cognito-idp:CreateGroup
-            - cognito-idp:AdminAddUserToGroup
-          Resource:
-            - "arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVars.COGNITO_USER_POOL_ID}"
-
-
-
-  sync_cog_users:
     runtime: python3.11
-    handler: cognito_users_sync.sync_users_to_dynamo  # Update with the actual path to your handler
-    timeout: 900  # Set an appropriate timeout, max is 15 minutes (900 seconds)
+    handler: object_access.simulate_access_to_objects
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /utilities/simulate_access_to_objects
+          method: post
+          cors: true
+
+  sync_cognito_users:
+    runtime: python3.11
+    handler: cognito_users_sync.sync_users_to_dynamo
+    timeout: 900
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     events:
       - schedule:
-          rate: rate(5 minutes)  # Example: run every hour
+          rate: rate(5 minutes)
           enabled: true
-    environment:
-      COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-      COGNITO_USERS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-cognito-users
-    iamRoleStatements:
-      - Effect: Allow
-        Action:
-          - cognito-idp:ListUsers
-        Resource:
-          - "arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVars.COGNITO_USER_POOL_ID}"
-      - Effect: Allow
-        Action:
-          - dynamodb:PutItem
-          - dynamodb:GetItem
-          - dynamodb:UpdateItem
-        Resource:
-          - !GetAtt CognitoUsersTable.Arn
+
+  create_ast_admin_group:
+    handler: groups.create_group
+    timeout: 12
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/create
+          method: post
+          cors: true
+
+  update_members:
+    handler: groups.update_members
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/members/update
+          method: post
+          cors: true
+
+  update_group_types:
+    handler: groups.update_group_types
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/types/update
+          method: post
+          cors: true
+
+  update_member_permission:
+    handler: groups.update_members_permission
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/members/update_permissions
+          method: post
+          cors: true
+
+  list_groups:
+    handler: groups.list_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/list
+          method: get
+          cors: true
+
+  update_assistants:
+    handler: groups.update_assistants
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/assistants/update
+          method: post
+          cors: true
+
+  delete_group:
+    handler: groups.delete_group
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/delete
+          method: delete
+          cors: true
 
 resources:
-  Conditions:
-    IsProd:
-      'Fn::Equals':
-        - ${self:provider.stage}
-        - 'prod'
-  
   Resources:
+    ObjectAccessLambdaPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+                - dynamodb:DeleteItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-cognito-users"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-cognito-users"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-object-access"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-api-keys/index*"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-groups"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-group-logs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files"
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource:
+                - !Sub "arn:aws:cognito-idp:${self:provider.region}:*:userpool/${self:custom.stageVars.COGNITO_USER_POOL_ID}"
+
+
     ObjectAccessTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
         TableName: ${self:service}-${sls:stage}-object-access
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         AttributeDefinitions:
           - AttributeName: 'object_id'
             AttributeType: 'S'
@@ -240,15 +296,78 @@ resources:
                 KeyType: 'HASH'  # Partition key for the secondary index
             Projection:
               ProjectionType: 'ALL'
-
+    
     CognitoUsersTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
         TableName: ${self:service}-${sls:stage}-cognito-users
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         AttributeDefinitions:
           - AttributeName: 'user_id'
             AttributeType: 'S'
         KeySchema:
           - AttributeName: 'user_id'
-            KeyType: 'HASH'              
+            KeyType: 'HASH'   
+
+    ApiKeyTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-api-keys
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true        
+        AttributeDefinitions:
+          - AttributeName: 'api_owner_id'
+            AttributeType: 'S'
+          - AttributeName: 'apiKey'
+            AttributeType: 'S' 
+        KeySchema:
+          - AttributeName: 'api_owner_id'
+            KeyType: 'HASH'
+        GlobalSecondaryIndexes:
+          - IndexName: ApiKeyIndex
+            KeySchema:
+              - AttributeName: apiKey
+                KeyType: HASH
+            Projection:
+              ProjectionType: 'ALL'          
+
+
+    AmplifyGroupsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:service}-${sls:stage}-amplify-groups
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true        
+        AttributeDefinitions:
+          - AttributeName: 'group_id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'group_id'
+            KeyType: 'HASH'   
+
+
+    AmplifyGroupLogTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${sls:stage}-amplify-group-logs
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true        
+        AttributeDefinitions:
+          - AttributeName: "log_id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "log_id"
+            KeyType: "HASH"      

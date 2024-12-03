@@ -15,7 +15,8 @@ def update_object_permissions(access_token,
                               principal_type="user",
                               permission_level="read",
                               policy=""):
-    permissions_endpoint = os.environ['OBJECT_ACCESS_SET_PERMISSIONS_ENDPOINT']
+    permissions_endpoint = os.environ['API_BASE_URL'] + '/utilities/update_object_permissions'
+    
     request = {
         "data": {
             "emailList": shared_with_users,
@@ -54,7 +55,11 @@ def update_object_permissions(access_token,
 def can_access_objects(access_token, data_sources, permission_level="read"):
     print(f"Checking access on data sources: {data_sources}")
 
-    access_levels = {ds['id']: permission_level for ds in data_sources}
+    # If there is a protocol on the ID, we need to strip it off
+    access_levels = {
+        ds['id'].split('://')[-1]: permission_level
+        for ds in data_sources
+    }
 
     print(f"With access levels: {access_levels}")
 
@@ -70,8 +75,7 @@ def can_access_objects(access_token, data_sources, permission_level="read"):
     }
 
     # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = os.environ['OBJECT_ACCESS_API_ENDPOINT']
-
+    permissions_endpoint = os.environ['API_BASE_URL'] + '/utilities/can_access_objects'
     try:
         response = requests.post(
             permissions_endpoint,
@@ -116,7 +120,7 @@ def simulate_can_access_objects(access_token, object_ids, permission_levels=["re
     }
 
     # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = os.environ['OBJECT_SIMULATE_ACCESS_API_ENDPOINT']
+    permissions_endpoint = os.environ['API_BASE_URL'] + "/utilities/simulate_access_to_objects"
 
     try:
         response = requests.post(
