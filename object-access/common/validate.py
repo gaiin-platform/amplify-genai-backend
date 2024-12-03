@@ -441,7 +441,7 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
 
 
 
-def validated(op, validate_body=True, idpPrefix_variable=None):  # Note the added argument
+def validated(op, validate_body=True):  # Note the added argument
     def decorator(f):
         def wrapper(event, context):
             try:

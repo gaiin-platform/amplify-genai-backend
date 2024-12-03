@@ -5,6 +5,7 @@
 from openai import AzureOpenAI
 from openai import OpenAI
 import tiktoken
+import json
 import re
 import os
 import boto3
@@ -19,6 +20,7 @@ from common.credentials import get_credentials, get_json_credetials, get_endpoin
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version = os.environ['API_VERSION']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
@@ -129,6 +131,54 @@ def generate_openai_embeddings(content):
     logger.info(f"Embedding: {embedding}")
     return {"success": True, "data": embedding, "token_count": token_count}        
 
+def generate_questions(content, embedding_provider="azure"):
+    if embedding_provider == "bedrock":
+        return generate_bedrock_questions(content)
+    if embedding_provider == "azure":
+        return generate_azure_questions(content)
+    if embedding_provider == "openai":
+        return generate_openai_questions(content)
+
+def generate_bedrock_questions(content):
+    try:
+        client = boto3.client("bedrock-runtime", region_name=region)
+        model_id = qa_model_name
+        
+        system_prompt = f"With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."
+
+        native_request = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "system": system_prompt,
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": content}],
+                }
+            ],
+        }
+        request = json.dumps(native_request)
+        
+        response = client.invoke_model(modelId=model_id, body=request)
+        model_response = json.loads(response["body"].read())
+        
+        questions = model_response["content"][0]["text"]
+        input_tokens = model_response["usage"]["input_tokens"]
+        output_tokens = model_response["usage"]["output_tokens"]
+        
+        logger.info(f"Questions generated: {questions}")
+        return {
+            "success": True,
+            "data": questions,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+    except Exception as e:
+        logger.error(f"An error occurred with Bedrock: {e}", exc_info=True)
+        return {"success": False, "error": f"An error occurred with Bedrock: {str(e)}"}
+
+def generate_azure_questions(content):
 def generate_questions(content, embedding_provider="azure"):
     if embedding_provider == "bedrock":
         return generate_bedrock_questions(content)

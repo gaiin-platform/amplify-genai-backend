@@ -18,6 +18,8 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
+    slim: false
+
 
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
@@ -25,10 +27,8 @@ custom:
 
   prune:
     automatic: true
-    number: 3
-  serverless-offline: 
-    custom:
-      config: ${file(../var/${self:provider.stage}-var.yml)}     
+    includeLayers: true
+    number: 5
 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -131,6 +131,7 @@ functions:
       RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
+  
   queue_document_for_embedding:
       runtime: python3.11
       layers:

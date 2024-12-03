@@ -54,9 +54,10 @@ def create_table():
     );
     -- Create an index on the 'vector_embedding' column using the hnsw method.
     CREATE INDEX embeddings_vector_embedding_hnsw_idx ON embeddings USING hnsw (vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
-    -- Create an index on the 'vector_embedding' column using the hnsw method.
+    -- Create an index on the 'vector_embedding_qa' column using the hnsw method.
     CREATE INDEX embeddings_vector_qa_embedding_hnsw_idx ON embeddings USING hnsw (qa_vector_embedding vector_ip_ops) WITH (m = 16, ef_construction = 64);
     -- Define the trigger function to update the 'content_tsvector' column before insert or update
+    CREATE INDEX idx_src ON embeddings (src);
     CREATE OR REPLACE FUNCTION update_tsvector_column() RETURNS trigger AS $$
     BEGIN
     NEW.content_tsvector := to_tsvector('english', coalesce(NEW.content, ''));

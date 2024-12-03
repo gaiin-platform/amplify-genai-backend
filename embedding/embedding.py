@@ -27,9 +27,8 @@ endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
 table_name = 'embeddings'
-
-
 pg_password = get_credentials(rag_pg_password)
+
 
 
 
