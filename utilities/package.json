@@ -1,7 +1,0 @@
-{
-  "devDependencies": {
-    "serverless-offline": "^13.3.3",
-    "serverless-prune-plugin": "^2.0.2",
-    "serverless-python-requirements": "^6.0.1"
-  }
-}

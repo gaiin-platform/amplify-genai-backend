@@ -261,7 +261,15 @@ const resolveDataSources = (step, workflowOutputs, externalDataSources) => {
                     throw new Error("Data source not found: " + inputName);
                 }
                 dataSources.push(dataSource);
-            } else {
+            }
+            else if(inputName.split("://").length === 2){
+                const dataSource = externalDataSources.find((ds) => ds.id === inputName);
+                if (!dataSource) {
+                    throw new Error("Data source not found: " + inputName);
+                }
+                dataSources.push(dataSource);
+            }
+            else if(workflowOutputs[inputName]) {
                 const dataSource = workflowOutputs[inputName];
                 if (!dataSource) {
                     throw new Error("Data source not found: " + inputName);

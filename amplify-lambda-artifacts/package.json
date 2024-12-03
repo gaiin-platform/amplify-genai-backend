@@ -1,0 +1,17 @@
+{
+  "name": "amplify-state-api",
+  "version": "1.0.0",
+  "description": "Amplify State API",
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "serverless-offline": "^13.2.0",
+    "serverless-offline-local-authorizers-plugin": "^1.2.0",
+    "serverless-prune-plugin": "^2.0.2",
+    "serverless-python-requirements": "^6.0.1"
+  },
+  "dependencies": {
+    "nodejs": "^0.0.0",
+    "serverless": "^3.38.0"
+  }
+}

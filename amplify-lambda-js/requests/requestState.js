@@ -120,6 +120,7 @@ export const updateKillswitch = async (user, requestId, killswitch) => {
             lastUpdatedTime: {N: "" + new Date().getTime()}
         }
     });
+    logger.debug("Exit - killswitch value: ", killswitch);
 
     logger.debug("Updating request state.");
     const response = await dynamodbClient.send(command);

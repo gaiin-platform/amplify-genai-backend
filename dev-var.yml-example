@@ -1,9 +1,4 @@
 # amplify-lambda
-#
-AWS_ACCOUNT_ID: ""
-COGNITO_CLIENT_ID: "" #Cognito Client ID provided by IAC output
-COGNITO_USER_POOL_ID: "" #Value provided by IAC output
-CUSTOM_API_DOMAIN: "" #domain used for API gateway; for example: <env>-api.<domain>.com
 DEP_NAME: "" #name of the deployment; must be less than 10 characters and not contain spaces
 HOSTED_ZONE_ID: "" #app_route53_zone_id from IAC output
 IDP_PREFIX: "AmplifyGenAI" #should match the value for provider_name in Cognito vars of the IAC deployment
@@ -20,6 +15,10 @@ RDS_HOSTED_ZONE_ID: "" #'Z2R2ITUGPM61AM' is us-east-1, use the RDS Hosted Zone I
 SECRETS_ARN_NAME: "" #app_secrets_secret_arn from IAC output
 VPC_CIDR: "" #vpc_cidr_block of deployment from IAC output
 VPC_ID: "" #vpc_id of deployment from IAC output
+SENDER_EMAIL: ""
+KEYWORD_MODEL_NAME: "gpt-35-turbo"
+CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
+CHAT_ENDPOINT: "https://yourchatendpoint" # This will an output from the LambdaJS stack. For the initial deploy leave this value in. Then update after LambdaJS is deployed. 
 
 # Embeddings Configuration
 #
@@ -28,7 +27,7 @@ ASSISTANTS_OPENAI_PROVIDER: "azure" #can be switched to 'openai' if using the Op
 EMBEDDING_MODEL_NAME: "text-embedding-ada-002" #If using Amazon Titan, set to amazon.titan-embed-text-v1
 EMBEDDING_PROVIDER: "azure" #set to 'openai' for OpenAI API or set to 'bedrock' for Amazon Bedrock
 OPENAI_PROVIDER: "azure" #can be switched to 'openai' if using the OpenAI service APIs
-QA_MODEL_NAME: "gpt-35-turbo" #If using Anthropic Haiku, set to claude-3-haiku-20240307-v1:0
+QA_MODEL_NAME: "gpt-35-turbo" #If using Anthropic Haiku, set to your deployed haiku model (claude-3-haiku-20240307-v1:0 or us.anthropic.claude-3-5-haiku-20241022-v1:0)
 RAG_ASSISTANT_MODEL_ID: "gpt-35-turbo"
 
 # These Amazon Aurora RDS can be adjusted to suit your deployment needs for scaling.

@@ -18,14 +18,14 @@ const limiter = new Bottleneck({
     minTime: 10
 });
 
-const ragEndpoint = process.env.RAG_ENDPOINT;
+const ragEndpoint = process.env.API_BASE_URL + '/embedding-dual-retrieval';
 
-async function getRagResults(params, token, search, ragDataSourceKeys, count) {
-
+async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupDataSourcesKeys, count) {
     const ragRequest = {
         data: {
             dataSources: ragDataSourceKeys,
-            userInput: search,
+            groupDataSources : ragGroupDataSourcesKeys, 
+            userInput : search,
             limit: count
         },
     }
@@ -48,7 +48,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, count) {
 
 export const getContextMessages = async (chatFn, params, chatBody, dataSources) => {
     const ragLLMParams = setModel(
-        {...params, options: {skipRag: true}}, //Models[process.env.RAG_ASSISTANT_MODEL_ID]);
+        {...params, options: {skipRag: true, dataSourceOptions:{}}}, //Models[process.env.RAG_ASSISTANT_MODEL_ID]);
         getCheapestModelEquivalent(getModel(params)));
 
     const llm = new LLM(
@@ -107,13 +107,22 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
         const search = lastMessage.content;
 
         const keyLookup = {};
+        const ragGroupDataSourcesKeys = {};
+        const ragDataSourceKeys = [];
         dataSources.forEach(ds => {
-            const key = extractKey(ds.id) //+ ".content.json";
+            const key = extractKey(ds.id);
+            if (ds.groupId) {
+                // If the dataSource has a groupId, add it to the groupDataSources object
+                if (!ragGroupDataSourcesKeys[ds.groupId]) {
+                    ragGroupDataSourcesKeys[ds.groupId] = [];
+                }
+                ragGroupDataSourcesKeys[ds.groupId].push(key);
+            } else {
+                ragDataSourceKeys.push(key)
+            }
             keyLookup[key] = ds;
         });
-
-        const ragDataSourceKeys = Object.keys(keyLookup);
-
+        
         const searches = await llm.promptForData(
             chatBody, [],
             `
@@ -155,7 +164,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 limiter.schedule(async () => {
                     try {
                         const searchString = idea.descriptionOfSpecificHelpfulInformation;
-                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, resultsPerIdea);
+                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, ragGroupDataSourcesKeys, resultsPerIdea);
                         const sources = response.data.result.map((item) => {
                             const [content, key, locations, indexes, charIndex, user, tokenCount,  ragId, score] = item;
                             const ds = keyLookup[key];
@@ -165,6 +174,8 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                                 score: score || 0.5,
                                 name: ds.name,
                                 key,
+                                contentKey: ds.metadata.userDataSourceId ?? ds.key,
+                                groupId: ds.groupId,
                                 type: ds.type,
                                 locations,
                                 indexes,
@@ -175,6 +186,18 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                         });
                         return sources;
                     } catch (e) {
+                        if (e.response) {
+                            // Extract status code and response message
+                            const statusCode = e.response.status;
+                            const responseMessage = e.response.data;
+
+                            // Log the status code and message
+                            console.error(`Error: Request failed with status code ${statusCode}`);
+                            console.error(`Response Message: ${JSON.stringify(responseMessage)}`);
+                        }
+                        else {
+                            logger.error("Error getting RAG results", e);
+                        }
                         return [];
                     }
                 });
