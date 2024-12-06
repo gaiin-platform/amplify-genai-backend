@@ -48,7 +48,7 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   logRetentionInDays: 365
   deploymentBucket:
@@ -102,7 +102,6 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
     EMBEDDING_PROVIDER: ${self:custom.stageVars.EMBEDDING_PROVIDER}
-    SENDER_EMAIL: ${self:custom.stageVars.SENDER_EMAIL}
     KEYWORD_MODEL_NAME: ${self:custom.stageVars.KEYWORD_MODEL_NAME}
     REGION: ${self:provider.region}
     
@@ -173,7 +172,6 @@ functions:
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-        SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
         ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
         EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
         KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}

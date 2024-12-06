@@ -27,7 +27,7 @@ def sync_users_to_dynamo(event, context):
                     'user_id': user_id,
                     'family_name': user_attributes.get('family_name'),
                     'given_name': user_attributes.get('given_name'),
-                    'custom:vu_groups': user_attributes.get('custom:vu_groups'),
+                    'custom:groups': user_attributes.get('custom:groups'),
                     'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                 }
                 
