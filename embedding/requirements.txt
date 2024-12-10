@@ -21,7 +21,7 @@ botocore==1.32.7
     #   -r requirements.in
     #   boto3
     #   s3transfer
-certifi==2024.7.4
+certifi==2024.8.30
     # via
     #   httpcore
     #   httpx
