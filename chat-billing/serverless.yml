@@ -9,14 +9,19 @@ package:
 
 plugins:
   - serverless-offline
-  - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-deployment-bucket
-
+  - serverless-python-requirements
+  - serverless-cloudformation-changesets
+    
 custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    
   serverless-offline: 
     custom:
       config: ${file(../var/${self:provider.stage}-var.yml)}
@@ -26,11 +31,6 @@ custom:
     - dev
     - staging
     - prod
-
-  prune:
-    automatic: true
-    includeLayers: true
-    number: 5    
 
   deploymentBucket:
     versioning: true
@@ -44,8 +44,9 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
+  logRetentionInDays: 365
   deploymentBucket:
     name: ${self:service}-${sls:stage}-deployment-bucket
     serverSideEncryption: AES256
@@ -57,125 +58,128 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
   environment:
-    MODEL_EXCHANGE_RATE_TABLE: ${self:service}-${sls:stage}-model-exchange-rates
-    BILLING_TABLE: ${self:service}-${sls:stage}-billing
-    USAGE_PER_ID_TABLE: ${self:service}-${sls:stage}-usage-per-id # TODO: Remove this
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
+    ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
+    CHAT_USAGE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    CHAT_BILLING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    
 
   iam:
     role:
-      statements:
-        - Effect: Allow # TODO: remove this
-          Action:
-            - logs:CreateLogGroup
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-          Resource:
-            - "arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/${self:service}-${self:provider.stage}-*:log-stream:*"
-        - Effect: Allow # TODO: remove this
-          Action:
-            - dynamodb:DescribeStream
-            - dynamodb:GetRecords
-            - dynamodb:GetShardIterator
-            - dynamodb:ListStreams
-          Resource:
-            Fn::ImportValue: "${self:provider.stage}-AccountingChatUsageDynamoStreamArn"
-        - Effect: Allow
-          Action:
-            - secretsmanager:GetSecretValue
-            - dynamodb:Query
-            - dynamodb:Scan
-            - dynamodb:GetItem
-            - dynamodb:PutItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - dynamodb:CreateTable
-          Resource:
-            - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}/*"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BILLING_TABLE}/*"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}" # TODO: remove this
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USAGE_PER_ID_TABLE}/*"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
-            - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.CHAT_BILLING_IAM_POLICY_NAME}
 
 
 functions:
-  # sets the value of the model exchange rates
-  # TODO:
-  # - finish implementation of AWS pricing API
-  # - make this trigger daily
+  # sets the value of the model input and output rates
+  # ONLY TRIGGERED MANUALLY VIA:
+  # ~ serverless invoke --function updateModelRateTable --stage dev --log
+  # NOTE: make sure you have deployed the most up to date version of the chat-billing/model_rates/model_rate_values.csv file 
+  #       or else the DynamoDB table will not update with what you have locally
   updateModelRateTable:
-    runtime: python3.11
-    handler: exchange_rates/update_table.updateModelExchangeRateTable
-    events:
-      - http:
-          path: billing/update-model-exchange-rates
-          method: post
-          cors: true
-    environment:
-      EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
-
-  # TODO: remove this stream
-  # handles the stream from chat-usage table to billing table
-  processChatUsageStream:
-    handler: usage/stream_table.handler
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::ImportValue: "${self:provider.stage}-AccountingChatUsageDynamoStreamArn"
-          batchSize: 10
-          startingPosition: LATEST
-    environment:
-      DESTINATION_TABLE: ${self:provider.environment.BILLING_TABLE}
-  
-  # calculates cost of usage for each action
-  # TODO: make this trigger at the end of each day and month, NOT on insert
-  #       this should also save everything to history table
-  trackUsage:
-    handler: usage/track_usage.handler
+    handler: model_rates/update_table.updateModelRateTable
     memorySize: 128
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt: [BillingTable, StreamArn]
-          batchSize: 10
-          startingPosition: LATEST
     environment:
-      MODEL_EXCHANGE_RATE_TABLE: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
-      USAGE_PER_ID_TABLE: ${self:provider.environment.USAGE_PER_ID_TABLE}
+      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+
   
-  # TODO: remove this
-  # saves daily and monthly usage to history table
-  resetAndRecordUsage:
-    handler: usage/reset_and_record.handler
-    events:
-      - schedule:
-          rate: cron(0 0 * * ? *) # Daily at midnight UTC
-          input:
-            type: dailyReset
-      - schedule:
-          rate: cron(0 0 1 * ? *) # Monthly on the first day of the month at midnight UTC
-          input:
-            type: monthlyReset
-    environment:
-      HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
-      USAGE_PER_ID_TABLE: ${self:provider.environment.USAGE_PER_ID_TABLE}
-  
-  # TODO: add real time report generator
+  # triggered at the start of each day and month
+  # calculates cost of all usage from the chat usage table and the additional charges table
+  # saves costs for each user, coa, and date to the history usage table
+  # removed @ 6pm Aug 8
+  # trackUsage:
+  #   handler: usage/track_usage.handler
+  #   memorySize: 512 # increased memory size to increase speed
+  #   timeout: 900 # 900 seconds (15 minutes) is the maximum
+  #   events:
+  #     - schedule:
+  #         rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
+  #     - schedule:
+  #         rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
+  #   environment:
+  #     MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
+
+
+  # provides real-time usage information via API gateway
+  # removed @ 6pm Aug 8
+  # reportGenerator:
+  #   handler: usage/report_generator.report_generator
+  #   memorySize: 128
+  #   layers:
+  #     - Ref: PythonRequirementsLambdaLayer
+  #   events:
+  #     - http:
+  #         path: billing/report-generator
+  #         method: post
+  #         cors: true
+  #   environment:
+  #     MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
+  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
+  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
 
 resources:
   Resources:
-    # contains values for cost calculations for each model
-    ExchangeRateTable:
+    ChatBillingIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.CHAT_BILLING_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:CreateTable
+              Resource:
+                - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}/*"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+              Resource:
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CHAT_USAGE_TABLE}"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CHAT_USAGE_TABLE}/*"  
+    # model rates needed for usage cost calculations
+    ModelRateTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST
-        TableName: ${self:provider.environment.MODEL_EXCHANGE_RATE_TABLE}
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        TableName: ${self:provider.environment.MODEL_RATE_TABLE}
         AttributeDefinitions:
           - AttributeName: 'ModelID'
             AttributeType: 'S'
@@ -183,53 +187,25 @@ resources:
           - AttributeName: 'ModelID'
             KeyType: 'HASH'
 
-    # TODO: this table should only contain code interpreter items
-    #       in the future this may contain lambda, assistant, and infrastructure items
-    # chat-usage table streamed to this table along with itemType
-    BillingTable:
+    # contains charges not included in chat usage table 
+    # these charges could be for assistants (code interpreter), database entries, embeddings, infrastructure/lambdas, RAG, Dynamo, S3
+    #
+    # This table current contains code interpreter session and usage records
+    AdditionalChargesTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
-        TableName: ${self:provider.environment.BILLING_TABLE}
+        TableName: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         AttributeDefinitions:
           - AttributeName: 'id'
-            AttributeType: 'S'
-          - AttributeName: 'user'
-            AttributeType: 'S'
-          - AttributeName: 'time'
             AttributeType: 'S'
         KeySchema:
           - AttributeName: 'id'
             KeyType: 'HASH'
-        GlobalSecondaryIndexes:
-          - IndexName: 'UserTimeIndex'
-            KeySchema:
-              - AttributeName: 'user'
-                KeyType: 'HASH'
-              - AttributeName: 'time'
-                KeyType: 'RANGE'
-            Projection:
-              ProjectionType: 'ALL'
-        StreamSpecification:
-          StreamViewType: NEW_AND_OLD_IMAGES
-    
-    # TODO: remove this
-    # cost for each action saved to each user
-    UsagePerIdTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        TableName: ${self:provider.environment.USAGE_PER_ID_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: 'id'
-            AttributeType: 'S'
-          - AttributeName: 'user'
-            AttributeType: 'S'
-        KeySchema:
-          - AttributeName: 'id'
-            KeyType: 'HASH'
-          - AttributeName: 'user'
-            KeyType: 'RANGE'
 
     # daily and monthly usage saved to this table
     HistoryUsageTable:
@@ -237,6 +213,10 @@ resources:
       Properties:
         TableName: ${self:provider.environment.HISTORY_USAGE_TABLE}
         BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         AttributeDefinitions:
           - AttributeName: 'id'
             AttributeType: 'S'

@@ -53,8 +53,6 @@ The following environment variables are used:
 
 - `DYNAMODB_TABLE`: The base DynamoDB table name for storing data.
 - `ASSISTANTS_DYNAMODB_TABLE`: Stores the assistants' data.
-- `ASSISTANT_THREADS_DYNAMODB_TABLE`: Stores assistant threads' data.
-- `THREAD_RUNS_DYNAMODB_TABLE`: Stores thread run status.
 - `S3_BUCKET_NAME`: The S3 bucket for shared files.
 - `S3_ASSISTANT_FILES_BUCKET_NAME`: The S3 bucket for assistant files.
 - `AUTH0_AUDIENCE`: The Auth0 audience for authentication.
@@ -70,20 +68,7 @@ Ensure that the correct permissions are set up as per the `serverless.yml` confi
 
 The service includes the following endpoints:
 
-- **upload_file**: `POST /assistant/files/upload`
-- **create_assistant**: `POST /assistant/create`
-- **delete_assistant**: `POST /assistant/delete`
-- **add_message_assistant_thread**: `POST /assistant/thread/message/create`
-- **get_messages_assistant_thread**: `POST /assistant/thread/message/list`
-- **run_assistant_thread**: `POST /assistant/thread/run`
-- **run_status_assistant_thread**: `POST /assistant/thread/run/status`
-- **list_assistants**: `POST /assistant/list`
-- **create_assistant_thread**: `POST /assistant/thread/create`
-- **delete_assistant_thread**: `POST /assistant/thread/delete`
-- **create**: `POST /state`
-- **user_share_with_users**: `POST /state/share`
-- **user_share_load**: `POST /state/share/load`
-- **user_get_shares**: `GET /state/share`
+----
 
 ## Resources
 

@@ -1,20 +1,20 @@
 The `chat-billing` service, as defined in the `serverless.yml` configuration and accompanying Python scripts, involves several AWS DynamoDB tables and Lambda functions that interact with each other to track and manage billing for a chat service. Below is an overview of the DynamoDB tables, Lambda functions, triggers, and the workflow for tracking usage costs:
 
 ### DynamoDB Tables:
-1. **ModelExchangeRateTable**: Stores exchange rates for different models. It is used to calculate costs based on the number of tokens processed for chat items.
+1. **ModelRateTable**: Stores input and output token rates for different models. It is used to calculate costs based on the number of tokens processed for chat items.
 2. **BillingTable**: Logs individual billing items, such as chats or code interpreter sessions. It has a global secondary index on `UserTimeIndex` to allow querying by user and time.
 3. **UsagePerIDTable**: Aggregates costs by ID (COA, or username if COA is not provided) string. It keeps track of daily, monthly, and total costs for each ID.
 4. **HistoryUsageTable**: Records historical usage data at the beginning of each day and month. It stores daily and monthly costs for each ID.
 
 ### Lambda Functions:
-1. **updateModelExchangeRateTable**: Handles POST requests to update exchange rates in the ModelExchangeRateTable.
+1. **updateModelRateTable**: Handles POST requests to update input and output rates in the ModelRateTable.
 2. **processChatUsageStream**: Processes new records in the DynamoDB stream for the `dev-chat-usage` table and inserts relevant items into the BillingTable.
 3. **trackUsage**: Triggered by new entries in the BillingTable. It calculates costs based on the `itemType` and updates the UsagePerIDTable.
 4. **resetAndRecordUsage**: Triggered by scheduled events at the beginning of each day and month. It writes usage data to the HistoryUsageTable and resets the costs in the UsagePerIDTable.
 
 ### Triggers:
 - **DynamoDB Streams**: The `processChatUsageStream` and `trackUsage` functions are triggered by DynamoDB Streams. When new records are inserted into the `dev-chat-usage` and BillingTable respectively, these streams invoke the corresponding Lambda functions.
-- **HTTP Requests**: The `updateModelExchangeRateTable` function is triggered by HTTP POST requests.
+- **HTTP Requests**: The `updateModelRateTable` function is triggered by HTTP POST requests.
 - **Scheduled Events**: The `resetAndRecordUsage` function is triggered by two scheduled events: one runs daily and another monthly.
 
 ### Workflow:

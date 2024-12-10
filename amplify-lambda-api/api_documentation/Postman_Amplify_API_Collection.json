@@ -1,0 +1,764 @@
+{
+	"info": {
+		"_postman_id": "1abf8b77-22b4-4b24-b1c0-10e5350f4995",
+		"name": "Amplify_API_Prod",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "33931694"
+	},
+	"item": [
+		{
+			"name": "/assistant/create/codeinterpreter",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"name\": \"Data Analysis Assistant\",\n        \"description\": \"An AI assistant specialized in data analysis and visualization\",\n        \"tags\": [\"data analysis\"],\n        \"instructions\": \"Analyze data files, perform statistical operations, and create visualizations as requested by the user\",\n        \"dataSources\": [\"yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json\"]\n        }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/create/codeinterpreter",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"create",
+						"codeinterpreter"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/openai/thread/delete",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "DELETE",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/openai/thread/delete?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"openai",
+						"thread",
+						"delete"
+					],
+					"query": [
+						{
+							"key": "threadId",
+							"value": "yourEmail@vanderbilt.edu/thr/8923047385920349782093"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/files/upload",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"type\": \"application/fileExtension\",\n        \"name\": \"fileName.pdf\",\n        \"knowledgeBase\": \"default\",\n        \"tags\": [],\n        \"data\": {}\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/files/upload",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"files",
+						"upload"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "assistant/files/download/codeinterpreter",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\": {\n        \"key\": \"yourEmail@vanderbilt.edu/ast/3498523804729\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/files/download/codeinterpreter",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"files",
+						"download",
+						"codeinterpreter"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/share",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"assistantId\": \"ast/8934572093982034020-9\",\n        \"recipientUsers\": [\"yourEmail@vanderbilt.edu\"],\n        \"note\": \"Sharing label\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/share",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"share"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/create",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\": {\n        \"name\": \"Sample Assistant 3\",\n        \"description\": \"This is a sample assistant for demonstration purposes\",\n        \"assistantId\": \"\",\n        \"tags\": [\"test\"],\n        \"instructions\": \"Respond to user queries about general knowledge topics\",\n        \"disclaimer\": \"This assistant's responses are for informational purposes only\",\n        \"dataSources\": [{\"id\": \"e48759073324384kjsf\", \"name\": \"api_paths_summary.csv\", \"type\": \"text/csv\", \"raw\": \"\", \"data\": \"\", \"key\": \"yourEmail@vanderbilt.edu/date/w3ou009we3.json\", \"metadata\": {\"name\": \"api_paths_summary.csv\", \"totalItems\": 20, \"locationProperties\": [\"row_number\"], \"contentKey\": \"yourEmail@vanderbilt.edu/date/w3ou009we3.json.content.json\", \"createdAt\": \"2024-07-15T18:58:24.912235\", \"totalTokens\": 3750, \"tags\": [], \"props\": {}}}],\n        \"tools\": []\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/create",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"create"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/state/share",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/state/share",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"state",
+						"share"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/list",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/list",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"list"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/delete",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"assistantId\": \"astp/3209457834985793094\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/delete",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"delete"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/files/query",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"pageSize\": 10,\n        \"sortIndex\": \"\",\n        \"forwardScan\": false\n        }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/files/query",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"files",
+						"query"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/files/set_tags",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"id\": \"yourEmail@vanderbilt.edu/date/23094023573924890-208.json\",\n        \"tags\": [\"NewTag\"]\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/files/set_tags",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"files",
+						"set_tags"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/files/tags/delete",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"tag\": \"NewTag\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/files/tags/delete",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"files",
+						"tags",
+						"delete"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/state/share/load",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\": {\n        \"key\": \"yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932804035837948202934805-24382.json\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/state/share/load",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"state",
+						"share",
+						"load"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/files/tags/create",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\": {\n        \"tags\": [\"NewTag\"]\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/files/tags/create",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"files",
+						"tags",
+						"create"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/files/tags/list",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\": {}\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/files/tags/list",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"files",
+						"tags",
+						"list"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/chat",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\":{\n        \"model\": \"gpt-4o\",\n        \"temperature\": 0.7,\n        \"max_tokens\": 150,\n        \"dataSources\": [{\"id\": \"s3://user@vanderbilt.edu/2014-qwertyuio\",\"type\": \"application/pdf\"}],\n        \"messages\": [\n            {\n            \"role\": \"user\",\n            \"content\": \"What is the capital of France?\"\n            }\n        ],\n        \"options\": {\n            \"ragOnly\": false,\n            \"skipRag\": true,\n            \"model\": {\"id\": \"gpt-4o\"},\n            \"assistantId\": \"astp/abcdefghijk\",\n            \"prompt\": \"What is the capital of France?\"\n        }\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/chat",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"chat"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/chat/codeinterpreter",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{   \n    \"data\": {\n        \"assistantId\": \"yourEmail@vanderbilt.edu/ast/43985037429849290398\",\n        \"messages\": [\n            { \"role\": \"user\",\n              \"content\" : \"Can you tell me something about the data analytics and what you are able to do?\",\n              \"dataSourceIds\" : [\"yourEmail@vanderbilt.edu/2024-05-08/0f20f0447b.json\"]\n            }\n        ]\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/chat/codeinterpreter",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"chat",
+						"codeinterpreter"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/assistant/openai/delete",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/assistant/openai/delete?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"assistant",
+						"openai",
+						"delete"
+					],
+					"query": [
+						{
+							"key": "assistantId",
+							"value": "yourEmail@vanderbilt.edu/ast/38940562397049823"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "embedding-dual-retrieval",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"data\" : {\n        \"userInput\":\"Can you describe the policies outlined in the document?\",\n        \"dataSources\": [\"global/09342587234089234890.content.json\"],\n        \"limit\": 10\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/embedding-dual-retrieval",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"embedding-dual-retrieval"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
