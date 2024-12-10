@@ -12,7 +12,7 @@ cryptography
 distro==1.8.0
 docx==0.2.4
 ecdsa==0.18.0
-et-xmlfile==1.1.0
+et-xmlfile==2.0.0
 h11==0.14.0
 httpcore==1.0.2
 httpx==0.25.1
