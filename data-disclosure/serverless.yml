@@ -1,0 +1,187 @@
+service: data-disclosure
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-cloudformation-changesets  
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.stageVars.DEP_REGION}
+  versionFunctions: false
+  logRetentionInDays: 365
+  apiGateway:
+    restApiId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+    restApiRootResourceId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+  environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    DATA_DISCLOSURE_VERSIONS_TABLE: ${self:service}-${sls:stage}-versions
+    DATA_DISCLOSURE_ACCEPTANCE_TABLE: ${self:service}-${sls:stage}-acceptance
+    DATA_DISCLOSURE_STORAGE_BUCKET: ${self:service}-${sls:stage}-storage
+    REST_API_ID: ${self:custom.stageVariables.REST_API_ID}
+    REST_API_ROOT_RESOURCE_ID: ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    DATA_DISCLOSURE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+
+
+  iam:
+    role:
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.DATA_DISCLOSURE_IAM_POLICY_NAME}    
+
+
+
+functions:
+  # determine if a user exists as an "accepted" record in the DataDisclosureAcceptanceTable
+  check_data_disclosure_decision:
+    handler: data_disclosure.check_data_disclosure_decision
+    memorySize: 128
+    timeout: 30
+    events:
+      - http:
+          path: data-disclosure/check
+          method: get
+          cors: true
+
+  # save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
+  save_data_disclosure_decision:
+    handler: data_disclosure.save_data_disclosure_decision
+    memorySize: 128
+    timeout: 30
+    events:
+      - http:
+          path: data-disclosure/save
+          method: post
+          cors: true
+
+  # get the most recent data disclosure from DataDisclosureVersionsTable
+  get_latest_data_disclosure:
+    handler: data_disclosure.get_latest_data_disclosure
+    memorySize: 128
+    timeout: 30
+    events:
+      - http:
+          path: data-disclosure/latest
+          method: get
+          cors: true
+
+  # upload the locally stored data disclosure file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
+  # 
+  # This lambda will only run locally. Follow these steps to update the data disclosure document:
+  # Step 1a: Save the data disclosure document you want to show in the popup as HTML at data-disclosure/data_disclosure.html
+  # Step 1b: Save the data disclosure document you want at the download link as pdf at data-disclosure/data_disclosure.pdf
+  # Step 2:  Deploy the lambda via:         ~ serverless deploy --stage dev
+  # Step 3:  Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
+  upload_data_disclosure:
+    handler: data_disclosure.upload_data_disclosure
+    memorySize: 128
+    timeout: 30
+    events: [] # No associated HTTP events since this function runs locally
+
+resources:
+  Resources:
+    DataDisclosureIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.DATA_DISCLOSURE_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_ACCEPTANCE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_ACCEPTANCE_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+            - Effect: "Allow"
+              Action:
+                - "s3:PutObject"
+                - "s3:GetObject"
+              Resource: 
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  
+    # contains records of what emails have accepted the data disclosure
+    DataDisclosureAcceptanceTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+        TableName: ${self:provider.environment.DATA_DISCLOSURE_ACCEPTANCE_TABLE}
+
+    # contains all information about the data disclosures and their versions
+    DataDisclosureVersionsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true  
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+          - AttributeName: version
+            AttributeType: N
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+          - AttributeName: version
+            KeyType: RANGE
+        TableName: ${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}
+
+    # contains all versions of the data disclosure
+    DataDisclosureStorage:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}

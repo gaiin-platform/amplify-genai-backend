@@ -49,6 +49,9 @@ const getEndpointData = (parsed_data, model_name) => {
     else if(model_name === "gpt-35-1106" || model_name === "gpt-35-1106"){
         model_name = "gpt-35-turbo";
     }
+    else if(model_name === "gpt-4o" || model_name === "gpt-4o"){
+        model_name = "gpt-4o";
+    }
 
     const endpoint_data = parsed_data.models.find((model) => model.hasOwnProperty(model_name));
     if (!endpoint_data) {

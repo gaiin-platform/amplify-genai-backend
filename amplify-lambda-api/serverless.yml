@@ -1,0 +1,171 @@
+service: amplify-${self:custom.stageVars.DEP_NAME}-api
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-cloudformation-changesets  
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+    
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.stageVars.DEP_REGION}
+  versionFunctions: false
+  logRetentionInDays: 365
+  apiGateway:
+    restApiId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+    restApiRootResourceId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId" 
+  environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    COGNITO_USERS_TABLE:  amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+
+
+  iam:
+    role:
+      managedPolicies:
+        - !Ref LambdaAPIIAMPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      
+
+functions:
+
+  get_api_keys:
+    handler: service/core.get_api_keys_for_user
+    events:
+      - http:
+          path: apiKeys/get_keys
+          method: get
+          cors: true
+  
+  get_api_keys_ast:
+    handler: service/core.get_api_keys_for_assistant
+    events:
+      - http:
+          path: apiKeys/get_keys_ast
+          method: get
+          cors: true
+
+  get_api_key:
+    handler: service/core.get_api_key
+    events:
+      - http:
+          path: apiKeys/get_key
+          method: get
+          cors: true
+
+  create_api_keys:
+    handler: service/core.create_api_keys
+    events:
+      - http:
+          path: apiKeys/create_keys
+          method: post
+          cors: true
+
+  update_api_key:
+    handler: service/core.update_api_keys_for_user
+    events:
+      - http:
+          path: apiKeys/update_keys
+          method: post
+          cors: true
+      
+  deactivate_key:
+    handler: service/core.deactivate_key
+    events:
+      - http:
+          path: apiKeys/deactivate_key
+          method: post
+          cors: true
+
+  get_system_ids:
+    handler: service/core.get_system_ids
+    events:
+      - http:
+          path: apiKeys/get_system_ids
+          method: get
+          cors: true
+
+  get_api_doc:
+    handler: service/core.get_documentation
+    events:
+      - http:
+          path: apiKeys/api_documentation
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    LambdaAPIIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - s3:GetObject
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/"
+                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"
+    
+    APIDocumentBucket:
+        Type: 'AWS::S3::Bucket'
+        Properties:
+          BucketName: ${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}
+          CorsConfiguration:
+            CorsRules:
+              - AllowedOrigins: ['*']
+                AllowedMethods: ['GET']
+                AllowedHeaders: ['*']
+                MaxAge: 3000     
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256        

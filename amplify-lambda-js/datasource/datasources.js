@@ -7,13 +7,16 @@ import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
+import getDatasourceHandler from "./external.js";
 
 const logger = getLogger("datasources");
 
 const client = new S3Client();
 const dynamodbClient = new DynamoDBClient();
 
-const dataSourcesQueryEndpoint = process.env.DATASOURCES_QUERY_ENDPOINT;
+export const additionalImageInstruction = "\n\n Additional Image Instructions:\n If given an encode image, describe the image in vivid detail, capturing every element, including the subjects, colors, textures, and emotions. Provide enough information so that someone can visualize the image perfectly without seeing it, using precise and rich language. This should be its own block of text."
+
+const dataSourcesQueryEndpoint = process.env.API_BASE_URL + "/files/query";
 const hashFilesTableName = process.env.HASH_FILES_DYNAMO_TABLE;
 
 const dataSourcesWithTagCache = lru(500, 30000, false);
@@ -31,8 +34,8 @@ export const getDataSourcesInConversation = (chatBody, includeCurrentMessage = t
 
         return base
             .filter(m => {
-                return m.data && m.data.dataSources
-            }).flatMap(m => m.data.dataSources)
+                return m.data && m.data.dataSources 
+            }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds))
     }
 
     return [];
@@ -67,6 +70,44 @@ export const getFileText = async (key) => {
     }
 }
 
+export const getImageBase64Content = async (dataSource) => {
+    const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
+    const key = extractKey(dataSource.id)
+    logger.debug("Fetching file from S3", {bucket: bucket, key: key});
+
+    const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+    });
+
+    try {
+        const response = await client.send(command);
+        const streamToString = (stream) => 
+            new Promise((resolve, reject) => {
+                const chunks = [];
+                stream.on("data", (chunk) => chunks.push(chunk));
+                stream.on("error", reject);
+                stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+            });
+        
+        const data = await streamToString(response.Body);
+        return data;
+    } catch (error) {
+        logger.error(error, {bucket: bucket, key: key});
+        return null;
+    }
+
+}
+
+export const isDocument = ds =>
+    (ds && ds.id && ds.id.indexOf("://") < 0) ||
+    (ds && ds.key && ds.key.indexOf("://") < 0) ||
+    (ds && ds.id && ds.id.startsWith("s3://")) ||
+    (ds && ds.key && ds.key.startsWith("s3://"));
+
+
+    export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
+
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
  * and then determines which data sources should be inserted in their entirety into the chat request and which
@@ -87,7 +128,9 @@ export const getFileText = async (key) => {
  */
 export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
 
-    if(params.options.skipRag && params.options.ragOnly){
+    logger.debug("Getting data sources by use", dataSources);
+
+    if((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
             dataSources: []
@@ -104,7 +147,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const referencedDataSourcesInMessages = chatRequestOrig.messages.slice(0,-1)
         .filter( m => {
             return m.data && m.data.dataSources
-        }).flatMap(m => m.data.dataSources);
+        }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
         params,
@@ -120,28 +163,85 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const getInsertOnly = sources => sources.filter(ds =>
         !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
 
+    const getDocumentDataSources = sources => sources.filter(isDocument);
+
+    const getNonDocumentDataSources = sources => sources.filter(ds => !isDocument(ds));
+
+    const uniqueDataSources = dss => {return [...Object.values(dss.reduce(
+        (acc, ds) => (acc[ds.id] = ds, acc), {})
+    )];}
+
+    const attachedDataSources = [
+        ...dataSources,
+        ...msgDataSources];
+
     const nonUniqueRagDataSources = [
         ...(getRagOnly(dataSources)),
         ...(getRagOnly(msgDataSources)),
-        ...convoDataSources
+        ...(getDocumentDataSources(convoDataSources))
     ];
 
-    const ragDataSources = Object.values(nonUniqueRagDataSources.reduce(
+    let ragDataSources = Object.values(nonUniqueRagDataSources.reduce(
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
     const allDataSources = [
         ...(getInsertOnly(dataSources)),
-        ...(getInsertOnly(msgDataSources))
+        ...(getInsertOnly(msgDataSources)),
+        ...(getNonDocumentDataSources(convoDataSources))
     ];
 
     dataSources = Object.values(allDataSources.reduce(
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
+    if(params.options.skipRag) {
+        ragDataSources = [];
+    }
+
+    const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
+    const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
+
+    if(params.options.dataSourceOptions || chatRequestOrig.options.dataSourceOptions) {
+
+        const dataSourceOptions = {
+        ...(chatRequestOrig.options.dataSourceOptions || {}),
+        ...(params.options.dataSourceOptions || {})};
+
+        logger.debug("Applying data source options", dataSourceOptions);
+
+        const insertList = [];
+        const ragList = [];
+
+        if (dataSourceOptions.disableDataSources) {
+            ragDataSources = [];
+            dataSources = [];
+        }
+        else {
+            if (dataSourceOptions.insertConversationDocuments) {
+                insertList.push(...uniqueConvoDataSources);
+            }
+            if (dataSourceOptions.insertAttachedDocuments) {
+                insertList.push(...uniqueAttachedDataSources);
+            }
+            if(dataSourceOptions.ragConversationDocuments) {
+                ragList.push(...uniqueConvoDataSources);
+            }
+            if(dataSourceOptions.ragAttachedDocuments) {
+                ragList.push(...uniqueAttachedDataSources);
+            }
+        }
+
+        ragDataSources = uniqueDataSources(ragList);
+        dataSources = uniqueDataSources(insertList);
+    }
+
     return {
         ragDataSources,
-        dataSources
+        dataSources,
+        conversationDataSources: uniqueConvoDataSources,
+        attachedDataSources: uniqueAttachedDataSources,
+        allDataSources: uniqueDataSources([...uniqueAttachedDataSources, ...uniqueConvoDataSources])
     };
 }
 
@@ -267,6 +367,17 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
  * @returns {Promise<(Awaited<any>|Awaited<unknown>)[]>}
  */
 export const resolveDataSources = async (params, body, dataSources) => {
+    logger.info("Resolving data sources", {dataSources: dataSources});
+
+    // seperate the image ds
+    if (body && body.messages && body.messages.length > 0) {
+        const lastMsg = body.messages[body.messages.length - 1];
+        const ds = lastMsg.data && lastMsg.data.dataSources;
+        if (ds) body.imageSources = ds.filter(d => isImage(d));
+    }
+
+    dataSources = dataSources.filter(ds => !isImage(ds))
+    
     dataSources = await translateUserDataSourcesToHashDataSources(params, body, dataSources);
 
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
@@ -285,7 +396,8 @@ export const resolveDataSources = async (params, body, dataSources) => {
     if (nonUserSources && nonUserSources.length > 0) {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
-        if (!await canReadDataSources(params.accessToken, ds_with_keys)) {
+        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: ds.key })) : [];
+        if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
     }
@@ -334,30 +446,36 @@ const getChunkAggregator = (maxTokens, options) => {
         maxItemsPerChunk = options.chunking.maxItemsPerChunk;
     }
 
-    return (dataSource, {currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0},
+    return (dataSource,
+            {locations, currentChunk = "", currentTokenCount = 0, chunks = [], itemCount = 0},
             formattedSourceName,
             formattedContent,
+            location,
             contentTokenCount) => {
         if ((currentTokenCount + contentTokenCount > maxTokens) || (itemCount + 1 > maxItemsPerChunk)) {
             // If the current chunk is too big, push it to the chunks array and start a new one
             if (currentChunk.length > 0) {
                 chunks.push({
+                    dataSource,
                     id: dataSource.id + "?chunk=" + chunks.length,
                     context: formattedSourceName + currentChunk,
-                    tokens: currentTokenCount
+                    tokens: currentTokenCount,
+                    locations: locations
                 });
                 itemCount = 1;
             }
 
+            locations = [location];
             currentChunk = formattedContent;
             currentTokenCount = contentTokenCount;
         } else {
             // Add to the current chunk
+            locations.push(location);
             currentChunk += (currentChunk ? "\n" : "") + formattedContent;
             currentTokenCount += contentTokenCount;
             itemCount = itemCount + 1;
         }
-        return {chunks, currentChunk, currentTokenCount, itemCount}
+        return {locations, chunks, currentChunk, currentTokenCount, itemCount}
     }
 
 }
@@ -398,9 +516,10 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         }
 
         const chunks = [];
+        const locations = [];
         let currentChunk = '';
         let currentTokenCount = 0;
-        let state = {chunks, currentChunk, currentTokenCount};
+        let state = {chunks, currentChunk, currentTokenCount, locations};
 
         const aggregator = getChunkAggregator(maxTokens, options);
         const formattedSourceName = "Source:" + content.name + " Type:" + dataSource.type + "\n-------------\n";
@@ -408,7 +527,7 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         for (const part of content.content) {
             const formattedContent = contentFormatter(part);
             const contentTokenCount = tokenCounter(formattedContent);
-            state = aggregator(dataSource, state, formattedSourceName, formattedContent, contentTokenCount);
+            state = aggregator(dataSource, state, formattedSourceName, formattedContent, part.location || {}, contentTokenCount);
         }
 
         // Add the last chunk if it has content
@@ -416,7 +535,9 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
             chunks.push({
                 id: dataSource.id + "?chunk=" + chunks.length,
                 context: formattedSourceName + state.currentChunk,
-                tokens: state.currentTokenCount
+                tokens: state.currentTokenCount,
+                locations: state.locations,
+                dataSource
             });
         }
 
@@ -426,7 +547,8 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         return formatAndChunkDataSource(tokenCounter, dataSource, {
             content: [{
                 content: content,
-                location: {}
+                location: {},
+                dataSource
             }]
         }, maxTokens);
     }
@@ -447,8 +569,8 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
  * @returns {Promise<Awaited<unknown>[]>}
  */
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
-
-    dataSources = await resolveDataSourceAliases(params, body, dataSources);
+    const toResolve = dataSources ? dataSources.filter(ds => !isImage(ds)) : [];
+    dataSources = await resolveDataSourceAliases(params, body, toResolve);
 
     const translated = await Promise.all(dataSources.map(async (ds) => {
 
@@ -478,7 +600,10 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                 if (Item) {
                     // Convert the returned item from DynamoDB's format to a regular JavaScript object
                     const item = unmarshall(Item);
-                    const result = {...ds, id: "s3://" + item.textLocationKey};
+                    const result = {
+                        ...ds,
+                        metadata: {...ds.metadata, userDataSourceId: ds.id},
+                        id: "s3://" + item.textLocationKey};
                     hashDataSourcesCache.set(key, result);
                     return result;
                 } else {
@@ -502,7 +627,7 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
  * @param dataSource
  * @returns {Promise<{name, content: {canSplit: boolean, tokens, location: {key: *}, content: *}[]}|*[]|*>}
  */
-export const getContent = async (dataSource) => {
+export const getContent = async (chatRequest, params, dataSource) => {
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
@@ -518,6 +643,7 @@ export const getContent = async (dataSource) => {
         }
 
         return result;
+
     } else if (sourceType === 'obj://') {
         logger.debug("Fetching data from object");
 
@@ -543,9 +669,15 @@ export const getContent = async (dataSource) => {
             }
 
         return content;
-    } else {
-        return [dataSource];
     }
+    else if (sourceType) {
+        const handler = await getDatasourceHandler(sourceType, chatRequest, params, dataSource);
+        if (handler) {
+            return await handler(chatRequest, params, dataSource);
+        }
+    }
+
+    return [dataSource];
 }
 
 /**
@@ -558,7 +690,8 @@ export const getContent = async (dataSource) => {
  * @param options
  * @returns {Promise<*[]|*>}
  */
-export const getContexts = async (tokenCounter, dataSource, maxTokens, options) => {
+export const getContexts = async (resolutionEnv, dataSource, maxTokens, options) => {
+    const tokenCounter = resolutionEnv.tokenCounter;
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Get contexts with options", options);
@@ -566,6 +699,6 @@ export const getContexts = async (tokenCounter, dataSource, maxTokens, options) 
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
-    const result = await getContent(dataSource);
+    const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
     return formatAndChunkDataSource(tokenCounter, dataSource, result, maxTokens, options);
 }
