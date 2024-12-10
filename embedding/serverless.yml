@@ -102,7 +102,6 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
     EMBEDDING_PROVIDER: ${self:custom.stageVars.EMBEDDING_PROVIDER}
-    KEYWORD_MODEL_NAME: ${self:custom.stageVars.KEYWORD_MODEL_NAME}
     REGION: ${self:provider.region}
     
   iam:
@@ -174,7 +173,7 @@ functions:
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
         ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
         EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
-        KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
+
         QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
         API_VERSION: ${self:provider.environment.API_VERSION}
        
