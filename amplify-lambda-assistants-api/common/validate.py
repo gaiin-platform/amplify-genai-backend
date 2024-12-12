@@ -44,14 +44,12 @@ class NotFound(HTTPException):
 execute_custom_auto_schema = {
     "type": "object",
     "properties": {
-        "RequestType": {"type": "string"},
-        "URL": {"type": "string"},
-        "Parameters": {"type": "object"},
-        "Body": {"type": "object"},
-        "Headers": {"type": "object"},
-        "Auth": {"type": "object"},
+        "action": {"type": "object"},
+        "conversation": {"type": "string"},
+        "assistant": {"type": "string"},
+        "message": {"type": "string"},
     },
-    "required": ["RequestType", "URL"],
+    "required": ["action", "message", "conversation", "assistant"],
 }
 
 """
@@ -62,12 +60,40 @@ validators = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": execute_custom_auto_schema
     },
+    "/start-auth" : {
+        "start_oauth": {
+        }
+    },
+    "/integrations/google/sheets/get-rows": {
+        "get_rows": {
+            "type": "object",
+            "properties": {
+                "sheetId": {"type": "string"},
+                "cellRange": {"type": "string"},
+            },
+            "required": ["sheetId", "cellRange"],
+        }
+    }
 }
 
 api_validators = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": execute_custom_auto_schema
     },
+    "/start-auth" : {
+        "start_oauth": {
+        }
+    },
+    "/integrations/google/sheets/get-rows": {
+        "get_rows": {
+            "type": "object",
+            "properties": {
+                "sheetId": {"type": "string"},
+                "cellRange": {"type": "string"},
+            },
+            "required": ["sheetId", "cellRange"],
+        }
+    }
 }
 
 
