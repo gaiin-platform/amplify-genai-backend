@@ -83,7 +83,7 @@ def optimize(event, context, current_user, name, data):
 
         result = None
 
-        chat_url = os.getenv('CHAT_ENDPOINT')
+        chat_url = os.environ['API_BASE_URL'] + '/api_g_chat/chat'
         model = os.getenv('DEFAULT_LLM_QUERY_MODEL')
 
         idea = PromptInput(task=query, max_placeholders=max_placeholders)

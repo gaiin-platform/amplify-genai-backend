@@ -177,7 +177,7 @@ def generate_bedrock_questions(content):
         logger.error(f"An error occurred with Bedrock: {e}", exc_info=True)
         return {"success": False, "error": f"An error occurred with Bedrock: {str(e)}"}
 
-def generate_azure_questions(content):
+
 def generate_questions(content, embedding_provider="azure"):
     if embedding_provider == "bedrock":
         return generate_bedrock_questions(content)
