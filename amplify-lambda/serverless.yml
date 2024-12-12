@@ -90,7 +90,6 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
       
   iam:
     role:

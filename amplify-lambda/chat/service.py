@@ -2,6 +2,7 @@ from llm.chat import chat
 import os
 from common.validate import validated
 
+
 @validated(op = 'chat')
 def chat_endpoint(event, context, current_user, name, data):
     access = data['allowed_access']
@@ -10,7 +11,7 @@ def chat_endpoint(event, context, current_user, name, data):
     try:
         payload = data['data']
         # print(payload)
-        chat_url = os.environ['CHAT_ENDPOINT']
+        chat_url = os.environ['API_BASE_URL'] + '/api_g_chat/chat'
         access_token = data['access_token']
 
         response, metadata = chat(chat_url, access_token, payload)

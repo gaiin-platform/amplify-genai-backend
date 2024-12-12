@@ -1,6 +1,6 @@
 # amplify-lambda
 DEP_NAME: "" #name of the deployment; must be less than 10 characters and not contain spaces
-DEP_REGION: "us-east-1" #region of the deployment
+DEP_REGION: "us-east-1" #region of the deployment. Deployment has not been tested with other regions. 
 HOSTED_ZONE_ID: "" #app_route53_zone_id from IAC output
 IDP_PREFIX: "AmplifyGenAI" #should match the value for provider_name in Cognito vars of the IAC deployment
 LLM_ENDPOINTS_SECRETS_NAME_ARN: "" #openai_endpoints_secret_arn from IAC output
@@ -18,7 +18,7 @@ VPC_CIDR: "" #vpc_cidr_block of deployment from IAC output
 VPC_ID: "" #vpc_id of deployment from IAC output
 KEYWORD_MODEL_NAME: "gpt-35-turbo"
 CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
-CHAT_ENDPOINT: "https://yourchatendpoint" # This will an output from the LambdaJS stack. For the initial deploy leave this value in. Then update after LambdaJS is deployed. 
+
 
 # Embeddings Configuration
 #

@@ -43,7 +43,6 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN} 
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "gpt-4o"
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
