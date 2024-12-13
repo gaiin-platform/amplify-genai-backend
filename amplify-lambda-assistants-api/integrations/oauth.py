@@ -10,6 +10,10 @@ import boto3
 from botocore.exceptions import ClientError
 
 
+# Define a custom error for missing credentials
+class MissingCredentialsError(Exception):
+    pass
+
 def get_user_credentials(current_user, integration):
     ssm = boto3.client('ssm')
     safe_user = current_user.replace("@", "__at__")
@@ -23,9 +27,10 @@ def get_user_credentials(current_user, integration):
         credentials_json = response['Parameter']['Value']
         return json.loads(credentials_json)
     except ssm.exceptions.ParameterNotFound:
-        raise ValueError(f"No credentials found for user {current_user} and integration {integration}")
+        raise MissingCredentialsError(f"No credentials found for user {current_user} and integration {integration}")
     except Exception as e:
-        raise ValueError(f"Error retrieving credentials: {str(e)}")
+        print(f"Error retrieving credentials: {str(e)}")
+        raise e
 
 
 def get_oauth_client_for_integration(integration):
