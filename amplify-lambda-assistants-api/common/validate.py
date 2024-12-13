@@ -60,7 +60,7 @@ validators = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": execute_custom_auto_schema
     },
-    "/start-auth" : {
+    "/integrations/oauth/start-auth" : {
         "start_oauth": {
         }
     },
@@ -73,14 +73,35 @@ validators = {
             },
             "required": ["sheetId", "cellRange"],
         }
-    }
+    },
+    "/integrations/oauth/user/list": {
+        "list_integrations": {
+            "type": "object",
+            "properties": {
+                "integrations": {"type": "array"},
+            },
+            "required": ["integrations"],
+        }
+    },
+    "/integrations/oauth/user/delete": {
+        "delete_integration": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string"},
+            },
+            "required": ["integration"],
+        }
+    },
+    "/integrations/oauth/list": {
+        "list_integrations":{}
+    },
 }
 
 api_validators = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": execute_custom_auto_schema
     },
-    "/start-auth" : {
+    "/integrations/oauth/start-auth" : {
         "start_oauth": {
         }
     },
@@ -93,7 +114,28 @@ api_validators = {
             },
             "required": ["sheetId", "cellRange"],
         }
-    }
+    },
+    "/integrations/oauth/user/list": {
+        "list_integrations": {
+            "type": "object",
+            "properties": {
+                "integrations": {"type": "array"},
+            },
+            "required": ["integrations"],
+        }
+    },
+    "/integrations/oauth/user/delete": {
+        "delete_integration": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string"},
+            },
+            "required": ["integration"],
+        }
+    },
+    "/integrations/oauth/list": {
+        "list_integrations":{}
+    },
 }
 
 

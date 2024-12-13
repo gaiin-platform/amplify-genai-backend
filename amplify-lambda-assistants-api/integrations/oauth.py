@@ -105,6 +105,69 @@ def get_oauth_token_parameter_for_user(service, current_user):
     token_param = f"{service}/{safe_user}"
     return token_param
 
+
+@validated("list_integrations")
+def list_integrations(event, context, current_user, name, data):
+    integrations = data['data']['integrations']
+    with_token = list_user_integrations(integrations, current_user)
+    return {
+        "success": True,
+        "data": with_token
+    }
+
+def list_user_integrations(integrations, current_user):
+    ssm = boto3.client('ssm')
+    safe_user = current_user.replace("@", "__at__")
+    user_integrations = []
+
+    for integration in integrations:
+        parameter_name = f"/oauth/{integration}/{safe_user}"
+        try:
+            ssm.get_parameter(Name=parameter_name, WithDecryption=True)
+            user_integrations.append(integration)
+        except ssm.exceptions.ParameterNotFound:
+            continue
+        except Exception as e:
+            print(f"Error checking integration {integration}: {str(e)}")
+
+    return user_integrations
+
+
+@validated("list_integrations")
+def list_all_integrations(event, context, current_user, name, data):
+    return {
+        "success": True,
+        "data": list_available_integrations()
+    }
+
+
+def list_available_integrations():
+    ssm = boto3.client('ssm')
+    stage = os.environ.get('INTEGRATION_STAGE')
+
+    if not stage:
+        raise ValueError("INTEGRATION_STAGE environment variable is not set")
+
+    available_integrations = []
+
+    try:
+        response = ssm.get_parameters_by_path(
+            Path=f"/oauth/integrations/",
+            Recursive=True,
+            WithDecryption=True
+        )
+
+        for param in response['Parameters']:
+            integration_name = param['Name'].split('/')[-2]
+            if integration_name not in available_integrations:
+                available_integrations.append(integration_name)
+
+    except Exception as e:
+        print(f"Error retrieving available integrations: {str(e)}")
+
+    return available_integrations
+
+
 def auth_callback(event, context):
 
     state = event['queryStringParameters']['state']
@@ -213,4 +276,31 @@ def auth_callback(event, context):
         </body>
         </html>
     '''
+    }
+
+
+def delete_integration(current_user, integration):
+    ssm = boto3.client('ssm')
+    safe_user = current_user.replace("@", "__at__")
+    parameter_name = f"/oauth/{integration}/{safe_user}"
+
+    try:
+        ssm.delete_parameter(Name=parameter_name)
+        print(f"Successfully deleted credentials for user {current_user} and integration {integration}")
+        return True
+    except ssm.exceptions.ParameterNotFound:
+        print(f"No credentials found for user {current_user} and integration {integration}")
+        return False
+    except ClientError as e:
+        print(f"Error deleting credentials: {str(e)}")
+        return False
+
+
+@validated("delete_integration")
+def handle_delete_integration(event, context, current_user, name, data):
+    integration = data['data']['integration']
+    success = delete_integration(current_user, integration)
+    return {
+        "success": success,
+        "message": f"Integration {integration} {'deleted' if success else 'not found'} for user {current_user}"
     }
