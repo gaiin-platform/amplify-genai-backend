@@ -6,79 +6,36 @@ from google.oauth2.credentials import Credentials
 
 integration_name = "google_sheets"
 
+def get_spreadsheet_rows(current_user, spreadsheet_id, cell_range, sheet_name=None):
+    service = get_sheets_service(current_user)
+    range_to_read = f"'{sheet_name}'!{cell_range}" if sheet_name else cell_range
+    result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_to_read).execute()
+    return result.get('values', [])
 
-def get_spreadsheet_rows(current_user, sheet_id, cell_range, sheet_name=None):
-    user_credentials = get_user_credentials(current_user, integration_name)
-
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    print("Building Google Sheets service")
-    service = build('sheets', 'v4', credentials=credentials)
-
-    print("Reading spreadsheet values")
-    sheet = service.spreadsheets()
-
-    if sheet_name:
-        range_to_read = f"'{sheet_name}'!{cell_range}"
-    else:
-        range_to_read = cell_range
-
-    result = sheet.values().get(spreadsheetId=sheet_id, range=range_to_read).execute()
-
-    values = result.get('values', [])
-    return values
-
-
-def get_spreadsheet_columns(current_user, sheet_id, sheet_name=None):
-    user_credentials = get_user_credentials(current_user, integration_name)
-
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    service = build('sheets', 'v4', credentials=credentials)
-
-    sheet = service.spreadsheets()
+def get_spreadsheet_columns(current_user, spreadsheet_id, sheet_name=None):
+    service = get_sheets_service(current_user)
     range_to_read = '1:1' if sheet_name is None else f"'{sheet_name}'!1:1"
-    result = sheet.values().get(spreadsheetId=sheet_id, range=range_to_read).execute()
-
+    result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_to_read).execute()
     values = result.get('values', [])
     return values[0] if values else []
 
-
-def get_sheet_names(current_user, sheet_id):
-    user_credentials = get_user_credentials(current_user, integration_name)
-
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    service = build('sheets', 'v4', credentials=credentials)
-
-    sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+def get_sheet_names(current_user, spreadsheet_id):
+    service = get_sheets_service(current_user)
+    sheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     sheets = sheet_metadata.get('sheets', '')
-    sheet_names = [sheet['properties']['title'] for sheet in sheets]
+    return [sheet['properties']['title'] for sheet in sheets]
 
-    return sheet_names
-
-
-def get_sheets_info(current_user, sheet_id):
-    user_credentials = get_user_credentials(current_user, integration_name)
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    service = build('sheets', 'v4', credentials=credentials)
-
-    print("Getting spreadsheet metadata")
-    sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+def get_sheets_info(current_user, spreadsheet_id):
+    service = get_sheets_service(current_user)
+    sheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     sheets = sheet_metadata.get('sheets', '')
-
-    result = {
-        "sheet_names": [],
-        "sheets_data": {}
-    }
-
-    print(f"There are {len(sheets)} sheets in the spreadsheet")
+    result = {"sheet_names": [], "sheets_data": {}}
 
     for sheet in sheets:
-        print(f"Getting data for sheet {sheet['properties']['title']}")
         sheet_name = sheet['properties']['title']
         result["sheet_names"].append(sheet_name)
-
         range_name = f"'{sheet_name}'"
-        sheet_data = service.spreadsheets().values().get(
-            spreadsheetId=sheet_id, range=range_name).execute()
+        sheet_data = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_name).execute()
         values = sheet_data.get('values', [])
 
         if not values:
@@ -87,73 +44,47 @@ def get_sheets_info(current_user, sheet_id):
 
         columns = values[0]
         rows = values[1:]
-
         sample_rows = random.sample(rows, min(5, len(rows)))
-
-        result["sheets_data"][sheet_name] = {
-            "columns": columns,
-            "sample_rows": sample_rows
-        }
+        result["sheets_data"][sheet_name] = {"columns": columns, "sample_rows": sample_rows}
 
     return result
 
-
-def insert_rows(current_user, sheet_id, rows_data, sheet_name=None, insertion_point=None):
-    user_credentials = get_user_credentials(current_user, integration_name)
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    service = build('sheets', 'v4', credentials=credentials)
-
+def insert_rows(current_user, spreadsheet_id, rows_data, sheet_name=None, insertion_point=None):
+    service = get_sheets_service(current_user)
     if not sheet_name:
-        sheet_name = service.spreadsheets().get(spreadsheetId=sheet_id).execute()['sheets'][0]['properties']['title']
-
+        sheet_name = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()['sheets'][0]['properties']['title']
     if not insertion_point:
-        result = service.spreadsheets().values().get(spreadsheetId=sheet_id, range=f"{sheet_name}!A:A").execute()
+        result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=f"{sheet_name}!A:A").execute()
         insertion_point = len(result.get('values', [])) + 1
-
     range_name = f"{sheet_name}!A{insertion_point}"
-    body = {
-        'values': rows_data
-    }
-
-    request = service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
+    body = {'values': rows_data}
+    return service.spreadsheets().values().append(
+        spreadsheetId=spreadsheet_id,
         range=range_name,
         valueInputOption='USER_ENTERED',
         insertDataOption='INSERT_ROWS',
         body=body
-    )
-    response = request.execute()
+    ).execute()
 
-    return response
-
-
-def delete_rows(current_user, sheet_id, start_row, end_row, sheet_name=None):
-    user_credentials = get_user_credentials(current_user, integration_name)
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    service = build('sheets', 'v4', credentials=credentials)
-
+def delete_rows(current_user, spreadsheet_id, start_row, end_row, sheet_name=None):
+    service = get_sheets_service(current_user)
     if not sheet_name:
-        sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        sheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
         sheet_name = sheet_metadata['sheets'][0]['properties']['title']
-
+    sheet_id = get_sheet_id(service, spreadsheet_id, sheet_name)
     request = {
-        "requests": [
-            {
-                "deleteDimension": {
-                    "range": {
-                        "sheetId": get_sheet_id(service, sheet_id, sheet_name),
-                        "dimension": "ROWS",
-                        "startIndex": start_row - 1,
-                        "endIndex": end_row
-                    }
+        "requests": [{
+            "deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": start_row - 1,
+                    "endIndex": end_row
                 }
             }
-        ]
+        }]
     }
-
-    response = service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=request).execute()
-    return response
-
+    return service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=request).execute()
 
 def get_sheet_id(service, spreadsheet_id, sheet_name):
     sheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
@@ -163,16 +94,12 @@ def get_sheet_id(service, spreadsheet_id, sheet_name):
             return sheet['properties']['sheetId']
     raise ValueError(f"Sheet '{sheet_name}' not found")
 
-
-def update_rows(current_user, sheet_id, rows_data, sheet_name=None):
-    user_credentials = get_user_credentials(current_user, integration_name)
-    credentials = Credentials.from_authorized_user_info(user_credentials)
-    service = build('sheets', 'v4', credentials=credentials)
-
+def update_rows(current_user, spreadsheet_id, rows_data, sheet_name=None):
+    service = get_sheets_service(current_user)
     if not sheet_name:
-        sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        sheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
         sheet_name = sheet_metadata['sheets'][0]['properties']['title']
-
+    sheet_id = get_sheet_id(service, spreadsheet_id, sheet_name)
     requests = []
     for row in rows_data:
         row_number = row[0]
@@ -180,7 +107,7 @@ def update_rows(current_user, sheet_id, rows_data, sheet_name=None):
         requests.append({
             "updateCells": {
                 "range": {
-                    "sheetId": get_sheet_id(service, sheet_id, sheet_name),
+                    "sheetId": sheet_id,
                     "startRowIndex": row_number - 1,
                     "endRowIndex": row_number,
                     "startColumnIndex": 0,
@@ -190,11 +117,8 @@ def update_rows(current_user, sheet_id, rows_data, sheet_name=None):
                 "fields": "userEnteredValue"
             }
         })
-
     body = {"requests": requests}
-    response = service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
-    return response
-
+    return service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
 
 def create_spreadsheet(current_user, title):
     service = get_sheets_service(current_user)
@@ -326,6 +250,80 @@ def apply_conditional_formatting(current_user, spreadsheet_id, sheet_id, start_r
         }]
     }
     return service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=request).execute()
+
+
+def execute_query(current_user, spreadsheet_id, query, sheet_name):
+    service = get_sheets_service(current_user)
+
+    if sheet_name is None:
+        spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheet_name = spreadsheet['sheets'][0]['properties']['title']
+
+    sheet_range = f"{sheet_name}!A1:ZZ"
+    result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=sheet_range).execute()
+    data = result.get('values', [])
+
+    if not data:
+        return []
+
+    headers = data[0]
+    records = data[1:]
+
+    conditions = parse_query(query)
+
+    filtered_records = [
+        {"row": idx + 2, **dict(zip(headers, record))}
+        for idx, record in enumerate(records)
+        if evaluate_conditions(conditions, dict(zip(headers, record)))
+    ]
+
+    return filtered_records
+
+
+def parse_query(query):
+    clauses = query.split(' and ')
+    return [parse_clause(clause) for clause in clauses]
+
+def parse_clause(clause):
+    or_clauses = clause.split(' or ')
+    return [parse_condition(c) for c in or_clauses]
+
+def parse_condition(condition):
+    operators = ['==', '!=', '>', '<', '>=', '<=', 'in', 'not in']
+    for op in operators:
+        if op in condition:
+            column, value = condition.split(op)
+            return column.strip(), op, value.strip()
+    raise ValueError("Unsupported query format")
+
+def evaluate_condition(condition, record):
+    column, op, value = condition
+    if column not in record:
+        return False
+
+    record_value = record[column]
+
+    operators = {
+        '==': lambda x, y: x == y,
+        '!=': lambda x, y: x != y,
+        '>': lambda x, y: float(x) > float(y),
+        '<': lambda x, y: float(x) < float(y),
+        '>=': lambda x, y: float(x) >= float(y),
+        '<=': lambda x, y: float(x) <= float(y),
+        'in': lambda x, y: x in parse_list(y),
+        'not in': lambda x, y: x not in parse_list(y)
+    }
+
+    return operators[op](record_value, value)
+
+def parse_list(value):
+    return [item.strip() for item in value.strip('[]').split(',')]
+
+def evaluate_conditions(conditions, record):
+    return all(evaluate_or_conditions(or_conditions, record) for or_conditions in conditions)
+
+def evaluate_or_conditions(or_conditions, record):
+    return any(evaluate_condition(condition, record) for condition in or_conditions)
 
 
 def get_sheets_service(current_user):

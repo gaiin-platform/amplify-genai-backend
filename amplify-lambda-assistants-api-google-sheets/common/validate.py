@@ -46,63 +46,63 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/integrations/google/sheets/get-rows": {
+    "/google/integrations/sheets/get-rows": {
         "get_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "cellRange": {"type": "string"},
             },
-            "required": ["sheetId", "cellRange"],
+            "required": ["spreadsheetId", "cellRange"],
         }
     },
-    "/integrations/google/sheets/get-info": {
+    "/google/integrations/sheets/get-info": {
         "get_google_sheets_info": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
             },
-            "required": ["sheetId"],
+            "required": ["spreadsheetId"],
         }
     },
-    "/integrations/google/sheets/get-sheet-names": {
+    "/google/integrations/sheets/get-sheet-names": {
         "get_sheet_names": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
             },
-            "required": ["sheetId"],
+            "required": ["spreadsheetId"],
         }
     },
-    "/integrations/google/sheets/insert-rows": {
+    "/google/integrations/sheets/insert-rows": {
         "insert_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "rowsData": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
                 "sheetName": {"type": "string"},
                 "insertionPoint": {"type": "integer"}
             },
-            "required": ["sheetId", "rowsData"]
+            "required": ["spreadsheetId", "rowsData"]
         }
     },
-    "/integrations/google/sheets/delete-rows": {
+    "/google/integrations/sheets/delete-rows": {
         "delete_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "sheetName": {"type": "string"},
                 "startRow": {"type": "integer", "minimum": 1},
                 "endRow": {"type": "integer", "minimum": 1}
             },
-            "required": ["sheetId", "startRow", "endRow"]
+            "required": ["spreadsheetId", "startRow", "endRow"]
         }
     },
-    "/integrations/google/sheets/update-rows": {
+    "/google/integrations/sheets/update-rows": {
         "update_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "rowsData": {
                     "type": "array",
                     "items": {
@@ -113,10 +113,10 @@ validators = {
                 },
                 "sheetName": {"type": "string"}
             },
-            "required": ["sheetId", "rowsData"]
+            "required": ["spreadsheetId", "rowsData"]
         }
     },
-    "/integrations/google/sheets/create-spreadsheet": {
+    "/google/integrations/sheets/create-spreadsheet": {
         "create_spreadsheet": {
             "type": "object",
             "properties": {
@@ -125,67 +125,189 @@ validators = {
             "required": ["title"]
         }
     },
+    "/google/integrations/sheets/duplicate-sheet": {
+        "duplicate_sheet": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "newSheetName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "sheetId", "newSheetName"]
+        }
+    },
+    "/google/integrations/sheets/rename-sheet": {
+        "rename_sheet": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "newName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "sheetId", "newName"]
+        }
+    },
+    "/google/integrations/sheets/clear-range": {
+        "clear_range": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "rangeName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "rangeName"]
+        }
+    },
+    "/google/integrations/sheets/apply-formatting": {
+        "apply_formatting": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "startCol": {"type": "integer", "minimum": 1},
+                "endCol": {"type": "integer", "minimum": 1},
+                "formatJson": {"type": "object"}
+            },
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "formatJson"]
+        }
+    },
+    "/google/integrations/sheets/add-chart": {
+        "add_chart": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "chartSpec": {"type": "object"}
+            },
+            "required": ["spreadsheetId", "sheetId", "chartSpec"]
+        }
+    },
+    "/google/integrations/sheets/get-cell-formulas": {
+        "get_cell_formulas": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "rangeName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "rangeName"]
+        }
+    },
+    "/google/integrations/sheets/find-replace": {
+        "find_replace": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "find": {"type": "string"},
+                "replace": {"type": "string"},
+                "sheetId": {"type": "integer"}
+            },
+            "required": ["spreadsheetId", "find", "replace"]
+        }
+    },
+    "/google/integrations/sheets/sort-range": {
+        "sort_range": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "startCol": {"type": "integer", "minimum": 1},
+                "endCol": {"type": "integer", "minimum": 1},
+                "sortOrder": {"type": "array", "items": {"type": "object"}}
+            },
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "sortOrder"]
+        }
+    },
+    "/google/integrations/sheets/apply-conditional-formatting": {
+        "apply_conditional_formatting": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "startCol": {"type": "integer", "minimum": 1},
+                "endCol": {"type": "integer", "minimum": 1},
+                "condition": {"type": "object"},
+                "format": {"type": "object"}
+            },
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "condition", "format"]
+        }
+    },
+    "/google/integrations/sheets/execute-query": {
+        "execute_query": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetName": {"type": "string"},
+                "query": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "query"]
+        }
+    }
 }
 
 
 api_validators = {
-    "/integrations/google/sheets/get-rows": {
+    "/google/integrations/sheets/get-rows": {
         "get_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "cellRange": {"type": "string"},
             },
-            "required": ["sheetId", "cellRange"],
+            "required": ["spreadsheetId", "cellRange"],
         }
     },
-    "/integrations/google/sheets/get-info": {
+    "/google/integrations/sheets/get-info": {
         "get_google_sheets_info": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
             },
-            "required": ["sheetId"],
+            "required": ["spreadsheetId"],
         }
     },
-    "/integrations/google/sheets/get-sheet-names": {
+    "/google/integrations/sheets/get-sheet-names": {
         "get_sheet_names": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
             },
-            "required": ["sheetId"],
+            "required": ["spreadsheetId"],
         }
     },
-    "/integrations/google/sheets/insert-rows": {
+    "/google/integrations/sheets/insert-rows": {
         "insert_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "rowsData": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
                 "sheetName": {"type": "string"},
                 "insertionPoint": {"type": "integer"}
             },
-            "required": ["sheetId", "rowsData"]
+            "required": ["spreadsheetId", "rowsData"]
         }
     },
-    "/integrations/google/sheets/delete-rows": {
+    "/google/integrations/sheets/delete-rows": {
         "delete_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "sheetName": {"type": "string"},
                 "startRow": {"type": "integer", "minimum": 1},
                 "endRow": {"type": "integer", "minimum": 1}
             },
-            "required": ["sheetId", "startRow", "endRow"]
+            "required": ["spreadsheetId", "startRow", "endRow"]
         }
     },
-    "/integrations/google/sheets/update-rows": {
+    "/google/integrations/sheets/update-rows": {
         "update_rows": {
             "type": "object",
             "properties": {
-                "sheetId": {"type": "string"},
+                "spreadsheetId": {"type": "string"},
                 "rowsData": {
                     "type": "array",
                     "items": {
@@ -196,10 +318,10 @@ api_validators = {
                 },
                 "sheetName": {"type": "string"}
             },
-            "required": ["sheetId", "rowsData"]
+            "required": ["spreadsheetId", "rowsData"]
         }
     },
-    "/integrations/google/sheets/create-spreadsheet": {
+    "/google/integrations/sheets/create-spreadsheet": {
         "create_spreadsheet": {
             "type": "object",
             "properties": {
@@ -208,6 +330,128 @@ api_validators = {
             "required": ["title"]
         }
     },
+    "/google/integrations/sheets/duplicate-sheet": {
+        "duplicate_sheet": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "newSheetName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "sheetId", "newSheetName"]
+        }
+    },
+    "/google/integrations/sheets/rename-sheet": {
+        "rename_sheet": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "newName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "sheetId", "newName"]
+        }
+    },
+    "/google/integrations/sheets/clear-range": {
+        "clear_range": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "rangeName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "rangeName"]
+        }
+    },
+    "/google/integrations/sheets/apply-formatting": {
+        "apply_formatting": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "startCol": {"type": "integer", "minimum": 1},
+                "endCol": {"type": "integer", "minimum": 1},
+                "formatJson": {"type": "object"}
+            },
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "formatJson"]
+        }
+    },
+    "/google/integrations/sheets/add-chart": {
+        "add_chart": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "chartSpec": {"type": "object"}
+            },
+            "required": ["spreadsheetId", "sheetId", "chartSpec"]
+        }
+    },
+    "/google/integrations/sheets/get-cell-formulas": {
+        "get_cell_formulas": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "rangeName": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "rangeName"]
+        }
+    },
+    "/google/integrations/sheets/find-replace": {
+        "find_replace": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "find": {"type": "string"},
+                "replace": {"type": "string"},
+                "sheetId": {"type": "integer"}
+            },
+            "required": ["spreadsheetId", "find", "replace"]
+        }
+    },
+    "/google/integrations/sheets/sort-range": {
+        "sort_range": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "startCol": {"type": "integer", "minimum": 1},
+                "endCol": {"type": "integer", "minimum": 1},
+                "sortOrder": {"type": "array", "items": {"type": "object"}}
+            },
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "sortOrder"]
+        }
+    },
+    "/google/integrations/sheets/apply-conditional-formatting": {
+        "apply_conditional_formatting": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetId": {"type": "integer"},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "startCol": {"type": "integer", "minimum": 1},
+                "endCol": {"type": "integer", "minimum": 1},
+                "condition": {"type": "object"},
+                "format": {"type": "object"}
+            },
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "condition", "format"]
+        }
+    },
+    "/google/integrations/sheets/execute-query": {
+        "execute_query": {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "sheetName": {"type": "string"},
+                "query": {"type": "string"}
+            },
+            "required": ["spreadsheetId", "query"]
+        }
+    }
 }
 
 

@@ -1,4 +1,4 @@
-service: vu-amplify-assistants-api-google-sheets
+service: vu-amplify-google-sheets
 
 frameworkVersion: "3"
 
@@ -57,18 +57,18 @@ functions:
 
   googleSheetsGetRows:
     handler: service/core.get_sheet_rows
-    timeout: 300
+    timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/get-rows
+          path: google/integrations/sheets/get-rows
           method: post
 
   googleSheetsGetInfo:
     handler: service/core.get_google_sheets_info
-    timeout: 300
+    timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/get-info
+          path: google/integrations/sheets/get-info
           method: post
 
   googleSheetsGetSheetNames:
@@ -76,7 +76,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/get-sheet-names
+          path: google/integrations/sheets/get-sheet-names
           method: post
 
   googleSheetsInsertRows:
@@ -84,7 +84,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/insert-rows
+          path: google/integrations/sheets/insert-rows
           method: post
 
   googleSheetsDeleteRows:
@@ -92,7 +92,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/delete-rows
+          path: google/integrations/sheets/delete-rows
           method: post
 
   googleSheetsUpdateRows:
@@ -100,7 +100,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/update-rows
+          path: google/integrations/sheets/update-rows
           method: post
 
   googleSheetsCreateSpreadsheet:
@@ -108,8 +108,92 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /integrations/google/sheets/create-spreadsheet
+          path: google/integrations/sheets/create-spreadsheet
           method: post
+
+  googleSheetsDuplicateSheet:
+    handler: service/core.duplicate_sheet_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/duplicate-sheet
+          method: post
+
+  googleSheetsRenameSheet:
+    handler: service/core.rename_sheet_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/rename-sheet
+          method: post
+
+  googleSheetsClearRange:
+    handler: service/core.clear_range_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/clear-range
+          method: post
+
+  googleSheetsFormatting:
+    handler: service/core.apply_formatting_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/apply-formatting
+          method: post
+
+  googleSheetsAddChart:
+    handler: service/core.add_chart_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/add-chart
+          method: post
+
+  googleSheetsGetCellFormulas:
+    handler: service/core.get_cell_formulas_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/get-cell-formulas
+          method: post
+
+  googleSheetsFindReplace:
+    handler: service/core.find_replace_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/find-replace
+          method: post
+
+  googleSheetsSortRange:
+    handler: service/core.sort_range_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/sort-range
+          method: post
+
+  googleSheetsCondFormatting:
+    handler: service/core.apply_conditional_formatting_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/apply-conditional-formatting
+          method: post
+
+  googleSheetsExecuteQuery:
+    handler: service/core.execute_query_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/execute-query
+          method: post
+    #layers:
+    #  - arn:aws:lambda:us-east-1:336392948345:layer:AWSSDKPandas-Python311:19
+      # See https://aws-sdk-pandas.readthedocs.io/en/stable/layers.html
+      # The layer will need to be changed if deploying outside of us-east-1
 
 resources:
   Resources:
