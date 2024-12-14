@@ -4,6 +4,7 @@ import time
 
 from google_auth_oauthlib.flow import Flow
 
+from common.ops import vop
 from common.secrets import store_secret_parameter
 from common.validate import validated
 import boto3
@@ -111,6 +112,15 @@ def get_oauth_token_parameter_for_user(service, current_user):
     return token_param
 
 
+@vop(
+    path="/integrations/oauth/user/list",
+    tags=["default"],
+    name="listUserIntegrations",
+    description="Takes a list of 3rd party services and returns a list of the 3rd party services that the user has connected to, such as Office 365, Google Sheets, Google Drive, etc.",
+    params={
+        "integrations": "JSON list of string IDs of integrations to check, such as google_sheets, google_drive, google_gmail, google_forms",
+    }
+)
 @validated("list_integrations")
 def list_integrations(event, context, current_user, name, data):
     integrations = data['data']['integrations']

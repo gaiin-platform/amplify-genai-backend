@@ -60,7 +60,7 @@ functions:
     handler: service/core.execute_custom_auto
     events:
       - http:
-          path: /assistant-api/execute-custom-auto
+          path: assistant-api/execute-custom-auto
           method: post
           cors: true
   startAuth:
@@ -68,45 +68,37 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /integrations/oauth/start-auth
+          path: integrations/oauth/start-auth
           method: post
   authCallback:
     handler: integrations/oauth.auth_callback
     timeout: 30
     events:
       - http:
-          path: /integrations/oauth/callback
+          path: integrations/oauth/callback
           method: get
   listUserIntegrations:
     handler: integrations/oauth.list_integrations
     timeout: 30
     events:
       - http:
-          path: /integrations/oauth/user/list
+          path: integrations/oauth/user/list
           method: post
   deleteUserIntegration:
     handler: integrations/oauth.handle_delete_integration
     timeout: 30
     events:
       - http:
-          path: /integrations/oauth/user/delete
+          path: integrations/oauth/user/delete
           method: post
   listAllIntegrations:
     handler: integrations/oauth.list_all_integrations
     timeout: 30
     events:
       - http:
-          path: /integrations/oauth/list
+          path: integrations/oauth/list
           method: post
 
-
-  googleSheetsGetRows:
-    handler: integrations/google/service.get_sheet_rows
-    timeout: 30
-    events:
-      - http:
-          path: /integrations/google/sheets/get-rows
-          method: post
 
 resources:
   Resources:
