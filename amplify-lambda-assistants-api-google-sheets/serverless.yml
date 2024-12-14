@@ -1,0 +1,146 @@
+service: vu-amplify-assistants-api-google-sheets
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+    
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  logRetentionInDays: 365
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+  environment:
+    INTEGRATION_STAGE: ${self:provider.stage}
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+
+
+  iam:
+    role:
+      managedPolicies:
+        - !Ref LambdaAPIIAMPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      
+
+functions:
+
+  googleSheetsGetRows:
+    handler: service/core.get_sheet_rows
+    timeout: 300
+    events:
+      - http:
+          path: /integrations/google/sheets/get-rows
+          method: post
+
+  googleSheetsGetInfo:
+    handler: service/core.get_google_sheets_info
+    timeout: 300
+    events:
+      - http:
+          path: /integrations/google/sheets/get-info
+          method: post
+
+  googleSheetsGetSheetNames:
+    handler: service/core.get_sheet_names_handler
+    timeout: 30
+    events:
+      - http:
+          path: /integrations/google/sheets/get-sheet-names
+          method: post
+
+  googleSheetsInsertRows:
+    handler: service/core.insert_rows_handler
+    timeout: 30
+    events:
+      - http:
+          path: /integrations/google/sheets/insert-rows
+          method: post
+
+  googleSheetsDeleteRows:
+    handler: service/core.delete_rows_handler
+    timeout: 30
+    events:
+      - http:
+          path: /integrations/google/sheets/delete-rows
+          method: post
+
+  googleSheetsUpdateRows:
+    handler: service/core.update_rows_handler
+    timeout: 30
+    events:
+      - http:
+          path: /integrations/google/sheets/update-rows
+          method: post
+
+  googleSheetsCreateSpreadsheet:
+    handler: service/core.create_spreadsheet_handler
+    timeout: 30
+    events:
+      - http:
+          path: /integrations/google/sheets/create-spreadsheet
+          method: post
+
+resources:
+  Resources:
+    LambdaAPIIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+                - s3:DeleteObject
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource:
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+
