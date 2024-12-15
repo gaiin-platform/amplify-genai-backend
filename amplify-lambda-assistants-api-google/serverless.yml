@@ -1,4 +1,4 @@
-service: vu-amplify-google-sheets
+service: vu-amplify-google
 
 frameworkVersion: "3"
 
@@ -190,10 +190,85 @@ functions:
       - http:
           path: google/integrations/sheets/execute-query
           method: post
+    # This has been removed until this code is refactored to use pandas
     #layers:
     #  - arn:aws:lambda:us-east-1:336392948345:layer:AWSSDKPandas-Python311:19
       # See https://aws-sdk-pandas.readthedocs.io/en/stable/layers.html
       # The layer will need to be changed if deploying outside of us-east-1
+
+
+  googleDocsCreateDocument:
+    handler: service/core.create_new_document_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/create-document
+          method: post
+
+  googleDocsAppendText:
+    handler: service/core.append_text_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/append-text
+          method: post
+
+  googleDocsGetContents:
+    handler: service/core.get_document_contents_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/get-contents
+          method: post
+
+  googleDocsInsertText:
+    handler: service/core.insert_text_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/insert-text
+          method: post
+
+  googleDocsReplaceText:
+    handler: service/core.replace_text_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/replace-text
+          method: post
+
+  googleDocsCreateOutline:
+    handler: service/core.create_document_outline_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/create-outline
+          method: post
+
+  googleDocsExportDocument:
+    handler: service/core.export_document_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/export-document
+          method: post
+
+  googleDocsShareDocument:
+    handler: service/core.share_document_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/share-document
+          method: post
+
+  googleDocsFindTextIndices:
+    handler: service/core.find_text_indices_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/find-text-indices
+          method: post
+
 
 resources:
   Resources:

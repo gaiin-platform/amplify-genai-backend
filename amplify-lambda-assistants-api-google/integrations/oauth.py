@@ -47,6 +47,9 @@ def get_oauth_client_for_integration(integration):
         config = json.loads(response['Parameter']['Value'])
         client_config = config['client_config']
         scopes = config['scopes']
+
+        print(f"Retrieved client config for integration '{integration}' in stage '{stage}' with scopes: {scopes}")
+
     except ssm.exceptions.ParameterNotFound:
         raise ValueError(f"No configuration found for integration '{integration}' in stage '{stage}'")
     except KeyError:

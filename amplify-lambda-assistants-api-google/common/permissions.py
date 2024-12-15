@@ -72,5 +72,32 @@ permissions_by_state_type = {
     },
     "/google/integrations/sheets/execute-query": {
         "execute_query": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/create-document": {
+        "create_new_document": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/get-contents": {
+        "get_document_contents": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/insert-text": {
+        "insert_text": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/replace-text": {
+        "replace_text": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/create-outline": {
+        "create_document_outline": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/export-document": {
+        "export_document": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/share-document": {
+        "share_document": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/find-text-indices": {
+        "find_text_indices": lambda for_user, with_data: True
+    },
+    "/google/integrations/docs/append-text": {
+        "append_text": lambda for_user, with_data: True
     }
 }

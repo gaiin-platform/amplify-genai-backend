@@ -246,6 +246,107 @@ validators = {
             },
             "required": ["spreadsheetId", "query"]
         }
+    },
+    "/google/integrations/docs/create-document": {
+        "create_new_document": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"}
+            },
+            "required": ["title"]
+        }
+    },
+    "/google/integrations/docs/get-contents": {
+        "get_document_contents": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"}
+            },
+            "required": ["documentId"]
+        }
+    },
+    "/google/integrations/docs/insert-text": {
+        "insert_text": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "text": {"type": "string"},
+                "index": {"type": "integer", "minimum": 1}
+            },
+            "required": ["documentId", "text", "index"]
+        }
+    },
+    "/google/integrations/docs/replace-text": {
+        "replace_text": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "oldText": {"type": "string"},
+                "newText": {"type": "string"}
+            },
+            "required": ["documentId", "oldText", "newText"]
+        }
+    },
+    "/google/integrations/docs/create-outline": {
+        "create_document_outline": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "outlineItems": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "integer", "minimum": 1},
+                            "end": {"type": "integer", "minimum": 1}
+                        },
+                        "required": ["start", "end"]
+                    }
+                }
+            },
+            "required": ["documentId", "outlineItems"]
+        }
+    },
+    "/google/integrations/docs/export-document": {
+        "export_document": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "mimeType": {"type": "string"}
+            },
+            "required": ["documentId", "mimeType"]
+        }
+    },
+    "/google/integrations/docs/share-document": {
+        "share_document": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "email": {"type": "string", "format": "email"},
+                "role": {"type": "string", "enum": ["writer", "reader", "commenter"]}
+            },
+            "required": ["documentId", "email", "role"]
+        }
+    },
+    "/google/integrations/docs/find-text-indices": {
+        "find_text_indices": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "searchText": {"type": "string"}
+            },
+            "required": ["documentId", "searchText"]
+        }
+    },
+    "/google/integrations/docs/append-text": {
+        "append_text": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "text": {"type": "string"}
+            },
+            "required": ["documentId", "text"]
+        }
     }
 }
 
@@ -450,6 +551,107 @@ api_validators = {
                 "query": {"type": "string"}
             },
             "required": ["spreadsheetId", "query"]
+        }
+    },
+    "/google/integrations/docs/create-document": {
+        "create_new_document": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"}
+            },
+            "required": ["title"]
+        }
+    },
+    "/google/integrations/docs/get-contents": {
+        "get_document_contents": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"}
+            },
+            "required": ["documentId"]
+        }
+    },
+    "/google/integrations/docs/insert-text": {
+        "insert_text": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "text": {"type": "string"},
+                "index": {"type": "integer", "minimum": 1}
+            },
+            "required": ["documentId", "text", "index"]
+        }
+    },
+    "/google/integrations/docs/replace-text": {
+        "replace_text": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "oldText": {"type": "string"},
+                "newText": {"type": "string"}
+            },
+            "required": ["documentId", "oldText", "newText"]
+        }
+    },
+    "/google/integrations/docs/create-outline": {
+        "create_document_outline": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "outlineItems": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "integer", "minimum": 1},
+                            "end": {"type": "integer", "minimum": 1}
+                        },
+                        "required": ["start", "end"]
+                    }
+                }
+            },
+            "required": ["documentId", "outlineItems"]
+        }
+    },
+    "/google/integrations/docs/export-document": {
+        "export_document": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "mimeType": {"type": "string"}
+            },
+            "required": ["documentId", "mimeType"]
+        }
+    },
+    "/google/integrations/docs/share-document": {
+        "share_document": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "email": {"type": "string", "format": "email"},
+                "role": {"type": "string", "enum": ["writer", "reader", "commenter"]}
+            },
+            "required": ["documentId", "email", "role"]
+        }
+    },
+    "/google/integrations/docs/find-text-indices": {
+        "find_text_indices": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "searchText": {"type": "string"}
+            },
+            "required": ["documentId", "searchText"]
+        }
+    },
+    "/google/integrations/docs/append-text": {
+        "append_text": {
+            "type": "object",
+            "properties": {
+                "documentId": {"type": "string"},
+                "text": {"type": "string"}
+            },
+            "required": ["documentId", "text"]
         }
     }
 }
