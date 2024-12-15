@@ -1,0 +1,305 @@
+service: vu-amplify-google
+
+frameworkVersion: "3"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stages:
+    - dev
+    - staging
+    - prod
+
+    
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  logRetentionInDays: 365
+  apiGateway:
+    restApiId:
+      ${self:custom.stageVariables.REST_API_ID}
+    restApiRootResourceId:
+      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+  environment:
+    INTEGRATION_STAGE: ${self:provider.stage}
+    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
+    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+
+
+  iam:
+    role:
+      managedPolicies:
+        - !Ref LambdaAPIIAMPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      
+
+functions:
+
+  googleSheetsGetRows:
+    handler: service/core.get_sheet_rows
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/get-rows
+          method: post
+
+  googleSheetsGetInfo:
+    handler: service/core.get_google_sheets_info
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/get-info
+          method: post
+
+  googleSheetsGetSheetNames:
+    handler: service/core.get_sheet_names_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/get-sheet-names
+          method: post
+
+  googleSheetsInsertRows:
+    handler: service/core.insert_rows_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/insert-rows
+          method: post
+
+  googleSheetsDeleteRows:
+    handler: service/core.delete_rows_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/delete-rows
+          method: post
+
+  googleSheetsUpdateRows:
+    handler: service/core.update_rows_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/update-rows
+          method: post
+
+  googleSheetsCreateSpreadsheet:
+    handler: service/core.create_spreadsheet_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/create-spreadsheet
+          method: post
+
+  googleSheetsDuplicateSheet:
+    handler: service/core.duplicate_sheet_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/duplicate-sheet
+          method: post
+
+  googleSheetsRenameSheet:
+    handler: service/core.rename_sheet_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/rename-sheet
+          method: post
+
+  googleSheetsClearRange:
+    handler: service/core.clear_range_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/clear-range
+          method: post
+
+  googleSheetsFormatting:
+    handler: service/core.apply_formatting_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/apply-formatting
+          method: post
+
+  googleSheetsAddChart:
+    handler: service/core.add_chart_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/add-chart
+          method: post
+
+  googleSheetsGetCellFormulas:
+    handler: service/core.get_cell_formulas_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/get-cell-formulas
+          method: post
+
+  googleSheetsFindReplace:
+    handler: service/core.find_replace_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/find-replace
+          method: post
+
+  googleSheetsSortRange:
+    handler: service/core.sort_range_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/sort-range
+          method: post
+
+  googleSheetsCondFormatting:
+    handler: service/core.apply_conditional_formatting_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/apply-conditional-formatting
+          method: post
+
+  googleSheetsExecuteQuery:
+    handler: service/core.execute_query_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/sheets/execute-query
+          method: post
+    # This has been removed until this code is refactored to use pandas
+    #layers:
+    #  - arn:aws:lambda:us-east-1:336392948345:layer:AWSSDKPandas-Python311:19
+      # See https://aws-sdk-pandas.readthedocs.io/en/stable/layers.html
+      # The layer will need to be changed if deploying outside of us-east-1
+
+
+  googleDocsCreateDocument:
+    handler: service/core.create_new_document_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/create-document
+          method: post
+
+  googleDocsAppendText:
+    handler: service/core.append_text_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/append-text
+          method: post
+
+  googleDocsGetContents:
+    handler: service/core.get_document_contents_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/get-contents
+          method: post
+
+  googleDocsInsertText:
+    handler: service/core.insert_text_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/insert-text
+          method: post
+
+  googleDocsReplaceText:
+    handler: service/core.replace_text_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/replace-text
+          method: post
+
+  googleDocsCreateOutline:
+    handler: service/core.create_document_outline_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/create-outline
+          method: post
+
+  googleDocsExportDocument:
+    handler: service/core.export_document_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/export-document
+          method: post
+
+  googleDocsShareDocument:
+    handler: service/core.share_document_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/share-document
+          method: post
+
+  googleDocsFindTextIndices:
+    handler: service/core.find_text_indices_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/docs/find-text-indices
+          method: post
+
+
+resources:
+  Resources:
+    LambdaAPIIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+                - s3:DeleteObject
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource:
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+
