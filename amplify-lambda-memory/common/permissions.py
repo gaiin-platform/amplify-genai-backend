@@ -9,7 +9,19 @@ def get_permission_checker(user, ptype, op, data):
     )
 
 
-def can_execute_custom_auto(user, data):
+def can_save_memory(user, data):
+    return True
+
+
+def can_extract_facts(user, data):
+    return True
+
+
+def can_read_memory(user, data):
+    return True
+
+
+def can_remove_memory(user, data):
     return True
 
 
@@ -22,7 +34,8 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/assistant-api/execute-custom-auto": {
-        "execute_custom_auto": can_execute_custom_auto
-    },
+    "/memory/save-memory": {"save_memory": can_save_memory},
+    "/memory/extract-facts": {"extract_facts": can_extract_facts},
+    "/memory/read-memory": {"read_memory": can_read_memory},
+    "/memory/remove-memory": {"remove_memory": can_remove_memory},
 }

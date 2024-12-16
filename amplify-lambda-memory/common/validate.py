@@ -51,16 +51,46 @@ save_memory_schema = {
     "required": ["MemoryItem", "MemoryType", "MemoryTypeID"],
 }
 
+extract_facts_schema = {
+    "type": "object",
+    "properties": {
+        "user_input": {"type": "string"},
+    },
+    "required": ["user_input"],
+}
+
+read_memory_schema = {
+    "type": "object",
+    "properties": {
+        "assistant_id": {"type": "string"},
+    },
+    "required": [],
+}
+
+remove_memory_schema = {
+    "type": "object",
+    "properties": {
+        "memory_id": {"type": "string"},
+    },
+    "required": ["memory_id"],
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
 """
 validators = {
     "/memory/save-memory": {"save_memory": save_memory_schema},
+    "/memory/extract-facts": {"extract_facts": extract_facts_schema},
+    "/memory/read-memory": {"read_memory": read_memory_schema},
+    "/memory/remove-memory": {"remove_memory": remove_memory_schema},
 }
 
 api_validators = {
     "/memory/save-memory": {"save_memory": save_memory_schema},
+    "/memory/extract-facts": {"extract_facts": extract_facts_schema},
+    "/memory/read-memory": {"read_memory": read_memory_schema},
+    "/memory/remove-memory": {"remove_memory": remove_memory_schema},
 }
 
 

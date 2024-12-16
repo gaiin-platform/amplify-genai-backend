@@ -59,7 +59,6 @@ functions:
           method: post
           cors: true
   
-  # todo make this a GET method
   # read from memory table
   read_memory:
     handler: service/core.read_memory
@@ -123,7 +122,21 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.MEMORY_DYNAMO_TABLE}
