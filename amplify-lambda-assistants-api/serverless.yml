@@ -44,6 +44,10 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    OP_LOG_DYNAMO_TABLE: vu-amplify-${sls:stage}-op-log
+    OP_TRACING_ENABLED: true
+    OP_TRACING_REQUEST_DETAILS_ENABLED: true
+    OP_TRACING_RESULT_DETAILS_ENABLED: true
 
 
   iam:
@@ -136,6 +140,16 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OP_LOG_DYNAMO_TABLE}"
+
 
     OauthStateTable:
       Type: AWS::DynamoDB::Table
@@ -147,6 +161,26 @@ resources:
         KeySchema:
           - AttributeName: state
             KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+
+    OpLogTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.OP_LOG_DYNAMO_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
