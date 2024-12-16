@@ -1,4 +1,4 @@
-service: vu-amplify-google
+service:  vu-amplify-google
 
 frameworkVersion: "3"
 
