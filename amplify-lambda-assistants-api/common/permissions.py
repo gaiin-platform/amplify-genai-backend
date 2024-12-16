@@ -25,4 +25,19 @@ permissions_by_state_type = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": can_execute_custom_auto
     },
+    "/integrations/oauth/start-auth": {
+        "start_oauth": lambda for_user, with_data: True
+    },
+    "/integrations/google/sheets/get-rows": {
+        "get_rows": lambda for_user, with_data: True
+    },
+    "/integrations/oauth/user/list": {
+        "list_integrations": lambda for_user, with_data: True
+    },
+    "/integrations/oauth/list": {
+        "list_integrations": lambda for_user, with_data: True
+    },
+    "/integrations/oauth/user/delete": {
+        "delete_integration": lambda for_user, with_data: True
+    },
 }

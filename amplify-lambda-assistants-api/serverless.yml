@@ -35,13 +35,16 @@ provider:
     restApiRootResourceId:
       ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
   environment:
+    INTEGRATION_STAGE: ${self:provider.stage}
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    OAUTH_STATE_TABLE: vu-amplify-${sls:stage}-oauth-state
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+
 
   iam:
     role:
@@ -57,10 +60,44 @@ functions:
     handler: service/core.execute_custom_auto
     events:
       - http:
-          path: /assistant-api/execute-custom-auto
+          path: assistant-api/execute-custom-auto
           method: post
           cors: true
-
+  startAuth:
+    handler: integrations/oauth.start_auth
+    timeout: 30
+    events:
+      - http:
+          path: integrations/oauth/start-auth
+          method: post
+  authCallback:
+    handler: integrations/oauth.auth_callback
+    timeout: 30
+    events:
+      - http:
+          path: integrations/oauth/callback
+          method: get
+  listUserIntegrations:
+    handler: integrations/oauth.list_integrations
+    timeout: 30
+    events:
+      - http:
+          path: integrations/oauth/user/list
+          method: post
+  deleteUserIntegration:
+    handler: integrations/oauth.handle_delete_integration
+    timeout: 30
+    events:
+      - http:
+          path: integrations/oauth/user/delete
+          method: post
+  listAllIntegrations:
+    handler: integrations/oauth.list_all_integrations
+    timeout: 30
+    events:
+      - http:
+          path: integrations/oauth/list
+          method: post
 
 
 resources:
@@ -84,10 +121,34 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OAUTH_STATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+                - ssm:DeleteParameter
+                - ssm:GetParametersByPath
+              Resource:
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
 
+    OauthStateTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.OAUTH_STATE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: state
+            AttributeType: S
+        KeySchema:
+          - AttributeName: state
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true

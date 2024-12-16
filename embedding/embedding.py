@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from common.credentials import get_credentials
 from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions, record_usage, get_key_details, preprocess_text
 import urllib
+from create_table import create_table
 sqs = boto3.client('sqs')
 
 
@@ -20,13 +21,13 @@ pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
 qa_model_name = os.environ['QA_MODEL_NAME']
-sender_email = os.environ['SENDER_EMAIL']
+embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
-
-
+table_name = 'embeddings'
 pg_password = get_credentials(rag_pg_password)
+
 
 
 
@@ -116,6 +117,9 @@ def update_parent_chunk_status(object_id):
     except Exception as e:
         print("Failed to update the parentChunkStatus in DynamoDB table.")
         print(e)
+def table_exists(cursor, table_name):
+    cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s);", (table_name,))
+    return cursor.fetchone()[0]
 
 
 #initially set db_connection to none/closed 
@@ -126,18 +130,39 @@ db_connection = None
 def get_db_connection():
     global db_connection
     if db_connection is None or db_connection.closed:
+        admin_conn_params = {
+            'dbname': pg_database,
+            'user': pg_user,
+            'password': pg_password,
+            'host': pg_host,
+            'port': 3306  # ensure the port matches the PostgreSQL port which is 5432 by default
+        }
         try:
             db_connection = psycopg2.connect(
                 host=pg_host,
                 database=pg_database,
                 user=pg_user,
                 password=pg_password,
-                port=3306
+                port=3306  # ensure the port matches the PostgreSQL port which is 5432 by default
             )
             logging.info("Database connection established.")
         except psycopg2.Error as e:
             logging.error(f"Failed to connect to the database: {e}")
             raise
+
+        # Once the database connection is established, check if the table exists
+        with db_connection.cursor() as cursor:
+            if not table_exists(cursor, table_name):
+                logging.info(f"Table {table_name} does not exist. Attempting to create table...")
+                if create_table():
+                    logging.info(f"Table {table_name} created successfully.")
+                else:
+                    logging.error(f"Failed to create the table {table_name}.")
+                    raise Exception(f"Table {table_name} creation failed.")
+            else:
+                logging.info(f"Table {table_name} exists.")
+
+    # Return the database connection
     return db_connection
 
 
@@ -287,26 +312,27 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                         raise Exception(f"Text preprocessing failed: {response_clean_text['error']}")
                     clean_text = response_clean_text["data"]
 
-                    response_vector_embedding = generate_embeddings(clean_text)
+                    response_vector_embedding = generate_embeddings(clean_text, embedding_provider)
                     if not response_vector_embedding["success"]:
                         raise Exception(f"Vector embedding generation failed: {response_vector_embedding['error']}")
                     vector_embedding = response_vector_embedding["data"]
 
-                    response_qa_summary = generate_questions(clean_text)
+                    response_qa_summary = generate_questions(clean_text, embedding_provider)
                     if not response_qa_summary["success"]:
                         raise Exception(f"QA summary generation failed: {response_qa_summary['error']}")
                     qa_summary = response_qa_summary["data"]
 
-                    response_qa_embedding = generate_embeddings(content=qa_summary)
+                    response_qa_embedding = generate_embeddings(content=qa_summary, embedding_provider=embedding_provider)
                     if not response_qa_embedding["success"]:
                         raise Exception(f"QA embedding generation failed: {response_qa_embedding['error']}")
                     qa_vector_embedding = response_qa_embedding["data"]
 
-                    qa_summary_input_tokens = num_tokens_from_text(clean_text, qa_model_name)
-                    qa_summary_output_token_count = num_tokens_from_text(qa_summary, qa_model_name)
-                    vector_token_count = num_tokens_from_text(clean_text, embedding_model_name)
-                    qa_vector_token_count = num_tokens_from_text(qa_summary, embedding_model_name)
+                    qa_summary_input_tokens = response_qa_summary["input_tokens"]
+                    qa_summary_output_token_count = response_qa_summary["output_tokens"]
+                    vector_token_count = response_vector_embedding["token_count"]
+                    qa_vector_token_count = response_qa_embedding["token_count"]
                     total_vector_token_count = vector_token_count + qa_vector_token_count
+                    
 
                     logging.info(f"Embedding local chunk index: {current_local_chunk_index}")
                     insert_chunk_data_to_db(src, locations, orig_indexes, char_index, total_vector_token_count, current_local_chunk_index, content, vector_embedding, qa_vector_embedding, cursor)
@@ -317,17 +343,36 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                         api_key = result['apiKey']
                         account = result['account']
                         user = result['originalCreator']
-                        logging.info(f"Account details retrieved for {trimmed_src}")
-                    else:
+                        logging.info(f"Account details: retrieved for {trimmed_src}")
+                        logging.info(f"Account: {account}, User: {user}, API Key: {api_key}")
+                    else:   
                         logging.error(f"Failed to retrieve account details for {trimmed_src}")
                         raise Exception("Account details not found")
 
-                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=qa_summary_input_tokens, output_tokens=None)
-                    record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=None, output_tokens=qa_summary_output_token_count)
-                    record_usage(account, src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
+                    try:
+                        record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=qa_summary_input_tokens, output_tokens=None)
+                        logging.info(f"Successfully recorded usage for qa_model_name input tokens. Account: {account}, User: {user}")
+                    except Exception as e:
+                        logging.error(f"Error recording usage for qa_model_name input tokens: {str(e)}")
+                        logging.exception("Full traceback:")
 
+                    try:
+                        record_usage(account, src, user, qa_model_name, api_key=api_key, input_tokens=None, output_tokens=qa_summary_output_token_count)
+                        logging.info(f"Successfully recorded usage for qa_model_name output tokens. Account: {account}, User: {user}")
+                    except Exception as e:
+                        logging.error(f"Error recording usage for qa_model_name output tokens: {str(e)}")
+                        logging.exception("Full traceback:")
+
+                    try:
+                        record_usage(account, src, user, embedding_model_name, api_key=api_key, output_tokens=total_vector_token_count, input_tokens=None)
+                        logging.info(f"Successfully recorded usage for embedding_model_name. Account: {account}, User: {user}")
+                    except Exception as e:
+                        logging.error(f"Error recording usage for embedding_model_name: {str(e)}")
+                        logging.exception("Full traceback:")
+                    
                     current_local_chunk_index += 1
                     db_connection.commit()
+                
                 except Exception as e:
                     logging.error(f"Error processing chunk {local_chunk_index} of {src}: {str(e)}")
                     update_child_chunk_status(trimmed_src, childChunk, "failed")
@@ -340,4 +385,4 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
         logging.exception(f"Critical error in embed_chunks for {src}: {str(e)}")
         update_child_chunk_status(trimmed_src, childChunk, "failed")
         db_connection.rollback()
-        return False, src
+        return False, src 
