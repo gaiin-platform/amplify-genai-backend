@@ -30,8 +30,8 @@ async function includeImageSources(dataSources, messages, model) {
     if (!dataSources || dataSources.length === 0)  return messages;
     const msgLen = messages.length - 1;
     // does not support images
-    if (model === "gpt-35-turbo") {
-        messages[msgLen]['content'] += "\n At the end of your response, please let the user know the model GPT 3.5 does not support images. Advise them to try another GPT model.";
+    if (!model.supportsImages) {          
+        messages[msgLen]['content'] += `\n At the end of your response, please let the user know the model ${model.name} does not support images. Advise them to try another GPT model.`;
         return messages;
     }
 
@@ -92,7 +92,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         "stream": true,
     };
 
-    data.messages = await includeImageSources(body.imageSources, data.messages, data.model);
+    data.messages = await includeImageSources(body.imageSources, data.messages, options.model);
 
     if(tools){
         data.tools = tools;

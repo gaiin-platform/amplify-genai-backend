@@ -2,7 +2,6 @@ import {ConsoleWritableStream} from "./consoleWriteableStream.js";
 import {chatWithDataStateless} from "../common/chatWithData.js";
 import {chat} from "../azure/openai.js";
 import {getLLMConfig} from "./common/secrets.js";
-import {Models} from "../models/models.js";
 import {getSecret} from "../common/secrets.js";
 import * as fs from "fs";
 import {LLM} from "../common/llm.js";
@@ -55,7 +54,7 @@ async function main() {
                 break;
             case '-m':
                 modelId = process.argv[++i];
-                model = Models[modelId];
+                model = {id: modelId}; // most likely missing data attributes since eliminating Models 
                 if(!model){
                     console.log("Invalid model: "+modelId);
                     return;

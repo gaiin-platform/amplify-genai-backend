@@ -46,6 +46,73 @@ Every service must define a schema each operation here. The schema is applied to
 body. You do NOT need to include the top-level "data" key in the schema.
 """
 
+get_ops_schema = {
+    "type": "object",
+    "properties": {
+        "tag": {"type": "string"}
+    },
+    "required": ["tag"]
+}
+
+register_ops_schema = {
+    "type": "object",
+    "properties": {
+        "ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "url": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "type": {"type": "string"},
+                    "params": {
+                        "type" : "array", 
+                        "items" : {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["name", "description"],
+                            "additionalProperties": False
+                        },
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["id", "url", "name", "description", "params"],
+                "additionalProperties": True
+            },
+        }
+    },
+    "required": ["ops"]
+}
+
+delete_op_schema = {
+    "type": "object",
+    "properties": {
+        "op": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "url": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["id", "url", "name", "tags"],
+            "additionalProperties": False
+        }
+    },
+    "required": ["op"],
+    "additionalProperties": False
+}
 
 """
 Every service must define the permissions for each operation here. 
@@ -53,8 +120,17 @@ The permission is related to a request path and to a specific operation.
 """
 validators = {
     "/ops/get": {
+        "get": get_ops_schema
+    },
+    "/ops/get_all": {
         "get": {}
     },
+    "/ops/register" : {
+        "write": register_ops_schema
+    },
+    "/ops/delete" : {
+        "delete": delete_op_schema
+    }
 }
 
 

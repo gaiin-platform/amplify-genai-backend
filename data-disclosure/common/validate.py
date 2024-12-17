@@ -59,6 +59,17 @@ save_data_disclosure_decision_schema = {
     "required": ["email", "acceptedDataDisclosure"],
 }
 
+upload_disclosure_schema = {
+    "type": "object",
+    "properties": {
+        "md5": {
+            "type": "string",
+        },
+    },
+    "required": ["md5"]
+}
+
+
 
 validators = {
     "/data-disclosure/check": {
@@ -69,6 +80,9 @@ validators = {
     },
     "/data-disclosure/latest": {
         "get_latest_data_disclosure": {} # get
+    },
+    "/data-disclosure/upload" : {
+        "upload": upload_disclosure_schema
     },
 }
 

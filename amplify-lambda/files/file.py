@@ -300,11 +300,12 @@ def encrypt_account_data(data):
         }
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
+
     access = data['allowed_access']
     if ('file_upload' not in access and 'full_access' not in access):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
-    
+    ####
     # we need the perms to be under the groupId if applicable
     groupId = data['data'].get('groupId', None) 
     if (groupId): 
