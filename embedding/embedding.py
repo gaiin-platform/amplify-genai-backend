@@ -7,9 +7,11 @@ import logging
 import re
 from botocore.exceptions import ClientError
 from common.credentials import get_credentials
-from shared_functions import num_tokens_from_text, generate_embeddings, generate_questions, record_usage, get_key_details, preprocess_text
+from common.validate import validated
+from shared_functions import generate_embeddings, generate_questions, record_usage, get_key_details, preprocess_text
 import urllib
 from create_table import create_table
+from embedding_models import get_embedding_models
 sqs = boto3.client('sqs')
 
 
@@ -19,9 +21,19 @@ pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
-embedding_model_name = os.environ['EMBEDDING_MODEL_NAME']
-qa_model_name = os.environ['QA_MODEL_NAME']
-embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
+
+embedding_model_name = None
+embedding_provider = None
+qa_model_name = None
+model_result = get_embedding_models()
+if (model_result['success']): 
+    data = model_result['data']
+    embedding_model_name = data['embedding']['model_id']
+    embedding_provider = data['embedding']['provider']
+    qa_model_name = data['qa']['model_id']
+    qa_provider = data['qa']['provider']
+
+
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 embedding_chunks_index_queue = os.environ['EMBEDDING_CHUNKS_INDEX_QUEUE'] 
@@ -276,7 +288,11 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
         local_chunks = data.get('chunks', [])
         src = data.get('src', '')
         trimmed_src = trim_src(src)
-        childChunk = str(childChunk)
+        childChunk = str(childChunk) 
+        
+        if (not embedding_model_name or not qa_model_name):
+            logging.error(f"No Models Provided:\nembedding: {embedding_model_name}\nqa:{qa_model_name}")
+            return False, src
 
         try:
             response = table.get_item(Key={'object_id': trimmed_src})
@@ -385,4 +401,32 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
         logging.exception(f"Critical error in embed_chunks for {src}: {str(e)}")
         update_child_chunk_status(trimmed_src, childChunk, "failed")
         db_connection.rollback()
-        return False, src 
+        return False, src
+    
+
+@validated(op='terminate')
+def terminate_embedding(event, context, current_user, name, data):
+    object_id = data['data'].get("object_key")
+    dynamodb = boto3.resource('dynamodb')
+    progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+    table = dynamodb.Table(progress_table)
+
+    try:
+        # Update the `terminated` column to True for the specified `object_id`
+        response = table.update_item(
+            Key={'object_id': object_id}, 
+            UpdateExpression="SET terminated = :val",
+            ExpressionAttributeValues={':val': True},
+            ReturnValues="UPDATED_NEW" 
+        )
+        
+        # Check if the update was successful
+        if response.get('Attributes', {}).get('terminated') is True:
+            print(f"Successfully terminated object with ID: {object_id}")
+            return True
+        else:
+            print(f"Failed to update termination status for object with ID: {object_id}")
+            return False
+    except Exception as e:
+        print(f"Error terminating embedding for object_id {object_id}: {e}", exc_info=True)
+        return False

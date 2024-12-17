@@ -585,20 +585,20 @@ save_settings_schema = {
                     "type": "string",
                     "enum": ["light", "dark"]
                 },
-                "modelOptions": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "boolean"
-                    }
-                },
                 "featureOptions": {
                     "type": "object",
                     "additionalProperties": {
                         "type": "boolean"
                     }
+                },
+                "hiddenModelIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                    }
                 }
             },
-            "required": ["theme", "modelOptions", "featureOptions"]
+            "required": ["theme", "featureOptions", "hiddenModelIds"]
         }
     },
     "required": ["settings"]
@@ -688,9 +688,6 @@ validators = {
     "/state/share": {
         "append": share_schema,
         "read": {}
-    },
-    "/state/base-prompts/get": {
-        "get": {}
     },
     "/state/share/load": {
         "load": share_load_schema

@@ -1,27 +1,22 @@
-import {chat} from "./azure/openai.js";
-import {chatAnthropic} from "./bedrock/anthropic.js";
-import {chatMistral} from "./bedrock/mistral.js";
-import {Models} from "./models/models.js";
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {getLogger} from "./common/logging.js";
-import {getLLMConfig} from "./common/secrets.js";
 import {LLM} from "./common/llm.js";
+import {getChatFn, getCheapestModel, getAdvancedModel} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
-import {DynamoDBClient, QueryCommand} from "@aws-sdk/client-dynamodb";
-
-import {unmarshall} from "@aws-sdk/util-dynamodb";
 import {resolveDataSources} from "./datasource/datasources.js";
 import {saveTrace, trace} from "./common/trace.js";
+import {isRateLimited} from "./rateLimit/rateLimiter.js";
+import {getUserAvailableModels} from "./models/models.js";
 
-const doTrace = process.env.TRACING_ENABLED === 'true';
+
+const doTrace = process.env.TRACING_ENABLED === 'true';;
 
 const logger = getLogger("router");
 
 function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
 }
-
 
 export const routeRequest = async (params, returnResponse, responseStream) => {
     try {
@@ -75,15 +70,25 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             });
 
         } else {
-            logger.debug("Processing request");
+            const user_model_data = await getUserAvailableModels(params.accessToken);
+            const models = user_model_data.models;
+            if (!models) {
+                    returnResponse(responseStream, {
+                    statusCode: 400,
+                    body: {error: "No user models."}
+                });
+            }
 
+
+            logger.debug("Processing request");
+                                                                        
             let options = params.body.options ? {...params.body.options} : {};
 
             params.body.options.numPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
             
-            const modelId = (options.model && options.model.id);//|| "gpt-4-1106-Preview";
-            const model = Models[modelId];
+            const modelId = (options.model && options.model.id);
 
+            const model = models[modelId];
 
             if (!model) {
                 returnResponse(responseStream, {
@@ -91,35 +96,34 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                     body: {error: "Invalid model."}
                 });
             }
-            
+
+            // override model in params/options so its from our backend end 
+            params.model = model;
+            options.model = model;
+
+            //default to user model in case there is no defined cheapest or advanced models 
+            params.cheapestModel = user_model_data.cheapest ?? model;
+            params.advancedModel = user_model_data.advanced ?? model;
+
+            options.cheapestModel = getCheapestModel(params);
+            options.advancedModel = getAdvancedModel(params);
+
+            // ensure the model id in the body and options is consitent with the changes 
+            let body = {...params.body, options: options, model: model.id}; 
+            logger.debug("Checking access on data sources");
+            let dataSources = [...params.body.dataSources];
+            logger.info("Request options.", options);
+
+            delete body.dataSources;
+
             logger.debug("Determining chatFn");
-            
             const chatFn = async (body, writable, context) => {
-                if (model.id.includes("gpt")) {
-                    return await chat(getLLMConfig, body, writable, context);
-
-                } else if (model.id.includes("anthropic")) { //claude models
-                    return await chatAnthropic(body, writable, context);
-
-                } else if (model.id.includes("mistral")) { // mistral 7b and mixtral 7x8b
-                    return await chatMistral(body, writable, context);
-                }
+                return await getChatFn(model.id, body, writable, context);
             }
-
 
             if (!params.body.dataSources) {
                 params.body.dataSources = [];
             }
-
-            //if (params.body.dataSources) {
-            logger.debug("Checking access on data sources");
-            let dataSources = [...params.body.dataSources];
-            let body = {...params.body};
-
-            logger.info("Request options.", options);
-
-            delete body.dataSources;
-            //delete body.options;
 
             try {
                 logger.info("Request data sources", dataSources);
@@ -139,13 +143,6 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
             if (doTrace) {
                 responseStream = new TraceStream({}, responseStream);
-            }
-
-            if (!model) {
-                returnResponse(responseStream, {
-                    statusCode: 400,
-                    body: {error: "Invalid model."}
-                });
             }
 
             logger.debug("Calling chat with data");
@@ -212,53 +209,3 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 }
 
 
-
-async function isRateLimited(params) {
-    const rateLimit = params.body.options.rateLimit;
-    if (!rateLimit || rateLimit.period === 'Unlimited') return false;
-    const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
-    const dynamodbClient = new DynamoDBClient();
-    
-
-    if (!costCalcTable) {
-        console.log("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
-        throw new Error("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
-    }
-    try {
-
-        const command = new QueryCommand({
-            TableName: costCalcTable,
-            KeyConditionExpression: '#id = :userid',
-            ExpressionAttributeNames: {
-                '#id': 'id'  // Using an expression attribute name to avoid any potential keyword conflicts
-            },
-            ExpressionAttributeValues: {
-                ':userid': { S: params.user} // Assuming this is the id you are querying by
-            }
-        });
-        
-        logger.debug("Calling billing table.");
-        const response = await dynamodbClient.send(command);
-        
-        const item = response.Items[0];
-
-        if (!item) {
-            logger.error("Table entry does not exist. Can not verify if rate limited");
-            return false;
-        }
-        const rateData = unmarshall(item);
-
-        //periods include Monthly, Daily, Hourly 
-        const period = rateLimit.period
-        const colName = `${period.toLowerCase()}Cost`
-        let spent = rateData[colName];
-        if (period === 'Hourly') spent = spent[new Date().getHours()]// Get the current hour as a number from 0 to 23
-        return spent >= rateLimit.rate;
-        
-    } catch (error) {
-        console.error("Error during rate limit DynamoDB operation:", error);
-        // let it slide for now
-        return false;
-    }
-
-}

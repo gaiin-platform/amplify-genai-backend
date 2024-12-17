@@ -12,7 +12,6 @@ import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getContextMessages} from "./chat/rag/rag.js";
-import {ModelID, Models} from "../models/models.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
 
@@ -184,7 +183,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
     // Query for related information from RAG
     const {messages:ragContextMsgs, sources} = (ragDataSources.length > 0 && !params.options.skipRag) ?
-        await getContextMessages(chatFn, params, chatRequestOrig, ragDataSources) :
+        await getContextMessages(params, chatRequestOrig, ragDataSources) :
         {messages:[], sources:[]};
 
     if(ragDataSources.length > 0 && !params.options.skipRag){
@@ -222,7 +221,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     logger.debug(`Chat with data called with request id ${requestId}`);
 
     const account = params.account;
-    const model = Models[params.model.id];
+    const model = params.model;
     const options = params.options || {};
 
     let srcPrefix = options.source || defaultSource;
@@ -247,7 +246,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // trim the message history to fit.
     let msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
     const minTokensForContext = (dataSources && dataSources.length > 0) ? 1000 : 0;
-    const maxTokensForMessages = model.tokenLimit - tokenLimitBuffer - minTokensForContext
+    const maxTokensForMessages = model.inputContextWindow - tokenLimitBuffer - minTokensForContext
     if(msgTokens > maxTokensForMessages) {
         chatRequest.messages = fitMessagesInTokenLimit(chatRequest.messages, maxTokensForMessages);
     }
@@ -258,7 +257,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
     logger.debug(`Total tokens in messages: ${msgTokens}`);
 
-    const maxTokens = model.tokenLimit - (msgTokens + tokenLimitBuffer);
+    const maxTokens = model.inputContextWindow - (msgTokens + tokenLimitBuffer);
 
     logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id} with a buffer of ${tokenLimitBuffer}.`)
 

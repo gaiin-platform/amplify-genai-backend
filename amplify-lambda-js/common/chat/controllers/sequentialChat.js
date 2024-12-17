@@ -6,7 +6,6 @@ import { newStatus } from "../../status.js";
 import { isKilled } from "../../../requests/requestState.js";
 import { getLogger } from "../../logging.js";
 import { sendStatusEventToStream } from "../../streams.js";
-import { getUser, getModel, setModel, getCheapestModelEquivalent, getMostAdvancedModelEquivalent } from "../../../common/params.js";
 import { addContextMessage, createContextMessage } from "./common.js";
 import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
 
