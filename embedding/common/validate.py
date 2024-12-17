@@ -93,13 +93,30 @@ dual_retrieval_schema = {
     "required": ["dataSources", "userInput"]
 }
 
+terminate_embedding_schema = {
+    "type": "object",
+    "properties": {
+        "object_key": {
+            "type": "string",
+            "description": "Key to terminate specific embedding."
+        },
+    },
+    "required": ["object_key"]
+}
+
 validators = {
     "/embedding-dual-retrieval": {
         "dual-retrieval": dual_retrieval_schema
     },
     "/embedding-retrieval": {
         "retrieval": process_input_schema
-  },
+    },
+    "/embedding/terminate": {
+        "terminate": terminate_embedding_schema
+    },
+    "/embedding/sqs/get" : {
+        "get": {}
+   }
 }
 
 

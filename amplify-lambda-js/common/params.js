@@ -1,18 +1,7 @@
-
-import { Models } from "../models/models.js";
-// This needs to be refactored into a class and all
-// of the places that use params need to be updated
-//
-// const assistantParams = {
-//     account: {
-//         user: params.user,
-//         accessToken: params.accessToken,
-//         accountId: options.accountId,
-//     },
-//     model,
-//     requestId,
-//     options
-// };
+import {chat} from "../azure/openai.js";
+import {chatAnthropic} from "../bedrock/anthropic.js";
+import {chatMistral} from "../bedrock/mistral.js";
+import {getLLMConfig} from "../common/secrets.js";
 
 export const getRequestId = (params) => {
     return params.requestId;
@@ -20,6 +9,14 @@ export const getRequestId = (params) => {
 
 export const getModel = (params) => {
     return params.model;
+}
+
+export const getCheapestModel = (params) => {
+    return params.cheapestModel ?? getModel(params);
+}
+
+export const getAdvancedModel = (params) => {
+    return params.advancedModel ?? getModel(params);
 }
 
 export const setModel = (params, model) => {
@@ -46,23 +43,14 @@ export const getAccountId = (params) => {
     return params.account.accountId;
 }
 
+export const getChatFn = (modelId, body, writable, context) => {
+    if (modelId.includes("gpt")) {
+        return chat(getLLMConfig, body, writable, context);
 
-export const getCheapestModelEquivalent = (model)  => {
-    if (model.id.includes("gpt")) {
-        return Models["gpt-35-turbo"];
-    } else if (model.id.includes("anthropic")) { 
-        return Models["anthropic.claude-3-haiku-20240307-v1:0"];
-    } else if (model.id.includes("mistral")) { 
-        return Models['mistral.mistral-7b-instruct-v0:2'];
-    }
-}
+    } else if (modelId.includes("anthropic")) { //claude models
+        return chatAnthropic(body, writable, context);
 
-export const getMostAdvancedModelEquivalent = (model) => {
-    if (model.id.includes("gpt")) {
-        return Models["gpt-4-1106-Preview"];
-    } else if (model.id.includes("anthropic")) { 
-        return Models["anthropic.claude-3-opus-20240229-v1:0"];
-    } else if (model.id.includes("mistral")) { 
-        return Models['mistral.mistral-large-2402-v1:0'];
+    } else if (modelId.includes("mistral")) { // mistral 7b and mixtral 7x8b
+        return chatMistral(body, writable, context);
     }
 }

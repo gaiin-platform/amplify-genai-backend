@@ -1,11 +1,15 @@
+import subprocess
 import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 import os
 import json
 from datetime import datetime
+
+import mammoth
 from common.validate import validated
 from common.encoders import DecimalEncoder
+from common.auth_admin import verify_user_as_admin
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -33,59 +37,101 @@ def get_latest_version_details(table):
     return latest_version_details
 
 
-# Function to upload a new data disclosure version
-def upload_data_disclosure(event, context):
-    # Define the local file paths and S3 bucket name
-    local_pdf_path = "data_disclosure.pdf"
-    local_html_path = "data_disclosure.html"
+
+@validated(op="upload")
+def get_presigned_data_disclosure(event, context, current_user, name, data):
+    # Authorize the User
+    if not verify_user_as_admin(data['access_token'], "Upload Data Disclosure"):
+        return {"success": False, "message": "User is not an authorized admin."}
+    content_md5 = data.get('md5', '')
+
+    s3_client = boto3.client('s3')
+    bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
+    key = f"data_disclosure.docx"
+
+    try:
+        # Generate a presigned URL for put_object
+        presigned_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': key,
+                'ContentType': "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                'ContentMD5': content_md5
+            },
+            ExpiresIn=3600  # URL expires in 1 hour
+        )
+
+        print("\n", presigned_url)
+
+        return {"success": True, "presigned_url": presigned_url}
+    except ClientError as e:
+        print(f"Error generating presigned URL: {str(e)}")
+        return {"success": False, "message": f"Error generating presigned URL: {str(e)}"}
+
+
+
+
+def convert_uploaded_data_disclosure(event, context):
+    s3 = boto3.client("s3")
+    dynamodb = boto3.resource("dynamodb")
+
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
     versions_table_name = os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"]
 
-    # Read the PDF and HTML document content
-    try:
-        with open(local_pdf_path, "rb") as pdf_file:
-            pdf_content = pdf_file.read()
-    except FileNotFoundError:
-        return generate_error_response(404, "Data disclosure PDF file not found")
-    except IOError as e:
-        return generate_error_response(
-            500, "Error reading local data disclosure PDF file"
-        )
+    docx_key = "data_disclosure.docx"
+    download_path = "/tmp/data_disclosure.docx"
+    output_dir = "/tmp"
 
     try:
-        with open(local_html_path, "rb") as html_file:
-            html_content = html_file.read()
-        # Attempt to decode as UTF-8, but handle exceptions
-        try:
-            html_content = html_content.decode("utf-8")  # if this fails, try utf-16
-        except UnicodeDecodeError as e:
-            print(f"Error decoding HTML content: {e}")
-            # Handle the error, e.g., by skipping the decoding or using a different encoding
-            return generate_error_response(500, "Error decoding HTML content")
-    except FileNotFoundError:
-        return generate_error_response(404, "Data disclosure HTML file not found")
-    except IOError as e:
-        return generate_error_response(
-            500, "Error reading local data disclosure HTML file"
-        )
+        s3.download_file(bucket_name, docx_key, download_path)
+    except Exception as e:
+        print(f"Error downloading docx file from S3: {e}")
+        return generate_error_response(404, "Data disclosure docx file not found in S3")
 
+    # Convert DOCX to PDF using LibreOffice
+    # LibreOffice command: /usr/bin/libreoffice --headless --convert-to pdf --outdir /tmp /tmp/data_disclosure.docx
+    try:
+        subprocess.check_call([
+            '/usr/bin/libreoffice',
+            '--headless',
+            '--convert-to',
+            'pdf',
+            '--outdir',
+            output_dir,
+            download_path
+        ])
+    except subprocess.CalledProcessError as e:
+        print(f"Error converting docx to pdf: {e}")
+        return generate_error_response(500, "Error converting docx to PDF")
+
+    # The converted PDF will be named "data_disclosure.pdf" in /tmp if the input was "data_disclosure.docx"
+    pdf_local_path = os.path.join(output_dir, "data_disclosure.pdf")
+    if not os.path.exists(pdf_local_path):
+        return generate_error_response(500, "PDF conversion failed, output file not found")
+
+    #Convert DOCX to HTML using Mammoth
+    # Mammoth expects a file-like object with .read()
+    try:
+        with open(download_path, "rb") as docx_file:
+            result = mammoth.convert_to_html(docx_file)
+            html_content = result.value  # HTML as a string
+    except Exception as e:
+        print(f"Error converting docx to html: {e}")
+        return generate_error_response(500, "Error converting DOCX to HTML")
+
+    # Create timestamp and generate unique filenames
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    html_document_name = f"data_disclosure_{timestamp}.html"
     pdf_document_name = f"data_disclosure_{timestamp}.pdf"
 
     try:
-        # Upload PDF version
-        s3.put_object(
-            Bucket=bucket_name,
-            Key=pdf_document_name,
-            Body=pdf_content,
-            ContentType="application/pdf",
-        )
+        s3.upload_file(pdf_local_path, bucket_name, pdf_document_name, ExtraArgs={"ContentType": "application/pdf"})
     except Exception as e:
-        print(e)
-        return generate_error_response(500, "Error saving pdf data disclosure to S3")
+        print(f"Error uploading pdf to S3: {e}")
+        return generate_error_response(500, "Error saving PDF data disclosure to S3")
 
-    # Update DynamoDB with new version info, including references to both HTML and PDF
+
+     # Update DynamoDB with new version info, including references to both HTML and PDF
     versions_table = dynamodb.Table(versions_table_name)
     latest_version_details = get_latest_version_details(versions_table)
     new_version = (
@@ -112,6 +158,8 @@ def upload_data_disclosure(event, context):
     except Exception as e:
         print(e)
         return generate_error_response(500, "Error uploading data disclosure")
+    
+
 
 
 # helper function to get the latest version number

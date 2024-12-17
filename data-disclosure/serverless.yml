@@ -102,11 +102,31 @@ functions:
   # Step 1b: Save the data disclosure document you want at the download link as pdf at data-disclosure/data_disclosure.pdf
   # Step 2:  Deploy the lambda via:         ~ serverless deploy --stage dev
   # Step 3:  Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
+  # upload_data_disclosure:
+  #   handler: data_disclosure.upload_data_disclosure
+  #   memorySize: 128
+  #   timeout: 30
+  #   events: [] # No associated HTTP events since this function runs locally
+
+
   upload_data_disclosure:
-    handler: data_disclosure.upload_data_disclosure
-    memorySize: 128
-    timeout: 30
-    events: [] # No associated HTTP events since this function runs locally
+    handler: data_disclosure.get_presigned_data_disclosure
+    timeout: 10
+    events:
+      - http:
+          path: data-disclosure/upload
+          method: post
+          cors: true
+
+
+  convertDataDisclosure:
+    handler: service/core.convert_uploaded_data_disclosure
+    events:
+      - s3:
+          bucket: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
+          event: s3:ObjectCreated:*
+          existing: true
+
 
 resources:
   Resources:
@@ -141,6 +161,8 @@ resources:
               Action:
                 - "s3:PutObject"
                 - "s3:GetObject"
+                - s3:HeadObject
+                - s3:PutBucketNotification
               Resource: 
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  
     # contains records of what emails have accepted the data disclosure
@@ -184,5 +206,25 @@ resources:
     # contains all versions of the data disclosure
     DataDisclosureStorage:
       Type: 'AWS::S3::Bucket'
+      DependsOn: DataDisclosureIAMPolicy
       Properties:
         BucketName: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET', 'PUT']
+              AllowedHeaders: ['*']
+              MaxAge: 3000     
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256   
+        NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: 's3:ObjectCreated:Put'
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: suffix
+                        Value: '.docx'
+                Function: !GetAtt ConvertDataDisclosureLambdaFunction.Arn

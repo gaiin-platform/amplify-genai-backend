@@ -5,8 +5,8 @@ import { getLogger } from "../common/logging.js";
 import { getDefaultLLM } from "../common/llm.js";
 import { StreamResultCollector } from "../common/streams.js";
 import { transform as fnTransformer } from "../common/chat/events/openaifn.js";
-import { Models } from "../models/models.js";
 import { createHash } from 'crypto';
+import { getChatFn } from "../common/params.js";
 
 const logger = getLogger("conversationAnalysis");
 
@@ -88,7 +88,7 @@ const analysisSchema = {
     properties: {
         category: {
             type: "string",
-            enum: [
+            enum: [ //TODO
                 "Job Application", "Benefits", "Benefits Appeal", "Compensation", "Retirement Plan",
                 "Retiring", "Employee Immigration Services", "Employee Records", "International Tax office",
                 "Payroll", "Employee Relations", "Engagement Consultant Support", "Leave", "Workers Comp",
@@ -118,6 +118,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const assistantId = chatRequest.options.assistantId;
     const assistantName = chatRequest.options.assistantName;
     const modelUsed = chatRequest.options.model.id;
+    const advancedModel = chatRequest.options.advancedModel;
     const numberPrompts = chatRequest.options.numPrompts;
     const employeeType = chatRequest.options.groupType;
     const entryPoint = chatRequest.options.source || "Amplify";
@@ -138,9 +139,15 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const resultCollector = new StreamResultCollector();
     resultCollector.addTransformer(fnTransformer);
 
-    const model = Models["gpt-4o"];
+    const model = advancedModel;
 
-    const llm = await getDefaultLLM(model, resultCollector, user);
+    // set up llm 
+    let llm = await getDefaultLLM(model, resultCollector, user);
+    //we need to ensure the chatFn is adjusted according to the model 
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model.id, body, writable, context);
+    }
+    llm = llm.clone(chatFn);
 
     const analysisPrompt = `Analyze the following conversation and determine its category and system rating:
 Prompt: ${userPrompt}

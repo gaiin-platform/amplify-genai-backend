@@ -1,3 +1,12 @@
+def get_permission_checker(user, type, op, data):
+    print(
+        "Checking permissions for user: {} and type: {} and op: {}".format(
+            user, type, op
+        )
+    )
+    return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
+
+
 def can_check_decision(user, data):
     return True
 
@@ -9,23 +18,8 @@ def can_save_decision(user, data):
 def can_get_latest_disclosure(user, data):
     return True
 
-
-def get_permission_checker(user, type, op, data):
-    print(
-        "Checking permissions for user: {} and type: {} and op: {}".format(
-            user, type, op
-        )
-    )
-    return permissions_by_state_type.get(type, {}).get(op, lambda user, data: False)
-
-
-def get_user(event, data):
-    return data["user"]
-
-
-def get_data_owner(event, data):
-    return data["user"]
-
+def can_upload(user, data):
+    return True
 
 permissions_by_state_type = {
     "/data-disclosure/latest": {
@@ -36,5 +30,8 @@ permissions_by_state_type = {
     },
     "/data-disclosure/check": {
         "check_data_disclosure_decision": can_check_decision,
+    },
+    "/data-disclosure/upload" : {
+        "upload": can_upload 
     },
 }
