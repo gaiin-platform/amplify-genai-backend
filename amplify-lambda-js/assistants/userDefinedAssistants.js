@@ -1,4 +1,3 @@
-import {ModelID, Models} from "../models/models.js";
 import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";

@@ -55,11 +55,19 @@ provider:
 
 functions:
 
+  get_doc_templates:
+    handler: service/core.get_api_document_templates
+    events:
+      - http:
+          path: apiKeys/api_documentation/get_templates
+          method: get
+          cors: true
+
   get_api_keys:
     handler: service/core.get_api_keys_for_user
     events:
       - http:
-          path: apiKeys/get_keys
+          path: apiKeys/keys/get
           method: get
           cors: true
   
@@ -75,7 +83,7 @@ functions:
     handler: service/core.get_api_key
     events:
       - http:
-          path: apiKeys/get_key
+          path: apiKeys/key/get
           method: get
           cors: true
 
@@ -83,7 +91,7 @@ functions:
     handler: service/core.create_api_keys
     events:
       - http:
-          path: apiKeys/create_keys
+          path: apiKeys/keys/create
           method: post
           cors: true
 
@@ -91,7 +99,7 @@ functions:
     handler: service/core.update_api_keys_for_user
     events:
       - http:
-          path: apiKeys/update_keys
+          path: apiKeys/keys/update
           method: post
           cors: true
       
@@ -99,7 +107,7 @@ functions:
     handler: service/core.deactivate_key
     events:
       - http:
-          path: apiKeys/deactivate_key
+          path: apiKeys/key/deactivate
           method: post
           cors: true
 
@@ -115,10 +123,26 @@ functions:
     handler: service/core.get_documentation
     events:
       - http:
-          path: apiKeys/api_documentation
+          path: apiKeys/api_documentation/get
           method: get
           cors: true
 
+  get_api_doc_presigned:
+    handler: service/core.get_api_doc_presigned_urls
+    events:
+      - http:
+          path: apiKeys/api_documentation/upload
+          method: post
+          cors: true
+        
+
+  convertApiDocs:
+    handler: service/core.docx_pdf_api_doc_convert
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}
+          event: s3:ObjectCreated:*
+          existing: true
 
 resources:
   Resources:
@@ -137,6 +161,9 @@ resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
                 - s3:GetObject
+                - s3:PutObject
+                - s3:HeadObject
+                - s3:PutBucketNotification
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -155,10 +182,19 @@ resources:
           CorsConfiguration:
             CorsRules:
               - AllowedOrigins: ['*']
-                AllowedMethods: ['GET']
+                AllowedMethods: ['GET', 'PUT']
                 AllowedHeaders: ['*']
                 MaxAge: 3000     
           BucketEncryption:
             ServerSideEncryptionConfiguration:
               - ServerSideEncryptionByDefault:
                   SSEAlgorithm: AES256        
+          NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: 's3:ObjectCreated:Put'
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: prefix
+                        Value: 'Amplify_API_Documentation.docx'
+                Function: !GetAtt ConvertApiDocsLambdaFunction.Arn

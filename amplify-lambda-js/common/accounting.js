@@ -78,8 +78,6 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
         const totalCost = inputCost + outputCost;
 
-        // TODO: need to save account.accountId, account.accessToken and account.user
-
         // adds the totalCost to the dailyCost field
         // gets the current hour (0-23), add the totalCost to the hourlyCost field (saves it to the correct index in hourlyCost's 24 index list)
         // ensures the code works if the record exists or if it doesn't exist yet

@@ -176,62 +176,59 @@ deactivate_api_key_schema = {
 }
 
 
+upload_api_doc_schema = {
+     "type": "object",
+    "properties": {
+        "filename": {
+            "type": "string",
+        },
+        "content_md5": {
+            "type": "string",
+        },
+    },
+    "required": ["filename", "content_md5"]
+}
+
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/apiKeys/deactivate_key": {
+    "/apiKeys/key/deactivate": {
         "deactivate": deactivate_api_key_schema
     }, 
-    "/apiKeys/create_keys": {
+    "/apiKeys/keys/create": {
         "create": create_api_keys_schema
     },
-    "/apiKeys/get_keys": {
+    "/apiKeys/keys/get": {
         "read": {}
     },
-    "/apiKeys/get_key": {
+    "/apiKeys/key/get": {
         "read": {}
     },
     "/apiKeys/get_keys_ast": {
         "read": {}
     },
-    "/apiKeys/update_keys" : {
+    "/apiKeys/keys/update" : {
         "update": update_key_schema
     },
     "/apiKeys/get_system_ids": {
         "read": {}
     },
-    "/apiKeys/api_documentation": {
+    "/apiKeys/api_documentation/get": {
         "read": {}
-    }
+    },
+    "/apiKeys/api_documentation/upload": {
+        "upload": upload_api_doc_schema
+    },
+    "/apiKeys/api_documentation/get_templates" : {
+        "read": {}
+    },
 }
 
 api_validators = {
-    "/apiKeys/deactivate_key": {
-        "deactivate": deactivate_api_key_schema
-    }, 
-    "/apiKeys/create_keys": {
-        "create": create_api_keys_schema
-    },
-    "/apiKeys/get_keys": {
-        "read": {}
-    },
-    "/apiKeys/get_key": {
-        "read": {}
-    },
-    "/apiKeys/get_keys_ast": {
-        "read": {}
-    },
-    "/apiKeys/update_keys" : {
-        "update": update_key_schema
-    },
-    "/apiKeys/get_system_ids": {
-        "read": {}
-    },
-    "/apiKeys/api_documentation": {
-        "read": {}
-    }
+
 }
 
 
