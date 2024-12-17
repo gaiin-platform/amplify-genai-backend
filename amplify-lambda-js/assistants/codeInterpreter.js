@@ -63,7 +63,7 @@ async function fetchRequest(token, data, url) {
     }
 }
 
-const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 10000) => {
+const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 12000) => {
     return new Promise((resolve, reject) => {
         let timer;
 
