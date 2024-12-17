@@ -77,20 +77,6 @@ def put_s3_data(bucket_name, filename, data):
     return filename
 
 
-@validated("get")
-def get_base_prompts(event, context, current_user, name, data):
-    data = data['data']
-
-    s3_key = 'base.json'
-    base_data = get_s3_data(os.environ['S3_BASE_PROMPTS_BUCKET_NAME'], s3_key)
-
-    return {
-        'success': True,
-        'message': 'Successfully fetched base prompts',
-        'data': json.loads(base_data)
-    }
-
-
 
 def handle_conversation_datasource_permissions(access_token, recipient_users, conversations):
     print('Enter handle shared datasources in conversations')

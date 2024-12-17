@@ -13,8 +13,21 @@ from decimal import Decimal
 # Initialize a DynamoDB client with Boto3
 dynamodb = boto3.resource("dynamodb")
 
-
 def updateModelRateTable(event, context):
+    result = load_model_rate_table()
+    if result:
+        return {
+            "statusCode": 200,
+            "body": json.dumps("Model rate table updated successfully."),
+        }
+    else:
+        return {
+            "statusCode": 500,
+            "body": json.dumps("Error updating model rate table."),
+        }
+    
+
+def load_model_rate_table():
     # Retrieve the environment variable for the table name
     table_name = os.environ["MODEL_RATE_TABLE"]
 
@@ -53,13 +66,7 @@ def updateModelRateTable(event, context):
                 response = table.put_item(Item=item)
             except ClientError as e:
                 print(e.response["Error"]["Message"])
-                return {
-                    "statusCode": 500,
-                    "body": json.dumps("Error updating model rate table."),
-                }
+                return False
 
     # Return a success response after updating the table with all entries
-    return {
-        "statusCode": 200,
-        "body": json.dumps("Model rate table updated successfully."),
-    }
+    return True
