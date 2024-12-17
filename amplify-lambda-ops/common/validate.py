@@ -51,7 +51,7 @@ get_ops_schema = {
     "properties": {
         "tag": {"type": "string"}
     },
-    "required": ["tag"]
+    "required": []
 }
 
 register_ops_schema = {
