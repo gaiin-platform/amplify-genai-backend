@@ -40,9 +40,6 @@ if (model_result['success']):
 
 hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
 region = os.environ['REGION']
-openai_provider = os.environ['OPENAI_PROVIDER']
-embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
-
 
 
 
