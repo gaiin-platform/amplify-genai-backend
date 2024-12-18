@@ -46,7 +46,7 @@ def get_presigned_data_disclosure(event, context, current_user, name, data):
     if not verify_user_as_admin(data['access_token'], "Upload Data Disclosure"):
         return {"success": False, "message": "User is not an authorized admin."}
     content_md5 = data["data"].get("md5")
-    print(f"MD5 used in presigned URL: {content_md5}")
+
 
     config = Config(
         signature_version='s3v4'  # Force AWS Signature Version 4
