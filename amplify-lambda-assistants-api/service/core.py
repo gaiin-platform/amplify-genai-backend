@@ -1,6 +1,5 @@
 from decimal import Decimal
-from importlib.metadata import metadata
-
+from requests.auth import HTTPBasicAuth
 from common.encoders import DecimalEncoder
 from common.validate import validated
 import json
@@ -8,6 +7,8 @@ import requests
 import os
 import boto3
 from datetime import datetime
+import re
+import urllib.parse
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['OP_LOG_DYNAMO_TABLE'])
@@ -86,32 +87,92 @@ def build_amplify_api_action(current_user, token, data):
     return send_request
 
 
+def print_curl_command(method, url, headers, body, auth_instance):
+    curl_command = f'curl -X {method} "{url}"'
+
+    for key, value in headers.items():
+        curl_command += f' -H "{key}: {value}"'
+
+    if body:
+        body_json = json.dumps(body).replace('"', '\\"')
+        curl_command += f' -d "{body_json}"'
+
+    if isinstance(auth_instance, HTTPBasicAuth):
+        curl_command += f' -u "{auth_instance.username}:{auth_instance.password}"'
+
+    print("cURL command:")
+    print(curl_command)
+
+
+def replace_placeholders(value, payload, url_encode=False, escape_quotes=False, escape_newlines=False):
+    def replace(match):
+        key = match.group(1)
+        replacement = str(payload.get(key, match.group(0)))
+        if url_encode:
+            replacement = urllib.parse.quote(replacement)
+        if escape_quotes:
+            replacement = replacement.replace('"', '\\"')
+        if escape_newlines:
+            replacement = replacement.replace('\n', '\\n').replace('\r', '\\r')
+        return replacement
+
+    if isinstance(value, str):
+        return re.sub(r'\${(\w+)}', replace, value)
+    elif isinstance(value, dict):
+        return {k: replace_placeholders(v, payload, url_encode, escape_quotes, escape_newlines) for k, v in value.items()}
+    return value
+
+
 def build_http_action(current_user, data):
     # Extract request details
-    method = data["RequestType"]
-    url = data["URL"]
-    params = data.get("Parameters", {})
-    body = data.get("Body", {})
-    headers = data.get("Headers", {})
-    auth = data.get("Auth", {})
+
+    action = data.get("action", {})
+    payload = action.get("payload", {})
+    operation_definition = data.get("operationDefinition", {})
+    url = replace_placeholders(operation_definition.get("url", ""), payload, url_encode=True)
+    method = operation_definition.get("requestType", "GET")
+    headers = replace_placeholders(operation_definition.get("headers", {}), payload, escape_newlines=True)
+    body = replace_placeholders(operation_definition.get("body", ""), payload, escape_quotes=True)
+    auth = operation_definition.get("auth", None)
+
+    # print everything
+    print(f"Operation definition: {operation_definition}")
+    print(f"Action: {action}")
+    print(f"Building HTTP action for URL: {url}")
+    print(f"Method: {method}")
+    print(f"Body: {body}")
+    print(f"Headers: {headers}")
+    print(f"Auth: {auth}")
 
     # Set up authentication if provided
     auth_instance = None
     if auth:
         if auth["type"].lower() == "bearer":
+            print("Setting up bearer token authentication.")
             headers["Authorization"] = f"Bearer {auth['token']}"
         elif auth["type"].lower() == "basic":
-            auth_instance = requests.auth.HTTPBasicAuth(
+            auth_instance = HTTPBasicAuth(
                 auth["username"], auth["password"]
             )
 
     def action():
+
+        #print everything going into the request in a nice format similar to the function call
+        debug = True
+        if debug:
+            print(f"Final HTTP action for URL: {url}")
+            print(f"Method: {method}")
+            print(f"Body: {body}")
+            print(f"Headers: {headers}")
+            print(f"Auth: {auth_instance}")
+            print_curl_command(method, url, headers, body, auth_instance)
+
+
         # Make the request
         response = requests.request(
             method=method,
             url=url,
-            params=params,
-            json=body if body else None,
+            json=body if body and method != "GET" and method != "HEAD" else None,
             headers=headers,
             auth=auth_instance,
         )
@@ -119,6 +180,7 @@ def build_http_action(current_user, data):
         if response.status_code == 200:
             return response.status_code, response.reason, response.json()
 
+        print(f"HTTP request failed with status code {response.status_code} and reason {response.reason}")
         return response.status_code, response.reason, None
 
     return action
