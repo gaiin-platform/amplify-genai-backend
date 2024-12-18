@@ -15,6 +15,8 @@ import re
 from common.ops import op
 import subprocess
 from common.auth_admin import verify_user_as_admin
+from botocore.config import Config
+
 
 s3 = boto3.client('s3')
 bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
@@ -485,7 +487,12 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
     if (not filename in file_names.keys()):
         return {'success': False , 'error': 'File name does not match the preset names.'}
     
+
     try:
+        config = Config(
+        signature_version='s3v4'  # Force AWS Signature Version 4
+        )
+        s3 = boto3.client('s3', config=config)
         presigned = s3.generate_presigned_url('put_object',
                                             Params={'Bucket': bucket_name,
                                                     'Key': filename,
