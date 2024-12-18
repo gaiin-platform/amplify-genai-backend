@@ -10,6 +10,7 @@ import mammoth
 from common.validate import validated
 from common.encoders import DecimalEncoder
 from common.auth_admin import verify_user_as_admin
+from botocore.config import Config
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -40,12 +41,17 @@ def get_latest_version_details(table):
 
 @validated(op="upload")
 def get_presigned_data_disclosure(event, context, current_user, name, data):
+
     # Authorize the User
     if not verify_user_as_admin(data['access_token'], "Upload Data Disclosure"):
         return {"success": False, "message": "User is not an authorized admin."}
-    content_md5 = data.get('md5', '')
+    content_md5 = data["data"].get("md5")
+    print(f"MD5 used in presigned URL: {content_md5}")
 
-    s3_client = boto3.client('s3')
+    config = Config(
+        signature_version='s3v4'  # Force AWS Signature Version 4
+    )
+    s3_client = boto3.client('s3', config=config)
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
     key = f"data_disclosure.docx"
 
