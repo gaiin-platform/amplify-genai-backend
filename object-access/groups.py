@@ -20,11 +20,13 @@ groups_table = dynamodb.Table(os.environ['AMPLIFY_GROUPS_DYNAMODB_TABLE'])
 @validated(op='create')
 def create_group(event, context, current_user, name, data):
     print("Initiating group creation process")
-    token = data['access_token']
     data = data['data']
     group_name = data['group_name']
     members = data.get('members', {}) # includes admins
     group_types = data.get('types', {})
+    return group_creation(current_user, group_name, members, group_types)
+
+def group_creation(current_user, group_name, members, group_types):
     # create_api key - 
     api_key_result = create_api_key_for_group(group_name)
     if (not api_key_result['success']):
@@ -309,12 +311,15 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id):
 
 
 @validated(op='update')
-def update_assistants(event, context, current_user, name, data):
+def update_group_assistants(event, context, current_user, name, data):
     data = data['data']
     group_id = data['group_id']
     update_type = data['update_type']
     ast_list = data['assistants']
+    return update_assistants(current_user, group_id, update_type, ast_list)
 
+
+def update_assistants(current_user, group_id, update_type, ast_list):
     auth_check = authorized_user(group_id, current_user)
     
     if (not auth_check['success']):
@@ -322,7 +327,6 @@ def update_assistants(event, context, current_user, name, data):
     
     item = auth_check['item']
     access_token = item['access']
-    members = item['members']
 
     current_assistants = item.get('assistants', [])
 
@@ -484,6 +488,18 @@ def delete_group(event, context, current_user, name, data):
     except Exception as e:
         return {"message": f"An error occurred: {str(e)}", "success": False}
 
+def get_latest_assistants(assistants):
+    latest_assistants = {}
+    for assistant in assistants:
+        # Set version to 1 if it doesn't exist
+        assistant.setdefault('version', 1)
+        assistant_id = assistant.get('assistantId', None)
+        # will exclude system ast since they dont have assistantId
+        if (assistant_id and (assistant_id not in latest_assistants or latest_assistants[assistant_id]['version'] < assistant['version'])):
+            latest_assistants[assistant_id] = assistant
+    
+    return list(latest_assistants.values())
+
 
 @validated(op='list')
 def list_groups(event, context, current_user, name, data):
@@ -504,7 +520,8 @@ def list_groups(event, context, current_user, name, data):
             continue
 
         #filter old versions
-        assistants = ast_result['data']
+        assistants = get_latest_assistants(ast_result['data'])
+        print(f"{group_name} - {len(assistants)}")
         published_assistants = []
         #append groupId and correct permissions if published
         for ast in assistants:
@@ -879,10 +896,28 @@ def update_ast_admin_groups(event, context, current_user, name, data):
 
 @validated(op='create')
 def create_amplify_assistants(event, context, current_user, name, data):
-    pass
+    print("Creating group")
 
-# create_group
-# add assistants update_assistants with ast 
-# create ops if api key manager is in it
-# api doc 
+    assistants = data['data'].get('assistants', [])
+    create_result = group_creation(current_user, "Amplify Assistants", {current_user:"admin"}, [])
+    if (not create_result['success']): 
+        print("Failed to create group")
+        return create_result
+    group_id = create_result['data']['id']
+
+    API_DOC_ASSISTANT = 'Amplify API Assistant'
+    API_KEY_ASSISTANT = 'Amplify API Key Manager'
+    
+    # if (any(d.get('name') == API_ASSISTANT for d in assistants)): api doc or write ops???
+    # if (any(d.get('name') == API_KEY_ASSISTANT for d in assistants)): call write ops
+
+    print("Adding assistants")
+    if (len(assistants > 0)):
+        ast_result = update_assistants(current_user, group_id, [], assistants)
+        if (not ast_result['success']): 
+            print("Failed to add assistants")
+            return ast_result
+    
+    return {"success": True, "data": {"id": group_id}}
+
 

@@ -1,4 +1,3 @@
-import string
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate

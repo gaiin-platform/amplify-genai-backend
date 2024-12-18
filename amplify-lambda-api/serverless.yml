@@ -43,7 +43,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
   iam:
     role:
@@ -127,7 +127,7 @@ functions:
           method: get
           cors: true
 
-  get_api_doc_presigned:
+  upload_api_doc:
     handler: service/core.get_api_doc_presigned_urls
     events:
       - http:
@@ -182,7 +182,7 @@ resources:
           CorsConfiguration:
             CorsRules:
               - AllowedOrigins: ['*']
-                AllowedMethods: ['GET', 'PUT']
+                AllowedMethods: ['GET', 'PUT', 'POST']
                 AllowedHeaders: ['*']
                 MaxAge: 3000     
           BucketEncryption:
@@ -195,6 +195,7 @@ resources:
                 Filter:
                   S3Key:
                     Rules:
-                      - Name: prefix
-                        Value: 'Amplify_API_Documentation.docx'
+                      - Name: suffix
+                        # Value: 'Amplify_API_Documentation.docx'
+                        Value: '.docx'
                 Function: !GetAtt ConvertApiDocsLambdaFunction.Arn
