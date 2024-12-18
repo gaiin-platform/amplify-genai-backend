@@ -51,6 +51,7 @@ def get_presigned_data_disclosure(event, context, current_user, name, data):
 
     try:
         # Generate a presigned URL for put_object
+        print("Presigned url generated")
         presigned_url = s3_client.generate_presigned_url(
             'put_object',
             Params={
@@ -84,6 +85,7 @@ def convert_uploaded_data_disclosure(event, context):
     output_dir = "/tmp"
 
     try:
+        print("Downloading uploaded file")
         s3.download_file(bucket_name, docx_key, download_path)
     except Exception as e:
         print(f"Error downloading docx file from S3: {e}")
@@ -92,6 +94,8 @@ def convert_uploaded_data_disclosure(event, context):
     # Convert DOCX to PDF using LibreOffice
     # LibreOffice command: /usr/bin/libreoffice --headless --convert-to pdf --outdir /tmp /tmp/data_disclosure.docx
     try:
+        print("converting file to pdf file")
+
         subprocess.check_call([
             '/usr/bin/libreoffice',
             '--headless',
@@ -106,6 +110,7 @@ def convert_uploaded_data_disclosure(event, context):
         return generate_error_response(500, "Error converting docx to PDF")
 
     # The converted PDF will be named "data_disclosure.pdf" in /tmp if the input was "data_disclosure.docx"
+    print("converting file to pdf file")
     pdf_local_path = os.path.join(output_dir, "data_disclosure.pdf")
     if not os.path.exists(pdf_local_path):
         return generate_error_response(500, "PDF conversion failed, output file not found")
@@ -113,9 +118,11 @@ def convert_uploaded_data_disclosure(event, context):
     #Convert DOCX to HTML using Mammoth
     # Mammoth expects a file-like object with .read()
     try:
+        print("converting file to html file")
         with open(download_path, "rb") as docx_file:
             result = mammoth.convert_to_html(docx_file)
             html_content = result.value  # HTML as a string
+            print("Html: ", html_content )
     except Exception as e:
         print(f"Error converting docx to html: {e}")
         return generate_error_response(500, "Error converting DOCX to HTML")
@@ -125,6 +132,7 @@ def convert_uploaded_data_disclosure(event, context):
     pdf_document_name = f"data_disclosure_{timestamp}.pdf"
 
     try:
+        print("uploading pdf format")
         s3.upload_file(pdf_local_path, bucket_name, pdf_document_name, ExtraArgs={"ContentType": "application/pdf"})
     except Exception as e:
         print(f"Error uploading pdf to S3: {e}")
@@ -132,6 +140,7 @@ def convert_uploaded_data_disclosure(event, context):
 
 
      # Update DynamoDB with new version info, including references to both HTML and PDF
+    print("Update DynamoDB with new version info")
     versions_table = dynamodb.Table(versions_table_name)
     latest_version_details = get_latest_version_details(versions_table)
     new_version = (

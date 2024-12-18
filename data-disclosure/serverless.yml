@@ -48,6 +48,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     DATA_DISCLOSURE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
   apiGateway:
     restApiId: ${self:provider.environment.REST_API_ID}
@@ -161,9 +162,10 @@ resources:
               Action:
                 - "s3:PutObject"
                 - "s3:GetObject"
-                - s3:HeadObject
-                - s3:PutBucketNotification
+                - "s3:HeadObject"
+                - "s3:PutBucketNotification"
               Resource: 
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"  
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  
     # contains records of what emails have accepted the data disclosure
     DataDisclosureAcceptanceTable:

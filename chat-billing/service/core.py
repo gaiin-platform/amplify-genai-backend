@@ -52,6 +52,7 @@ def extract_data(model_id, model_data):
         "description": model_data.get("description", ""),
         "inputContextWindow": model_data.get("inputContextWindow", -1),
         "supportsImages": model_data.get("supportsImages", False),
+        "provider": model_data.get("provider", '')
         }
 
 

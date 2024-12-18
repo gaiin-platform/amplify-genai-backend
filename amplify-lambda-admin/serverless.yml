@@ -44,9 +44,9 @@ provider:
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-configs
     AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-logs
     ADMINS: ${self:custom.stageVariables.ADMINS}
-    APP_VARS_NAME: ${sls:stage}-amplify-app-vars
-    APP_SECRETS_NAME: ${sls:stage}-amplify-app-secrets
-    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
+    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${sls:stage}-openai-endpoints
     S3_CONVERSION_OUTPUT_BUCKET_NAME: vu-amplify-${sls:stage}-document-conversion-output
     AMPLIFY_GROUPS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-amplify-groups
 
@@ -160,8 +160,15 @@ resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
                 - s3:ListBucket
-                - s3:PutBucket
+                - s3:PutObject
+                - s3:DeleteObject
+                - secretsmanager:GetSecretValue
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecretVersionStage
               Resource:
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*'
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
