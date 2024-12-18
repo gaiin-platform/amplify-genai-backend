@@ -7,7 +7,8 @@ const opFormats = {
     "default": `
 Operations:
 {{#each __assistantOps}}
-{{id}}{{#each params}}, "{{description}}"{{/each}} -- {{description}}
+{{id}}: {{description}}
+{{#each params}}\n  {{name}}:{{description}}{{/each}}
 {{/each}}
 `
 }
