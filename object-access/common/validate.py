@@ -184,13 +184,13 @@ create_admin_group_schema = {
             "description": "The name of the group to be created."
         },
         "members": members_schema,
-        },
         "types": {
             "type": "array",
             "items": {
                 "type": "string"
             }
         },
+    },
     "required": ["group_name", "members"]
 }
 
@@ -252,6 +252,19 @@ create_assistant_schema = {
         },
     },
     "required": ["name", "description", "tags", "instructions", "dataSources"]
+}
+
+create_amplify_assistants_group_schema = {
+    "type": "object",
+    "properties": {
+        "assistants": {
+            "type": "array",
+            "items": {
+                "type": create_assistant_schema
+            }
+        },
+    },
+    "required": ["assistants"]
 }
 
 update_ast_schema = {
@@ -415,6 +428,9 @@ validators = {
     },
     "/groups/replace_key" : {
         "update" : replace_key_schema
+    },
+    "/groups/assistants/amplify": {
+        "create": create_amplify_assistants_group_schema
     }
 }
 
