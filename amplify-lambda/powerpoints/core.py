@@ -40,7 +40,7 @@ def handle_pptx_upload(event, context):
         # Extract metadata
         metadata = obj_head.get('Metadata', {})
         is_available_str = metadata.get('isavailable', 'true').lower()
-        is_available = True if is_available_str == 'true' else True
+        is_available = True if is_available_str == 'true' else False
 
         # Split amplifygroups by comma; if empty string, results in [''], so filter empties
         amplify_groups_str = metadata.get('amplifygroups', '')

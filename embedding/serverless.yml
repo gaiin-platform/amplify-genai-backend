@@ -175,6 +175,8 @@ functions:
 
   terminate_embedding:
     handler: embedding.terminate_embedding
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 15
     events:
       - http:
@@ -185,6 +187,8 @@ functions:
 
   get_sqs_messages:
     handler: embedding-sqs.get_in_flight_messages
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     timeout: 15
     events:
       - http:

@@ -12,10 +12,16 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
 
+
 custom:
   pythonRequirements:
     dockerizePip: non-linux
     layer: true
+
+  prune:
+    automatic: true
+    number: 1
+
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -350,7 +356,7 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
-      - Ref: PythonRequirementsLambdaLayer
+      # - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
@@ -938,7 +944,7 @@ resources:
           CorsConfiguration:
             CorsRules:
               - AllowedOrigins: ['*']
-                AllowedMethods: ['GET', 'PUT']
+                AllowedMethods: ['GET', 'PUT', 'POST']
                 AllowedHeaders: ['*']
                 MaxAge: 3000
           LoggingConfiguration:
@@ -952,7 +958,7 @@ resources:
                   S3Key:
                     Rules:
                       - Name: prefix
-                        Value: '/templates'
+                        Value: 'templates/'
                       - Name: suffix
                         Value: '.pptx' 
                 Function: !GetAtt HandlePptxUploadLambdaFunction.Arn

@@ -192,6 +192,27 @@ functions:
       
     role: !GetAtt CreateAstAdminGroupRole.Arn
 
+    create_amplify_asts:
+    handler: groups.create_amplify_assistants
+    timeout: 12
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/assistants/amplify
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID} 
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
+      
+    role: !GetAtt CreateAstAdminGroupRole.Arn
+
   replace_group_key:
     handler: groups.replace_group_key
     timeout: 12
@@ -334,8 +355,8 @@ functions:
     role: !GetAtt UpdateGroupsRole.Arn
  
 
-  update_assistants:
-    handler: groups.update_assistants
+  update_group_assistants:
+    handler: groups.update_group_assistants
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30
@@ -696,6 +717,8 @@ resources:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index*"
+
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

@@ -138,6 +138,9 @@ api_validators = {
      "/ops/get": {
         "get": {}
     },
+    "/ops/register" : {
+        "write": register_ops_schema
+    },
 }
 
 
