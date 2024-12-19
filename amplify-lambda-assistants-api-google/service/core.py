@@ -1,5 +1,7 @@
 from common.ops import vop
 from common.validate import validated
+from integrations.google.calendar import get_events_between_dates, create_event, check_event_conflicts, \
+    get_free_time_slots, get_upcoming_events, get_events_for_date, get_event_details, delete_event, update_event
 from integrations.google.docs import find_text_indices, append_text
 from integrations.google.sheets import get_spreadsheet_rows, get_sheets_info, get_sheet_names, insert_rows, delete_rows, \
     update_rows, create_spreadsheet, apply_conditional_formatting, sort_range, find_replace, get_cell_formulas, \
@@ -413,3 +415,144 @@ def share_document_handler(event, context, current_user, name, data):
 @validated("find_text_indices")
 def find_text_indices_handler(event, context, current_user, name, data):
     return common_handler(find_text_indices, 'documentId', 'searchText')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/get-events-between-dates",
+    tags=["default"],
+    name="getEventsBetweenDates",
+    description="Retrieves events from Google Calendar between two specified dates.",
+    params={
+        "startDate": "The start date in ISO 8601 format",
+        "endDate": "The end date in ISO 8601 format"
+    }
+)
+@validated("get_events_between_dates")
+def get_events_between_dates_handler(event, context, current_user, name, data):
+    return common_handler(get_events_between_dates, 'startDate', 'endDate')(event, context, current_user, name, data)
+
+
+
+@vop(
+    path="/google/integrations/calendar/create-event",
+    tags=["default"],
+    name="createEvent",
+    description="Creates a new event in Google Calendar.",
+    params={
+        "title": "The title of the event",
+        "startTime": "The start time of the event in ISO 8601 format",
+        "endTime": "The end time of the event in ISO 8601 format",
+        "description": "The description of the event"
+    }
+)
+@validated("create_event")
+def create_event_handler(event, context, current_user, name, data):
+    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/update-event",
+    tags=["default"],
+    name="updateEvent",
+    description="Updates an existing event in Google Calendar.",
+    params={
+        "eventId": "The ID of the event to update",
+        "updatedFields": "A dictionary of fields to update and their new values"
+    }
+)
+@validated("update_event")
+def update_event_handler(event, context, current_user, name, data):
+    return common_handler(update_event, 'eventId', 'updatedFields')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/delete-event",
+    tags=["default"],
+    name="deleteEvent",
+    description="Deletes an event from Google Calendar.",
+    params={
+        "eventId": "The ID of the event to delete"
+    }
+)
+@validated("delete_event")
+def delete_event_handler(event, context, current_user, name, data):
+    return common_handler(delete_event, 'eventId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/get-event-details",
+    tags=["default"],
+    name="getEventDetails",
+    description="Retrieves details of a specific event from Google Calendar.",
+    params={
+        "eventId": "The ID of the event to retrieve"
+    }
+)
+@validated("get_event_details")
+def get_event_details_handler(event, context, current_user, name, data):
+    return common_handler(get_event_details, 'eventId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/get-events-between-dates",
+    tags=["default"],
+    name="getEventsBetweenDates",
+    description="Retrieves events from Google Calendar between two specified dates.",
+    params={
+        "startDate": "The start date in ISO 8601 format",
+        "endDate": "The end date in ISO 8601 format"
+    }
+)
+@validated("get_events_between_dates")
+def get_events_between_dates_handler(event, context, current_user, name, data):
+    return common_handler(get_events_between_dates, 'startDate', 'endDate')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/get-events-for-date",
+    tags=["default"],
+    name="getEventsForDate",
+    description="Retrieves events from Google Calendar for a specific date.",
+    params={
+        "date": "The date in ISO 8601 format (YYYY-MM-DD)"
+    }
+)
+@validated("get_events_for_date")
+def get_events_for_date_handler(event, context, current_user, name, data):
+    return common_handler(get_events_for_date, 'date')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/get-upcoming-events",
+    tags=["default"],
+    name="getUpcomingEvents",
+    description="Retrieves upcoming events from Google Calendar until a specified end date.",
+    params={
+        "endDate": "The end date in ISO 8601 format"
+    }
+)
+@validated("get_upcoming_events")
+def get_upcoming_events_handler(event, context, current_user, name, data):
+    return common_handler(get_upcoming_events, 'endDate')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/get-free-time-slots",
+    tags=["default"],
+    name="getFreeTimeSlots",
+    description="Finds free time slots in Google Calendar between two dates.",
+    params={
+        "startDate": "The start date in ISO 8601 format",
+        "endDate": "The end date in ISO 8601 format",
+        "duration": "The minimum duration of free time slots in minutes"
+    }
+)
+@validated("get_free_time_slots")
+def get_free_time_slots_handler(event, context, current_user, name, data):
+    return common_handler(get_free_time_slots, 'startDate', 'endDate', 'duration')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/calendar/check-event-conflicts",
+    tags=["default"],
+    name="checkEventConflicts",
+    description="Checks for conflicts with existing events in Google Calendar.",
+    params={
+        "proposedStartTime": "The proposed start time in ISO 8601 format",
+        "proposedEndTime": "The proposed end time in ISO 8601 format"
+    }
+)
+@validated("check_event_conflicts")
+def check_event_conflicts_handler(event, context, current_user, name, data):
+    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime')(event, context, current_user, name, data)
