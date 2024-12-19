@@ -95,6 +95,9 @@ permissions_by_state_type = {
     },
     "/groups/replace_key" : {
         "update" : can_update
+    },
+    "/groups/assistants/amplify": {
+        "create": can_create
     }
 }
 

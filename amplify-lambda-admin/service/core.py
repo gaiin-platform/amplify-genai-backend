@@ -40,9 +40,9 @@ class AdminConfigTypes(Enum):
 
 # Map config_type to the corresponding secret name in Secrets Manager
 secret_name_map = {
-    AdminConfigTypes.APP_VARS: os.environ['APP_VARS_NAME'],
-    AdminConfigTypes.APP_SECRETS: os.environ['APP_SECRETS_NAME'],
-    AdminConfigTypes.OPENAI_ENDPOINTS: os.environ['LLM_ENDPOINTS_SECRETS_NAME']
+    AdminConfigTypes.APP_VARS: os.environ['APP_ARN_NAME'],
+    AdminConfigTypes.APP_SECRETS: os.environ['SECRETS_ARN_NAME'],
+    AdminConfigTypes.OPENAI_ENDPOINTS: os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 }
     
 
@@ -144,6 +144,7 @@ def get_secret(secret_name, region_name):
         secret_dict = json.loads(secret_string)
         return secret_dict
     except ClientError as e:
+        print(f"Error getting secret: {e}")
         return None
     
 
@@ -227,7 +228,7 @@ def get_configs(event, context, current_user, name, data):
     for config_type, secret_name in secret_name_map.items():
         try:
             secret_value = get_secret(secret_name, region_name)
-            # if (not secret_value) \
+            print(secret_value)
             configurations[config_type.value] = secret_value
         except ClientError as e:
             print( f"Error retrieving {config_type.value}: {str(e)}")
@@ -431,8 +432,7 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         else:
             # Configuration does not exist, cannot delete
             return {"success": False, "message": "No PPTX templates configuration found."}
-
-        # Step 3: Remove the Template Entry
+        
         updated_templates = []
         for template in existing_templates:
             if template['name'] != template_name:
@@ -452,13 +452,13 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         try:
             s3_client.delete_object(Bucket=output_bucket_name, Key=pptx_key)
         except Exception as e:
-            # If deletion from S3 fails, you might want to handle it
-            # Optionally, you could restore the template in DynamoDB
+            print(f"Error deleting PPTX file from S3: {str(e)}")
             return {"success": False, "message": f"Error deleting PPTX file from S3: {str(e)}"}
 
         return {"success": True, "message": f"Template '{template_name}' deleted successfully."}
 
     except Exception as e:
+        print(f"Error deleting template: {str(e)}")
         return {"success": False, "message": f"Error deleting template: {str(e)}"}
 
 

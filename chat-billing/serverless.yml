@@ -179,6 +179,9 @@ resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:CreateTable
+                - "dynamodb:BatchWriteItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:DeleteItem"
               Resource:
                 - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"

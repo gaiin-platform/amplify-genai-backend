@@ -15,6 +15,8 @@ import re
 from common.ops import op
 import subprocess
 from common.auth_admin import verify_user_as_admin
+from botocore.config import Config
+
 
 s3 = boto3.client('s3')
 bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
@@ -477,11 +479,20 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
     if (not verify_user_as_admin(data["access_token"], 'Upload API Documentation')):
         return {'success': False , 'error': 'Unable to authenticate user as admin'}
     data = data['data']
-    filename = data.get("filename")
-    md5_content = data.get("content_md5")
+    filename = data.get("filename", "")
+    md5_content = data.get("content_md5", "")
     file_names = {APIFile.DOCX.value: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
                   APIFile.CSV.value: "text/csv", APIFile.JSON.value: "application/json"}
+    print("Uploading: ", file_names[filename])
+    if (not filename in file_names.keys()):
+        return {'success': False , 'error': 'File name does not match the preset names.'}
+    
+
     try:
+        config = Config(
+        signature_version='s3v4'  # Force AWS Signature Version 4
+        )
+        s3 = boto3.client('s3', config=config)
         presigned = s3.generate_presigned_url('put_object',
                                             Params={'Bucket': bucket_name,
                                                     'Key': filename,
@@ -489,7 +500,7 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
                                                     'ContentMD5': md5_content
                                                     },
                                             ExpiresIn=3600)
-        # urls[filename.split(".")[1]] = presigned
+        print("Presigned url generated")
         return {'success': True , 'presigned_url': presigned}
     except ClientError as e:
         print(f"Error generating presigned upload URL: {e}")
