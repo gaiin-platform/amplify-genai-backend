@@ -150,6 +150,21 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             const extraMessages = [];
 
+            if(params && params.options){
+                if(params.options.timeZone) {
+                    extraMessages.push({
+                        role: "user",
+                        content: "The user is in the " + params.options.timeZone + " time zone."
+                    });
+                }
+                if(params.options.time){
+                    extraMessages.push({
+                        role: "user",
+                        content: "The current time for the user is " + params.options.time
+                    });
+                }
+            }
+
             if(assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
 
