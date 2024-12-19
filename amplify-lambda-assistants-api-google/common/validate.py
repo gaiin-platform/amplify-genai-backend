@@ -393,7 +393,10 @@ validators = {
             "type": "object",
             "properties": {
                 "startDate": {"type": "string", "format": "date-time"},
-                "endDate": {"type": "string", "format": "date-time"}
+                "endDate": {"type": "string", "format": "date-time"},
+                "includeDescription": {"type": "boolean"},
+                "includeAttendees": {"type": "boolean"},
+                "includeLocation": {"type": "boolean"}
             },
             "required": ["startDate", "endDate"]
         }
@@ -402,7 +405,10 @@ validators = {
         "get_events_for_date": {
             "type": "object",
             "properties": {
-                "date": {"type": "string", "format": "date"}
+                "date": {"type": "string", "format": "date"},
+                "includeDescription": {"type": "boolean"},
+                "includeAttendees": {"type": "boolean"},
+                "includeLocation": {"type": "boolean"}
             },
             "required": ["date"]
         }
@@ -411,7 +417,10 @@ validators = {
         "get_upcoming_events": {
             "type": "object",
             "properties": {
-                "endDate": {"type": "string", "format": "date-time"}
+                "endDate": {"type": "string", "format": "date-time"},
+                "includeDescription": {"type": "boolean"},
+                "includeAttendees": {"type": "boolean"},
+                "includeLocation": {"type": "boolean"}
             },
             "required": ["endDate"]
         }
@@ -432,13 +441,13 @@ validators = {
             "type": "object",
             "properties": {
                 "proposedStartTime": {"type": "string", "format": "date-time"},
-                "proposedEndTime": {"type": "string", "format": "date-time"}
+                "proposedEndTime": {"type": "string", "format": "date-time"},
+                "returnConflictingEvents": {"type": "boolean"}
             },
             "required": ["proposedStartTime", "proposedEndTime"]
         }
     }
 }
-
 
 api_validators = {
     "/google/integrations/sheets/get-rows": {
@@ -788,7 +797,10 @@ api_validators = {
             "type": "object",
             "properties": {
                 "startDate": {"type": "string", "format": "date-time"},
-                "endDate": {"type": "string", "format": "date-time"}
+                "endDate": {"type": "string", "format": "date-time"},
+                "includeDescription": {"type": "boolean"},
+                "includeAttendees": {"type": "boolean"},
+                "includeLocation": {"type": "boolean"}
             },
             "required": ["startDate", "endDate"]
         }
@@ -797,7 +809,10 @@ api_validators = {
         "get_events_for_date": {
             "type": "object",
             "properties": {
-                "date": {"type": "string", "format": "date"}
+                "date": {"type": "string", "format": "date"},
+                "includeDescription": {"type": "boolean"},
+                "includeAttendees": {"type": "boolean"},
+                "includeLocation": {"type": "boolean"}
             },
             "required": ["date"]
         }
@@ -806,7 +821,10 @@ api_validators = {
         "get_upcoming_events": {
             "type": "object",
             "properties": {
-                "endDate": {"type": "string", "format": "date-time"}
+                "endDate": {"type": "string", "format": "date-time"},
+                "includeDescription": {"type": "boolean"},
+                "includeAttendees": {"type": "boolean"},
+                "includeLocation": {"type": "boolean"}
             },
             "required": ["endDate"]
         }
@@ -827,7 +845,8 @@ api_validators = {
             "type": "object",
             "properties": {
                 "proposedStartTime": {"type": "string", "format": "date-time"},
-                "proposedEndTime": {"type": "string", "format": "date-time"}
+                "proposedEndTime": {"type": "string", "format": "date-time"},
+                "returnConflictingEvents": {"type": "boolean"}
             },
             "required": ["proposedStartTime", "proposedEndTime"]
         }
@@ -1050,8 +1069,8 @@ def api_claims(event, context, token):
 
         # Optionally check the expiration date if applicable
         if (
-            item.get("expirationDate")
-            and datetime.strptime(item["expirationDate"], "%Y-%m-%d") <= datetime.now()
+                item.get("expirationDate")
+                and datetime.strptime(item["expirationDate"], "%Y-%m-%d") <= datetime.now()
         ):
             print("API key has expired.")
             raise PermissionError("API key has expired.")
@@ -1059,9 +1078,9 @@ def api_claims(event, context, token):
         # Check for access rights
         access = item.get("accessTypes", [])
         if (
-            "assistants" not in access
-            and "share" not in access
-            and "full_access" not in access
+                "assistants" not in access
+                and "share" not in access
+                and "full_access" not in access
         ):
             print("API doesn't have access to assistants")
             raise PermissionError(
