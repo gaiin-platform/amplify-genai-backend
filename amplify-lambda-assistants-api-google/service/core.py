@@ -423,14 +423,15 @@ def find_text_indices_handler(event, context, current_user, name, data):
     description="Retrieves events from Google Calendar between two specified dates.",
     params={
         "startDate": "The start date in ISO 8601 format",
-        "endDate": "The end date in ISO 8601 format"
+        "endDate": "The end date in ISO 8601 format",
+        "includeDescription": "Optional. Include event description (default: false)",
+        "includeAttendees": "Optional. Include event attendees (default: false)",
+        "includeLocation": "Optional. Include event location (default: false)"
     }
 )
 @validated("get_events_between_dates")
 def get_events_between_dates_handler(event, context, current_user, name, data):
-    return common_handler(get_events_between_dates, 'startDate', 'endDate')(event, context, current_user, name, data)
-
-
+    return common_handler(get_events_between_dates, 'startDate', 'endDate', includeDescription=False, includeAttendees=False, includeLocation=False)(event, context, current_user, name, data)
 
 @vop(
     path="/google/integrations/calendar/create-event",
@@ -489,44 +490,20 @@ def get_event_details_handler(event, context, current_user, name, data):
     return common_handler(get_event_details, 'eventId')(event, context, current_user, name, data)
 
 @vop(
-    path="/google/integrations/calendar/get-events-between-dates",
-    tags=["default"],
-    name="getEventsBetweenDates",
-    description="Retrieves events from Google Calendar between two specified dates.",
-    params={
-        "startDate": "The start date in ISO 8601 format",
-        "endDate": "The end date in ISO 8601 format"
-    }
-)
-@validated("get_events_between_dates")
-def get_events_between_dates_handler(event, context, current_user, name, data):
-    return common_handler(get_events_between_dates, 'startDate', 'endDate')(event, context, current_user, name, data)
-
-@vop(
     path="/google/integrations/calendar/get-events-for-date",
     tags=["default"],
     name="getEventsForDate",
     description="Retrieves events from Google Calendar for a specific date.",
     params={
-        "date": "The date in ISO 8601 format (YYYY-MM-DD)"
+        "date": "The date in ISO 8601 format (YYYY-MM-DD)",
+        "includeDescription": "Optional. Include event description (default: false)",
+        "includeAttendees": "Optional. Include event attendees (default: false)",
+        "includeLocation": "Optional. Include event location (default: false)"
     }
 )
 @validated("get_events_for_date")
 def get_events_for_date_handler(event, context, current_user, name, data):
-    return common_handler(get_events_for_date, 'date')(event, context, current_user, name, data)
-
-@vop(
-    path="/google/integrations/calendar/get-upcoming-events",
-    tags=["default"],
-    name="getUpcomingEvents",
-    description="Retrieves upcoming events from Google Calendar until a specified end date.",
-    params={
-        "endDate": "The end date in ISO 8601 format"
-    }
-)
-@validated("get_upcoming_events")
-def get_upcoming_events_handler(event, context, current_user, name, data):
-    return common_handler(get_upcoming_events, 'endDate')(event, context, current_user, name, data)
+    return common_handler(get_events_for_date, 'date', includeDescription=False, includeAttendees=False, includeLocation=False)(event, context, current_user, name, data)
 
 @vop(
     path="/google/integrations/calendar/get-free-time-slots",
@@ -550,9 +527,10 @@ def get_free_time_slots_handler(event, context, current_user, name, data):
     description="Checks for conflicts with existing events in Google Calendar.",
     params={
         "proposedStartTime": "The proposed start time in ISO 8601 format",
-        "proposedEndTime": "The proposed end time in ISO 8601 format"
+        "proposedEndTime": "The proposed end time in ISO 8601 format",
+        "returnConflictingEvents": "Optional. Return details of conflicting events (default: false)"
     }
 )
 @validated("check_event_conflicts")
 def check_event_conflicts_handler(event, context, current_user, name, data):
-    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime')(event, context, current_user, name, data)
+    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime', returnConflictingEvents=False)(event, context, current_user, name, data)
