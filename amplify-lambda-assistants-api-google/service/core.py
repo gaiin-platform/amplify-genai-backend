@@ -1,7 +1,7 @@
 from common.ops import vop
 from common.validate import validated
 from integrations.google.calendar import get_events_between_dates, create_event, check_event_conflicts, \
-    get_free_time_slots, get_upcoming_events, get_events_for_date, get_event_details, delete_event, update_event
+    get_free_time_slots, get_events_for_date, get_event_details, delete_event, update_event
 from integrations.google.docs import find_text_indices, append_text
 from integrations.google.sheets import get_spreadsheet_rows, get_sheets_info, get_sheet_names, insert_rows, delete_rows, \
     update_rows, create_spreadsheet, apply_conditional_formatting, sort_range, find_replace, get_cell_formulas, \
