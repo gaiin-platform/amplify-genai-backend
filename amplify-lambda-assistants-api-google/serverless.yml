@@ -269,6 +269,77 @@ functions:
           path: google/integrations/docs/find-text-indices
           method: post
 
+  googleCalendarCreateEvent:
+    handler: service/core.create_event_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/create-event
+          method: post
+
+  googleCalendarUpdateEvent:
+    handler: service/core.update_event_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/update-event
+          method: post
+
+  googleCalendarDeleteEvent:
+    handler: service/core.delete_event_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/delete-event
+          method: post
+
+  googleCalendarGetEventDetails:
+    handler: service/core.get_event_details_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/get-event-details
+          method: post
+
+  googleCalendarGetEventsBetweenDates:
+    handler: service/core.get_events_between_dates_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/get-events-between-dates
+          method: post
+
+  googleCalendarGetEventsForDate:
+    handler: service/core.get_events_for_date_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/get-events-for-date
+          method: post
+
+  googleCalendarGetUpcomingEvents:
+    handler: service/core.get_upcoming_events_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/get-upcoming-events
+          method: post
+
+  googleCalendarGetFreeTimeSlots:
+    handler: service/core.get_free_time_slots_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/get-free-time-slots
+          method: post
+
+  googleCalendarCheckEventConflicts:
+    handler: service/core.check_event_conflicts_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/calendar/check-event-conflicts
+          method: post
 
 resources:
   Resources:

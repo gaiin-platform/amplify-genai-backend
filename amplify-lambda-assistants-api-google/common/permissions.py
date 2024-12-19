@@ -99,5 +99,32 @@ permissions_by_state_type = {
     },
     "/google/integrations/docs/append-text": {
         "append_text": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/create-event": {
+        "create_event": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/update-event": {
+        "update_event": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/delete-event": {
+        "delete_event": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/get-event-details": {
+        "get_event_details": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/get-events-between-dates": {
+        "get_events_between_dates": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/get-events-for-date": {
+        "get_events_for_date": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/get-upcoming-events": {
+        "get_upcoming_events": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/get-free-time-slots": {
+        "get_free_time_slots": lambda for_user, with_data: True
+    },
+    "/google/integrations/calendar/check-event-conflicts": {
+        "check_event_conflicts": lambda for_user, with_data: True
     }
 }

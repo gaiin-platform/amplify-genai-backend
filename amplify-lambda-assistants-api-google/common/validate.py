@@ -347,6 +347,95 @@ validators = {
             },
             "required": ["documentId", "text"]
         }
+    },
+    "/google/integrations/calendar/create-event": {
+        "create_event": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "startTime": {"type": "string", "format": "date-time"},
+                "endTime": {"type": "string", "format": "date-time"},
+                "description": {"type": "string"}
+            },
+            "required": ["title", "startTime", "endTime", "description"]
+        }
+    },
+    "/google/integrations/calendar/update-event": {
+        "update_event": {
+            "type": "object",
+            "properties": {
+                "eventId": {"type": "string"},
+                "updatedFields": {"type": "object"}
+            },
+            "required": ["eventId", "updatedFields"]
+        }
+    },
+    "/google/integrations/calendar/delete-event": {
+        "delete_event": {
+            "type": "object",
+            "properties": {
+                "eventId": {"type": "string"}
+            },
+            "required": ["eventId"]
+        }
+    },
+    "/google/integrations/calendar/get-event-details": {
+        "get_event_details": {
+            "type": "object",
+            "properties": {
+                "eventId": {"type": "string"}
+            },
+            "required": ["eventId"]
+        }
+    },
+    "/google/integrations/calendar/get-events-between-dates": {
+        "get_events_between_dates": {
+            "type": "object",
+            "properties": {
+                "startDate": {"type": "string", "format": "date-time"},
+                "endDate": {"type": "string", "format": "date-time"}
+            },
+            "required": ["startDate", "endDate"]
+        }
+    },
+    "/google/integrations/calendar/get-events-for-date": {
+        "get_events_for_date": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "format": "date"}
+            },
+            "required": ["date"]
+        }
+    },
+    "/google/integrations/calendar/get-upcoming-events": {
+        "get_upcoming_events": {
+            "type": "object",
+            "properties": {
+                "endDate": {"type": "string", "format": "date-time"}
+            },
+            "required": ["endDate"]
+        }
+    },
+    "/google/integrations/calendar/get-free-time-slots": {
+        "get_free_time_slots": {
+            "type": "object",
+            "properties": {
+                "startDate": {"type": "string", "format": "date-time"},
+                "endDate": {"type": "string", "format": "date-time"},
+                "duration": {"type": "integer", "minimum": 1}
+            },
+            "required": ["startDate", "endDate", "duration"]
+        }
+    },
+    "/google/integrations/calendar/check-event-conflicts": {
+        "check_event_conflicts": {
+            "type": "object",
+            "properties": {
+                "proposedStartTime": {"type": "string", "format": "date-time"},
+                "proposedEndTime": {"type": "string", "format": "date-time"}
+            },
+            "required": ["proposedStartTime", "proposedEndTime"]
+        }
     }
 }
 
@@ -652,6 +741,95 @@ api_validators = {
                 "text": {"type": "string"}
             },
             "required": ["documentId", "text"]
+        }
+    },
+    "/google/integrations/calendar/create-event": {
+        "create_event": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "startTime": {"type": "string", "format": "date-time"},
+                "endTime": {"type": "string", "format": "date-time"},
+                "description": {"type": "string"}
+            },
+            "required": ["title", "startTime", "endTime", "description"]
+        }
+    },
+    "/google/integrations/calendar/update-event": {
+        "update_event": {
+            "type": "object",
+            "properties": {
+                "eventId": {"type": "string"},
+                "updatedFields": {"type": "object"}
+            },
+            "required": ["eventId", "updatedFields"]
+        }
+    },
+    "/google/integrations/calendar/delete-event": {
+        "delete_event": {
+            "type": "object",
+            "properties": {
+                "eventId": {"type": "string"}
+            },
+            "required": ["eventId"]
+        }
+    },
+    "/google/integrations/calendar/get-event-details": {
+        "get_event_details": {
+            "type": "object",
+            "properties": {
+                "eventId": {"type": "string"}
+            },
+            "required": ["eventId"]
+        }
+    },
+    "/google/integrations/calendar/get-events-between-dates": {
+        "get_events_between_dates": {
+            "type": "object",
+            "properties": {
+                "startDate": {"type": "string", "format": "date-time"},
+                "endDate": {"type": "string", "format": "date-time"}
+            },
+            "required": ["startDate", "endDate"]
+        }
+    },
+    "/google/integrations/calendar/get-events-for-date": {
+        "get_events_for_date": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "format": "date"}
+            },
+            "required": ["date"]
+        }
+    },
+    "/google/integrations/calendar/get-upcoming-events": {
+        "get_upcoming_events": {
+            "type": "object",
+            "properties": {
+                "endDate": {"type": "string", "format": "date-time"}
+            },
+            "required": ["endDate"]
+        }
+    },
+    "/google/integrations/calendar/get-free-time-slots": {
+        "get_free_time_slots": {
+            "type": "object",
+            "properties": {
+                "startDate": {"type": "string", "format": "date-time"},
+                "endDate": {"type": "string", "format": "date-time"},
+                "duration": {"type": "integer", "minimum": 1}
+            },
+            "required": ["startDate", "endDate", "duration"]
+        }
+    },
+    "/google/integrations/calendar/check-event-conflicts": {
+        "check_event_conflicts": {
+            "type": "object",
+            "properties": {
+                "proposedStartTime": {"type": "string", "format": "date-time"},
+                "proposedEndTime": {"type": "string", "format": "date-time"}
+            },
+            "required": ["proposedStartTime", "proposedEndTime"]
         }
     }
 }
