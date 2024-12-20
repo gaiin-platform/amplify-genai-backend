@@ -126,5 +126,56 @@ permissions_by_state_type = {
     },
     "/google/integrations/calendar/check-event-conflicts": {
         "check_event_conflicts": lambda for_user, with_data: True
-    }
+    },
+    "/google/integrations/drive/list-files": {
+        "list_files": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/search-files": {
+        "search_files": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/get-file-metadata": {
+        "get_file_metadata": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/get-file-content": {
+        "get_file_content": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/create-file": {
+        "create_file": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/get-download-link": {
+        "get_download_link": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/create-shared-link": {
+        "create_shared_link": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/share-file": {
+        "share_file": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/convert-file": {
+        "convert_file": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/list-folders": {
+        "list_folders": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/move-item": {
+        "move_item": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/copy-item": {
+        "copy_item": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/rename-item": {
+        "rename_item": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/get-file-revisions": {
+        "get_file_revisions": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/create-folder": {
+        "create_folder": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/delete-item-permanently": {
+        "delete_item_permanently": lambda for_user, with_data: True
+    },
+    "/google/integrations/drive/get-root-folder-ids": {
+        "get_root_folder_ids": lambda for_user, with_data: True
+    },
 }
