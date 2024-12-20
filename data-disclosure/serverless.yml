@@ -66,7 +66,7 @@ functions:
   # determine if a user exists as an "accepted" record in the DataDisclosureAcceptanceTable
   check_data_disclosure_decision:
     handler: data_disclosure.check_data_disclosure_decision
-    memorySize: 128
+    memorySize: 512
     timeout: 30
     events:
       - http:
@@ -77,7 +77,6 @@ functions:
   # save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
   save_data_disclosure_decision:
     handler: data_disclosure.save_data_disclosure_decision
-    memorySize: 128
     timeout: 30
     events:
       - http:
@@ -88,26 +87,12 @@ functions:
   # get the most recent data disclosure from DataDisclosureVersionsTable
   get_latest_data_disclosure:
     handler: data_disclosure.get_latest_data_disclosure
-    memorySize: 128
     timeout: 30
     events:
       - http:
           path: data-disclosure/latest
           method: get
           cors: true
-
-  # upload the locally stored data disclosure file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
-  # 
-  # This lambda will only run locally. Follow these steps to update the data disclosure document:
-  # Step 1a: Save the data disclosure document you want to show in the popup as HTML at data-disclosure/data_disclosure.html
-  # Step 1b: Save the data disclosure document you want at the download link as pdf at data-disclosure/data_disclosure.pdf
-  # Step 2:  Deploy the lambda via:         ~ serverless deploy --stage dev
-  # Step 3:  Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
-  # upload_data_disclosure:
-  #   handler: data_disclosure.upload_data_disclosure
-  #   memorySize: 128
-  #   timeout: 30
-  #   events: [] # No associated HTTP events since this function runs locally
 
 
   upload_data_disclosure:
@@ -121,7 +106,7 @@ functions:
 
 
   convertDataDisclosure:
-    handler: service/core.convert_uploaded_data_disclosure
+    handler: data_disclosure.convert_uploaded_data_disclosure
     events:
       - s3:
           bucket: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
@@ -228,5 +213,6 @@ resources:
                   S3Key:
                     Rules:
                       - Name: suffix
-                        Value: '.docx'
+                        Value: '.pdf'
                 Function: !GetAtt ConvertDataDisclosureLambdaFunction.Arn
+                
