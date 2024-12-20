@@ -333,6 +333,141 @@ functions:
           path: google/integrations/calendar/check-event-conflicts
           method: post
 
+  googleDriveListFiles:
+    handler: service/core.list_files_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/list-files
+          method: post
+
+  googleDriveSearchFiles:
+    handler: service/core.search_files_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/search-files
+          method: post
+
+  googleDriveGetFileMetadata:
+    handler: service/core.get_file_metadata_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/get-file-metadata
+          method: post
+
+  googleDriveGetFileContent:
+    handler: service/core.get_file_content_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/get-file-content
+          method: post
+
+  googleDriveCreateFile:
+    handler: service/core.create_file_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/create-file
+          method: post
+
+  googleDriveGetDownloadLink:
+    handler: service/core.get_download_link_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/get-download-link
+          method: post
+
+  googleDriveCreateSharedLink:
+    handler: service/core.create_shared_link_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/create-shared-link
+          method: post
+
+  googleDriveShareFile:
+    handler: service/core.share_file_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/share-file
+          method: post
+
+  googleDriveConvertFile:
+    handler: service/core.convert_file_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/convert-file
+          method: post
+
+  googleDriveListFolders:
+    handler: service/core.list_folders_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/list-folders
+          method: post
+
+  googleDriveMoveItem:
+    handler: service/core.move_item_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/move-item
+          method: post
+
+  googleDriveCopyItem:
+    handler: service/core.copy_item_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/copy-item
+          method: post
+
+  googleDriveRenameItem:
+    handler: service/core.rename_item_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/rename-item
+          method: post
+
+  googleDriveGetFileRevisions:
+    handler: service/core.get_file_revisions_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/get-file-revisions
+          method: post
+
+  googleDriveCreateFolder:
+    handler: service/core.create_folder_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/create-folder
+          method: post
+
+  googleDriveDeleteItemPermanently:
+    handler: service/core.delete_item_permanently_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/drive/delete-item-permanently
+          method: post
+
+  googleDriveDeleteGetRootFolderIds:
+    handler: service/core.get_root_folder_ids_handler
+    events:
+      - http:
+          path: /google/integrations/drive/get-root-folder-ids
+          method: post
+
 resources:
   Resources:
     LambdaAPIIAMPolicy:
