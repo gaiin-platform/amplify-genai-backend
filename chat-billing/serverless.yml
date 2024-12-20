@@ -94,7 +94,7 @@ functions:
     timeout: 10
     events:
       - http:
-          path: /available_models/get
+          path: /available_models
           method: get
           cors: true
 
