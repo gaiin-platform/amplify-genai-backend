@@ -107,10 +107,6 @@ function combineMessages(oldMessages) {
         j += 1;
     }
 
-    if (messages.length === 0 || (messages[0]['role'] !== 'user')) {
-        if (systemPrompt) messages.unshift({'role': 'user', 'content': `${systemPrompt}`});
-    } 
-
     return messages;
 }
 
