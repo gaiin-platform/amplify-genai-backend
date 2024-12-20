@@ -383,13 +383,6 @@ create_tags_schema = {
     "additionalProperties": False
 }
 
-user_list_tags_schema = {
-    "type": "object",
-    "properties": {
-    },
-    "additionalProperties": False
-}
-
 user_delete_tag_schema = {
     "type": "object",
     "properties": {
@@ -710,7 +703,7 @@ validators = {
         "create": create_tags_schema
     },
     "/files/tags/list": {
-        "list": user_list_tags_schema
+        "list": {}
     },
     "/files/query": {
         "query": file_query_schema
@@ -777,7 +770,7 @@ api_validators = {
         "create": create_tags_schema
     },
     "/files/tags/list": {
-        "list": user_list_tags_schema
+        "list": {}
     },
     "/files/query": {
         "query": file_query_schema

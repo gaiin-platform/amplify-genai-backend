@@ -82,10 +82,10 @@ update_models_schema = {
                             "isDefault": {
                             "type": "boolean"
                         },
-                            "systempPrompt": {
+                            "systemPrompt": {
                             "type": "string"
                         },
-                            "supportsSystempPrompts": {
+                            "supportsSystemPrompts": {
                             "type": "boolean"
                         },
                             "supportsImages": {
@@ -125,7 +125,7 @@ update_models_schema = {
                     "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost",
-                                    "exclusiveGroupAvailability", "systempPrompt", "supportsSystempPrompts"],
+                                    "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],
                     "additionalProperties": False
                 }
             },
