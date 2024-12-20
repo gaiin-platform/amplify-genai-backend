@@ -12,7 +12,7 @@ from common.assistants import share_assistant
 import boto3
 
 from common.validate import HTTPException, validated
-
+from common.ops import op
 dynamodb = boto3.resource('dynamodb')
 
 
@@ -39,6 +39,23 @@ def get_data_from_dynamodb(user, name):
     return items
 
 
+@op(
+    path="/state/share/load",
+    name="loadSharedState",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Retrieve specific shared data elements using their unique identifier key. 
+    Example request:
+    {
+        "data": {
+            "key": "yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/932934805-24382.json"
+        }
+    }
+    """,
+    params={
+        "key": "String. Required. Unique identifier for the shared resource to retrieve. Users can find their keys by calling /state/share"
+    }
+)
 @validated("load")
 def load_data_from_s3(event, context, current_user, name, data):
     access = data['allowed_access']
@@ -127,6 +144,25 @@ def handle_share_assistant(access_token, prompts, recipient_users):
     return {'success': True, 'message': 'Successfully made the calls to share assistants'}
 
 
+@op(
+    path="/state/share",
+    name="viewSharedState",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""View a list of shared resources, including assistants, conversations, and organizational folders distributed by other Amplify platform users.
+    
+    Example response:
+    [
+      {
+        "note": "testing share with a doc",
+        "sharedAt": 1720714099836,
+        "key": "yourEmail@vanderbilt.edu/sharedByEmail@vanderbilt.edu/9324805-24382.json",
+        "sharedBy": "sharedByEmail@vanderbilt.edu"
+      }
+    ]
+    """,
+    params={}
+)
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
     access_token = data['access_token']

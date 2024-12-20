@@ -10,7 +10,10 @@ import boto3
 from common.validate import validated
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
 from common.auth_admin import verify_user_as_admin
-from common.amplifyGroups import verify_user_in_amp_group
+from common.amplify_groups import verify_user_in_amp_group
+from common.register_ops import register_ops
+from base_ast_group_ops import ops
+
 
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource('dynamodb')
@@ -897,6 +900,10 @@ def update_ast_admin_groups(event, context, current_user, name, data):
 @validated(op='create')
 def create_amplify_assistants(event, context, current_user, name, data):
     print("Creating group")
+    token = data['access_token']
+     # verify is admin 
+    if (not verify_user_as_admin(token, 'Create Amplify Assistants Admin Group')):
+        return {'success': False , 'error': 'Unable to authenticate user as admin'}
 
     assistants = data['data'].get('assistants', [])
     create_result = group_creation(current_user, "Amplify Assistants", {current_user:"admin"}, [])
@@ -905,11 +912,17 @@ def create_amplify_assistants(event, context, current_user, name, data):
         return create_result
     group_id = create_result['data']['id']
 
-    API_DOC_ASSISTANT = 'Amplify API Assistant'
-    API_KEY_ASSISTANT = 'Amplify API Key Manager'
-    
-    # if (any(d.get('name') == API_ASSISTANT for d in assistants)): api doc or write ops???
-    # if (any(d.get('name') == API_KEY_ASSISTANT for d in assistants)): call write ops
+    assistants = [
+        {**ast_def, 
+        'groupId': group_id, 
+        'data': {**ast_def.get('data', {}), 'groupId': group_id}}
+        for ast_def in assistants
+    ]
+
+    result = register_ops(token, ops)
+
+    if (not result):
+        return {"success": False, "message": "Failed to register ops"}
 
     print("Adding assistants")
     if (len(assistants > 0)):
