@@ -25,7 +25,6 @@ api_keys_table_name = os.environ['API_KEYS_DYNAMODB_TABLE']
 table = dynamodb.Table(api_keys_table_name)
 
 class APIFile(Enum):
-    DOCX = 'Amplify_API_Documentation.docx'
     PDF = 'Amplify_API_Documentation.pdf'
     CSV = 'Amplify_API_Documentation.csv'
     JSON = 'Postman_Amplify_API_Collection.json'
@@ -431,14 +430,12 @@ def get_system_ids(event, context, current_user, name, data):
 @validated("read")
 def get_documentation(event, context, current_user, name, data): 
     print(f"Getting presigned download URL for user {current_user}")
-    
-    docx_presigned_url = generate_presigned_url(APIFile.DOCX.value)
+
     doc_presigned_url = generate_presigned_url(APIFile.PDF.value)
     csv_presigned_url =  generate_presigned_url(APIFile.CSV.value)
     postman_presigned_url = generate_presigned_url(APIFile.JSON.value)
 
     res = {'success': True}
-    if doc_presigned_url : res['docx_url'] =  docx_presigned_url
     if doc_presigned_url : res['doc_url'] =  doc_presigned_url
     if csv_presigned_url : res['csv_url'] =  csv_presigned_url
     if postman_presigned_url : res['postman_url'] =  postman_presigned_url
@@ -481,8 +478,9 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
     data = data['data']
     filename = data.get("filename", "")
     md5_content = data.get("content_md5", "")
-    file_names = {APIFile.DOCX.value: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
-                  APIFile.CSV.value: "text/csv", APIFile.JSON.value: "application/json"}
+    file_names = {APIFile.PDF.value: "application/pdf", 
+                  APIFile.CSV.value: "text/csv", 
+                   APIFile.JSON.value: "application/json"}
     print("Uploading: ", file_names[filename])
     if (not filename in file_names.keys()):
         return {'success': False , 'error': 'File name does not match the preset names.'}
@@ -565,41 +563,3 @@ def get_api_document_templates(event, context, current_user, name, data):
             'success': False,
             'message': 'Failed to generate presigned URL'
         }
-
-
-def docx_pdf_api_doc_convert(event, context):
-    key = APIFile.DOCX.value
-    download_path = f'/tmp/{key}'
-    output_dir = '/tmp'
-
-    # Download the docx file from S3
-    try:
-        s3.download_file(bucket_name, key, download_path)
-    except Exception as e:
-        print(f"Error downloading file from S3: {e}")
-        raise e
-
-    # Convert docx to pdf using LibreOffice
-    try:
-        subprocess.check_call([
-            '/usr/bin/libreoffice',
-            '--headless',
-            '--convert-to',
-            'pdf',
-            '--outdir',
-            output_dir,
-            download_path
-        ])
-    except subprocess.CalledProcessError as e:
-        print(f"Error converting docx to pdf: {e}")
-        raise e
-
-    # Upload the pdf back to S3
-    pdf_file = os.path.join(output_dir, APIFile.PDF.value)
-    try:
-        s3.upload_file(pdf_file, bucket_name, APIFile.PDF.value)
-    except Exception as e:
-        print(f"Error uploading pdf to S3: {e}")
-        raise e
-
-    print("Successfully converted docx to pdf and uploaded to S3.")

@@ -6,7 +6,7 @@ import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
-import {claudeTransform, mistralTransform} from "./chat/events/bedrock.js";
+import {claudeTransform, mistralTransform, bedrockConverseTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
@@ -291,12 +291,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         if (selectedModel.includes("gpt")) {
             result = openAiTransform(event);  
             
-        } else if (selectedModel.includes("anthropic")) {
-            result = claudeTransform(event);
-
-        } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
-            result = mistralTransform(event);
+        } else if (model.provider === 'Bedrock') {
+            return bedrockConverseTransform(event);
         }
+ 
+        // (selectedModel.includes("anthropic")) {
+        //     result = claudeTransform(event);
+
+        // } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
+        //     result = mistralTransform(event);
+        // }
 
         if(!result){
             outputTokenCount--;

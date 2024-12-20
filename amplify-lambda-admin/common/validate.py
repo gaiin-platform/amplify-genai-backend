@@ -226,6 +226,12 @@ update_admin_config_schema = {
                                              "isDefault": {
                                                 "type": "boolean"
                                             },
+                                            "systempPrompt": {
+                                                "type": "string"
+                                            },
+                                            "supportsSystempPrompts": {
+                                                "type": "boolean"
+                                            },
                                              "supportsImages": {
                                                 "type": "boolean"
                                             },
@@ -260,8 +266,9 @@ update_admin_config_schema = {
                                                 }
                                             }
                                         },
-                                        "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
-                                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
+                                        "required": ["id","name", "provider", "description", "isAvailable", 
+                                                     "supportsImages","supportsSystempPrompts", "systempPrompt"
+                                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
                                                      "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }

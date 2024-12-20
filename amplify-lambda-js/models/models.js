@@ -1,6 +1,6 @@
 
 export const getUserAvailableModels = async (accessToken) => {
-    const apiUrl = process.env.API_BASE_URL + '/available_models/get';
+    const apiUrl = process.env.API_BASE_URL + '/available_models'; 
     
     const response = await fetch(apiUrl, {
         method: "GET",

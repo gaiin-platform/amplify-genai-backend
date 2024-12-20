@@ -10,6 +10,7 @@ import logging
 import boto3
 from boto3.dynamodb.conditions import Key
 import logging
+from common.ops import op
 
 # Configure Logging 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -263,6 +264,40 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user):
     return accessible_src_ids, access_denied_src_ids
 
 
+@op(
+    path="/embedding-dual-retrieval",
+    name="retrieveEmbeddings",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Retrieve embeddings from Amplify data sources based on user input using the dual retrieval method.
+
+    Example request:
+    {
+        "data": {
+            "userInput": "Can you describe the policies outlined in the document?",
+            "dataSources": ["global/09342587234089234890.content.json"],
+            "limit": 10
+        }
+    }
+
+    Example response:
+    {
+        "result": [
+            {
+                "content": "xmlns:w=3D'urn:schemas-microsoft-com:office:word' ...",
+                "file": "global/24059380341.content.json",
+                "line_numbers": [15, 30],
+                "score": 0.7489801645278931
+            }
+        ]
+    }
+    """,
+    params={
+        "userInput": "String. Required. Query text for embedding retrieval. Example: 'What are the main points of this document?'.",
+        "dataSources": "Array of strings. Required. List of data source IDs to retrieve embeddings from. These ids must start with global/ Example: ['global/09342587234089234890.content.json'].  User can find these keys by calling the /files/query endpoint",
+        "limit": "Integer. Optional. Maximum number of results to return. Default: 10."
+    }
+)
 @validated("dual-retrieval")
 def process_input_with_dual_retrieval(event, context, current_user, name, data):
     data = data['data']
