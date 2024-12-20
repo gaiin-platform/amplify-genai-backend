@@ -136,14 +136,6 @@ functions:
           cors: true
         
 
-  convertApiDocs:
-    handler: service/core.docx_pdf_api_doc_convert
-    events:
-      - s3:
-          bucket: ${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}
-          event: s3:ObjectCreated:*
-          existing: true
-
 resources:
   Resources:
     LambdaAPIIAMPolicy:
@@ -163,7 +155,6 @@ resources:
                 - s3:GetObject
                 - s3:PutObject
                 - s3:HeadObject
-                - s3:PutBucketNotification
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -189,13 +180,4 @@ resources:
             ServerSideEncryptionConfiguration:
               - ServerSideEncryptionByDefault:
                   SSEAlgorithm: AES256        
-          NotificationConfiguration:
-            LambdaConfigurations:
-              - Event: 's3:ObjectCreated:Put'
-                Filter:
-                  S3Key:
-                    Rules:
-                      - Name: suffix
-                        # Value: 'Amplify_API_Documentation.docx'
-                        Value: '.docx'
-                Function: !GetAtt ConvertApiDocsLambdaFunction.Arn
+        

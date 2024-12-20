@@ -1,7 +1,7 @@
 {
 	"info": {
-		"_postman_id": "1abf8b77-22b4-4b24-b1c0-10e5350f4995",
-		"name": "Amplify_API",
+		"_postman_id": "6598f6ff-3b32-4432-897c-2ceb75c597d6",
+		"name": "Amplify",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
 		"_exporter_id": "33931694"
 	},
@@ -34,9 +34,7 @@
 					"raw": "https://<Your_URL>/assistant/create/codeinterpreter",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -75,9 +73,7 @@
 					"raw": "https://<Your_URL>/assistant/openai/thread/delete?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -123,9 +119,7 @@
 					"raw": "https://<Your_URL>/files/upload",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -163,9 +157,7 @@
 					"raw": "https://<Your_URL>/assistant/files/download/codeinterpreter",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -205,9 +197,7 @@
 					"raw": "https://<Your_URL>/assistant/share",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -245,9 +235,7 @@
 					"raw": "https://<Your_URL>/assistant/create",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -276,9 +264,7 @@
 					"raw": "https://<Your_URL>/state/share",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"state",
@@ -307,9 +293,7 @@
 					"raw": "https://<Your_URL>/assistant/list",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -347,9 +331,7 @@
 					"raw": "https://<Your_URL>/assistant/delete",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -387,9 +369,7 @@
 					"raw": "https://<Your_URL>/files/query",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -427,9 +407,7 @@
 					"raw": "https://<Your_URL>/files/set_tags",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -467,9 +445,7 @@
 					"raw": "https://<Your_URL>/files/tags/delete",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -508,9 +484,7 @@
 					"raw": "https://<Your_URL>/state/share/load",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"state",
@@ -549,9 +523,7 @@
 					"raw": "https://<Your_URL>/files/tags/create",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -564,6 +536,9 @@
 		},
 		{
 			"name": "/files/tags/list",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
 			"request": {
 				"auth": {
 					"type": "bearer",
@@ -575,11 +550,11 @@
 						}
 					]
 				},
-				"method": "POST",
+				"method": "GET",
 				"header": [],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"data\": {}\n}",
+					"raw": "",
 					"options": {
 						"raw": {
 							"language": "json"
@@ -590,14 +565,52 @@
 					"raw": "https://<Your_URL>/files/tags/list",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
 						"tags",
 						"list"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/available_models",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://<Your_URL>/available_models",
+					"protocol": "https",
+					"host": [
+						
+					],
+					"path": [
+						"available_models"
 					]
 				}
 			},
@@ -631,9 +644,7 @@
 					"raw": "https://<Your_URL>/chat",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"chat"
@@ -670,9 +681,7 @@
 					"raw": "https://<Your_URL>/assistant/chat/codeinterpreter",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -702,9 +711,7 @@
 					"raw": "https://<Your_URL>/assistant/openai/delete?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -749,9 +756,7 @@
 					"raw": "https://<Your_URL>/embedding-dual-retrieval",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"embedding-dual-retrieval"
