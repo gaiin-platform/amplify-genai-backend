@@ -446,6 +446,164 @@ validators = {
             },
             "required": ["proposedStartTime", "proposedEndTime"]
         }
+    },
+    "/google/integrations/drive/list-files": {
+        "list_files": {
+            "type": "object",
+            "properties": {
+                "folderId": {"type": "string"},
+            },
+            "required": [],
+        }
+    },
+    "/google/integrations/drive/search-files": {
+        "search_files": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+        }
+    },
+    "/google/integrations/drive/get-file-metadata": {
+        "get_file_metadata": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/get-file-content": {
+        "get_file_content": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/create-file": {
+        "create_file": {
+            "type": "object",
+            "properties": {
+                "fileName": {"type": "string"},
+                "content": {"type": "string"},
+                "mimeType": {"type": "string"},
+            },
+            "required": ["fileName", "content"],
+        }
+    },
+    "/google/integrations/drive/get-download-link": {
+        "get_download_link": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/create-shared-link": {
+        "create_shared_link": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+                "permission": {"type": "string", "enum": ["view", "edit"]},
+            },
+            "required": ["fileId", "permission"],
+        }
+    },
+    "/google/integrations/drive/share-file": {
+        "share_file": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+                "emails": {"type": "array", "items": {"type": "string"}},
+                "role": {"type": "string", "enum": ["reader", "commenter", "writer"]},
+            },
+            "required": ["fileId", "emails", "role"],
+        }
+    },
+    "/google/integrations/drive/convert-file": {
+        "convert_file": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+                "targetMimeType": {"type": "string"},
+            },
+            "required": ["fileId", "targetMimeType"],
+        }
+    },
+    "/google/integrations/drive/list-folders": {
+        "list_folders": {
+            "type": "object",
+            "properties": {
+                "parentFolderId": {"type": "string"},
+            },
+            "required": [],
+        }
+    },
+    "/google/integrations/drive/move-item": {
+        "move_item": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+                "destinationFolderId": {"type": "string"},
+            },
+            "required": ["itemId", "destinationFolderId"],
+        }
+    },
+    "/google/integrations/drive/copy-item": {
+        "copy_item": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+                "newName": {"type": "string"},
+            },
+            "required": ["itemId"],
+        }
+    },
+    "/google/integrations/drive/rename-item": {
+        "rename_item": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+                "newName": {"type": "string"},
+            },
+            "required": ["itemId", "newName"],
+        }
+    },
+    "/google/integrations/drive/get-file-revisions": {
+        "get_file_revisions": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/create-folder": {
+        "create_folder": {
+            "type": "object",
+            "properties": {
+                "folderName": {"type": "string"},
+                "parentId": {"type": "string"},
+            },
+            "required": ["folderName"],
+        }
+    },
+    "/google/integrations/drive/delete-item-permanently": {
+        "delete_item_permanently": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+            },
+            "required": ["itemId"],
+        }
+    },
+    "/google/integrations/drive/get-root-folder-ids": {
+        "get_root_folder_ids": {
+        }
     }
 }
 
@@ -849,6 +1007,164 @@ api_validators = {
                 "returnConflictingEvents": {"type": "boolean"}
             },
             "required": ["proposedStartTime", "proposedEndTime"]
+        }
+    },
+    "/google/integrations/drive/list-files": {
+        "list_files": {
+            "type": "object",
+            "properties": {
+                "folderId": {"type": "string"},
+            },
+            "required": [],
+        }
+    },
+    "/google/integrations/drive/search-files": {
+        "search_files": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+        }
+    },
+    "/google/integrations/drive/get-file-metadata": {
+        "get_file_metadata": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/get-file-content": {
+        "get_file_content": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/create-file": {
+        "create_file": {
+            "type": "object",
+            "properties": {
+                "fileName": {"type": "string"},
+                "content": {"type": "string"},
+                "mimeType": {"type": "string"},
+            },
+            "required": ["fileName", "content"],
+        }
+    },
+    "/google/integrations/drive/get-download-link": {
+        "get_download_link": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/create-shared-link": {
+        "create_shared_link": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+                "permission": {"type": "string", "enum": ["view", "edit"]},
+            },
+            "required": ["fileId", "permission"],
+        }
+    },
+    "/google/integrations/drive/share-file": {
+        "share_file": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+                "emails": {"type": "array", "items": {"type": "string"}},
+                "role": {"type": "string", "enum": ["reader", "commenter", "writer"]},
+            },
+            "required": ["fileId", "emails", "role"],
+        }
+    },
+    "/google/integrations/drive/convert-file": {
+        "convert_file": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+                "targetMimeType": {"type": "string"},
+            },
+            "required": ["fileId", "targetMimeType"],
+        }
+    },
+    "/google/integrations/drive/list-folders": {
+        "list_folders": {
+            "type": "object",
+            "properties": {
+                "parentFolderId": {"type": "string"},
+            },
+            "required": [],
+        }
+    },
+    "/google/integrations/drive/move-item": {
+        "move_item": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+                "destinationFolderId": {"type": "string"},
+            },
+            "required": ["itemId", "destinationFolderId"],
+        }
+    },
+    "/google/integrations/drive/copy-item": {
+        "copy_item": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+                "newName": {"type": "string"},
+            },
+            "required": ["itemId"],
+        }
+    },
+    "/google/integrations/drive/rename-item": {
+        "rename_item": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+                "newName": {"type": "string"},
+            },
+            "required": ["itemId", "newName"],
+        }
+    },
+    "/google/integrations/drive/get-file-revisions": {
+        "get_file_revisions": {
+            "type": "object",
+            "properties": {
+                "fileId": {"type": "string"},
+            },
+            "required": ["fileId"],
+        }
+    },
+    "/google/integrations/drive/create-folder": {
+        "create_folder": {
+            "type": "object",
+            "properties": {
+                "folderName": {"type": "string"},
+                "parentId": {"type": "string"},
+            },
+            "required": ["folderName"],
+        }
+    },
+    "/google/integrations/drive/delete-item-permanently": {
+        "delete_item_permanently": {
+            "type": "object",
+            "properties": {
+                "itemId": {"type": "string"},
+            },
+            "required": ["itemId"],
+        }
+    },
+    "/google/integrations/drive/get-root-folder-ids": {
+        "get_root_folder_ids": {
         }
     }
 }
