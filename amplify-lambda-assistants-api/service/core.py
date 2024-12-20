@@ -71,7 +71,7 @@ def build_amplify_api_action(current_user, token, data):
     }
 
     payload = {
-        "data": data["action"]["payload"]
+        "data": data["action"].get("payload", {})
     }
 
     def send_request():
