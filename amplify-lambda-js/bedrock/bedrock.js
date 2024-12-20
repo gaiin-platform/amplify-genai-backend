@@ -107,6 +107,10 @@ function combineMessages(oldMessages) {
         j += 1;
     }
 
+    if (messages.length === 0 || (messages[0]['role'] !== 'user')) {
+        messages.unshift({'role': 'user', 'content': "NA Intentionally left empty, disregard and continue"});
+    } 
+
     return messages;
 }
 
