@@ -604,6 +604,118 @@ validators = {
     "/google/integrations/drive/get-root-folder-ids": {
         "get_root_folder_ids": {
         }
+    },
+
+    "/google/integrations/forms/create-form": {
+        "create_form": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string"}
+            },
+            "required": ["title"]
+        }
+    },
+    "/google/integrations/forms/get-form-details": {
+        "get_form_details": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/add-question": {
+        "add_question": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "questionType": {"type": "string"},
+                "title": {"type": "string"},
+                "required": {"type": "boolean"},
+                "options": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["formId", "questionType", "title"]
+        }
+    },
+    "/google/integrations/forms/update-question": {
+        "update_question": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "questionId": {"type": "string"},
+                "title": {"type": "string"},
+                "required": {"type": "boolean"},
+                "options": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["formId", "questionId"]
+        }
+    },
+    "/google/integrations/forms/delete-question": {
+        "delete_question": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "questionId": {"type": "string"}
+            },
+            "required": ["formId", "questionId"]
+        }
+    },
+    "/google/integrations/forms/get-responses": {
+        "get_responses": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/get-response": {
+        "get_response": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "responseId": {"type": "string"}
+            },
+            "required": ["formId", "responseId"]
+        }
+    },
+    "/google/integrations/forms/set-form-settings": {
+        "set_form_settings": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "settings": {"type": "object"}
+            },
+            "required": ["formId", "settings"]
+        }
+    },
+    "/google/integrations/forms/get-form-link": {
+        "get_form_link": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/update-form-info": {
+        "update_form_info": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/list-user-forms": {
+        "list_user_forms": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     }
 }
 
@@ -1165,6 +1277,118 @@ api_validators = {
     },
     "/google/integrations/drive/get-root-folder-ids": {
         "get_root_folder_ids": {
+        }
+    },
+
+    "/google/integrations/forms/create-form": {
+        "create_form": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string"}
+            },
+            "required": ["title"]
+        }
+    },
+    "/google/integrations/forms/get-form-details": {
+        "get_form_details": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/add-question": {
+        "add_question": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "questionType": {"type": "string"},
+                "title": {"type": "string"},
+                "required": {"type": "boolean"},
+                "options": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["formId", "questionType", "title"]
+        }
+    },
+    "/google/integrations/forms/update-question": {
+        "update_question": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "questionId": {"type": "string"},
+                "title": {"type": "string"},
+                "required": {"type": "boolean"},
+                "options": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["formId", "questionId"]
+        }
+    },
+    "/google/integrations/forms/delete-question": {
+        "delete_question": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "questionId": {"type": "string"}
+            },
+            "required": ["formId", "questionId"]
+        }
+    },
+    "/google/integrations/forms/get-responses": {
+        "get_responses": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/get-response": {
+        "get_response": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "responseId": {"type": "string"}
+            },
+            "required": ["formId", "responseId"]
+        }
+    },
+    "/google/integrations/forms/set-form-settings": {
+        "set_form_settings": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "settings": {"type": "object"}
+            },
+            "required": ["formId", "settings"]
+        }
+    },
+    "/google/integrations/forms/get-form-link": {
+        "get_form_link": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/update-form-info": {
+        "update_form_info": {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"}
+            },
+            "required": ["formId"]
+        }
+    },
+    "/google/integrations/forms/list-user-forms": {
+        "list_user_forms": {
+            "type": "object",
+            "properties": {},
+            "required": []
         }
     }
 }
