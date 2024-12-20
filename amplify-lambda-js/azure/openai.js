@@ -65,8 +65,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     let body = {...chatBody};
     const options = {...body.options};
     delete body.options;
-
-    const modelId = (options.model && options.model.id) || "gpt-4-1106-Preview";
+    const model = options.model;
+    const modelId = (model && model.id) || "gpt-4-1106-Preview";
 
     let tools = options.tools;
     if(!tools && options.functions){
@@ -91,8 +91,28 @@ export const chat = async (endpointProvider, chatBody, writable) => {
        ...body,
         "stream": true,
     };
+    // append additional system prompt
+    if (model.systemPrompt) {
+        data.messages[0].content += `\n${model.systemPrompt}`
+    }
 
-    data.messages = await includeImageSources(body.imageSources, data.messages, options.model);
+    if (!model.supportsSystemPrompts) {
+        data.messages = data.messages.map(m => { 
+            return (m.role === 'system') ? {...m, role: 'user'} : m}
+        );
+    }
+
+    if (["o1-mini", "o1-preview"].includes(data.model)) {
+        data.max_completion_tokens = data.max_tokens;
+        delete data.max_tokens;
+        delete data.model;
+        delete data.stream;
+        delete data.temperature;
+        delete data.top_p;
+        delete data.n;
+    }
+
+    data.messages = await includeImageSources(body.imageSources, data.messages, model);
 
     if(tools){
         data.tools = tools;
@@ -120,6 +140,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if(isOpenAIEndpoint(url)){
         data.model = translateModelToOpenAI(body.model);
     }
+
 
     logger.debug("Calling OpenAI API with url: "+url);
 
