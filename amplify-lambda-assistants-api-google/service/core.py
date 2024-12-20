@@ -1,5 +1,7 @@
 from common.ops import vop
 from common.validate import validated
+from integrations.google.forms import create_form, get_form_details, add_question, update_question, delete_question, \
+    get_responses, get_response, set_form_settings, get_form_link, update_form_info, list_user_forms
 from integrations.google.calendar import get_events_between_dates, create_event, check_event_conflicts, \
     get_free_time_slots, get_events_for_date, get_event_details, delete_event, update_event
 from integrations.google.docs import find_text_indices, append_text
@@ -815,3 +817,159 @@ def delete_item_permanently_handler(event, context, current_user, name, data):
 @validated("get_root_folder_ids")
 def get_root_folder_ids_handler(event, context, current_user, name, data):
     return common_handler(get_root_folder_ids)(event, context, current_user, name, data)
+
+
+@vop(
+    path="/google/integrations/forms/create-form",
+    tags=["default"],
+    name="createForm",
+    description="Creates a new Google Form.",
+    params={
+        "title": "The title of the new form",
+        "description": "Optional description for the form"
+    }
+)
+@validated("create_form")
+def create_form_handler(event, context, current_user, name, data):
+    return common_handler(create_form, 'title', description="")(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/get-form-details",
+    tags=["default"],
+    name="getFormDetails",
+    description="Retrieves details of a specific Google Form.",
+    params={
+        "formId": "The ID of the form to retrieve"
+    }
+)
+@validated("get_form_details")
+def get_form_details_handler(event, context, current_user, name, data):
+    return common_handler(get_form_details, 'formId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/add-question",
+    tags=["default"],
+    name="addQuestion",
+    description="Adds a new question to a Google Form.",
+    params={
+        "formId": "The ID of the form",
+        "questionType": "The type of question (e.g., 'TEXT', 'MULTIPLE_CHOICE', 'CHECKBOX')",
+        "title": "The title of the question",
+        "required": "Whether the question is required (default: false)",
+        "options": "List of options for multiple choice or checkbox questions (optional)"
+    }
+)
+@validated("add_question")
+def add_question_handler(event, context, current_user, name, data):
+    return common_handler(add_question, 'formId', 'questionType', 'title', required=False, options=None)(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/update-question",
+    tags=["default"],
+    name="updateQuestion",
+    description="Updates an existing question in a Google Form.",
+    params={
+        "formId": "The ID of the form",
+        "questionId": "The ID of the question to update",
+        "title": "The new title of the question (optional)",
+        "required": "Whether the question is required (optional)",
+        "options": "New list of options for multiple choice or checkbox questions (optional)"
+    }
+)
+@validated("update_question")
+def update_question_handler(event, context, current_user, name, data):
+    return common_handler(update_question, 'formId', 'questionId', title=None, required=None, options=None)(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/delete-question",
+    tags=["default"],
+    name="deleteQuestion",
+    description="Deletes a question from a Google Form.",
+    params={
+        "formId": "The ID of the form",
+        "questionId": "The ID of the question to delete"
+    }
+)
+@validated("delete_question")
+def delete_question_handler(event, context, current_user, name, data):
+    return common_handler(delete_question, 'formId', 'questionId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/get-responses",
+    tags=["default"],
+    name="getResponses",
+    description="Retrieves all responses for a Google Form.",
+    params={
+        "formId": "The ID of the form"
+    }
+)
+@validated("get_responses")
+def get_responses_handler(event, context, current_user, name, data):
+    return common_handler(get_responses, 'formId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/get-response",
+    tags=["default"],
+    name="getResponse",
+    description="Retrieves a specific response from a Google Form.",
+    params={
+        "formId": "The ID of the form",
+        "responseId": "The ID of the response to retrieve"
+    }
+)
+@validated("get_response")
+def get_response_handler(event, context, current_user, name, data):
+    return common_handler(get_response, 'formId', 'responseId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/set-form-settings",
+    tags=["default"],
+    name="setFormSettings",
+    description="Updates the settings of a Google Form.",
+    params={
+        "formId": "The ID of the form",
+        "settings": "A dictionary of settings to update"
+    }
+)
+@validated("set_form_settings")
+def set_form_settings_handler(event, context, current_user, name, data):
+    return common_handler(set_form_settings, 'formId', 'settings')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/get-form-link",
+    tags=["default"],
+    name="getFormLink",
+    description="Retrieves the public link for a Google Form.",
+    params={
+        "formId": "The ID of the form"
+    }
+)
+@validated("get_form_link")
+def get_form_link_handler(event, context, current_user, name, data):
+    return common_handler(get_form_link, 'formId')(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/update-form-info",
+    tags=["default"],
+    name="updateFormInfo",
+    description="Updates the title and/or description of a Google Form.",
+    params={
+        "formId": "The ID of the form",
+        "title": "The new title for the form (optional)",
+        "description": "The new description for the form (optional)"
+    }
+)
+@validated("update_form_info")
+def update_form_info_handler(event, context, current_user, name, data):
+    return common_handler(update_form_info, 'formId', title=None, description=None)(event, context, current_user, name, data)
+
+@vop(
+    path="/google/integrations/forms/list-user-forms",
+    tags=["default"],
+    name="listUserForms",
+    description="Lists all forms owned by the current user.",
+    params={}
+)
+@validated("list_user_forms")
+def list_user_forms_handler(event, context, current_user, name, data):
+    return common_handler(list_user_forms)(event, context, current_user, name, data)
