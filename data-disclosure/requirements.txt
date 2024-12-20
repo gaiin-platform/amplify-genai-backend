@@ -10,4 +10,5 @@ pydantic_core==2.10.1
 python-jose==3.3.0
 python-dotenv==1.0.0
 requests==2.31.0
-mammoth==1.8.0
+PyMuPDF==1.25.1
+# Markdown==3.7
