@@ -468,6 +468,95 @@ functions:
           path: /google/integrations/drive/get-root-folder-ids
           method: post
 
+  googleFormsCreateForm:
+    handler: service/core.create_form_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/create-form
+          method: post
+
+  googleFormsGetFormDetails:
+    handler: service/core.get_form_details_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/get-form-details
+          method: post
+
+  googleFormsAddQuestion:
+    handler: service/core.add_question_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/add-question
+          method: post
+
+  googleFormsUpdateQuestion:
+    handler: service/core.update_question_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/update-question
+          method: post
+
+  googleFormsDeleteQuestion:
+    handler: service/core.delete_question_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/delete-question
+          method: post
+
+  googleFormsGetResponses:
+    handler: service/core.get_responses_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/get-responses
+          method: post
+
+  googleFormsGetResponse:
+    handler: service/core.get_response_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/get-response
+          method: post
+
+  googleFormsSetFormSettings:
+    handler: service/core.set_form_settings_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/set-form-settings
+          method: post
+
+  googleFormsGetFormLink:
+    handler: service/core.get_form_link_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/get-form-link
+          method: post
+
+  googleFormsUpdateFormInfo:
+    handler: service/core.update_form_info_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/update-form-info
+          method: post
+
+  googleFormsListUserForms:
+    handler: service/core.list_user_forms_handler
+    timeout: 30
+    events:
+      - http:
+          path: google/integrations/forms/list-user-forms
+          method: post
+
+
 resources:
   Resources:
     LambdaAPIIAMPolicy:

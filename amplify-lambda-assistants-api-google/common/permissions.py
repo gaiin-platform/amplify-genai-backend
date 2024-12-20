@@ -178,4 +178,47 @@ permissions_by_state_type = {
     "/google/integrations/drive/get-root-folder-ids": {
         "get_root_folder_ids": lambda for_user, with_data: True
     },
+    "/google/integrations/forms/create-form": {
+        "create_form": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/get-form-details": {
+        "get_form_details": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/add-question": {
+        "add_question": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/update-question": {
+        "update_question": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/delete-question": {
+        "delete_question": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/get-responses": {
+        "get_responses": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/get-response": {
+        "get_response": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/set-form-settings": {
+        "set_form_settings": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/get-form-link": {
+        "get_form_link": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/update-form-info": {
+        "update_form_info": lambda for_user, with_data: True
+    },
+
+    "/google/integrations/forms/list-user-forms": {
+        "list_user_forms": lambda for_user, with_data: True
+    }
 }
