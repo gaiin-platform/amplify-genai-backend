@@ -192,7 +192,7 @@ functions:
       
     role: !GetAtt CreateAstAdminGroupRole.Arn
 
-    create_amplify_asts:
+  create_amplify_asts:
     handler: groups.create_amplify_assistants
     timeout: 12
     layers:
