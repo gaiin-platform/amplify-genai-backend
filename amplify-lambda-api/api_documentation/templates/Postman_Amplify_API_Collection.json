@@ -1,7 +1,7 @@
 {
 	"info": {
 		"_postman_id": "6598f6ff-3b32-4432-897c-2ceb75c597d6",
-		"name": "Amplify_API_Prod",
+		"name": "Amplify",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
 		"_exporter_id": "33931694"
 	},
@@ -31,12 +31,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/create/codeinterpreter",
+					"raw": "https://<Your_URL>/assistant/create/codeinterpreter",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -72,12 +70,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/openai/thread/delete?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093",
+					"raw": "https://<Your_URL>/assistant/openai/thread/delete?threadId=yourEmail@vanderbilt.edu/thr/8923047385920349782093",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -120,12 +116,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/files/upload",
+					"raw": "https://<Your_URL>/files/upload",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -160,12 +154,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/files/download/codeinterpreter",
+					"raw": "https://<Your_URL>/assistant/files/download/codeinterpreter",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -202,12 +194,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/share",
+					"raw": "https://<Your_URL>/assistant/share",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -242,12 +232,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/create",
+					"raw": "https://<Your_URL>/assistant/create",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -273,12 +261,10 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/state/share",
+					"raw": "https://<Your_URL>/state/share",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"state",
@@ -304,12 +290,10 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/list",
+					"raw": "https://<Your_URL>/assistant/list",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -344,12 +328,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/delete",
+					"raw": "https://<Your_URL>/assistant/delete",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -384,12 +366,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/files/query",
+					"raw": "https://<Your_URL>/files/query",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -424,12 +404,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/files/set_tags",
+					"raw": "https://<Your_URL>/files/set_tags",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -464,12 +442,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/files/tags/delete",
+					"raw": "https://<Your_URL>/files/tags/delete",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -505,12 +481,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/state/share/load",
+					"raw": "https://<Your_URL>/state/share/load",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"state",
@@ -546,12 +520,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/files/tags/create",
+					"raw": "https://<Your_URL>/files/tags/create",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -590,12 +562,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/files/tags/list",
+					"raw": "https://<Your_URL>/files/tags/list",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"files",
@@ -634,12 +604,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/available_models",
+					"raw": "https://<Your_URL>/available_models",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"available_models"
@@ -673,12 +641,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/chat",
+					"raw": "https://<Your_URL>/chat",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"chat"
@@ -712,12 +678,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/chat/codeinterpreter",
+					"raw": "https://<Your_URL>/assistant/chat/codeinterpreter",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -744,12 +708,10 @@
 				"method": "DELETE",
 				"header": [],
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/assistant/openai/delete?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823",
+					"raw": "https://<Your_URL>/assistant/openai/delete?assistantId=yourEmail@vanderbilt.edu/ast/38940562397049823",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"assistant",
@@ -791,12 +753,10 @@
 					}
 				},
 				"url": {
-					"raw": "https://prod-api.vanderbilt.ai/embedding-dual-retrieval",
+					"raw": "https://<Your_URL>/embedding-dual-retrieval",
 					"protocol": "https",
 					"host": [
-						"prod-api",
-						"vanderbilt",
-						"ai"
+						
 					],
 					"path": [
 						"embedding-dual-retrieval"

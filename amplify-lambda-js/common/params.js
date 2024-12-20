@@ -1,5 +1,6 @@
 import {chat} from "../azure/openai.js";
 import {chatAnthropic} from "../bedrock/anthropic.js";
+import { chatBedrock } from "../bedrock/bedrock.js";
 import {chatMistral} from "../bedrock/mistral.js";
 import {getLLMConfig} from "../common/secrets.js";
 
@@ -43,14 +44,20 @@ export const getAccountId = (params) => {
     return params.account.accountId;
 }
 
-export const getChatFn = (modelId, body, writable, context) => {
-    if (modelId.includes("gpt")) {
+export const getChatFn = (model, body, writable, context) => {
+
+    if (model.id.includes("gpt")) {
         return chat(getLLMConfig, body, writable, context);
-
-    } else if (modelId.includes("anthropic")) { //claude models
-        return chatAnthropic(body, writable, context);
-
-    } else if (modelId.includes("mistral")) { // mistral 7b and mixtral 7x8b
-        return chatMistral(body, writable, context);
+    } else if (model.provider === 'Bedrock') {
+        return chatBedrock(body, writable, context);
+    } else {
+        console.log(`Error: Model ${model} does not have a corresponding chatFn`)
+        return null;
     }
+    // else if (modelId.includes("anthropic")) { //claude models
+    //     return chatAnthropic(body, writable, context);
+
+    // } else if (modelId.includes("mistral")) { // mistral 7b and mixtral 7x8b
+    //     return chatMistral(body, writable, context);
+    
 }

@@ -211,7 +211,7 @@ ${body.messages.slice(-1)[0].content}
     const names = assistants.map((a) => a.name);
 
     const chatFn = async (body, writable, context) => {
-        return await getChatFn(model.id, body, writable, context);
+        return await getChatFn(model, body, writable, context);
     }
     const llmClone = llm.clone(chatFn);
 

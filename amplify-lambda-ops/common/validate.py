@@ -63,6 +63,7 @@ register_ops_schema = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
+                    "method": {"type": "string"},
                     "url": {"type": "string"},
                     "name": {"type": "string"},
                     "description": {"type": "string"},
@@ -84,7 +85,7 @@ register_ops_schema = {
                         "items": {"type": "string"},
                     },
                 },
-                "required": ["id", "url", "name", "description", "params"],
+                "required": ["id", "method", "url", "name", "description", "params"],
                 "additionalProperties": True
             },
         }

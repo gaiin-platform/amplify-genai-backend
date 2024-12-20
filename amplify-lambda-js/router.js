@@ -118,7 +118,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
             logger.debug("Determining chatFn");
             const chatFn = async (body, writable, context) => {
-                return await getChatFn(model.id, body, writable, context);
+                return await getChatFn(model, body, writable, context);
             }
 
             if (!params.body.dataSources) {

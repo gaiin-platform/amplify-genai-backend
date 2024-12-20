@@ -145,7 +145,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     let llm = await getDefaultLLM(model, resultCollector, user);
     //we need to ensure the chatFn is adjusted according to the model 
     const chatFn = async (body, writable, context) => {
-        return await getChatFn(model.id, body, writable, context);
+        return await getChatFn(model, body, writable, context);
     }
     llm = llm.clone(chatFn);
 

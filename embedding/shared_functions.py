@@ -2,6 +2,7 @@
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
+from enum import Enum
 from openai import AzureOpenAI
 from openai import OpenAI
 import tiktoken
@@ -23,6 +24,11 @@ logger.setLevel(logging.INFO)
 
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version    = os.environ['API_VERSION']
+
+class PROVIDERS(Enum):
+    AZURE = 'Azure'
+    OPENAI = 'OpenAI'
+    BEDROCK = 'Bedrock'
 
 
 embedding_model_name = None
@@ -75,11 +81,11 @@ def generate_embeddings(content):
     if (not embedding_model_name):
         logging.error(f"No Models Provided:\nembedding: {embedding_model_name}")
         return {"success": False, "error": f"No Models Provided:\nembedding: {embedding_model_name}"}
-    if embedding_provider == "bedrock":
+    if embedding_provider == PROVIDERS.BEDROCK.value:
         return generate_bedrock_embeddings(content)
-    if embedding_provider == "azure":
+    if embedding_provider == PROVIDERS.AZURE.value:
         return generate_azure_embeddings(content)
-    if embedding_provider == "openai":
+    if embedding_provider == PROVIDERS.OPENAI.value:
         return generate_openai_embeddings(content)
 
 def generate_bedrock_embeddings(content):
@@ -143,11 +149,11 @@ def generate_openai_embeddings(content):
     return {"success": True, "data": embedding, "token_count": token_count}        
 
 def generate_questions(content):
-    if qa_provider == "bedrock":
+    if qa_provider == PROVIDERS.BEDROCK.value:
         return generate_bedrock_questions(content)
-    if qa_provider == "azure":
+    if qa_provider == PROVIDERS.AZURE.value:
         return generate_azure_questions(content)
-    if qa_provider == "openai":
+    if qa_provider == PROVIDERS.OPENAI.value:
         return generate_openai_questions(content)
 
 def generate_bedrock_questions(content):

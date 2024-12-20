@@ -47,7 +47,7 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
     const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
 
     const chatFn = async (body, writable, context) => {
-        return await getChatFn(model.id, body, writable, context);
+        return await getChatFn(model, body, writable, context);
     }
 
     const llm = new LLM(

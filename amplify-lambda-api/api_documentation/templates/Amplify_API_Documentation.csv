@@ -1,6 +1,6 @@
 Amplify_API_Documentation
 Path,Method,Summary,Expected Data,Responses,Example Body,Example Response,
-https://prod-api.vanderbilt.ai,,,,,,,
+https://<Your_URL>,,,,,,,
           /available_models,GET,"View a list of available models, including id, name, descriptions, context window size, output token limit, provider, support of base-64 encoded images as data source input, support of system prompts, and any additional system prompts Amplify appends to the model.",,"200: List of available models and Amplify’s set default, cheapest, and advanced models. Content: application/json    models (list of model objects)    default (object)    cheapest (object)    advanced (object)",,"{
   ""success"": true,
   ""data"": {

@@ -444,7 +444,7 @@ export const ragAction = (config = {
             
             const model = llm.params.cheapestModel;
             const chatFn = async (body, writable, context) => {
-                return await getChatFn(model.id, body, writable, context);
+                return await getChatFn(model, body, writable, context);
             }
 
             const ragLLM = llm.clone(chatFn);

@@ -19,3 +19,13 @@ export const mistralTransform = (event) => {
         return null;
     }
 }
+
+
+export const bedrockConverseTransform = (event) => { 
+    console.log(event)
+    if (event && event.d && event.d.delta && event.d.delta.text) { 
+        return {d: event.d.delta.text}
+    } else {
+        return null;
+    }
+}

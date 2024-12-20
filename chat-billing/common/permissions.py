@@ -28,7 +28,7 @@ permissions_by_state_type = {
     "/billing/report-generator": {
         "report_generator": can_generate_report,
     },
-    "/available_models/get": {
+    "/available_models": {
         "read": can_read
     },
     "/supported_models/update": {
