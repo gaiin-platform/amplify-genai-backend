@@ -5,15 +5,48 @@ from common.validate import validated
 from model_rates.update_table import load_model_rate_table
 from common.amplifyGroups import verify_user_in_amp_group
 from common.auth_admin import verify_user_as_admin
+from common.ops import op
 dynamodb = boto3.resource('dynamodb')
 
+@op(
+    path="/available_models",
+    name="getUserAvailableModels",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""Retrieve a list of available AI models for the user, including details such as model ID, name, description, and capabilities.
+
+    Example response:
+    {
+        "success": true,
+        "data": {
+            # list of Model dicts. example
+            "models": [
+                {
+                    "id": "gpt-4o",
+                    "name": "GPT-4o",
+                    "description": "An optimized version of GPT-4 for general use.",
+                    "inputContextWindow": 200000,
+                    "outputTokenLimit": 4096, 
+                    "supportsImages": true,
+                    "provider": "OpenAI",
+                    "supportsSystemPrompts": true,
+                    "systemPrompt": "Additional Prompt",
+                },
+            ],
+            "default": <Model dict>,
+            "advanced": <Model dict>,
+            "cheapest": <Model dict>
+        }
+    }
+    """,
+    params={}
+)
 
 @validated(op='read')
 def get_user_available_models(event, context, current_user, name, data):
     # Retrieve supported models
     supported_models_result = get_supported_models()
 
-    # Check if retrieval was successful
     if not supported_models_result.get("success"):
         return supported_models_result
     
@@ -24,8 +57,6 @@ def get_user_available_models(event, context, current_user, name, data):
         extract_data(model_id, model_data) for model_id, model_data in supported_models 
         if (model_data.get("isAvailable", False) or verify_user_in_amp_group(data["access_token"], model_data.get("exclusiveGroupAvailability", [])))
     ]
-
-    # print("----------------------------------")
     print(available_models)
 
     default_model = None
@@ -51,8 +82,11 @@ def extract_data(model_id, model_data):
         "name": model_data["name"],
         "description": model_data.get("description", ""),
         "inputContextWindow": model_data.get("inputContextWindow", -1),
+        "outputTokenLimit": model_data.get("outputTokenLimit", -1),
         "supportsImages": model_data.get("supportsImages", False),
-        "provider": model_data.get("provider", '')
+        "provider": model_data.get("provider", ''),
+        "supportsSystemPrompts": model_data.get("supportsSystemPrompts", False),
+        "systemPrompt": model_data.get("systemPrompt", ''),
         }
 
 
@@ -187,9 +221,9 @@ dynamodb_to_internal_field_map = {
     'UsersDefault': 'isDefault',
     'Available': 'isAvailable',
     'Built-In': 'isBuiltIn',
-
+    'SupportsSystemPrompts': 'supportsSystemPrompts',
+    'AdditionalSystemPrompt': 'systemPrompt',
 }
-
 
 def model_transform_db_to_internal(model):
     return {

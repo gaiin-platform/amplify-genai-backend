@@ -210,8 +210,11 @@ functions:
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
       
-    role: !GetAtt CreateAstAdminGroupRole.Arn
+    role: !GetAtt CreateAmpAstAdminGroupRole.Arn
 
   replace_group_key:
     handler: groups.replace_group_key
@@ -699,6 +702,54 @@ resources:
         ManagedPolicyArns:
           - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref CreateAstAdminGroupPolicy
+
+
+    CreateAmpAstAdminGroupPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-hash-files"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+
+    CreateAmpAstAdminGroupRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - !Ref CreateAmpAstAdminGroupPolicy
 
     ReplaceAstAdminGroupKeyPolicy:
       Type: AWS::IAM::ManagedPolicy
