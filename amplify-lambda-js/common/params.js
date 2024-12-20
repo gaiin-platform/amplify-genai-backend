@@ -46,7 +46,7 @@ export const getAccountId = (params) => {
 
 export const getChatFn = (model, body, writable, context) => {
 
-    if (model.id.includes("gpt")) {
+    if (model.id.includes("gpt") || model.id.includes("o1") ) {
         return chat(getLLMConfig, body, writable, context);
     } else if (model.provider === 'Bedrock') {
         return chatBedrock(body, writable, context);

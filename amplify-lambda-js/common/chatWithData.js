@@ -288,7 +288,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
         const selectedModel = model.id;
         let result;
-        if (selectedModel.includes("gpt")) {
+        if (selectedModel.includes("gpt") || selectedModel.includes("o1")) {
             result = openAiTransform(event);  
             
         } else if (model.provider === 'Bedrock') {

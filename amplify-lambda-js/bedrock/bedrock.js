@@ -27,7 +27,8 @@ export const chatBedrock = async (chatBody, writable) => {
         }
     }
 
-    const sanitizedMessages = await sanitizeMessages(withoutSystemMessages, body.imageSources)
+    const combinedMessages = combineMessages(withoutSystemMessages);
+    const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources)
     
     try {
         
@@ -42,21 +43,16 @@ export const chatBedrock = async (chatBody, writable) => {
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
                         }
+
         if (currentModel.supportsSystemPrompts) {
             input.system = systemPrompts;
         } else {
             // Gather all text values from the system prompts list
             const systemPromptsText = systemPrompts.map(sp => sp.text).join("\n\n");
-
-            // Create a user message with the gathered system prompts
-            const systemPromptMessage = {
-                role: "user",
-                content: [{ text: `System Prompts: ${systemPromptsText}` }],
-            };
-
-            // Insert the system prompt message
             const sanitizedMessagesCopy = [...sanitizedMessages];
-            sanitizedMessagesCopy.splice(-1, 0, systemPromptMessage);
+
+            sanitizedMessagesCopy[sanitizedMessagesCopy.length -1].content[0].text +=
+            `Recall your custom instructions are: ${systemPromptsText}`;
 
             input.messages = sanitizedMessagesCopy;
         }
@@ -85,6 +81,37 @@ export const chatBedrock = async (chatBody, writable) => {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
         return null;
     }
+}
+
+function combineMessages(oldMessages) {
+    if (!oldMessages) return oldMessages;
+    let messages = [];
+    const delimiter = "\n_________________________\n";
+    
+    const newestMessage = oldMessages[oldMessages.length - 1]
+    if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] = `${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
+    
+    let i = -1;
+    let j = 0;
+    while (j < oldMessages.length) {
+        const curMessageRole = oldMessages[j]['role'];
+        const oldContent = oldMessages[j]['content'];
+        if (!oldContent) oldMessages[j]['content'] = "NA Intentionally left empty, disregard and continue";
+        if (messages.length == 0 || (messages[i]['role'] !== curMessageRole)) {
+            oldMessages[j]['content'] = oldMessages[j]['content'].trimEnd() // remove white space, final messages cause error if not
+            messages.push(oldMessages[j]);
+            i += 1;
+        } else if (messages[i]['role'] === oldMessages[j]['role']) {
+            messages[i]['content'] += delimiter + oldContent;
+        } 
+        j += 1;
+    }
+
+    if (messages.length === 0 || (messages[0]['role'] !== 'user')) {
+        if (systemPrompt) messages.unshift({'role': 'user', 'content': `${systemPrompt}`});
+    } 
+
+    return messages;
 }
 
 
