@@ -20,27 +20,22 @@ def convert_dictionaries(input_list):
         result.append([item['id'], name])
     return result
 
-def list_files(current_user, folder_id=None):
 
-    # if folder ID is none, then return the root files themselves
-    if folder_id is None:
-        root_folder_ids = get_root_folder_ids(current_user)
-        return root_folder_ids
-
-    service = get_drive_service(current_user)
-    query = f"'{folder_id}' in parents" if folder_id else None
-    results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
-    return results.get('files', [])
-
-def search_files(current_user, query):
-    service = get_drive_service(current_user)
-    formatted_query = f"name contains '{query}'"
-    results = service.files().list(q=formatted_query, fields="files(id, name, mimeType)").execute()
-    return results.get('files', [])
 
 def get_file_metadata(current_user, file_id):
     service = get_drive_service(current_user)
-    return service.files().get(fileId=file_id, fields='id,name,mimeType,createdTime,modifiedTime,size').execute()
+    metadata = service.files().get(fileId=file_id, fields='id,name,mimeType,createdTime,modifiedTime,size').execute()
+
+    result = [
+        metadata['id'],
+        '/' + metadata['name'] if metadata['mimeType'] == 'application/vnd.google-apps.folder' else metadata['name'],
+        f"mimeType={metadata['mimeType']}",
+        f"createdTime={metadata['createdTime']}",
+        f"modifiedTime={metadata['modifiedTime']}",
+        f"size={metadata.get('size', 'N/A')}"
+    ]
+
+    return result
 
 def get_file_content(current_user, file_id):
     service = get_drive_service(current_user)
@@ -58,22 +53,6 @@ def create_file(current_user, file_name, content, mime_type='text/plain'):
     media = MediaIoBaseUpload(BytesIO(content.encode()), mimetype=mime_type)
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     return file.get('id')
-
-def list_folders(current_user, parent_folder_id=None):
-
-    # if parent folder ID is none, return the root folders themselves
-    # in the form of a list of dictionaries with keys 'id' and 'name'
-    if parent_folder_id is None:
-        root_folder_ids = get_root_folder_ids(current_user)
-        return root_folder_ids
-
-
-    service = get_drive_service(current_user)
-    query = "mimeType='application/vnd.google-apps.folder'"
-    if parent_folder_id:
-        query += f" and '{parent_folder_id}' in parents"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    return results.get('files', [])
 
 def get_download_link(current_user, file_id):
     service = get_drive_service(current_user)
@@ -152,23 +131,18 @@ def copy_item(current_user, item_id, new_name=None):
     service = get_drive_service(current_user)
     body = {'name': new_name} if new_name else {}
     copied_file = service.files().copy(fileId=item_id, body=body).execute()
-    return copied_file
+    return convert_dictionaries([copied_file])[0]
 
 def rename_item(current_user, item_id, new_name):
     service = get_drive_service(current_user)
     file = service.files().update(fileId=item_id, body={'name': new_name}).execute()
-    return file
+    return convert_dictionaries([file])[0]
 
-# 2. Rename files or folders (already provided in previous response)
-
-# 3. Get file revisions
 def get_file_revisions(current_user, file_id):
     service = get_drive_service(current_user)
     revisions = service.revisions().list(fileId=file_id).execute()
     return revisions.get('revisions', [])
 
-
-# 4. Create a new folder
 def create_folder(current_user, folder_name, parent_id=None):
     service = get_drive_service(current_user)
     file_metadata = {
@@ -180,19 +154,45 @@ def create_folder(current_user, folder_name, parent_id=None):
     folder = service.files().create(body=file_metadata, fields='id').execute()
     return folder
 
-
 def delete_item_permanently(current_user, item_id):
     service = get_drive_service(current_user)
     service.files().delete(fileId=item_id).execute()
     return {"success": True, "message": f"Item with ID {item_id} has been permanently deleted."}
 
+def list_files(current_user, folder_id=None):
+    if folder_id is None:
+        root_folder_ids = get_root_folder_ids(current_user)
+        return convert_dictionaries(root_folder_ids)
+
+    service = get_drive_service(current_user)
+    query = f"'{folder_id}' in parents" if folder_id else None
+    results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+    return convert_dictionaries(results.get('files', []))
+
+def search_files(current_user, query):
+    service = get_drive_service(current_user)
+    formatted_query = f"name contains '{query}'"
+    results = service.files().list(q=formatted_query, fields="files(id, name, mimeType)").execute()
+    return convert_dictionaries(results.get('files', []))
+
+def list_folders(current_user, parent_folder_id=None):
+    if parent_folder_id is None:
+        root_folder_ids = get_root_folder_ids(current_user)
+        return convert_dictionaries(root_folder_ids)
+
+    service = get_drive_service(current_user)
+    query = "mimeType='application/vnd.google-apps.folder'"
+    if parent_folder_id:
+        query += f" and '{parent_folder_id}' in parents"
+    results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+    return convert_dictionaries(results.get('files', []))
 
 def get_root_folder_ids(current_user):
     service = get_drive_service(current_user)
     results = service.files().list(q="'root' in parents and mimeType='application/vnd.google-apps.folder'",
-                                   fields="files(id, name)").execute()
+                                   fields="files(id, name, mimeType)").execute()
     root_folders = results.get('files', [])
-    return [{'id': folder['id'], 'name': folder['name']} for folder in root_folders]
+    return convert_dictionaries(root_folders)
 
 
 
