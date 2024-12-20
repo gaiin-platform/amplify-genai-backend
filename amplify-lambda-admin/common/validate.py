@@ -226,10 +226,10 @@ update_admin_config_schema = {
                                              "isDefault": {
                                                 "type": "boolean"
                                             },
-                                            "systempPrompt": {
+                                            "systemPrompt": {
                                                 "type": "string"
                                             },
-                                            "supportsSystempPrompts": {
+                                            "supportsSystemPrompts": {
                                                 "type": "boolean"
                                             },
                                              "supportsImages": {
@@ -267,7 +267,7 @@ update_admin_config_schema = {
                                             }
                                         },
                                         "required": ["id","name", "provider", "description", "isAvailable", 
-                                                     "supportsImages","supportsSystempPrompts", "systempPrompt"
+                                                     "supportsImages","supportsSystemPrompts", "systemPrompt",
                                                      "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
                                                      "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
