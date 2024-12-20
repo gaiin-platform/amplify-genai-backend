@@ -82,6 +82,12 @@ update_models_schema = {
                             "isDefault": {
                             "type": "boolean"
                         },
+                            "systempPrompt": {
+                            "type": "string"
+                        },
+                            "supportsSystempPrompts": {
+                            "type": "boolean"
+                        },
                             "supportsImages": {
                             "type": "boolean"
                         },
@@ -118,7 +124,8 @@ update_models_schema = {
                     },
                     "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
-                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "exclusiveGroupAvailability"],
+                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost",
+                                    "exclusiveGroupAvailability", "systempPrompt", "supportsSystempPrompts"],
                     "additionalProperties": False
                 }
             },
@@ -131,7 +138,7 @@ update_models_schema = {
 
 validators = {
     "/billing": {"report_generator": report_generator_schema},
-    "/available_models/get": {
+    "/available_models": {
         "read": {}
     },
     "/supported_models/update": {
@@ -143,7 +150,9 @@ validators = {
 }
 
 api_validators = {
-    "/billing": {"report_generator": report_generator_schema},
+    "/available_models": {
+        "read": {}
+    },
 }
 
 
