@@ -228,7 +228,7 @@ resources:
                 - sqs:ReceiveMessage
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
-
+                - bedrock:InvokeModel
               Resource:
                 - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
                 - "arn:aws:secretsmanager:us-east-1:514391678313:secret:aws/ses/credentials-i82Vzw"
@@ -250,10 +250,14 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/${self:service}-${sls:stage}-embedding-progress"
                 - "arn:aws:dynamodb:${self:provider.region}:514391678313:table/vu-amplify-object-access-${sls:stage}-object-access"
                 - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${self:provider.region}:514391678313:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:bedrock:*::foundation-model/*"
+
   
           
 #    RagPostgresDbCluster:

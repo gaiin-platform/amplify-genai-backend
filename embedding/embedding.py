@@ -25,6 +25,8 @@ rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
 embedding_model_name = None
 qa_model_name = None
 model_result = get_embedding_models()
+print('Model_result', model_result)
+
 if (model_result['success']): 
     data = model_result['data']
     embedding_model_name = data['embedding']['model_id']
