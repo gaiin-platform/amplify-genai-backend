@@ -19,7 +19,6 @@ def get_embedding_models():
         while 'LastEvaluatedKey' in response:
             response = model_rate_table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
             items.extend(response.get('Items', []))
-
         # Filter and find the default embedding and QA models
         for item in items:
             if item.get('DefaultEmbeddingsModel') is True:
@@ -28,10 +27,12 @@ def get_embedding_models():
                 defaults['qa'] = {'model_id': item['ModelID'], 'provider': item['Provider']}
 
     except Exception as e:
+        print(f"Error retrieving default models: {str(e)}")
         return {"success": False, "message": f"Error retrieving default models: {str(e)}"}
 
     # Check if both default models were found
     if not defaults['embedding'] or not defaults['qa']:
+        print("Could not find all default models")
         return {"success": False, "message": "Could not find all default models"}
 
     return {"success": True, "data": defaults}
