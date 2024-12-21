@@ -89,7 +89,9 @@ function combineMessages(oldMessages) {
     const delimiter = "\n_________________________\n";
     
     const newestMessage = oldMessages[oldMessages.length - 1]
-    if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] = `${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
+    if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] =
+        //`${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
+        `${delimiter}${newestMessage['content']}`
     
     let i = -1;
     let j = 0;
