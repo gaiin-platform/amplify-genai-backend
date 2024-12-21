@@ -22,7 +22,8 @@ from integrations.oauth import MissingCredentialsError
 import re
 
 def camel_to_snake(name):
-    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+    snake = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+    return snake
 
 def common_handler(operation, *required_params, **optional_params):
     def handler(event, context, current_user, name, data):
@@ -433,8 +434,8 @@ def find_text_indices_handler(event, context, current_user, name, data):
     name="getEventsBetweenDates",
     description="Retrieves events from Google Calendar between two specified dates.",
     params={
-        "startDate": "The start date in ISO 8601 format",
-        "endDate": "The end date in ISO 8601 format",
+        "startDate": "The start date in ISO 8601 format (e.g., 2024-12-20T23:59:59Z)",
+        "endDate": "The end date in ISO 8601 format (e.g., 2024-12-20T23:59:59Z)",
         "includeDescription": "Optional. Include event description (default: false)",
         "includeAttendees": "Optional. Include event attendees (default: false)",
         "includeLocation": "Optional. Include event location (default: false)"
@@ -524,12 +525,13 @@ def get_events_for_date_handler(event, context, current_user, name, data):
     params={
         "startDate": "The start date in ISO 8601 format",
         "endDate": "The end date in ISO 8601 format",
-        "duration": "The minimum duration of free time slots in minutes"
+        "duration": "The minimum duration of free time slots in minutes",
+        'userTimeZone': "Optional. The time zone of the user (default: 'America/Chicago')"
     }
 )
 @validated("get_free_time_slots")
 def get_free_time_slots_handler(event, context, current_user, name, data):
-    return common_handler(get_free_time_slots, 'startDate', 'endDate', 'duration')(event, context, current_user, name, data)
+    return common_handler(get_free_time_slots, 'startDate', 'endDate', 'duration', userTimeZone="America/Chicago")(event, context, current_user, name, data)
 
 @vop(
     path="/google/integrations/calendar/check-event-conflicts",

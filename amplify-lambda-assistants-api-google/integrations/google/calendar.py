@@ -2,6 +2,8 @@ from googleapiclient.discovery import build
 from integrations.oauth import get_user_credentials
 from google.oauth2.credentials import Credentials
 from datetime import datetime, timedelta, timezone
+from dateutil import tz
+from zoneinfo import ZoneInfo
 
 integration_name = "google_calendar"
 
@@ -72,6 +74,8 @@ def get_event_details(current_user, event_id):
 
 def get_events_between_dates(current_user, start_date, end_date, include_description=False, include_attendees=False, include_location=False):
     service = get_calendar_service(current_user)
+    start_date = normalize_date(start_date)
+    end_date = normalize_date(end_date)
     events_result = service.events().list(calendarId='primary', timeMin=start_date,
                                           timeMax=end_date, singleEvents=True,
                                           orderBy='startTime').execute()
@@ -80,47 +84,146 @@ def get_events_between_dates(current_user, start_date, end_date, include_descrip
 
 def get_events_for_date(current_user, date, include_description=False, include_attendees=False, include_location=False):
     service = get_calendar_service(current_user)
-    start_of_day = date + 'T00:00:00Z'
-    end_of_day = date + 'T23:59:59Z'
+
+    # Normalize the input date
+    normalized_date = normalize_date(date)
+    if normalized_date is None:
+        raise ValueError("The provided date format is invalid.")
+
+    # Extract the date part (YYYY-MM-DD) from the normalized date
+    date_only = normalized_date.split("T")[0]  # Get YYYY-MM-DD
+
+    start_of_day = date_only + 'T00:00:00Z'
+    end_of_day = date_only + 'T23:59:59Z'
+
     events_result = service.events().list(calendarId='primary', timeMin=start_of_day,
                                           timeMax=end_of_day, singleEvents=True,
                                           orderBy='startTime').execute()
+
     return [format_event(event, include_description, include_attendees, include_location)
             for event in events_result.get('items', [])]
 
 
-def get_free_time_slots(current_user, start_date, end_date, duration):
+def normalize_date(date_string):
+    # Define the target format
+    target_format = "%Y-%m-%dT%H:%M:%SZ"
+
+    # Try parsing in various formats, including variations
+    formats_to_try = [
+        "%Y-%m-%d",                     # Original format
+        "%Y-%m-%dT%H:%M:%SZ",           # Full UTC format
+        "%Y-%m-%dT%H:%M:%S",            # Local time without Z
+        "%Y-%m-%dT%H:%M:%S.%fZ",        # With milliseconds
+        "%Y-%m-%dT%H:%M:%S.%f",         # Local time with milliseconds
+        "%d-%m-%Y",                     # Day-Month-Year
+        "%m/%d/%Y",                     # Month/Day/Year
+        "%Y/%m/%d",                     # Year/Month/Day
+        "%d/%m/%Y",                     # Day/Month/Year
+        "%m/%d/%y",                     # Month/Day/Two-digit Year
+        "%Y-%m-%dT%H:%M:%S.%fZ",        # Full UTC with fractional seconds
+        "%Y-%m-%dT%H:%M:%SZ",           # ISO-like formats
+        "%Y-%m-%dT%H:%M:%S%z",          # ISO format with timezone offset
+    ]
+
+    for date_format in formats_to_try:
+        try:
+            # Attempt to parse the date
+            parsed_date = datetime.strptime(date_string, date_format)
+            # Format to the desired format with time zone
+            return parsed_date.strftime(target_format)
+        except ValueError:
+            continue
+
+    # Check for ISO 8601 formats with timezone offset
+    try:
+        parsed_date = datetime.fromisoformat(date_string.replace("Z", "+00:00"))  # Replace Z with equivalent
+        return parsed_date.strftime(target_format)
+    except ValueError:
+        pass
+
+    print(f"Could not parse date {date_string}")
+    # If no formats were valid, return None or raise an exception
+    raise ValueError(f"Could not parse date {date_string}. Please use %Y-%m-%dT%H:%M:%SZ format.")
+
+
+def get_free_time_slots(current_user, start_date, end_date, duration, user_time_zone='America/Chicago'):
+    if user_time_zone is None:
+        user_time_zone = 'America/Chicago'
+
     service = get_calendar_service(current_user)
-    # Get all events within the specified date range
     events = get_events_between_dates(current_user, start_date, end_date)
 
-    free_slots = []
-    # Convert start_date and end_date to datetime objects
-    current_time = datetime.fromisoformat(start_date[:-1])  # Remove 'Z' from ISO format
-    end_time = datetime.fromisoformat(end_date[:-1])
+    print(f"User time zone: {user_time_zone}")
 
-    for event in events:
-        # Convert event start time to datetime object
-        event_start = datetime.fromisoformat(event['start']['dateTime'][:-1])
-        # Check if there's enough time between current_time and event_start for the desired duration
-        if int((event_start - current_time).total_seconds()) >= duration * 60:
-            # If so, add this time slot to free_slots
-            free_slots.append({
-                'start': current_time.isoformat() + 'Z',
-                'end': (event_start - timedelta(minutes=1)).isoformat() + 'Z'
-            })
-        # Move current_time to the end of this event
-        current_time = datetime.fromisoformat(event['end']['dateTime'][:-1])
+    free_slots_by_date = {}
+    usertz = ZoneInfo(user_time_zone)
 
-    # Check if there's a free slot after the last event
+    def parse_datetime(date_str):
+        dt = datetime.fromisoformat(date_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=usertz)
+        return dt.astimezone(usertz)
+
+    # Parse start and end times
+    current_time = parse_datetime(start_date)
+    end_time = parse_datetime(end_date)
+
+    # Sort events by start time
+    sorted_events = sorted(events, key=lambda x: parse_datetime(x['start']))
+
+    # Process events
+    for event in sorted_events:
+        event_start = parse_datetime(event['start'])
+
+        # Check if there's enough time before the event
+        if (event_start - current_time).total_seconds() >= duration * 60:
+            add_time_slot(free_slots_by_date, current_time, event_start, usertz)
+
+        # Move current time to end of event
+        event_end = parse_datetime(event['end'])
+        current_time = max(current_time, event_end)
+
+    # Add final slot if there's time remaining
     if (end_time - current_time).total_seconds() >= duration * 60:
-        free_slots.append({
-            'start': current_time.isoformat() + 'Z',
-            'end': end_time.isoformat() + 'Z'
-        })
+        add_time_slot(free_slots_by_date, current_time, end_time, usertz)
 
-    return free_slots
+    # Format results
+    result = [
+        {"date": date, "times": times}
+        for date, times in sorted(free_slots_by_date.items())
+    ]
 
+    return result
+
+def add_time_slot(slots_dict, start_time, end_time, timezone):
+    date_str = start_time.strftime("%m/%d/%y")
+    time_str = (f"{start_time.strftime('%I:%M %p')} – "
+                f"{(end_time - timedelta(minutes=1)).strftime('%I:%M %p')} "
+                f"({start_time.tzname()})")
+
+    if date_str not in slots_dict:
+        slots_dict[date_str] = []
+    slots_dict[date_str].append(time_str)
+
+
+def timezone_abbreviation(timezone_str):
+    try:
+        timezone = tz.gettz(timezone_str)
+        current_time = datetime.now(timezone)
+        return current_time.tzname() or timezone_str
+    except Exception:
+        # Fallback to original timezone string if anything fails
+        return timezone_str.split('/')[-1]
+
+def parse_datetime(date_str, usertz):
+    dt = datetime.fromisoformat(date_str)
+    if dt.tzinfo is None:
+        # If no timezone info, assume it's in user's timezone
+        dt = dt.replace(tzinfo=usertz)
+    else:
+        # If it has timezone info, convert to user's timezone
+        dt = dt.astimezone(usertz)
+    return dt
 
 def get_calendar_service(current_user):
     user_credentials = get_user_credentials(current_user, integration_name)

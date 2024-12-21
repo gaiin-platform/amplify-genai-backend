@@ -431,7 +431,8 @@ validators = {
             "properties": {
                 "startDate": {"type": "string", "format": "date-time"},
                 "endDate": {"type": "string", "format": "date-time"},
-                "duration": {"type": "integer", "minimum": 1}
+                "duration": {"type": "integer", "minimum": 1},
+                "userTimeZone": {"type": "string"}
             },
             "required": ["startDate", "endDate", "duration"]
         }
@@ -1326,7 +1327,8 @@ api_validators = {
             "properties": {
                 "startDate": {"type": "string", "format": "date-time"},
                 "endDate": {"type": "string", "format": "date-time"},
-                "duration": {"type": "integer", "minimum": 1}
+                "duration": {"type": "integer", "minimum": 1},
+                "userTimeZone": {"type": "string"}
             },
             "required": ["startDate", "endDate", "duration"]
         }
