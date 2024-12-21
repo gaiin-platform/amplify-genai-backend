@@ -45,6 +45,10 @@ const defaultAssistant = {
         logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
         logger.debug(`Required tokens: ${requiredTokens}, limit: ${limit}, aboveLimit: ${aboveLimit}`);
 
+        if(params.blockTerminator) {
+            body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
+        }
+
         if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
         }

@@ -14,6 +14,8 @@ import { v4 as uuidv4 } from 'uuid';
 import {getContextMessages} from "./chat/rag/rag.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
+import {createBlockDetector} from "./chat/controllers/blockDetector.js";
+import {localKill} from "../requests/requestState.js";
 
 const logger = getLogger("chatWithData");
 
@@ -269,6 +271,11 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // forward bill for 100 tokens, we will account for this at the end
     await recordUsage(account, requestId, model, 0, increment, {});
 
+    // This is a block detector that is used to detect the end of an assistant operation
+    // and automatically ignore the rest of the output. If it isn't set, nothing will
+    // happen, it will just return the input.
+    let responseStreamClosed = false;
+    const blockTerminator = createBlockDetector(options.blockTerminator);
     // This function is used to transform the output of the LLM provider into
     // a format that can be streamed back to the client. It translates from the
     // native streaming format of the LLM provider to the format expected by the
@@ -288,11 +295,13 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
         const selectedModel = model.id;
         let result;
+        let countTokens = true;
         if (selectedModel.includes("gpt") || selectedModel.includes("o1")) {
             result = openAiTransform(event);  
             
         } else if (model.provider === 'Bedrock') {
-            return bedrockConverseTransform(event);
+            countTokens = false;
+            result = bedrockConverseTransform(event);
         }
  
         // (selectedModel.includes("anthropic")) {
@@ -301,8 +310,15 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         // } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
         //     result = mistralTransform(event);
         // }
+        if(result && result.d){
+            const [blockEnded, remaining] = blockTerminator(result.d);
+            if(blockEnded){
+                result.d = remaining;
+                //localKill(account, requestId);
+            }
+        }
 
-        if(!result){
+        if(countTokens && !result){
             outputTokenCount--;
         }
 
@@ -444,6 +460,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     logger.debug("Chat function finished, ending responseStream.");
 
     responseStream.end();
+
 
     logger.debug(`There were ${inputTokenCount} tokens in the request. Generated ${outputTokenCount} tokens in output.`)
 

@@ -148,6 +148,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
             }
 
+            const suffixMessages = [];
             const extraMessages = [];
 
             if(params && params.options){
@@ -268,11 +269,15 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
+            let blockTerminator = null;
+
             if(assistant.data && assistant.data.operations && assistant.data.opsLanguageVersion !== "custom") {
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
                 const langMessages = langVersion.messages;
+                blockTerminator = langVersion.blockTerminator;
                 extraMessages.push(...langMessages);
+                suffixMessages.push(...(langVersion.suffixMessages || []));
             }
 
 
@@ -330,7 +335,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             content: instructions,
                         },
                         ...extraMessages,
-                        body.messages.slice(-1)[0]
+                        body.messages.slice(-1)[0],
+                        ...suffixMessages
                     ],
                     options: {
                         ...body.options,
@@ -344,7 +350,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             await assistantBase.handler(
                 llm,
-                params,
+                {...params, blockTerminator: blockTerminator || params.blockTerminator},
                 updatedBody,
                 ds,
                 responseStream);
