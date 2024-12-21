@@ -6,8 +6,8 @@ const extractTagAndFormat = (str) => {
     const regex = /\{\{\s*ops\s+([a-zA-Z0-9_./-]+)?(:[a-zA-Z0-9_./-]+)?\s*\}\}/;
     const match = str.match(regex);
 
-    if (match) {
-        return { tag: match[1], format: match[2] };
+    if (match) {                        // remove colon
+        return { tag: match[1], format: match[2]?.slice(1) };
     } else {
         return { tag: null, format: null };
     }
@@ -40,6 +40,7 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
             llm.sendStateEventToStream({resolvedOps: includedOperations});
 
             opsStr = await formatOps(includedOperations, format);
+            // console.log(opsStr)
             contextData["__assistantOps"] = includedOperations;
 
             if (!hasTemplateForOps) {
