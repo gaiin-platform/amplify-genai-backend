@@ -352,7 +352,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             data = create_result['data']
             print("AST Data: ", data)
             
-            new_ast_data ={'id':  data["id"], 'assistantId': data["assistantId"], "version": data['version']}
+            new_ast_data ={'id':  data["id"], 'assistantId': data["assistantId"], "version": data['version'], "name" : ast["name"]}
             new_assistants.append(new_ast_data)
             if (update_type == "UPDATE"):
                 current_assistants = remove_old_ast_versions(current_assistants, data['assistantId'])
@@ -925,8 +925,8 @@ def create_amplify_assistants(event, context, current_user, name, data):
         return {"success": False, "message": "Failed to register ops"}
 
     print("Adding assistants")
-    if (len(assistants > 0)):
-        ast_result = update_assistants(current_user, group_id, [], assistants)
+    if (len(assistants) > 0):
+        ast_result = update_assistants(current_user, group_id, "ADD", assistants)
         if (not ast_result['success']): 
             print("Failed to add assistants")
             return ast_result
