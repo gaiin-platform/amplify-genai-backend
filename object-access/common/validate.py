@@ -259,9 +259,8 @@ create_amplify_assistants_group_schema = {
     "properties": {
         "assistants": {
             "type": "array",
-            "items": {
-                "type": create_assistant_schema
-            }
+            "items": create_assistant_schema
+            
         },
     },
     "required": ["assistants"]

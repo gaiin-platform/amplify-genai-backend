@@ -27,7 +27,7 @@ export const chatBedrock = async (chatBody, writable) => {
         }
     }
 
-    const combinedMessages = combineMessages(withoutSystemMessages);
+    const combinedMessages = combineMessages(withoutSystemMessages, options.prompt);
     const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources)
     
     try {
@@ -79,11 +79,11 @@ export const chatBedrock = async (chatBody, writable) => {
          
     } catch (error) {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        return null;
+        sendDeltaToStream(writable, "answer", "Error retrieving response. Please try again.");
     }
 }
 
-function combineMessages(oldMessages) {
+function combineMessages(oldMessages, failSafeUserMessage) {
     if (!oldMessages) return oldMessages;
     let messages = [];
     const delimiter = "\n_________________________\n";
@@ -108,7 +108,7 @@ function combineMessages(oldMessages) {
     }
 
     if (messages.length === 0 || (messages[0]['role'] !== 'user')) {
-        messages.unshift({'role': 'user', 'content': "NA Intentionally left empty, disregard and continue"});
+        messages = [{'role': 'user', 'content': failSafeUserMessage}, ...messages];
     } 
 
     return messages;

@@ -743,7 +743,7 @@ def update_file_tags(current_user, item_id, tags):
     name="queryUploadedFiles",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Retrieve a list of uploaded files stored on the Amplify platform.
+    description="""Retrieve a list of uploaded files stored on the Amplify. A user can retrieve details about their files include id, types, size, and more.
 
     Example request:
     {
