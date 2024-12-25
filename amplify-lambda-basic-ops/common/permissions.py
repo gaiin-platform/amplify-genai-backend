@@ -37,6 +37,9 @@ permissions_by_state_type = {
     "/llm/qa_check": {
         "qa_check":  can_read
     },
+    "/llm/workflow": {
+        "llm_workflow": can_prompt
+    },
     "/work/echo": {
         "echo": can_read
     },
