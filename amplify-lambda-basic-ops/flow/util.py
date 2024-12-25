@@ -1,3 +1,4 @@
+import json
 import random
 import re
 import time
@@ -11,7 +12,7 @@ from llm.chat import chat_simple
 from flow.spec import validate_dict, convert_keys_to_strings_based_on_spec
 
 
-def generate_example(spec):
+def generate_example(spec, string_instructions="Either enclose it in \"\" or make sure it is a yaml | string if it has quotes or new lines."):
     def generate_value(type_desc):
         parts = type_desc.split('-')
         type_info = parts[0].strip()
@@ -19,7 +20,7 @@ def generate_example(spec):
         if type_info == 'bool':
             return random.choice([True, False])
         elif type_info == 'str':
-            return f"{note} Either enclose it in \"\" or make sure it is a yaml | string if it has quotes or new lines."
+            return f"{note} {string_instructions}"
         elif type_info == 'int':
             return random.randint(1, 100)
         elif type_info == 'float':
@@ -126,9 +127,10 @@ def resolve(data, path):
     return result
 
 
-def prompt_llm(prompt, system_prompt):
+def prompt_llm(prompt, system_prompt, access_token=None, model="gpt-4o"):
     # Placeholder response for demonstration purposes
-    response = chat_simple(None, "gpt-4o", system_prompt, prompt)
+    response = chat_simple(access_token, model, system_prompt, prompt)
+
     return response
 
 
@@ -140,6 +142,13 @@ def extract_yaml(response: str) -> str:
     end = response.rfind(end_marker)
     return response[start:end].strip()
 
+def extract_json(response: str) -> str:
+    start_marker = '```json'
+    end_marker = '```'
+    start = response.find(start_marker) + len(start_marker)
+    # find in reverse
+    end = response.rfind(end_marker)
+    return response[start:end].strip()
 
 def fill_prompt_template(context, template):
     def replace_var(match):
@@ -265,7 +274,7 @@ suffix_to_fix: '"\n'
 
 
 @with_retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,))
-def dynamic_prompt(context: Dict[str, Any], template: str, system_prompt: str, output_spec: Dict[str, Any]) -> Dict[str, Any]:
+def dynamic_prompt(context: Dict[str, Any], template: str, system_prompt: str, output_spec: Dict[str, Any], access_token=None, model=None, output_mode="yaml") -> Dict[str, Any]:
     # Fill in the template
     filled_prompt = fill_prompt_template(context, template)
     filled_system_prompt = fill_prompt_template(context, system_prompt)
@@ -274,12 +283,9 @@ def dynamic_prompt(context: Dict[str, Any], template: str, system_prompt: str, o
 
     #print(f"Prompt Template: {prompt_template}")
 
-    system_data_prompt = f"""
-    {filled_system_prompt}
-    
-    Follow the user's instructions very carefully.
-    Analyze the task or question and output the requested data.
 
+
+    yaml_instructions = f"""
     You output with the data should be in the YAML format:
     \`\`\`yaml
 thought: <INSERT THOUGHT>
@@ -292,32 +298,77 @@ thought: <INSERT THOUGHT>
     You ALWAYS output a \`\`\`yaml code block.
     """
 
+    mode_instructions = yaml_instructions
+    if output_mode == "json":
+        example = generate_example(output_spec, "Make sure that all quotes and newlines are escaped properly for valid json.")
+        example['thought'] = "<Insert 1-2 sentence thought of thinking step by step>"
+        mode_instructions = f"""
+You output with the data should be in the JSON format:
+\`\`\`json
+{json.dumps(example)}
+\`\`\`
+
+You MUST provide the requested data. Make sure strings are valid JSON strings
+that properly escape special characters, newlines, etc.
+
+IMPORTANT!!! Make sure and escape any new line or special characters in the JSON string.
+
+You ALWAYS output a \`\`\`json code block with all new lines and quotes escaped within json property values.
+"""
+
+
+    system_data_prompt = f"""
+    {filled_system_prompt}
+    
+    Follow the user's instructions very carefully.
+    Analyze the task or question and output the requested data.
+
+    {mode_instructions}
+    """
+
     # Call the LLM with the prompt
-    llm_response = prompt_llm(filled_prompt, system_data_prompt)
+    llm_response = prompt_llm(filled_prompt, system_data_prompt, access_token, model)
+    structured_data = None
 
-    # Extract YAML from the LLM response
-    yaml_content = extract_yaml(llm_response)
-    if not yaml_content:
-        # see if it got cut off producing out and try to recover
-        yaml_content = extract_yaml(f"{llm_response}\n\n```")
-        fix = fix_truncated_yaml_output(yaml_content)
-        yaml_content = f"{yaml_content}{fix}\n"
+    if output_mode == "yaml":
+        # Extract YAML from the LLM response
+        yaml_content = extract_yaml(llm_response)
+        if not yaml_content:
+            # see if it got cut off producing out and try to recover
+            yaml_content = extract_yaml(f"{llm_response}\n\n```")
+            fix = fix_truncated_yaml_output(yaml_content)
+            yaml_content = f"{yaml_content}{fix}\n"
 
-    # Parse the YAML content
-    parsed_data = yaml.safe_load(yaml_content)
+        # Parse the YAML content
+        parsed_data = yaml.safe_load(yaml_content)
+        structured_data = convert_keys_to_strings_based_on_spec(output_spec, parsed_data)
+    elif output_mode == "json":
+        # Extract JSON from the LLM response
+        json_content = extract_json(llm_response)
+        # if not json_content:
+        #     # see if it got cut off producing out and try to recover
+        #     json_content = extract_json(f"{llm_response}\n\n```")
+        #     fix = fix_truncated_json_output(json_content)
+        #     json_content = f"{json_content}{fix}\n"
 
-    parsed_data = convert_keys_to_strings_based_on_spec(output_spec, parsed_data)
+        # Parse the JSON content
+        try:
+            parsed_data = json.loads(json_content)
+            structured_data = convert_keys_to_strings_based_on_spec(output_spec, parsed_data)
+        except json.JSONDecodeError as e:
+            print("Failed to parse:", json_content)
+            print("JSON Decode Error:", e)
+            raise
 
     # Validate and parse the data using the Pydantic model
     try:
         if output_spec:
-            valid, msg = validate_dict(output_spec, parsed_data)
+            valid, msg = validate_dict(output_spec, structured_data)
             if not valid:
                 raise ValueError(f"LLM output validation Error: {msg}")
 
         return parsed_data, {
             'llm_response': llm_response,
-            'yaml_content': yaml_content,
             'prompt': template,
             'system_prompt': system_prompt,
             'filled_prompt': filled_prompt,

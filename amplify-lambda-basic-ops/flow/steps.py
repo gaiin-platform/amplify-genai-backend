@@ -118,7 +118,12 @@ class Prompt(Step):
         return [get_root_key(path) for path in list(set(paths + spaths))]
 
     def run(self, context: Dict, options={}) -> Dict:
-        result, data = dynamic_prompt(context, self.prompt, self.system_prompt, self.output)
+
+        access_token = options.get('access_token', None)
+        model = options.get('model', None)
+        output_mode = options.get('output_mode', 'yaml')
+
+        result, data = dynamic_prompt(context, self.prompt, self.system_prompt, self.output, access_token, model, output_mode)
 
         self.get_tracer(options)(
             self.id,
@@ -474,7 +479,12 @@ def load_yaml(yaml_input: str) -> Tuple[Dict, str]:
 
 def parse_workflow(yaml_input: str) -> 'Workflow':
     try:
-        data, base_dir = load_yaml(yaml_input)
+        # check if yaml_input is a dict
+        if isinstance(yaml_input, dict):
+            data = yaml_input
+            base_dir = None
+        else:
+            data, base_dir = load_yaml(yaml_input)
     except yaml.YAMLError as e:
         raise WorkflowValidationError(f"Invalid YAML: {str(e)}")
 

@@ -375,6 +375,7 @@ def chat_simple(access_token, model, system_instructions, prompt_instructions):
             }
         }
     )
+
     return response
 
 

@@ -115,6 +115,15 @@ functions:
             method: post
             cors: true
 
+  llm_workflow:
+    handler: service/core.llm_workflow
+    timeout: 900
+    events:
+      - http:
+          path: /llm/workflow
+          method: post
+          cors: true
+
   echo:
     handler: service/work.echo
     events:

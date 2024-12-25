@@ -1,4 +1,5 @@
 import os
+import threading
 import traceback
 import uuid
 
@@ -6,6 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from common.ops import op, vop
 from common.validate import validated
+from flow.steps import parse_workflow
 from llm.chat import chat, prompt
 from work.session import create_session
 
@@ -276,6 +278,82 @@ def llm_qa_check(event, context, current_user, name, data):
         }
 
 
+@validated(op="llm_workflow")
+def llm_workflow(event, context, current_user, name, data):
+    try:
+        """
+
+        """
+        # This must be configured in the registry entry as described above
+        access_token = data['access_token']
+        data = data['data']
+        template_doc = data['template']
+
+        try:
+
+            try:
+
+
+
+                trace_lock = threading.Lock()
+                trace = []
+
+                def progress_callback(percent):
+                    print(f"--- Progress: {percent}%")
+
+                def recording_tracer(id, tag, data, log_file='trace_log.yaml'):
+                    try:
+                        logdata = data
+                        if isinstance(data, dict):
+                            logdata = next((data[key].keys() for key in ['result','context'] if key in data), data)
+                        elif isinstance(data, list):
+                            logdata = f"list[{len(data)}]"
+                        print(f"--- Step {id}: {tag} - {logdata}")
+                        with trace_lock:
+                            trace.append({'id': id, 'tag': tag, 'data': data})
+                    except Exception as e:
+                        print(f"--- Error recording trace: {str(e)}")
+
+                steps = parse_workflow(template_doc)
+
+                print(f"--- Executing workflow: {steps} ")
+
+                result = steps.exec({},
+                                    {
+                                        'access_token': access_token,
+                                        'model': 'gpt-4o',
+                                        'output_mode': 'yaml',
+                                        'tracer': recording_tracer,
+                                        'progress_callback': progress_callback
+                                    })
+
+                return {
+                    'success': True,
+                    'data': result
+                }
+
+            except Exception as e:
+                # print a detailed stack trace
+                print(f"--- ERROR {str(e)}")
+                return {
+                    'success': False,
+                    'message': f"Error executing steps: {str(e)}"
+                }
+
+
+        except ValidationError as e:
+            print(e)
+            return {
+                'success': False,
+                'message': "Invalid parameters {e}"
+            }
+
+    except Exception as e:
+        print(e)
+        return {
+            'success': False,
+            'message': "Failed to execute the operation"
+        }
 
 
 # Example usage:
