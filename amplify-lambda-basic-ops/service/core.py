@@ -292,9 +292,6 @@ def llm_workflow(event, context, current_user, name, data):
         try:
 
             try:
-
-
-
                 trace_lock = threading.Lock()
                 trace = []
 
@@ -318,7 +315,7 @@ def llm_workflow(event, context, current_user, name, data):
 
                 print(f"--- Executing workflow: {steps} ")
 
-                result = steps.exec({},
+                result = steps.exec(data.get("context",{}),
                                     {
                                         'access_token': access_token,
                                         'model': 'gpt-4o',
