@@ -57,6 +57,20 @@ query_schema = {
     "additionalProperties": True
 }
 
+workflow_schema = {
+    "type": "object",
+    "properties": {
+        "workflow": {
+            "type": "string"
+        },
+        "context":{
+            "type": "object"
+        }
+    },
+    "required": ["workflow"],
+    "additionalProperties": True
+}
+
 qa_check_schema = {
 
 }
@@ -96,6 +110,9 @@ validators = {
     "/llm/qa_check": {
         "qa_check": qa_check_schema
     },
+    "/llm/workflow": {
+        "workflow": workflow_schema
+    },
     "/work/echo": {
         "echo": echo_schema
     },
@@ -123,6 +140,9 @@ api_validators = {
     },
     "/llm/qa_check": {
         "qa_check": qa_check_schema
+    },
+    "/llm/workflow": {
+        "workflow": workflow_schema
     },
     "/work/echo": {
         "echo": echo_schema
@@ -365,10 +385,10 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('basic_ops' not in access):
-            # and 'full_access' not in access
-            print("API doesn't have access to api key functionality")
-            raise PermissionError("API key does not have access to api key functionality")
+        # if ('basic_ops' not in access):
+        #     # and 'full_access' not in access
+        #     print("API doesn't have access to api key functionality")
+        #     raise PermissionError("API key does not have access to api key functionality")
         
          # Determine API user
         current_user = determine_api_user(item)
