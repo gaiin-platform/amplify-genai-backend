@@ -95,6 +95,29 @@ validators = {
     "/integrations/oauth/list": {
         "list_integrations":{}
     },
+    "/assistant-api/get-job-result":
+    {
+        "get_result": {
+            "type": "object",
+            "properties": {
+                "jobId": {"type": "string"}
+            },
+            "required": ["jobId"],
+            "additionalProperties": True
+        }
+    },
+    "/assistant-api/set-job-result":{
+        "set_result": {
+            "type": "object",
+            "properties": {
+                "jobId": {"type": "string"},
+                "result": {"type": "object"},
+                "storeAsBlob": {"type": "boolean"}
+            },
+            "required": ["jobId", "result"],
+            "additionalProperties": True
+        }
+    },
 }
 
 api_validators = {
@@ -135,6 +158,28 @@ api_validators = {
     },
     "/integrations/oauth/list": {
         "list_integrations":{}
+    },
+    "/assistant-api/get-job-result":{
+        "get_result": {
+            "type": "object",
+            "properties": {
+                "jobId": {"type": "string"}
+            },
+            "required": ["jobId"],
+            "additionalProperties": True
+        }
+    },
+    "/assistant-api/set-job-result":{
+        "set_result": {
+            "type": "object",
+            "properties": {
+                "jobId": {"type": "string"},
+                "result": {"type": "object"},
+                "storeAsBlob": {"type": "boolean"}
+            },
+            "required": ["jobId", "result"],
+            "additionalProperties": True
+        }
     },
 }
 
