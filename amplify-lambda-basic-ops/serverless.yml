@@ -46,6 +46,9 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     DYNAMIC_CODE_BUCKET: vu-amplify-${sls:stage}-dynamic-code
     LAMBDA_BASIC_OPS_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    JOB_STATUS_TABLE: vu-amplify-${sls:stage}-job-status
+    JOB_RESULTS_BUCKET: vu-amplify-${sls:stage}-job-results
+    WORKFLOW_LAMBDA_NAME: ${self:service}-${self:provider.stage}-llm_workflow_runner
 
   apiGateway:
     restApiId:
@@ -124,6 +127,19 @@ functions:
           method: post
           cors: true
 
+  llm_workflow_async:
+    handler: service/core.llm_workflow_async
+    events:
+      - http:
+          path: /llm/workflow-start
+          method: post
+          cors: true
+
+  llm_workflow_runner:
+    handler: service/core.llm_workflow_lambda_handler
+    timeout: 900
+
+
   echo:
     handler: service/work.echo
     events:
@@ -193,9 +209,14 @@ resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:Query
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+                - s3:DeleteObject
               Resource:
-                - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}
-                - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}
+                - "arn:aws:s3:::${self:provider.environment.JOB_RESULTS_BUCKET}/*"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_SESSIONS_DYNAMODB_TABLE_NAME}"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_RECORDS_DYNAMODB_TABLE_NAME}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -204,6 +225,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMO_DYNAMIC_CODE_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.JOB_STATUS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.JOB_STATUS_TABLE}/*"
             - Effect: Allow
               Action:
                 - s3:PutObject
@@ -212,7 +235,10 @@ resources:
               Resource: 
                 - arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
                 - arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
-
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${self:provider.stage}-llm_workflow_runner
 
     UserSessionsTable:
       Type: AWS::DynamoDB::Table

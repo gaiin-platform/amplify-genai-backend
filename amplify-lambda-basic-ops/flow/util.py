@@ -299,7 +299,11 @@ thought: <INSERT THOUGHT>
     """
 
     mode_instructions = yaml_instructions
-    if output_mode == "json":
+    # Just do a regular prompt
+    if len(output_spec) == 0:
+        output_mode = "plain"
+        mode_instructions = ""
+    elif output_mode == "json":
         example = generate_example(output_spec, "Make sure that all quotes and newlines are escaped properly for valid json.")
         example['thought'] = "<Insert 1-2 sentence thought of thinking step by step>"
         mode_instructions = f"""
@@ -315,7 +319,6 @@ IMPORTANT!!! Make sure and escape any new line or special characters in the JSON
 
 You ALWAYS output a \`\`\`json code block with all new lines and quotes escaped within json property values.
 """
-
 
     system_data_prompt = f"""
     {filled_system_prompt}
@@ -359,13 +362,17 @@ You ALWAYS output a \`\`\`json code block with all new lines and quotes escaped 
             print("Failed to parse:", json_content)
             print("JSON Decode Error:", e)
             raise
+    elif output_mode == "plain":
+        parsed_data = llm_response
 
     # Validate and parse the data using the Pydantic model
     try:
-        if output_spec:
+        if output_spec and output_mode != "plain":
             valid, msg = validate_dict(output_spec, structured_data)
             if not valid:
                 raise ValueError(f"LLM output validation Error: {msg}")
+        else:
+            print("No output spec provided. Skipping validation.")
 
         return parsed_data, {
             'llm_response': llm_response,

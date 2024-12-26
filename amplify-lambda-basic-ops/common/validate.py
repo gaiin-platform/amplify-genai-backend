@@ -113,6 +113,9 @@ validators = {
     "/llm/workflow": {
         "workflow": workflow_schema
     },
+    "/llm/workflow-start": {
+        "workflow": workflow_schema
+    },
     "/work/echo": {
         "echo": echo_schema
     },
@@ -142,6 +145,9 @@ api_validators = {
         "qa_check": qa_check_schema
     },
     "/llm/workflow": {
+        "workflow": workflow_schema
+    },
+    "/llm/workflow-start": {
         "workflow": workflow_schema
     },
     "/work/echo": {

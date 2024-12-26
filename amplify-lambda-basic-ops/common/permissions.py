@@ -40,6 +40,9 @@ permissions_by_state_type = {
     "/llm/workflow": {
         "llm_workflow": can_prompt
     },
+    "/llm/workflow-start": {
+        "llm_workflow_async": can_prompt
+    },
     "/work/echo": {
         "echo": can_read
     },
