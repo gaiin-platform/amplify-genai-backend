@@ -40,4 +40,10 @@ permissions_by_state_type = {
     "/integrations/oauth/user/delete": {
         "delete_integration": lambda for_user, with_data: True
     },
+    "/assistant-api/get-job-result": {
+        "get_result": lambda for_user, with_data: True
+    },
+    "/assistant-api/set-job-result": {
+        "set_result": lambda for_user, with_data: True
+    },
 }

@@ -1,6 +1,7 @@
 from decimal import Decimal
 from requests.auth import HTTPBasicAuth
 from common.encoders import DecimalEncoder
+from common.ops import vop
 from common.validate import validated
 import json
 import requests
@@ -9,6 +10,8 @@ import boto3
 from datetime import datetime
 import re
 import urllib.parse
+
+from service.jobs import check_job_status, set_job_result
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['OP_LOG_DYNAMO_TABLE'])
@@ -185,9 +188,47 @@ def build_http_action(current_user, data):
 
     return action
 
-def build_action(current_user, token, data):
+def resolve_op_definition(current_user, token, action_name, data):
+    op_def = data.get("operationDefinition", None)
+    if not op_def:
+        api_base = os.environ.get("API_BASE_URL", None)
+        # make a call to API_BASE_URL + /ops/get with {data:{tag:default}} as the payload and the token as a
+        # a bearer token
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "data": {
+                "tag": "default"
+            }
+        }
+        response = requests.post(f"{api_base}/ops/get", headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        result = response.json()
+        # convert to dict
+        ops = result.get('data', [])
+        print(f"Ops: {ops}")
+        # find the operation definition with the name action_name
+        op_def = next((op for op in ops if op.get('name', None) == action_name), None)
+
+
+    if op_def and not data.get("operationDefinition", None):
+        data["operationDefinition"] = op_def
+
+    print(f"Op def: {op_def}")
+    return op_def
+
+
+def build_action(current_user, token, action_name, data):
     #return build_http_action(current_user, data)
-    action_type = data.get("operationDefinition", {}).get("type", "custom")
+    op_def = resolve_op_definition(current_user, token, action_name, data)
+
+    if not op_def:
+        print(f"No operation definition found for {action_name}.")
+        raise ValueError(f"No operation definition found for {action_name}.")
+
+    action_type = op_def.get("type", "custom")
 
     if action_type != "http":
         print("Building Amplify API action.")
@@ -206,8 +247,6 @@ def execute_custom_auto(event, context, current_user, name, data):
         token = data["access_token"]
         nested_data = data["data"]
 
-
-
         conversation_id = nested_data["conversation"]
         message_id = nested_data["message"]
         assistant_id = nested_data["assistant"]
@@ -220,7 +259,7 @@ def execute_custom_auto(event, context, current_user, name, data):
         print(f"Message ID: {message_id}")
         print(f"Assistant ID: {assistant_id}")
 
-        action = build_action(current_user, token, nested_data)
+        action = build_action(current_user, token, action_name, nested_data)
 
         if action is None:
             print("The specified operation was not found.")
@@ -282,3 +321,64 @@ def execute_custom_auto(event, context, current_user, name, data):
         log_execution(current_user, data.get('data',{}), 500,  f"An unexpected error occurred: {str(e)}", error_result)
 
         return f"An unexpected error occurred: {str(e)}"
+
+@vop(
+    path="/assistant-api/get-job-result",
+    tags=["default"],
+    name="getJobResult",
+    description="Returns the status of the job and/or the result if it is finished.",
+    params={
+        "jobId": "The job ID to fetch the result / status of."
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "jobId": {"type": "string"}
+        },
+        "required": ["jobId"]
+    }
+)
+@validated("get_result")
+def get_job_result(event, context, current_user, name, data):
+    try:
+        # print("Nested data:", data["data"])
+        token = data["access_token"]
+        nested_data = data["data"]
+
+        job_id = nested_data["jobId"]
+
+        result = check_job_status(current_user, job_id)
+        return {
+            'success': True,
+            'data': result
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+@validated("set_result")
+def update_job_result(event, context, current_user, name, data):
+    try:
+        # print("Nested data:", data["data"])
+        nested_data = data["data"]
+
+        job_id = nested_data["jobId"]
+        result = nested_data["result"]
+        store_in_s3 = nested_data.get("storeAsBlob", False)
+
+        set_job_result(current_user, job_id, result, store_in_s3)
+
+        return {
+            'success': True,
+            'data': {
+                'message': "Job result updated."
+            }
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
