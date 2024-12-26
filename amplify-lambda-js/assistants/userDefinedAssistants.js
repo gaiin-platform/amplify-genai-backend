@@ -275,6 +275,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 && !excludeOpsInstrByAstTag(assistant.data.tags ?? [])) {
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
+                const instructionsPreProcessor = langVersion.instructionsPreProcessor;
+
+                if (instructionsPreProcessor) {
+                    assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                }
+
                 const langMessages = langVersion.messages;
                 blockTerminator = langVersion.blockTerminator;
                 extraMessages.push(...langMessages);
