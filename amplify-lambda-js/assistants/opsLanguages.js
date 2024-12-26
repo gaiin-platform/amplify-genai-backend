@@ -54,6 +54,11 @@ bigoOp("some value", "another value", "1...asdf")
     },
     "v2": {
         blockTerminator: "invoke",
+        instructionsPreProcessor: (instructions) => {
+            // Replace all {{ with \\{{ to escape Handlebars
+            instructions = instructions.replace(/{{/g, "\\{{");
+            return instructions
+        },
         "messages": [
             {
                 role: "user",
