@@ -155,13 +155,13 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 if(params.options.timeZone) {
                     extraMessages.push({
                         role: "user",
-                        content: "The user is in the " + params.options.timeZone + " time zone."
+                        content: "Helpful info, don't repeat: The user is in the " + params.options.timeZone + " time zone."
                     });
                 }
                 if(params.options.time){
                     extraMessages.push({
                         role: "user",
-                        content: "The current time for the user is " + params.options.time
+                        content: "Helpful info, don't repeat: The current time for the user is " + params.options.time
                     });
                 }
             }
