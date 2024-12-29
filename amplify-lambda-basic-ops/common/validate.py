@@ -133,8 +133,162 @@ validators = {
     },
     "/work/session/stitch_records": {
         "stitch": stitch_schema
+    },
+    "/user-data/put": {
+        "put_item": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemId", "data"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemId": {"type": "string"},
+                "data": {"type": "object"},
+                "rangeKey": {"type": "string"}
+            }
+        }
+    },
+    "/user-data/get": {
+        "get_item": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemId"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemId": {"type": "string"},
+                "rangeKey": {"type": "string"}
+            }
+        }
+    },
+    "/user-data/get-by-uuid": {
+        "get_by_uuid": {
+            "type": "object",
+            "required": ["uuid"],
+            "properties": {
+                "uuid": {"type": "string", "format": "uuid"}
+            }
+        }
+    },
+    "/user-data/query-range": {
+        "query_by_range": {
+            "type": "object",
+            "required": ["appId", "entityType"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "rangeStart": {"type": "string"},
+                "rangeEnd": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+        }
+    },
+    "/user-data/query-prefix": {
+        "query_by_prefix": {
+            "type": "object",
+            "required": ["appId", "entityType", "prefix"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "prefix": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+        }
+    },
+    "/user-data/query-type": {
+        "query_by_type": {
+            "type": "object",
+            "required": ["appId", "entityType"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+        }
+    },
+    "/user-data/delete": {
+        "delete_item": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemId"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemId": {"type": "string"},
+                "rangeKey": {"type": "string"}
+            }
+        }
+    },
+    "/user-data/batch-put": {
+        "batch_put_items": {
+            "type": "object",
+            "required": ["appId", "entityType", "items"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["itemId", "data"],
+                        "properties": {
+                            "itemId": {"type": "string"},
+                            "rangeKey": {"type": "string"},
+                            "data": {"type": "object"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/user-data/batch-get": {
+        "batch_get_items": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemIds"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["itemId"],
+                        "properties": {
+                            "itemId": {"type": "string"},
+                            "rangeKey": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/user-data/batch-delete": {
+        "batch_delete_items": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemIds"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["itemId"],
+                        "properties": {
+                            "itemId": {"type": "string"},
+                            "rangeKey": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/user-data/delete-by-uuid": {
+        "delete_by_uuid": {
+            "type": "object",
+            "required": ["uuid"],
+            "properties": {
+                "uuid": {"type": "string"}
+            }
+        }
     }
-    
 }
 
 api_validators = {
@@ -167,6 +321,161 @@ api_validators = {
     },
     "/work/session/stitch_records": {
         "stitch": stitch_schema
+    },
+    "/user-data/put": {
+        "put_item": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemId", "data"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemId": {"type": "string"},
+                "data": {"type": "object"},
+                "rangeKey": {"type": "string"}
+            }
+        }
+    },
+    "/user-data/get": {
+        "get_item": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemId"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemId": {"type": "string"},
+                "rangeKey": {"type": "string"}
+            }
+        }
+    },
+    "/user-data/get-by-uuid": {
+        "get_by_uuid": {
+            "type": "object",
+            "required": ["uuid"],
+            "properties": {
+                "uuid": {"type": "string", "format": "uuid"}
+            }
+        }
+    },
+    "/user-data/query-range": {
+        "query_by_range": {
+            "type": "object",
+            "required": ["appId", "entityType"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "rangeStart": {"type": "string"},
+                "rangeEnd": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+        }
+    },
+    "/user-data/query-prefix": {
+        "query_by_prefix": {
+            "type": "object",
+            "required": ["appId", "entityType", "prefix"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "prefix": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+        }
+    },
+    "/user-data/query-type": {
+        "query_by_type": {
+            "type": "object",
+            "required": ["appId", "entityType"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+        }
+    },
+    "/user-data/delete": {
+        "delete_item": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemId"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemId": {"type": "string"},
+                "rangeKey": {"type": "string"}
+            }
+        }
+    },
+    "/user-data/batch-put": {
+        "batch_put_items": {
+            "type": "object",
+            "required": ["appId", "entityType", "items"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["itemId", "data"],
+                        "properties": {
+                            "itemId": {"type": "string"},
+                            "rangeKey": {"type": "string"},
+                            "data": {"type": "object"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/user-data/batch-get": {
+        "batch_get_items": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemIds"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["itemId"],
+                        "properties": {
+                            "itemId": {"type": "string"},
+                            "rangeKey": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/user-data/batch-delete": {
+        "batch_delete_items": {
+            "type": "object",
+            "required": ["appId", "entityType", "itemIds"],
+            "properties": {
+                "appId": {"type": "string"},
+                "entityType": {"type": "string"},
+                "itemIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["itemId"],
+                        "properties": {
+                            "itemId": {"type": "string"},
+                            "rangeKey": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/user-data/delete-by-uuid": {
+        "delete_by_uuid": {
+            "type": "object",
+            "required": ["uuid"],
+            "properties": {
+                "uuid": {"type": "string"}
+            }
+        }
     }
 }
 
@@ -235,7 +544,7 @@ def validated(op, validate_body=True):
                 data['api_accessed'] = api_accessed
                 data['allowed_access'] = claims['allowed_access']
 
-                print(f"Invoking {f.__name__} with data: {data}")
+                print(f"Invoking {f.__name__}")
 
                 result = f(event, context, current_user, name, data)
 

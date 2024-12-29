@@ -1,5 +1,7 @@
+from functools import wraps
 
 from common import permissions
+from service.routes import route_data
 
 
 def op(tags=None, path="", name="", description="", params=None, method="POST"):
@@ -23,6 +25,7 @@ def op(tags=None, path="", name="", description="", params=None, method="POST"):
 def vop(tags=None, path="", name="", description="", params=None,  schema=None):
     # This is the actual decorator
     def decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
             # You can do something with tags, name, description, and params here
             print(f"Path: {path}")
@@ -42,5 +45,15 @@ def vop(tags=None, path="", name="", description="", params=None,  schema=None):
             # Call the actual function
             result = func(*args, **kwargs)
             return result
+
+        route_data[path] = {
+            'schema': schema,
+            'tags': tags,
+            'name': name,
+            'description': description,
+            'params': params,
+            'handler': wrapper
+        }
+
         return wrapper
     return decorator
