@@ -49,6 +49,7 @@ provider:
     JOB_STATUS_TABLE: vu-amplify-${sls:stage}-job-status
     JOB_RESULTS_BUCKET: vu-amplify-${sls:stage}-job-results
     WORKFLOW_LAMBDA_NAME: ${self:service}-${self:provider.stage}-llm_workflow_runner
+    USER_STORAGE_TABLE: vu-amplify-${sls:stage}-user-storage
 
   apiGateway:
     restApiId:
@@ -193,6 +194,16 @@ functions:
           method: post
           cors: true
 
+
+  user_data_router:
+    handler: service/user_data.route
+    timeout: 30
+    events:
+      - http:
+          path: /user-data/{proxy+}
+          method: post
+          cors: true
+
 resources:
   Resources:
     LambdaBasicOpsIAMPolicy:
@@ -239,6 +250,19 @@ resources:
               Action:
                 - lambda:InvokeFunction
               Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${self:provider.stage}-llm_workflow_runner
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:BatchWriteItem
+                - dynamodb:BatchGetItem
+              Resource:
+                - !GetAtt UserStorageTable.Arn
+                - !Join ['', [!GetAtt UserStorageTable.Arn, '/index/*']]
 
     UserSessionsTable:
       Type: AWS::DynamoDB::Table
@@ -300,6 +324,33 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL
+
+    UserStorageTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.USER_STORAGE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: UUID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: UUID-index
+            KeySchema:
+              - AttributeName: UUID
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
 
     AttachmentStorageBucket:
       Type: AWS::S3::Bucket
