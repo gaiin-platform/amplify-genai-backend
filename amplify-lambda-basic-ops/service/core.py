@@ -5,6 +5,8 @@ import traceback
 import uuid
 
 import boto3
+from boto3 import dynamodb
+from boto3.dynamodb.types import TypeDeserializer
 from pydantic import BaseModel, Field, ValidationError
 
 from common.jobs import set_job_result, init_job_status, update_job_status
@@ -279,6 +281,7 @@ def llm_qa_check(event, context, current_user, name, data):
             'success': False,
             'message': "Failed to execute the operation"
         }
+
 
 @vop(
     path="/llm/workflow-start",
