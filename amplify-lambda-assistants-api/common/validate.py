@@ -407,14 +407,11 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get("accessTypes", [])
-        if (
-            "assistants" not in access
-            and "share" not in access
-            and "full_access" not in access
-        ):
-            print("API doesn't have access to assistants")
+        if ("assistants-api" not in access):
+            # and "full_access" not in access
+            print("API doesn't have access to assistants api")
             raise PermissionError(
-                "API key does not have access to assistants functionality"
+                "API key does not have access to assistants api functionality"
             )
 
         # Determine API user
