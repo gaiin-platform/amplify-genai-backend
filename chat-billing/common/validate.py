@@ -371,8 +371,9 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('billing' not in access):
-            # and 'full_access' not in access
+        if ('chat' not in access and 
+            "full_access" not in access and
+            "admin" not in access):
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")
         
