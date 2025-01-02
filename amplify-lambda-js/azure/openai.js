@@ -3,6 +3,7 @@ import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
 import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
+import { Transform } from "stream";
 
 const logger = getLogger("openai");
 
@@ -87,7 +88,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     logger.debug("Calling OpenAI API with modelId: "+modelId);
 
-    const data = {
+    let data = {
        ...body,
         "stream": true,
     };
@@ -100,16 +101,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data.messages = data.messages.map(m => { 
             return (m.role === 'system') ? {...m, role: 'user'} : m}
         );
-    }
-
-    if (["o1-mini", "o1-preview"].includes(data.model)) {
-        data.max_completion_tokens = data.max_tokens;
-        delete data.max_tokens;
-        delete data.model;
-        delete data.stream;
-        delete data.temperature;
-        delete data.top_p;
-        delete data.n;
     }
 
     data.messages = await includeImageSources(body.imageSources, data.messages, model);
@@ -126,8 +117,9 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     const config = await endpointProvider(modelId);
 
     const url = config.url;
+    const isOpenAiEndpoint = isOpenAIEndpoint(url);
 
-    const headers = isOpenAIEndpoint(url) ?
+    const headers = isOpenAiEndpoint ?
         {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ' + config.key,
@@ -137,10 +129,19 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    if(isOpenAIEndpoint(url)){
-        data.model = translateModelToOpenAI(body.model);
-    }
+    const isO1model = ["o1-mini", "o1-preview"].includes(modelId);
 
+    if (isOpenAiEndpoint && !isO1model) data.model = translateModelToOpenAI(body.model);
+
+    if (isO1model) {
+        data = {max_completion_tokens: model.outputTokenLimit,
+                messages: data.messages
+                }
+        if (isOpenAiEndpoint) {
+            data.stram = true
+            // data.stream_options = {"include_usage": True}
+        }
+    }
 
     logger.debug("Calling OpenAI API with url: "+url);
 
@@ -156,9 +157,28 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 responseType: 'stream'
             })
                 .then(response => {
-                    // Pipe the response stream to the writable stream
-                    response.data.pipe(writableStream);
 
+                    if (isO1model && !isOpenAiEndpoint) { // azure currently does not support streaming 
+
+                        const transformStream = new Transform({
+                            transform(chunk, encoding, callback) {
+                                // console.log("O1 response raw: ", chunk.toString());
+                                // Convert chunk to string, remove newlines, and add 'data: ' prefix
+                                const modifiedData = 'data: ' + chunk.toString().replace(/\n/g, '');
+                                // console.log("modifiedData: ", chunk.toString());
+
+                                this.push(modifiedData);
+                                callback();
+                            }
+                        });
+                        response.data
+                        .pipe(transformStream)
+                        .pipe(writableStream);
+
+                    } else {
+                        response.data.pipe(writableStream);
+                    }
+                    
                     // Handle the 'finish' event to resolve the promise
                     writableStream.on('finish', resolve);
 
@@ -167,6 +187,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     writableStream.on('error', reject);
                 })
                 .catch((e)=>{
+                    
                     if(e.response && e.response.data) {
                         console.log("Error invoking OpenAI API: ",e.response.statusText);
 
