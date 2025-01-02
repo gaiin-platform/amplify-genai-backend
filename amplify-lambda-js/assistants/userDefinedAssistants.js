@@ -6,7 +6,7 @@ import {getOps} from "./ops/ops.js";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
-import {opsLanguages, excludeOpsInstrByAstTag} from "./opsLanguages.js";
+import {opsLanguages} from "./opsLanguages.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -271,8 +271,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             let blockTerminator = null;
 
-            if(assistant.data && assistant.data.operations && assistant.data.opsLanguageVersion !== "custom"
-                && !excludeOpsInstrByAstTag(assistant.data.tags ?? [])) {
+            if(assistant.data && assistant.data.operations && assistant.data.opsLanguageVersion !== "custom") {
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
                 const instructionsPreProcessor = langVersion.instructionsPreProcessor;
@@ -299,6 +298,10 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     assistant.instructions += "\n\n" + groupTypeData.additionalInstructions;
                     assistant.dataSources = [...assistant.dataSources, ...groupTypeData.dataSources];
                 }
+            }
+
+            if (assistant.data && assistant.data.supportConvAnalysis) {
+                body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
             }
 
             const instructions = await fillInTemplate(
