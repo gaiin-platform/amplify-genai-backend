@@ -92,6 +92,9 @@ def extract_data(model_id, model_data):
 
 @validated(op='read')
 def get_supported_models_as_admin(event, context, current_user, name, data):
+    if ( data['api_accessed'] and 'admin' not in data['allowed_access']):
+      return {'success': False, 'message': 'API key does not have access to admin functionality'}
+    
     if (not verify_user_as_admin(data["access_token"], 'Get Supported Models')):
         return {'success': False , 'error': 'Unable to authenticate user as admin'}
     model_result = get_supported_models()
