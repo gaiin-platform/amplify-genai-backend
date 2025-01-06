@@ -94,4 +94,10 @@ permissions_by_state_type = {
     "/user-data/delete-by-uuid": {
         "route": lambda for_user, with_data: True
     },
+    "/user-data/list-apps": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/list-entity-types": {
+        "route": lambda for_user, with_data: True
+    },
 }
