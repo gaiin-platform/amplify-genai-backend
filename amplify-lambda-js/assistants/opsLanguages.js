@@ -1,12 +1,4 @@
 
-
-const EXCLUDE_BY_TAGS = ['amplify:api-doc-helper', 'amplify:api-key-manager']
-// Using ops for apiDocumentation, the assistant is not allowed to perform ops
-export const excludeOpsInstrByAstTag = (assistantTags) => {
-    return assistantTags.some(tag => EXCLUDE_BY_TAGS.includes(tag));
-};
-
-
 export const opsLanguages = {
     "v1": {
         blockTerminator: "auto",

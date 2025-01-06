@@ -338,6 +338,10 @@ def update_assistants(current_user, group_id, update_type, ast_list):
         for ast in ast_list:
             groupDSData = {} 
             if ('data' in ast and 'groupTypeData' in ast["data"]): groupDSData = ast["data"]["groupTypeData"]
+            # always reset here in case access to conv analysis has been revoked at a group level
+            # Note for future: as you can see this only applies when an assistant has been updated. 
+            if (('data' in ast and 'supportConvAnalysis' in ast["data"]) and 
+                 not item.get('supportConvAnalysis', False)): ast["data"]["supportConvAnalysis"] = False
 
             update_perms_result = update_group_ds_perms(ast['dataSources'], groupDSData, group_id)
             if (not update_perms_result['success']):
@@ -534,14 +538,16 @@ def list_groups(event, context, current_user, name, data):
                 ast['groupId'] = group["group_id"]
                 ast["data"]["access"]['write'] = hasAdminInterfaceAccess
                 published_assistants.append(ast)
-
-        group_info.append({
-            'name' : group_name, 
-            'id' : group['group_id'], 
-            'members': group['members'], 
-            'assistants': published_assistants,
-            'groupTypes': group['groupTypes']
-        })
+                
+        if (len(published_assistants) > 0):
+            group_info.append({
+                'name' : group_name, 
+                'id' : group['group_id'], 
+                'members': group['members'], 
+                'assistants': published_assistants,
+                'groupTypes': group['groupTypes'],
+                'supportConvAnalysis': group.get('supportConvAnalysis', False), 
+            })
 
     if (len(failed_to_list) == len(group_info)):
         return {
@@ -676,8 +682,7 @@ def list_all_groups_for_admins(event, context, current_user, name, data):
                 {'group_id': group.get('group_id'), 'groupName': group.get('groupName'), 
                  'amplifyGroups' : group.get('amplifyGroups', []), 'createdBy' : group.get('createdBy'),
                  'isPublic' : group.get('isPublic', False), 'numOfAssistants' : len(group.get('assistants')), 
-                 "supportConvAnalysis": group.get('supportConvAnalysis', False), 
-                 "analysisCategories": group.get('analysisCategories', [])}
+                 "supportConvAnalysis": group.get('supportConvAnalysis', False)}
                 for group in groups
             ]
         return {
