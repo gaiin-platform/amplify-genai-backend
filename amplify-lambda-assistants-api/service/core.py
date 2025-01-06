@@ -191,6 +191,8 @@ def build_http_action(current_user, data):
 def resolve_op_definition(current_user, token, action_name, data):
     op_def = data.get("operationDefinition", None)
     if not op_def:
+        print(f"Operation definition not found in data, resolving...")
+
         api_base = os.environ.get("API_BASE_URL", None)
         # make a call to API_BASE_URL + /ops/get with {data:{tag:default}} as the payload and the token as a
         # a bearer token
@@ -203,14 +205,20 @@ def resolve_op_definition(current_user, token, action_name, data):
                 "tag": "default"
             }
         }
-        response = requests.post(f"{api_base}/ops/get", headers=headers, data=json.dumps(payload))
-        response.raise_for_status()
-        result = response.json()
-        # convert to dict
-        ops = result.get('data', [])
-        print(f"Ops: {ops}")
-        # find the operation definition with the name action_name
-        op_def = next((op for op in ops if op.get('name', None) == action_name), None)
+        try:
+            response = requests.post(f"{api_base}/ops/get", headers=headers, data=json.dumps(payload))
+            response.raise_for_status()
+            result = response.json()
+
+            print(f"Result: {result}")
+            # convert to dict
+            ops = result.get('data', [])
+            print(f"Ops: {ops}")
+            # find the operation definition with the name action_name
+            op_def = next((op for op in ops if op.get('name', None) == action_name), None)
+        except Exception as e:
+            print(f"Failed to resolve operation definition: {str(e)}")
+            return None
 
 
     if op_def and not data.get("operationDefinition", None):
