@@ -261,3 +261,52 @@ class CommonData:
                 )
         return True
 
+    def list_app_ids(self, prefix=None):
+        """
+        List all unique appIds in the DynamoDB table that optionally start with a given prefix.
+
+        Args:
+            prefix (str, optional): If provided, only returns appIds that start with this prefix.
+
+        Returns:
+            list: A list of unique appIds, optionally filtered by prefix.
+        """
+        app_ids = set()
+
+        # Initialize scanning parameters
+        scan_params = {
+            'ProjectionExpression': 'PK',
+            'FilterExpression': 'begins_with(PK, :prefix)' if prefix else None,
+            'ExpressionAttributeValues': {':prefix': f'{prefix}'} if prefix else None
+        }
+
+        # Remove None values from scan_params
+        scan_params = {k: v for k, v in scan_params.items() if v is not None}
+
+        done = False
+        start_key = None
+
+        while not done:
+            if start_key:
+                scan_params['ExclusiveStartKey'] = start_key
+
+            response = self.table.scan(**scan_params)
+
+            # Extract appIds from PK values
+            for item in response.get('Items', []):
+                pk = item.get('PK', '')
+                if '#' in pk:
+                    app_id = pk
+                    # If prefix is specified, double-check the filtering
+                    # (DynamoDB FilterExpression matches against full PK)
+                    if prefix:
+                        if app_id.startswith(prefix):
+                            app_ids.add(app_id)
+                    else:
+                        app_ids.add(app_id)
+
+            # Check if there are more items to scan
+            start_key = response.get('LastEvaluatedKey')
+            done = start_key is None
+
+        return sorted(list(app_ids))

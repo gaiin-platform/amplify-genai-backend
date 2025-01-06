@@ -145,7 +145,7 @@ def _remove_keys(item):
 
 @vop(
     path="/user-data/put",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="putUserData",
     description="Stores user data in DynamoDB",
     params={
@@ -175,7 +175,7 @@ def handle_put_item(current_user, app_id, entity_type, item_id, data, range_key=
 
 @vop(
     path="/user-data/get",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="getUserData",
     description="Retrieves user data from DynamoDB",
     params={
@@ -209,7 +209,7 @@ def handle_get_item(current_user, app_id, entity_type, item_id, range_key=None):
 
 @vop(
     path="/user-data/query-range",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="queryUserDataByRange",
     description="Queries user data by range in DynamoDB",
     params={
@@ -246,7 +246,7 @@ def handle_query_by_range(current_user, app_id, entity_type, range_start=None, r
 
 @vop(
     path="/user-data/query-prefix",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="queryUserDataByPrefix",
     description="Queries user data by prefix in DynamoDB",
     params={
@@ -281,7 +281,7 @@ def handle_query_by_prefix(current_user, app_id, entity_type, prefix, limit=100)
 
 @vop(
     path="/user-data/query-type",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="queryUserDataByType",
     description="Queries all user data of a specific type in DynamoDB",
     params={
@@ -314,7 +314,7 @@ def handle_query_by_type(current_user, app_id, entity_type, limit=100):
 
 @vop(
     path="/user-data/batch-get",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="batchGetUserData",
     description="Retrieves multiple user data items from DynamoDB",
     params={
@@ -359,7 +359,7 @@ def handle_batch_get_items(current_user, app_id, entity_type, item_ids):
 
 @vop(
     path="/user-data/get-by-uuid",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="getUserDataByUuid",
     description="Retrieves user data from DynamoDB using UUID",
     params={
@@ -378,7 +378,7 @@ def handle_get_by_uuid(current_user, uuid):
     item = storage.get_by_uuid(uuid)
 
     # Extract the email prefix from the current_user (before the '@')
-    email_prefix = current_user.split('@')[0]
+    email_prefix = current_user
 
     # Verify the item belongs to this user by checking if the app_id starts with the email prefix
     if item and item.get('appId').startswith(email_prefix):
@@ -389,7 +389,7 @@ def handle_get_by_uuid(current_user, uuid):
 
 @vop(
     path="/user-data/delete",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="deleteUserData",
     description="Deletes user data from DynamoDB",
     params={
@@ -418,7 +418,7 @@ def handle_delete_item(current_user, app_id, entity_type, item_id, range_key=Non
 
 @vop(
     path="/user-data/batch-put",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="batchPutUserData",
     description="Stores multiple user data items in DynamoDB",
     params={
@@ -456,7 +456,7 @@ def handle_batch_put_items(current_user, app_id, entity_type, items):
 
 @vop(
     path="/user-data/batch-delete",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="batchDeleteUserData",
     description="Deletes multiple user data items from DynamoDB",
     params={
@@ -494,7 +494,7 @@ def handle_batch_delete_items(current_user, app_id, entity_type, item_ids):
 
 @vop(
     path="/user-data/delete-by-uuid",
-    tags=["user-data"],
+    tags=["default","user-data"],
     name="deleteUserDataByUuid",
     description="Deletes user data from DynamoDB by UUID",
     params={
@@ -515,7 +515,7 @@ def handle_delete_by_uuid(current_user, uuid):
     item = storage.get_by_uuid(uuid)
 
     # Extract the email prefix from the current_user (before the '@')
-    email_prefix = current_user.split('@')[0]
+    email_prefix = current_user
 
     # Verify the item belongs to this user by checking if the app_id starts with the email prefix
     if item and item.get('appId').startswith(email_prefix):
@@ -527,3 +527,40 @@ def handle_delete_by_uuid(current_user, uuid):
             return {"status": "failure", "message": "Item not found."}
     else:
         return {"status": "failure", "message": "You do not have permission to delete this item."}
+
+
+@vop(
+    path="/user-data/list-apps",
+    tags=["default","user-data"],
+    name="listUserApps",
+    description="Lists all application IDs belonging to the current user",
+    params={
+        "prefix": "Optional prefix to filter app IDs"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "prefix": {"type": "string"}
+        }
+    }
+)
+def handle_list_user_apps(current_user, prefix=None):
+    """Handler to list all app IDs belonging to the current user"""
+
+    # Extract the email prefix from the current_user (before the '@')
+    email_prefix = current_user
+
+    # Get all matching app IDs using the storage method
+    if prefix:
+        search_prefix = f"{email_prefix}#{prefix}"
+    else:
+        search_prefix = f"{email_prefix}"
+
+    app_ids = storage.list_app_ids(prefix=search_prefix)
+
+    print(f"AppIds {app_ids}")
+
+    # Decode the app IDs to remove the user prefix
+    decoded_app_ids = [_decode_app_id(app_id) for app_id in app_ids]
+
+    return {"appIds": decoded_app_ids}
