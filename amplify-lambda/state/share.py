@@ -61,7 +61,7 @@ def load_data_from_s3(event, context, current_user, name, data):
     access = data['allowed_access']
     if ('share' not in access and 'full_access' not in access):
         print("User does not have access to the share functionality")
-        raise HTTPException(401, 'User does not have access to the share functionality')
+        return {'success': False, 'message': 'User does not have access to the share functionality'}
 
     s3_key = data['data']['key']
     print("Loading data from S3: {}".format(s3_key))
@@ -72,9 +72,10 @@ def load_data_from_s3(event, context, current_user, name, data):
     if any(s3_key == data_dict.get('key') for item in user_data for data_dict in item.get('data', [])):
         # If s3_key found, fetch data from S3 and return
         print("Loading data from S3: {}".format(s3_key))
-        return get_s3_data(os.environ['S3_BUCKET_NAME'], s3_key)
+        return {'success': True, 'item': get_s3_data(os.environ['S3_BUCKET_NAME'], s3_key)}
+
     else:
-        raise HTTPException(404, "Data not found")
+        return {'success': False, 'message': "Data not found"}
 
 
 def put_s3_data(bucket_name, filename, data):
@@ -166,12 +167,14 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
     access_token = data['access_token']
+    data = data['data']
+    print(data)
 
-    users = data['data']['sharedWith']
+    users = data['sharedWith']
     users = [user.lower() for user in users]
 
-    note = data['data']['note']
-    new_data = data['data']['sharedData']
+    note = data['note']
+    new_data = data['sharedData']
     new_data['sharedBy'] = current_user.lower()
 
     conversations = remove_code_interpreter_details(new_data['history']) # if it has any, else it just returns the conv back
@@ -250,7 +253,7 @@ def share_with_users(event, context, current_user, name, data):
             logging.error(e)
             continue
 
-    return succesful_shares
+    return {'success': True, 'items': succesful_shares}
 
 
 def remove_code_interpreter_details(conversations):
@@ -258,8 +261,8 @@ def remove_code_interpreter_details(conversations):
         if 'codeInterpreterAssistantId' in conversation:
             del conversation['codeInterpreterAssistantId']
             for message in conversation['messages']:
-                if 'codeInterpreterMessageData' in message:
-                    del message['codeInterpreterMessageData']
+                if 'data' in message and 'state' in message["data"] and 'codeInterpreter' in message["data"]["state"]:
+                    del message["data"]["state"]['codeInterpreter']
     return conversations
 
 @validated("read")
@@ -284,15 +287,16 @@ def get_share_data_for_user(event, context, current_user, name, data):
         if not items:
             # No item found with user and name, return message
             logging.info("No shared data found for current user: {} and name: {}".format(current_user, name))
-            return []
-
+            return {'success': True, 'items': []}
         else:
             # Otherwise, retrieve the shared data
             item = items[0]
             if 'data' in item:
                 share_data = item['data']
-                return share_data
+                return {'success': True, 'items': share_data}
 
     except Exception as e:
         logging.error(e)
-        return None
+        return {'success': False}
+
+    
