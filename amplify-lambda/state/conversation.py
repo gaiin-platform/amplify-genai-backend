@@ -20,16 +20,10 @@ def upload_conversation(event, context, current_user, name, data):
         s3.put_object(Bucket=conversations_bucket,
                       Key=conversation_key,
                       Body=json.dumps({"conversation":conversation, "folder":folder}))
-        return {
-                'statusCode': 200,
-                'body': json.dumps({'success' : True, 'message': "Succesfully uploaded conversation to s3"})
-                }
+        return {'success' : True, 'message': "Succesfully uploaded conversation to s3"}
     except (BotoCoreError, ClientError) as e:
         print(str(e))
-        return {
-                'statusCode': 404,
-                'body': json.dumps({'success' : False, 'message': "Failed to uploaded conversation to s3", 'error': str(e)})
-                }
+        return {'success' : False, 'message': "Failed to uploaded conversation to s3", 'error': str(e)}
 
 
 @validated("read")
@@ -48,20 +42,16 @@ def get_conversation(event, context, current_user, name, data):
         response = s3.get_object(Bucket=conversations_bucket, Key=conversation_key)
         conversation_body = response['Body'].read().decode('utf-8')
         conversation_data = json.loads(conversation_body)
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'success': True, "conversation": conversation_data["conversation"]})
-        }
+        return {'success': True, "conversation": conversation_data["conversation"]}
+    
     except (BotoCoreError, ClientError) as e:
         error = {'success': False, 'message': "Failed to retrieve conversation from S3", 'error': str(e)}
         
         print(str(e))
         if e.response['Error']['Code'] == 'NoSuchKey':
             error["type"] = 'NoSuchKey'
-        return  {
-            'statusCode': 404,
-            'body': json.dumps(error)
-        }
+
+        return  error
     
 
 def pick_conversation_attributes(conversation):
@@ -82,10 +72,7 @@ def get_all_conversations(event, context, current_user, name, data):
         # List all objects in the bucket with the given prefix
         response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
         if 'Contents' not in response:
-            return {
-                'statusCode': 200,
-                'body': json.dumps({'success': True, 'conversationsData': []})
-            }
+            return {'success': True, 'conversationsData': []}
         
         conversations = []
         print("Number of conversation in list obj: ", len(response['Contents']))
@@ -112,17 +99,11 @@ def get_all_conversations(event, context, current_user, name, data):
         # Generate a pre-signed URL for the uploaded file
         presigned_url = get_presigned_url(current_user, conversations, conversations_bucket)
 
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'success': True, 'presignedUrl': presigned_url})
-        }
+        return {'success': True, 'presignedUrl': presigned_url}
 
     except (BotoCoreError, ClientError) as e:
         print(str(e))
-        return {
-            'statusCode': 404,
-            'body': json.dumps({'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)})
-        }
+        return {'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)}
    
 
 @validated("get_multiple_conversations")
@@ -136,6 +117,9 @@ def get_multiple_conversations(event, context, current_user, name, data):
 
     try:
         conversations = []
+        failedToFetchConversations = []
+        noSuchKeyConversations = []
+
         for id in conversation_ids:
             conversation_key = user_prefix + id
             # Get each conversation object
@@ -144,24 +128,26 @@ def get_multiple_conversations(event, context, current_user, name, data):
                 conversation_body = conversation_response['Body'].read().decode('utf-8')
                 conversation_data = json.loads(conversation_body)
                 conversations.append(conversation_data["conversation"])
+
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to retrieve conversation id: {id} with error: {str(e)}")
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    print("added to no such key list: ", id)
+                    noSuchKeyConversations.append(id)
+                else:
+                    failedToFetchConversations.append(id)
             
         # Generate a pre-signed URL for the uploaded file
         presigned_url = get_presigned_url(current_user, conversations, conversations_bucket)
 
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'success': True, 'presignedUrl': presigned_url})
-        }
+        return {'success': True, 'presignedUrl': presigned_url, 
+                "noSuchKeyConversations": noSuchKeyConversations,
+                "failed" : failedToFetchConversations}
 
 
     except (BotoCoreError, ClientError) as e:
         print(str(e))
-        return {
-            'statusCode': 404,
-            'body': json.dumps({'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)})
-        }
+        return {'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)}
 
 def get_presigned_url(current_user, conversations, conversations_bucket):
     s3 = boto3.client('s3')
@@ -198,16 +184,11 @@ def delete_conversation(event, context, current_user, name, data):
     
     try:
         s3.delete_object(Bucket=conversations_bucket, Key=conversation_key)
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'success': True, 'message': "Successfully deleted conversation from S3"})
-        }
+        return {'success': True, 'message': "Successfully deleted conversation from S3"}
+    
     except (BotoCoreError, ClientError) as e:
         print(str(e))
-        return {
-            'statusCode': 404,
-            'body': json.dumps({'success': False, 'message': "Failed to delete conversation from S3", 'error': str(e)})
-        }   
+        return {'success': False, 'message': "Failed to delete conversation from S3", 'error': str(e)}
 
 
 
@@ -229,17 +210,11 @@ def delete_multiple_conversations(event, context, current_user, name, data):
             except (BotoCoreError, ClientError) as e:
                 print(f"Failed to delete conversation id: {id} with error: {str(e)}")
             
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'success': True, 'message': "Successfully deleted all conversations from S3"})
-        }
+        return {'success': True, 'message': "Successfully deleted all conversations from S3"}
 
     except (BotoCoreError, ClientError) as e:
         print(str(e))
-        return {
-            'statusCode': 404,
-            'body': json.dumps({'success': False, 'message': "Failed to delete all conversations from S3", 'error': str(e)})
-        } 
+        return {'success': False, 'message': "Failed to delete all conversations from S3", 'error': str(e)}
 
 
 
@@ -247,11 +222,7 @@ def get_conversation_query_param(query_params):
     print("Query params: ", query_params)
     conversation_id = query_params.get('conversationId', '')
     if ((not conversation_id) or (not is_valid_uuidv4(conversation_id))):
-        return {'success' : False,
-                 "response":  {'statusCode': 400,
-                    'body': json.dumps({'success': False, 'error': 'Invalid or missing conversation id parameter'})
-                    }
-                }
+        return {'success': False, 'error': 'Invalid or missing conversation id parameter'}
     return {
             'success':  True,
             'query_value': conversation_id
