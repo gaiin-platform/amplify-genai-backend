@@ -1,10 +1,12 @@
-
-
 def can_retrieve(user, data):
   return True
 
 
 def can_terminate(user, data):
+  return True
+
+
+def can_delete(user, data):
   return True
 
 
@@ -30,5 +32,8 @@ permissions_by_state_type = {
   },
   "/embedding/sqs/get" : {
     "get": can_retrieve
+  },
+  "/embedding-delete": {
+    "embedding-delete": can_delete
   }
 }
