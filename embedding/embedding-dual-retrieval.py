@@ -5,7 +5,7 @@ import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials, get_endpoint
 from common.validate import validated
-from shared_functions import generate_keywords, generate_embeddings
+from shared_functions import generate_embeddings
 import logging
 import boto3
 from boto3.dynamodb.conditions import Key
