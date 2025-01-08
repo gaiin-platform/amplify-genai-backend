@@ -65,12 +65,20 @@ class Workflow(Step):
         # merge self.context with context, letting context take priority
         context = {**self.context_data, **context}
 
+        stop_controller = options.get('stop_controller', lambda : False)
+
         if debug:
             print(f"Context after merging additional data: {yaml.dump(context)}")
 
         total = len(self.steps)
         results = {}
         for idx, step in enumerate(self.steps):
+
+            if stop_controller and stop_controller():
+                results[step.id] = {"status": "stopped"}
+                context.update(results)
+                break
+
             if debug:
                 print(f"Running step [{idx+1}/{total}] {step.id}")
             step_result = step.exec(context, options)
@@ -102,11 +110,12 @@ class Prompt(Step):
         self.system_prompt = data.get('system_prompt', "Follow the user's instructions very carefully. "
                                                        "Analyze the task or question and output the requested "
                                                        "information.")
-        self.output = data.get('output', {'output': 'str - your output'})
+        self.output = data.get('output', {})
 
-        is_valid_spec, message = validate_output_spec(self.output)
-        if not is_valid_spec:
-            raise WorkflowValidationError(f"Invalid output specification for prompt step {id}: {message}")
+        if len(self.output) > 0:
+            is_valid_spec, message = validate_output_spec(self.output)
+            if not is_valid_spec:
+                raise WorkflowValidationError(f"Invalid output specification for prompt step {id}: {message}")
 
         if 'prompt' not in data:
             raise WorkflowValidationError(f"Prompt step {id} must have 'prompt' field")
@@ -118,7 +127,12 @@ class Prompt(Step):
         return [get_root_key(path) for path in list(set(paths + spaths))]
 
     def run(self, context: Dict, options={}) -> Dict:
-        result, data = dynamic_prompt(context, self.prompt, self.system_prompt, self.output)
+
+        access_token = options.get('access_token', None)
+        model = options.get('model', None)
+        output_mode = options.get('output_mode', 'yaml')
+
+        result, data = dynamic_prompt(context, self.prompt, self.system_prompt, self.output, access_token, model, output_mode)
 
         self.get_tracer(options)(
             self.id,
@@ -474,7 +488,12 @@ def load_yaml(yaml_input: str) -> Tuple[Dict, str]:
 
 def parse_workflow(yaml_input: str) -> 'Workflow':
     try:
-        data, base_dir = load_yaml(yaml_input)
+        # check if yaml_input is a dict
+        if isinstance(yaml_input, dict):
+            data = yaml_input
+            base_dir = None
+        else:
+            data, base_dir = load_yaml(yaml_input)
     except yaml.YAMLError as e:
         raise WorkflowValidationError(f"Invalid YAML: {str(e)}")
 

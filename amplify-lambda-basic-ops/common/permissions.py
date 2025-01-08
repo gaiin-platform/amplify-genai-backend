@@ -37,6 +37,12 @@ permissions_by_state_type = {
     "/llm/qa_check": {
         "qa_check":  can_read
     },
+    "/llm/workflow": {
+        "llm_workflow": can_prompt
+    },
+    "/llm/workflow-start": {
+        "llm_workflow_async": can_prompt
+    },
     "/work/echo": {
         "echo": can_read
     },
@@ -54,6 +60,44 @@ permissions_by_state_type = {
     },
     "/work/session/stitch_records": {
         "stitch_records":  can_create
-    }
-    
+    },
+    "/user-data/put": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/get": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/get-by-uuid": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/query-range": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/query-prefix": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/query-type": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/delete": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/batch-put": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/batch-get": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/batch-delete": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/delete-by-uuid": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/list-apps": {
+        "route": lambda for_user, with_data: True
+    },
+    "/user-data/list-entity-types": {
+        "route": lambda for_user, with_data: True
+    },
 }

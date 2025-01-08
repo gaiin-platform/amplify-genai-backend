@@ -84,8 +84,20 @@ permissions_by_state_type = {
      "/groups/list" : {
         'list': can_read
     },
+    "/groups/list_all" : {
+        'list': can_read
+    },
      "/groups/members/list" : {
         'list': can_read
+    },
+     "/groups/update" : {
+        "update": can_update
+    },
+    "/groups/replace_key" : {
+        "update" : can_update
+    },
+    "/groups/assistants/amplify": {
+        "create": can_create
     }
 }
 

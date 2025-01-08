@@ -37,6 +37,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_OPS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-ops-iam-policy
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
   apiGateway:
     restApiId:
@@ -59,6 +60,30 @@ functions:
           path: ops/get
           method: post
           cors: true
+  
+  get_all_ops:
+    handler: service/core.get_all_ops
+    events:
+      - http:
+          path: ops/get_all
+          method: get
+          cors: true
+
+  register_ops:
+    handler: service/core.write_ops
+    events:
+      - http:
+          path: ops/register
+          method: post
+          cors: true
+
+  delete_op:
+    handler: service/core.delete_op
+    events:
+      - http:
+          path: ops/delete
+          method: post
+          cors: true
 
 resources:
   Resources:
@@ -76,6 +101,7 @@ resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"

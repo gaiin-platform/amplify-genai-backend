@@ -1,0 +1,12 @@
+boto3
+botocore
+jsonschema
+jsonschema-specifications
+python-dateutil
+httpcore
+httpx
+pydantic
+pydantic_core
+python-jose
+python-dotenv
+requests

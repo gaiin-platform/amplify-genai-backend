@@ -89,23 +89,6 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
     role: !GetAtt GetCognitoAmpGroupsRole.Arn
-
-  in_cognito_amp_groups:
-    handler: cognito_users.in_cognito_amplify_groups
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 12
-    events:
-      - http:
-          path: /utilities/in_cognito_amp_groups
-          method: post
-    environment:
-      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
-      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
-      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-    role: !GetAtt CognitoAmpGroupsRole.Arn
   
   update_ojbect_perms:
     runtime: python3.11
@@ -184,6 +167,7 @@ functions:
     environment:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       COGNITO_USERS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-cognito-users
+      AMPLIFY_ADMIN_DYNAMODB_TABLE: vu-amplify-admin-${sls:stage}-admin-configs
     role: !GetAtt SyncCognitoUsersRole.Arn
 
 
@@ -200,13 +184,58 @@ functions:
     environment:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}        
-      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID} 
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
+      
     role: !GetAtt CreateAstAdminGroupRole.Arn
+
+  create_amplify_asts:
+    handler: groups.create_amplify_assistants
+    timeout: 12
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/assistants/amplify
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID} 
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+      OBJECT_ACCESS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-object-access
+      HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+      
+    role: !GetAtt CreateAmpAstAdminGroupRole.Arn
+
+  replace_group_key:
+    handler: groups.replace_group_key
+    timeout: 12
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/replace_key
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID} 
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      API_KEYS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-api-keys
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    role: !GetAtt ReplaceAstAdminGroupKeyRole.Arn
     
   update_members:
     handler: groups.update_members
@@ -221,12 +250,10 @@ functions:
     environment:
       OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
       OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}   
-      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users 
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
       ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
     role: !GetAtt UpdateMembersRole.Arn
 
@@ -265,8 +292,8 @@ functions:
       COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}    
       AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
       AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
-      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
-      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts 
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      
     role: !GetAtt UpdateMemberPermissionRole.Arn
 
   list_groups:
@@ -289,9 +316,50 @@ functions:
       COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
     role: !GetAtt ListGroupsRole.Arn
   
+  list_all_groups:
+    handler: groups.list_all_groups_for_admins
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/list_all
+          method: get
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    role: !GetAtt ListGroupsRole.Arn
+
+  
+  update_groups_by_admins:
+    handler: groups.update_ast_admin_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/update
+          method: post
+          cors: true
+    environment:
+      OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
+      OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+      COGNITO_USER_POOL_ID: ${self:custom.stageVariables.COGNITO_USER_POOL_ID}   
+      COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users 
+      AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
+      AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
+      ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
+      API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    role: !GetAtt UpdateGroupsRole.Arn
  
-  update_assistants:
-    handler: groups.update_assistants
+
+  update_group_assistants:
+    handler: groups.update_group_assistants
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30
@@ -611,11 +679,13 @@ resources:
                 - dynamodb:GetItem
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
             - Effect: Allow
               Action:
                 - dynamodb:PutItem
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
 
     CreateAstAdminGroupRole:
       Type: AWS::IAM::Role
@@ -633,6 +703,101 @@ resources:
           - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref CreateAstAdminGroupPolicy
 
+
+    CreateAmpAstAdminGroupPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-hash-files"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-object-access"
+
+    CreateAmpAstAdminGroupRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - !Ref CreateAmpAstAdminGroupPolicy
+
+    ReplaceAstAdminGroupKeyPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-api-keys/index*"
+
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-admin-${sls:stage}-admin-configs"
+
+
+    ReplaceAstAdminGroupKeyRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - !Ref ReplaceAstAdminGroupKeyPolicy
 
     UpdateMembersPolicyDocument:
       Type: AWS::IAM::ManagedPolicy
@@ -673,6 +838,48 @@ resources:
         ManagedPolicyArns:
           - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref UpdateMembersPolicyDocument
+
+
+    UpdateGroupsPolicyDocument:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource:
+                # - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-cognito-users"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-groups"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/${self:service}-${sls:stage}-amplify-group-logs"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:514391678313:table/vu-amplify-${sls:stage}-accounts"
+
+    UpdateGroupsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - !Ref UpdateMembersPolicyDocument
+
 
     UpdateGroupTypesPolicy:
       Type: AWS::IAM::ManagedPolicy
@@ -785,7 +992,7 @@ resources:
         ManagedPolicyArns:
           - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - !Ref ListGroupsPolicy
-
+          
     UpdateAssistantsPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:

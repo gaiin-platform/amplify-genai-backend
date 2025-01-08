@@ -45,9 +45,6 @@ permissions_by_state_type = {
   "/state/share/load": {
     "load": can_read_share
   },
-  "/state/base-prompts/get": {
-    "get": can_read_share
-  },
   "/datasource/metadata/set": {
     "set": can_upload
   },
@@ -107,8 +104,8 @@ permissions_by_state_type = {
   },
    "/state/settings/save": {
         "save": can_upload
-    },
+  },
     "/state/settings/get": {
         "get": can_read
-    },
+  },
 }

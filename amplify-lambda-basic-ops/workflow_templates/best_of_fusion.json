@@ -1,0 +1,44 @@
+{
+  "data": {
+    "template": {
+      "id": "prompt_fusion_best_of_many",
+      "context": {
+        "original_prompt": "Explain how photosynthesis works",
+        "total_variations": 5
+      },
+      "steps": [
+        {
+          "id": "generate_variations",
+          "prompt": "Original prompt:\n----------\n{{original_prompt}}\n----------\n\nCreate {{total_variations}} different variations of this prompt that preserve the core intent but approach it in different ways. Make them meaningfully different in their approach while maintaining the same goal. Make each prompt much longer and more detailed than the original. Number them 1-{{total_variations}}.",
+          "output": {
+            "variations": [
+              "str - variant prompt 1",
+              "str - variant prompt 2",
+              "str - variant prompt 3",
+              "str - variant prompt 4",
+              "str - variant prompt ..etc."
+            ]
+          }
+        },
+        {
+          "id": "get_responses",
+          "input": "generate_variations.variations",
+          "item_key": "prompt_variant",
+          "result_key": "response",
+          "map": "{{prompt_variant}}",
+          "output": {
+            "response": "str - A long (if appropriate), detailed, carefully thought out output  to the prompt."
+          }
+        },
+        {
+          "id": "fuse_best_aspects",
+          "prompt": "Original prompt:\n----------\n{{original_prompt}}\n----------\n\nBelow are {{total_variations}} different responses to variations of this prompt:\n\n{{get_responses}}\n\nAnalyze these responses and select the best aspects of each that most effectively addresses the original prompt's intent. Explain in 2-3 sentences why you selected it, then output a new response that uses the best aspects of each response to produce an even better overall response.",
+          "output": {
+            "rationale": "str - an explanation of which is the best output and why",
+            "best_output": "str - the selected best response VERBATIM"
+          }
+        }
+      ]
+    }
+  }
+}

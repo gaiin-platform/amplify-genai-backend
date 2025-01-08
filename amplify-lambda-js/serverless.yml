@@ -36,7 +36,6 @@ provider:
     "vu:owner": "amplify@vanderbilt.edu"
   environment:
     AZURE_OPENAI_RESOURCE_NAME: openai
-    RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVariables.RAG_ASSISTANT_MODEL_ID}
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
@@ -69,8 +68,9 @@ provider:
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: vu-amplify-assistants-${sls:stage}-group-assistant-conversations
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: vu-amplify-assistants-${sls:stage}-group-conversations-content
+    ADMIN_DYNAMODB_TABLE: vu-amplify-admin-${sls:stage}-admin-configs
+    DEP_REGION: ${self:custom.stageVariables.DEP_REGION}
     # STREAM: false # optional 
-    
 
   iam:
     role:
@@ -196,15 +196,9 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-instant-v1'
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-v2:1'
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0'
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0'
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-opus-20240229-v1:0'
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0'
-                - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-7b-instruct-v0:2'
-                - 'arn:aws:bedrock:*::foundation-model/mistral.mixtral-8x7b-instruct-v0:1'
-                - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-2402-v1:0'
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
+                - 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

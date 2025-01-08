@@ -12,11 +12,16 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
 
+
 custom:
   pythonRequirements:
     dockerizePip: non-linux
     layer: true
-    slim: true
+
+  prune:
+    automatic: true
+    number: 1
+
 
   stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -57,8 +62,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
-    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
-    S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
+    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
     S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
@@ -83,6 +87,7 @@ provider:
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
     FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: vu-amplify-admin-${sls:stage}-admin-configs
 
   iam:
     role:
@@ -197,7 +202,7 @@ functions:
     events:
       - http:
           path: files/tags/list
-          method: post
+          method: get
           cors: true
 
   create_tags_user:
@@ -261,16 +266,6 @@ functions:
           path: state
           method: post
           cors: true
-
-  user_base_prompts:
-    handler: state/share.get_base_prompts
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
-    events:
-      - http:
-          path: state/base-prompts/get
-          method: post
 
   user_share_with_users:
     handler: state/share.share_with_users
@@ -361,12 +356,22 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
-      - Ref: PythonRequirementsLambdaLayer
+      # - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
       - s3:
           bucket: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
+    
+  handlePptxUpload:
+    handler: powerpoints/core.handle_pptx_upload
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
           event: s3:ObjectCreated:*
           existing: true
 
@@ -492,6 +497,7 @@ resources:
                 - s3:HeadObject
                 - s3:ListBucket
                 - s3:CreateBucket
+                - s3:PutBucketNotification
                 - sqs:SendMessage
                 - sqs:DeleteMessage
                 - sqs:ReceiveMessage
@@ -529,6 +535,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
@@ -536,8 +543,6 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
@@ -933,34 +938,30 @@ resources:
 
     ConversionOutputBucket:
          Type: AWS::S3::Bucket
+         DependsOn: LambdaIAMPolicy
          Properties:
           BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
           CorsConfiguration:
             CorsRules:
               - AllowedOrigins: ['*']
-                AllowedMethods: ['GET']
+                AllowedMethods: ['GET', 'PUT', 'POST']
                 AllowedHeaders: ['*']
                 MaxAge: 3000
           LoggingConfiguration:
             DestinationBucketName: 
               Ref: AccessLogsBucket
-            LogFilePrefix: S3AccessLogs/      
-
-    BasePromptsBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-          BucketName: ${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}
-          CorsConfiguration:
-            CorsRules:
-             - AllowedOrigins: ['*']
-               AllowedMethods: ['GET']
-               AllowedHeaders: ['*']
-               MaxAge: 3000
-          LoggingConfiguration:
-            DestinationBucketName: 
-              Ref: AccessLogsBucket
-            LogFilePrefix: S3AccessLogs/      
-
+            LogFilePrefix: S3AccessLogs/ 
+          NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: 's3:ObjectCreated:Put'
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: prefix
+                        Value: 'templates/'
+                      - Name: suffix
+                        Value: '.pptx' 
+                Function: !GetAtt HandlePptxUploadLambdaFunction.Arn
 
     RagInputBucket:
         Type: AWS::S3::Bucket

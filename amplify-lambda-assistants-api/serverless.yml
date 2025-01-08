@@ -44,6 +44,12 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    OP_LOG_DYNAMO_TABLE: vu-amplify-${sls:stage}-op-log
+    OP_TRACING_ENABLED: true
+    OP_TRACING_REQUEST_DETAILS_ENABLED: true
+    OP_TRACING_RESULT_DETAILS_ENABLED: true
+    JOB_STATUS_TABLE: vu-amplify-${sls:stage}-job-status
+    JOB_RESULTS_BUCKET: vu-amplify-${sls:stage}-job-results
 
 
   iam:
@@ -58,9 +64,26 @@ functions:
 
   execute_custom_auto:
     handler: service/core.execute_custom_auto
+    timeout: 30
     events:
       - http:
           path: assistant-api/execute-custom-auto
+          method: post
+          cors: true
+  get_job_result:
+    handler: service/core.get_job_result
+    timeout: 30
+    events:
+      - http:
+          path: assistant-api/get-job-result
+          method: post
+          cors: true
+  set_job_result:
+    handler: service/core.update_job_result
+    timeout: 30
+    events:
+      - http:
+          path: assistant-api/set-job-result
           method: post
           cors: true
   startAuth:
@@ -121,6 +144,7 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
+                - "arn:aws:s3:::${self:provider.environment.JOB_RESULTS_BUCKET}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OAUTH_STATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -136,6 +160,17 @@ resources:
                 - ssm:GetParametersByPath
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.JOB_STATUS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OP_LOG_DYNAMO_TABLE}"
+
 
     OauthStateTable:
       Type: AWS::DynamoDB::Table
@@ -152,3 +187,48 @@ resources:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
           SSEEnabled: true
+
+    OpLogTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.OP_LOG_DYNAMO_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+
+    JobStatusTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.JOB_STATUS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: job_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: job_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+
+    JobResultsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.JOB_RESULTS_BUCKET}

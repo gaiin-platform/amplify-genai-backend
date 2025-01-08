@@ -63,22 +63,15 @@ async function fetchRequest(token, data, url) {
     }
 }
 
-const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 10000) => {
+const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 12000) => {
     return new Promise((resolve, reject) => {
         let timer;
 
-        const sendStatusMessage = () => {
-            llm.sendStatus(newStatus(
-                {
-                    inProgress: true,
-                    message: "Code interpreter needs a few more moments...",
-                    icon: "assistant",
-                    sticky: true
-                }));
-            timer = setTimeout(sendStatusMessage, timeout);
+        const handleSendStatusMessage = () => {
+            sendStatusMessage(llm, "Code interpreter needs a few more moments...");
+            timer = setTimeout(handleSendStatusMessage, timeout);
         };
-
-        timer = setTimeout(sendStatusMessage, timeout);
+        timer = setTimeout(handleSendStatusMessage, timeout);
 
         fetchRequest(token, chat_data, endpoint)
             .then(response => {
@@ -91,6 +84,18 @@ const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 10000) => {
             });
     });
 };
+
+const sendStatusMessage = (llm, message, summary='') => {
+    llm.sendStatus(newStatus(
+        {
+            inProgress: false,
+            message: message,
+            summary: summary,
+            icon: "assistant",
+            sticky: true
+        }));
+    llm.forceFlush();
+}
 
 export const codeInterpreterAssistant = async (assistantBase) => {
     return {
@@ -137,14 +142,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     assistantId = responseData.data.assistantId
                     //we need to ensure we send the assistant_id back to be saved in the conversation
                     sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterAssistantId=${assistantId}`);
-                    llm.sendStatus(newStatus(
-                        {
-                            inProgress: false,
-                            message: "Code interpreter is making progress on your request...",
-                            icon: "assistant",
-                            sticky: true
-                        }));
-                    llm.forceFlush();
+                    sendStatusMessage(llm, "Code interpreter is making progress on your request...");
                 } else {
                     console.log(`Error with creating an assistant: ${responseData}`)
                 }
@@ -159,28 +157,26 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     accountId: account.accountId || 'general_account',
                     requestId: options.requestId
                 }
-    
 
                     const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
-                    
-                    llm.sendStatus(newStatus(
-                        {
-                            inProgress: false,
-                            message: "Finalizing code interpreter results...",
-                            icon: "assistant",
-                            sticky: true
-                        }));
-                    llm.forceFlush();
-                    
-                    // logger.debug(responseData);
+                    const responseSuccess = responseData && !!responseData.success;
+                    const responseErrorMessage = responseData && responseData.error;
+
+                    if (!responseSuccess) {
+                        sendStatusMessage(llm, String(responseErrorMessage ?? "This is a test"), "Code interpreter response failed. View Error:");
+                        sendStatusMessage(llm, "Amplify Assistant is responding...");
+                    }
                     // check for successfull response
-                    if (responseData && responseData.success && responseData.data) {
-                        const response = responseData.data.data.textContent;
-                        // console.log(response);
-                        codeInterpreterResponse = response;
-                        responseData.data.data.textContent = '';
-                        sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterResponseData=${JSON.stringify(responseData)}`);
-                    } 
+                    if (responseSuccess && responseData.data) {
+                        sendStatusMessage(llm, "Finalizing code interpreter results...");
+                        const { textContent, ...messageData } = responseData.data.data;
+                        codeInterpreterResponse = textContent;
+                        llm.sendStateEventToStream({ codeInterpreter: messageData });
+                    } else if (responseErrorMessage) {
+                        console.log("Code interpreter Response was unsuccessful: ", responseErrorMessage);
+                        const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
+                        llm.sendStateEventToStream({ codeInterpreter: { error: error } });
+                    }
 
             } 
             let updatedMessages = messages.slice(0, -1);
@@ -196,7 +192,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 console.log("Code interpreter was unavailable...");
                 updatedMessages.push({
                     role: 'user',
-                    content: `User Prompt:\n${userPrompt}\n\n The user expected to reach code interpreter however, I did not here from them. If you can answer the query, please do so. 
+                    content: `User Prompt:\n${userPrompt}\n\n The user expected to reach code interpreter however, we did not recieve a code interpreter response. If you can answer the query, please do so. 
                               If you are asked to do something you can not do (ex. generate files) then tell the user that Code Interpreter was not available at this time and to try again. Also, if you can answer any of the query you are effectively able to do`
                 });
             }
@@ -212,7 +208,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     maxTokens: 4000
                 }
             };
-        
+            // unless we support with user defined assistants, we dont need this for now
             // for now we will include the ds in the current message
             // if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
