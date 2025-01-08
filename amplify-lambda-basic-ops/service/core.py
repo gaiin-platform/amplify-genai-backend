@@ -1,11 +1,18 @@
+import json
 import os
+import threading
 import traceback
 import uuid
 
+import boto3
+from boto3 import dynamodb
+from boto3.dynamodb.types import TypeDeserializer
 from pydantic import BaseModel, Field, ValidationError
 
+from common.jobs import set_job_result, init_job_status, update_job_status
 from common.ops import op, vop
 from common.validate import validated
+from flow.steps import parse_workflow
 from llm.chat import chat, prompt
 from work.session import create_session
 
@@ -276,20 +283,229 @@ def llm_qa_check(event, context, current_user, name, data):
         }
 
 
+@vop(
+    path="/llm/workflow-start",
+    tags=["default"],
+    name="startWorkflow",
+    description="Starts asynchronous execution of the specified workflow.",
+    params={
+        "template": "The workflow template as JSON in the Amplify Workflow Template Language.",
+        "context": "An optional set of context parameters as a JSON dictionary.",
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "template": {"type": "object"},
+            "context": {"type": "object"}
+        },
+        "required": ["template"]
+    }
+)
+@validated (op="llm_workflow_async")
+def llm_workflow_async(event, context, current_user, name, data):
+    try:
+        """
+
+        """
+        # This must be configured in the registry entry as described above
+        access_token = data['access_token']
+        data = data['data']
+        template_doc = data['template']
+
+        job_id = start_workflow_lambda(current_user, access_token, data)
+
+        return {
+            'success': True,
+            'data': {
+                'job_id': job_id
+            }
+        }
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return {
+            'success': False,
+            'message': "Failed to execute the operation"
+        }
 
 
-# Example usage:
-#
-# result = qa(QAInput(
-#     input="data: { 'id': '1234', 'name': 'John Doe' }"
-#           "original_input: John Doe was walking by aisle 1234 when a box fell on him.",
-#     qa_guidelines=("1. The data must include an id that is also a valid id in the original input. "
-#                    "2. The name in data must correspond to the person's name in the original_input.")),
-#     model="gpt-4o")
-#
-# if not result.qa_pass_or_fail:
-#     print(f"QA failed: {result.qa_reason}")
-# else:
-#     print("QA passed")
+@validated(op="llm_workflow")
+def llm_workflow(event, context, current_user, name, data):
+    try:
+        """
 
-# "data: { 'id': '1234', 'name': 'John Doe' }\noriginal_input: John Doe was walking by aisle 1234 when a box fell on him.",
+        """
+        # This must be configured in the registry entry as described above
+        access_token = data['access_token']
+        data = data['data']
+        template_doc = data['template']
+
+        try:
+
+            try:
+                trace_lock = threading.Lock()
+                trace = []
+
+                def progress_callback(percent):
+                    print(f"--- Progress: {percent}%")
+
+                def recording_tracer(id, tag, data, log_file='trace_log.yaml'):
+                    try:
+                        logdata = data
+                        if isinstance(data, dict):
+                            logdata = next((data[key].keys() for key in ['result','context'] if key in data), data)
+                        elif isinstance(data, list):
+                            logdata = f"list[{len(data)}]"
+                        print(f"--- Step {id}: {tag} - {logdata}")
+                        with trace_lock:
+                            trace.append({'id': id, 'tag': tag, 'data': data})
+                    except Exception as e:
+                        print(f"--- Error recording trace: {str(e)}")
+
+                steps = parse_workflow(template_doc)
+
+                print(f"--- Executing workflow: {steps} ")
+
+                result = steps.exec(data.get("context",{}),
+                                    {
+                                        'access_token': access_token,
+                                        'model': 'gpt-4o',
+                                        'output_mode': 'yaml',
+                                        'tracer': recording_tracer,
+                                        'progress_callback': progress_callback
+                                    })
+
+                return result
+
+            except Exception as e:
+                # print a detailed stack trace
+                print(f"--- ERROR {str(e)}")
+                return {
+                    'message': f"Error executing steps: {str(e)}"
+                }
+
+
+        except ValidationError as e:
+            print(e)
+            return {
+                'success': False,
+                'message': "Invalid parameters {e}"
+            }
+
+    except Exception as e:
+        print(e)
+        return {
+            'success': False,
+            'message': "Failed to execute the operation"
+        }
+
+
+# The Lambda function (llm_workflow_lambda.py):
+def llm_workflow_lambda_handler(event, context):
+
+    # Extract parameters from the event
+    current_user = event.get('current_user')
+    job_id = event.get('job_id')
+    access_token = event.get('access_token')
+
+    print(f"Starting workflow for user {current_user} with job_id {job_id}")
+
+    try:
+        data = event.get('payload')
+        # Thread-safe trace recording
+        trace_lock = threading.Lock()
+        trace = []
+
+        def progress_callback(percent):
+            print(f"--- Progress: {percent}%")
+
+        def recording_tracer(id, tag, data, log_file='trace_log.yaml'):
+            try:
+                logdata = data
+                logdatajson = json.dumps(data)
+
+                update_job_status(current_user, job_id,
+                                  {"status":f"Step {id}: {tag}",
+                                    "data":data if len(logdatajson) <= 35000 else {},
+                                    "retryIn": 2000})
+
+                if isinstance(data, dict):
+                    logdata = next((data[key].keys() for key in ['result','context'] if key in data), data)
+                elif isinstance(data, list):
+                    logdata = f"list[{len(data)}]"
+                print(f"--- Step {id}: {tag} - {logdata}")
+                with trace_lock:
+                    trace.append({'id': id, 'tag': tag, 'data': data})
+            except Exception as e:
+                print(f"--- Error recording trace: {str(e)}")
+
+
+        workflow_data = data['data']
+
+        print(f"Workflow data: {workflow_data}")
+
+        template_doc = workflow_data['template']
+
+        steps = parse_workflow(template_doc)
+        print(f"--- Executing workflow: {steps} ")
+
+        result = steps.exec(workflow_data.get("context", {}),
+                            {
+                                'access_token': access_token,
+                                'model': 'gpt-4o',
+                                'output_mode': 'yaml',
+                                'tracer': recording_tracer,
+                                'progress_callback': progress_callback
+                            })
+
+        print(f"--- Workflow result: {result}")
+        set_job_result(current_user, job_id, result, store_in_s3=True)
+        print(f"--- Job result stored successfully")
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        set_job_result(current_user, job_id, {
+                'success': False,
+                'message': str(e)
+            }
+        )
+
+
+def start_workflow_lambda(current_user, access_token, data):
+    lambda_client = boto3.client('lambda')
+
+    print(f"Starting workflow for user {current_user}")
+    job_id = init_job_status(current_user, "Workflow started and running...")
+
+    print("Initialized job status")
+
+    # Prepare the payload
+    payload = {
+        'name': 'workflow_name',
+        'current_user': current_user,
+        'access_token': access_token,
+        'job_id': job_id,
+        'payload': {
+            'data': data,
+        }
+    }
+
+    try:
+        print(f"Invoking workflow lambda with payload: {payload}")
+
+        lambda_name = os.getenv('WORKFLOW_LAMBDA_NAME')
+        print(f"Workflow lambda name: {lambda_name}")
+
+        lambda_client.invoke(
+            FunctionName=lambda_name,
+            InvocationType='Event',
+            Payload=json.dumps(payload)
+        )
+
+        print(f"Workflow lambda invoked successfully")
+
+        return job_id
+
+    except Exception as e:
+        print(f"Error invoking workflow lambda: {str(e)}")
+        raise

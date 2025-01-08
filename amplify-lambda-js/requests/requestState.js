@@ -130,6 +130,15 @@ export const updateKillswitch = async (user, requestId, killswitch) => {
 
 const killedCache = lru(10, 0, false);
 
+export const localKill = (user, requestId) => {
+    const key = getKillSwitchKey(user, requestId);
+    killedCache.set(key, true);
+}
+
+function getKillSwitchKey(user, requestId) {
+    return user + "__" + requestId;
+}
+
 export const isKilled = async (user, responseStream, chatRequest) => {
 
     if (chatRequest && chatRequest.options) {
@@ -137,7 +146,7 @@ export const isKilled = async (user, responseStream, chatRequest) => {
 
         if (requestId) {
 
-            const key = user + "__" + requestId;
+            const key = getKillSwitchKey(user, requestId);
             if (killedCache.get(key)) {
                 logger.info("Killswitch triggered, exiting.");
                 return true;

@@ -23,6 +23,8 @@ from common.object_permissions import (
 )
 
 from common.validate import validated
+from common.ops import op
+
 from decimal import Decimal
 
 
@@ -166,6 +168,25 @@ def check_user_can_update_assistant(assistant, user_id):
     return False
 
 
+
+@op(
+    path="/assistant/delete",
+    name="deleteAssistant",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Delete a specified Amplify assistant.
+
+    Example request:
+    {
+        "data": {
+            "assistantId": "astp/3209457834985793094"
+        }
+    }
+    """,
+    params={
+        "assistantId": "String. Required. Unique identifier of the assistant to delete. Example: 'astp/3209457834985793094'."
+    }
+)
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -225,6 +246,45 @@ def delete_assistant(event, context, current_user, name, data):
         print(f"Error deleting assistant: {e}")
         return {"success": False, "message": "Failed to delete assistant."}
 
+
+
+@op(
+    path="/assistant/list",
+    name="listAssistants",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""Retrieve a list of all Amplify assistants created or accessible by the user.
+
+    Example response:
+    {
+        "success": true,
+        "message": "Assistants retrieved successfully",
+        "data": [
+            {
+                "assistantId": "astp/498370528-38594",
+                "version": 3,
+                "instructions": "<instructions>",
+                "disclaimerHash": "348529340098580234959824580-pueiorupo4",
+                "coreHash": "eiouqent84832n8989pdeer",
+                "user": "yourEmail@vanderbilt.edu",
+                "uri": null,
+                "createdAt": "2024-07-15T19:07:57",
+                "dataSources": [
+                    {
+                        "metadata": "<metadata>",
+                        "data": "",
+                        "name": "api_documentation.yml",
+                        "raw": "",
+                        "id": "global/7834905723785897982345088927.content.json",
+                        "type": "application/x-yaml"
+                    }
+                ]
+            }
+        ]
+    }
+    """,
+    params={}
+)
 
 @validated(op="list")
 def list_assistants(event, context, current_user, name, data):
@@ -345,6 +405,48 @@ def get_assistant(assistant_id):
         return None
 
 
+@op(
+    path="/assistant/create",
+    name="createOrUpdateAssistant",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Create or update a customizable Amplify assistant.
+
+    Example request:
+    {
+        "data": {
+            "name": "Sample Assistant 3",
+            "description": "This is a sample assistant for demonstration purposes.",
+            "assistantId": "",
+            "tags": ["test"],
+            "instructions": "Respond to user queries about general knowledge topics.",
+            "disclaimer": "This assistant's responses are for informational purposes only.",
+            "dataSources": [{"id": "e48759073324384kjsf", "name": "api_paths_summary.csv", "type": "text/csv", "raw": "", "data": "", "key": "yourEmail@vanderbilt.edu/date/w3ou009we3.json", "metadata": {"name": "api_paths_summary.csv", "totalItems": 20, "locationProperties": ["row_number"], "contentKey": "yourEmail@vanderbilt.edu/date/w3ou009we3.json.content.json", "createdAt": "2024-07-15T18:58:24.912235", "totalTokens": 3750, "tags": [], "props": {}}}],
+        }
+    }
+
+    Example response:
+    {
+        "success": true,
+        "message": "Assistant created successfully.",
+        "data": {
+            "assistantId": "astp/3io4u5ipy34jkelkdfweiorwur",
+            "id": "ast/03uio3904583049859482",
+            "version": 1
+        }
+    }
+    """,
+    params={
+        "name": "String. Required. Name of the assistant. Example: 'Sample Assistant 3'.",
+        "description": "String. Required. Description of the assistant's purpose.",
+        "assistantId": "String. Optional. If provided, updates an existing assistant. Example: 'astp/3io4u5ipy34jkelkdfweiorwur'. prefixed with astp",
+        "tags": "Array of strings. Required. Tags to categorize the assistant.",
+        "instructions": "String. Required. Detailed instructions on how the assistant should respond.",
+        "disclaimer": "String. Optional. Disclaimer for the assistant's responses.",
+        "dataSources": "Array of objects. Required. List of data sources the assistant can use. You can obtain ful data source objects by calling the /files/query endpoint",
+    }
+)
+
 @validated(op="create")
 def create_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -432,6 +534,28 @@ def create_assistant(event, context, current_user, name, data):
     )
 
 
+@op(
+    path="/assistant/share",
+    name="shareAssistant",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Share an Amplify assistant with other users on the platform.
+
+    Example request:
+    {
+        "data": {
+            "assistantId": "ast/8934572093982034020-9",
+            "recipientUsers": ["yourEmail@vanderbilt.edu"],
+            "note": "Sharing label"
+        }
+    }
+    """,
+    params={
+        "assistantId": "String. Required. Unique identifier of the assistant to share. Example: 'ast/8934572093982034020-9'. prefixed with ast",
+        "recipientUsers": "Array of strings. Required. List of email addresses of the users to share the assistant with. Example: ['user1@example.com', 'user2@example.com'].",
+        "note": "String. Optional. A note to include with the shared assistant. Example: 'Sharing this assistant for project collaboration.'"
+    }
+)
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]

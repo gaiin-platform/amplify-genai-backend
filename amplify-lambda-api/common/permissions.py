@@ -23,28 +23,34 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/apiKeys/get_keys": {
+    "/apiKeys/keys/get": {
         "read": can_read
     },
-    "/apiKeys/get_key": {
+    "/apiKeys/key/get": {
         "read": can_read
     },
      "/apiKeys/get_keys_ast": {
         "read": can_read
     },
-    "/apiKeys/create_keys": {
+    "/apiKeys/keys/create": {
         "create": can_save
     },
-    "/apiKeys/deactivate_key": {
+    "/apiKeys/key/deactivate": {
         "deactivate": can_deactivate
     },
-     "/apiKeys/update_keys" : {
+     "/apiKeys/keys/update" : {
         "update": can_save
     },
     "/apiKeys/get_system_ids": {
         "read": can_read
     },
-    "/apiKeys/api_documentation": {
+   "/apiKeys/api_documentation/get": {
         "read": can_read
-    }
+    },
+    "/apiKeys/api_documentation/upload": {
+        "upload": can_save
+    },
+    "/apiKeys/api_documentation/get_templates" : {
+        "read": can_read
+    },
 }

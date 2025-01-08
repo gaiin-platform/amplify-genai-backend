@@ -1,5 +1,7 @@
-const opsLanguages = {
+
+export const opsLanguages = {
     "v1": {
+        blockTerminator: "auto",
         "messages": [
             {
                 role: "user",
@@ -43,6 +45,12 @@ bigoOp("some value", "another value", "1...asdf")
         ]
     },
     "v2": {
+        blockTerminator: "invoke",
+        instructionsPreProcessor: (instructions) => {
+            // Replace all {{ with \\{{ to escape Handlebars
+            instructions = instructions.replace(/{{/g, "\\{{");
+            return instructions
+        },
         "messages": [
             {
                 role: "user",
@@ -60,7 +68,61 @@ If you get more than two errors in a row, you should stop and ask the user how t
                     `
             }
         ]
+    },
+    "v3": {
+        "suffixMessages": [
+            {
+                role: "user",
+                content: `
+You can use the tellUser operation to provide the user with information. 
+Analyze the task or question and either output the requested information or run the necessary operations to produce it.
+
+You output with the response should be in the EXACT format:
+\`\`\`invoke
+thought: <INSERT THOUGHT>
+{
+    "name": "<insert operation name>",
+    "payload":{...json for parameters with camelCase keys...}
+}
+\`\`\`
+
+You ALWAYS output a SINGLE \`\`\`data code block with NOTHING BEFORE OR AFTER.
+`
+            }
+        ],
+        "messages": [
+            {
+                role: "system",
+                content: `
+                
+Sample outputs to user prompts are shown below.:
+\`\`\`invoke
+{
+  "thought": "I need to run an operation to get the information. The operations is called getXYZ.",
+  "name": "getXYZ",
+  "payload":{\"someParam\":\"someValue\", \"anotherParam\":1234}
+}
+\`\`\`
+Note that there is NOTHING BEFORE OR AFTER the \`\`\`invoke block.
+
+All of your output must be in a markdown block with nothing before or after as shown:
+
+\`\`\`invoke
+{
+  "thought": "<insert 1-sentence thought>",
+  "name": "<insert operation name>",
+  "payload":{...json for parameters with camelCase keys...}
+}
+\`\`\`
+
+My message that STARTS! with \`\`\`invoke is: 
+`
+
+            }
+        ]
     }
 }
 
-export default opsLanguages;
+
+
+
