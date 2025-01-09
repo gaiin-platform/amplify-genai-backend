@@ -43,7 +43,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 
 
 export const getContextMessages = async (params, chatBody, dataSources) => {
-    const model = params.cheapestModel;
+    const model = params.options.cheapestModel;
     const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
 
     const chatFn = async (body, writable, context) => {

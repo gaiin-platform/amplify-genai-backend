@@ -84,14 +84,17 @@ permissions_by_state_type = {
   "/state/conversation/upload": {
     "conversation_upload": can_upload
   },
-  "/state/conversation/get_multiple": {
+  "/state/conversation/get/multiple": {
     "get_multiple_conversations": can_read
   },
   "/state/conversation/get": {
     "read": can_read
   },
-  "/state/conversation/get_all": {
+  "/state/conversation/get/all": {
     "read": can_read
+  },
+  "/state/conversation/get/empty": {
+        "read" : can_read
   },
   "/state/conversation/delete": {
     "delete": can_delete_item
