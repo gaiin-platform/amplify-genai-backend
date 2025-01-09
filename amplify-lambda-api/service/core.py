@@ -294,7 +294,7 @@ def update_api_key(item_id, updates, user):
     update_expression = []
     expression_attribute_values = {}
     expression_attribute_names = {}
-    print("Updates performed on key: ", key_name)
+    print("Updates to perform on key: ", key_name)
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
@@ -306,11 +306,11 @@ def update_api_key(item_id, updates, user):
         if (field == 'rateLimit'): 
             value = formatRateLimit(value)
         # Use attribute names to avoid conflicts with DynamoDB reserved keywords
-            placeholder = f"#{field}"
-            value_placeholder = f":{field}"
-            update_expression.append(f"{placeholder} = {value_placeholder}")
-            expression_attribute_names[placeholder] = field
-            expression_attribute_values[value_placeholder] = value
+        placeholder = f"#{field}"
+        value_placeholder = f":{field}"
+        update_expression.append(f"{placeholder} = {value_placeholder}")
+        expression_attribute_names[placeholder] = field
+        expression_attribute_values[value_placeholder] = value
 
 
     # Join the update expression and check if it's empty
@@ -332,6 +332,7 @@ def update_api_key(item_id, updates, user):
         )
         return {'success': True, 'updated_attributes': response['Attributes']}
     except ClientError as e:
+        print("Updates save error: ", e)
         return {'success': False, 'error': str(e), "key_name": key_name}
 
 
