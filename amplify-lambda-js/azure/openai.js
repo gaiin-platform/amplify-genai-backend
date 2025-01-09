@@ -2,7 +2,7 @@
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
-import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
+import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import { Transform } from "stream";
 
 const logger = getLogger("openai");
@@ -32,7 +32,7 @@ async function includeImageSources(dataSources, messages, model) {
     const msgLen = messages.length - 1;
     // does not support images
     if (!model.supportsImages) {          
-        messages[msgLen]['content'] += `\n At the end of your response, please let the user know the model ${model.name} does not support images. Advise them to try another GPT model.`;
+        messages[msgLen]['content'] += doesNotSupportImagesInstructions(model.name);
         return messages;
     }
 
