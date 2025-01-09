@@ -46,18 +46,20 @@ export class StreamMultiplexer {
                         try {
                             //console.log("Parsing", data);
 
+                            logger.debug("Parsing Event...");
                             let eventObj = JSON.parse(data);
 
                             let transformed = eventObj;
 
                             if (processor) {
                                 transformed = processor(eventObj);
+                                logger.debug("Processing Event...");
                             }
 
                             if (transformed) {
                                 transformed.s = src;
-                                //logger.debug("Sending event: ", transformed);
                                 this.outputStream.write("data: "+JSON.stringify(transformed) + '\n\n');
+                                logger.debug("Event Transformed Sent... ", transformed);
                             }
                         } catch (err) {
                             // Handle any parsing error or write error here
