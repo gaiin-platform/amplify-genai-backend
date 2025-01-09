@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 from common.validate import validated
@@ -61,18 +62,51 @@ def pick_conversation_attributes(conversation):
 
 @validated("read")
 def get_all_conversations(event, context, current_user, name, data):
+    conversations = get_all_complete_conversations(current_user)
+    if (not conversations):
+        return {'success': False, 'message': "Failed to retrieve conversations from S3"}
+    elif (len(conversations) == 0):
+        return {'success': True, 'message': "No conversations saved to S3"}
+    
+    for item in conversations:
+        if 'conversation' in item:
+            item['conversation'] = pick_conversation_attributes(item['conversation'])
+
+    presigned_urls = get_presigned_urls(current_user, conversations)
+    return {'success': True, 'presignedUrls': presigned_urls}
+
+
+@validated("read")
+def get_empty_conversations(event, context, current_user, name, data):
+    conversations = get_all_complete_conversations(current_user)
+    if (not conversations):
+        return {'success': False, 'message': "Failed to retrieve conversations from S3"}
+    elif (len(conversations) == 0):
+        return {'success': True, 'message': "No conversations saved to S3"}
+    
+    empty_conversations = []
+    nonempty_conversations_ids = []
+
+    for item in conversations:
+        if ('conversation' in item and len(item['conversation']['messages']) == 0):
+            empty_conversations.append( pick_conversation_attributes(item['conversation']) )
+        else: 
+            nonempty_conversations_ids.append(item['conversation']['id'] )
+
+    presigned_urls = get_presigned_urls(current_user, empty_conversations)
+    return {'success': True, 'presignedUrls': presigned_urls, 'nonEmptyIds': nonempty_conversations_ids}
+
+
+def get_all_complete_conversations(current_user):
     s3 = boto3.client('s3')
     conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
     user_prefix = current_user + '/'
 
-    temp_path = f'temp/{current_user}/conversations.json'
-
     try:
-        print("Listing s3 pbjects")
         # List all objects in the bucket with the given prefix
         response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
         if 'Contents' not in response:
-            return {'success': True, 'conversationsData': []}
+            return []
         
         conversations = []
         print("Number of conversation in list obj: ", len(response['Contents']))
@@ -85,9 +119,8 @@ def get_all_conversations(event, context, current_user, name, data):
                 conversation = json.loads(conversation_body)
                 uncompressed_conversation = lzw_uncompress(conversation["conversation"])
                 if (uncompressed_conversation):
-                    strippedConversation = pick_conversation_attributes(uncompressed_conversation) 
                     conversations.append({
-                        'conversation': strippedConversation,
+                        'conversation': uncompressed_conversation,
                         'folder': conversation["folder"]
                     })
                 else:
@@ -96,15 +129,13 @@ def get_all_conversations(event, context, current_user, name, data):
                 print(f"Failed to retrieve : {obj} with error: {str(e)}")
         print("Number of conversations retrieved: ", len(conversations))
 
-        # Generate a pre-signed URL for the uploaded file
-        presigned_url = get_presigned_url(current_user, conversations, conversations_bucket)
-
-        return {'success': True, 'presignedUrl': presigned_url}
+        return conversations
 
     except (BotoCoreError, ClientError) as e:
         print(str(e))
-        return {'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)}
+        return None
    
+
 
 @validated("get_multiple_conversations")
 def get_multiple_conversations(event, context, current_user, name, data):
@@ -138,9 +169,9 @@ def get_multiple_conversations(event, context, current_user, name, data):
                     failedToFetchConversations.append(id)
             
         # Generate a pre-signed URL for the uploaded file
-        presigned_url = get_presigned_url(current_user, conversations, conversations_bucket)
+        presigned_urls = get_presigned_urls(current_user, conversations, 100)
 
-        return {'success': True, 'presignedUrl': presigned_url, 
+        return {'success': True, 'presignedUrls': presigned_urls, 
                 "noSuchKeyConversations": noSuchKeyConversations,
                 "failed" : failedToFetchConversations}
 
@@ -149,25 +180,42 @@ def get_multiple_conversations(event, context, current_user, name, data):
         print(str(e))
         return {'success': False, 'message': "Failed to retrieve conversations from S3", 'error': str(e)}
 
-def get_presigned_url(current_user, conversations, conversations_bucket):
-    s3 = boto3.client('s3')
-    temp_path = f'temp/{current_user}/conversations.json'
-    conversations_data = json.dumps(conversations)
-    s3.put_object(
-        Bucket=conversations_bucket,
-        Key=temp_path,
-        Body=conversations_data,
-        ContentType='application/json'
-    )
-    
-    # Generate a pre-signed URL for the uploaded file
-    presigned_url = s3.generate_presigned_url(
-        'get_object',
-        Params={'Bucket': conversations_bucket, 'Key': temp_path},
-        ExpiresIn=3600  # URL valid for 1 hour
-    )
 
-    return presigned_url
+def get_presigned_urls(current_user, conversations, chunk_size=400):
+    conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
+    s3 = boto3.client('s3')
+    
+    total_chunks = math.ceil(len(conversations) / chunk_size)
+    presigned_urls = []
+
+    for i in range(total_chunks):
+        start_index = i * chunk_size
+        end_index = min(start_index + chunk_size, len(conversations))
+
+        # Extract the chunk of conversation data
+        chunk_data = conversations[start_index:end_index]
+        chunk_json = json.dumps(chunk_data)
+
+        chunk_key = f"temp/{current_user}/conversations_chunk_{i}.json"
+
+        s3.put_object(
+            Bucket=conversations_bucket,
+            Key=chunk_key,
+            Body=chunk_json,
+            ContentType='application/json'
+        )
+
+        # Generate a GET presigned URL for this chunk
+        presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': conversations_bucket, 'Key': chunk_key},
+            ExpiresIn=3600  # 1 hour
+        )
+
+        presigned_urls.append(presigned_url)
+    print("Number of presigned urls needed: ", len(presigned_urls))
+    return presigned_urls
+
 
 
 @validated("delete")
