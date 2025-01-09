@@ -271,7 +271,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             let blockTerminator = null;
 
-            if(assistant.data && assistant.data.operations && assistant.data.opsLanguageVersion !== "custom") {
+            if(assistant.data && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
                 const instructionsPreProcessor = langVersion.instructionsPreProcessor;
