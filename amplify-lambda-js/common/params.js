@@ -13,11 +13,11 @@ export const getModel = (params) => {
 }
 
 export const getCheapestModel = (params) => {
-    return params.cheapestModel ?? getModel(params);
+    return params.cheapestModel ?? (params.options.cheapestModel ?? getModel(params));
 }
 
 export const getAdvancedModel = (params) => {
-    return params.advancedModel ?? getModel(params);
+    return params.advancedModel ?? (params.options.advancedModel ?? getModel(params));
 }
 
 export const setModel = (params, model) => {
