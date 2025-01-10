@@ -1,7 +1,7 @@
 import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
-import {getChatFn} from "../common/params.js";
+import {getChatFn, getCheapestModel} from "../common/params.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
@@ -93,7 +93,7 @@ const batchAssistant = {
                 params.account.user,
                 `${params.account.user}/tasks/${date}/chat-${time}-${uuidv4()}.json`,
                 updatedBody,
-                params.cheapestModel,
+                getCheapestModel(params),
                 params.options,
             )
             await sendAssistantTaskToQueue(task);
