@@ -79,7 +79,7 @@ export const chatBedrock = async (chatBody, writable) => {
          
     } catch (error) {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        sendDeltaToStream(writable, "answer", "Error retrieving response. Please try again.");
+        // sendDeltaToStream(writable, "answer", "Error retrieving response. Please try again.");
     }
 }
 
@@ -120,7 +120,9 @@ function combineMessages(oldMessages, failSafeUserMessage) {
 async function sanitizeMessages(messages, imageSources, model) {
     if (!messages) return messages;
 
-    if (!model.supportsImages) {
+    const containsImages = imageSources && imageSources.length > 0;
+
+    if (!model.supportsImages && containsImages) {
         messages.slice(-1)[0].content += doesNotSupportImagesInstructions(model.name)
     }
 
@@ -133,7 +135,7 @@ async function sanitizeMessages(messages, imageSources, model) {
             }))
     ];
 
-    if (model.supportsImages && imageSources && imageSources.length > 0) {
+    if (model.supportsImages && containsImages) {
         updatedMessages = await includeImageSources(imageSources, updatedMessages); 
     }
     return updatedMessages;
