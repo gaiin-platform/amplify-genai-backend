@@ -44,6 +44,10 @@ export const getAccountId = (params) => {
     return params.account.accountId;
 }
 
+export const getMaxTokens = (params) => {
+    return params.options.maxTokens;
+}
+
 export const getChatFn = (model, body, writable, context) => {
 
     if (model.id.includes("gpt") || model.id.includes("o1") ) {
@@ -54,10 +58,4 @@ export const getChatFn = (model, body, writable, context) => {
         console.log(`Error: Model ${model} does not have a corresponding chatFn`)
         return null;
     }
-    // else if (modelId.includes("anthropic")) { //claude models
-    //     return chatAnthropic(body, writable, context);
-
-    // } else if (modelId.includes("mistral")) { // mistral 7b and mixtral 7x8b
-    //     return chatMistral(body, writable, context);
-    
 }
