@@ -6,8 +6,8 @@ const extractTagAndFormat = (str) => {
     const regex = /\{\{\s*ops\s+([a-zA-Z0-9_./-]+)?(:[a-zA-Z0-9_./-]+)?\s*\}\}/;
     const match = str.match(regex);
 
-    if (match) {
-        return { tag: match[1], format: match[2] };
+    if (match) {                        // remove colon
+        return { tag: match[1], format: match[2]?.slice(1) };
     } else {
         return { tag: null, format: null };
     }
@@ -24,17 +24,28 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
     let result = templateStr;
     try {
 
+        let includedOperations = contextData.operations || [];
+        let hasTemplateForOps = false;
+
         let opsStr = "";
         const { tag, format } = extractTagAndFormat(templateStr);
         if(tag || templateStr.includes("__assistantOps")) {
+            hasTemplateForOps = true;
             const ops = await getOps(params.account.accessToken, tag);
 
-            if(tag) {
-                opsStr = await formatOps(ops, format);
-            }
-            contextData["__assistantOps"] = ops;
+            includedOperations = [...includedOperations, ...ops];
+        }
 
-            llm.sendStateEventToStream({resolvedOps: ops})
+        if(includedOperations.length > 0) {
+            llm.sendStateEventToStream({resolvedOps: includedOperations});
+
+            opsStr = await formatOps(includedOperations, format);
+            // console.log(opsStr)
+            contextData["__assistantOps"] = includedOperations;
+
+            if (!hasTemplateForOps) {
+                templateStr = "{{ops __assistantOps}}\n\n" + templateStr;
+            }
         }
 
         const dataSourcesInConversationAlready = (body) => {

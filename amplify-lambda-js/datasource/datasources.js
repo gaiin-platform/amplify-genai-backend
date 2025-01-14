@@ -70,6 +70,10 @@ export const getFileText = async (key) => {
     }
 }
 
+export const doesNotSupportImagesInstructions = (modelName) => {
+    return `\n\n At the end of your response, please let the user know the model ${modelName} does not support images. Advise them to try another model.`;
+}
+
 export const getImageBase64Content = async (dataSource) => {
     const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
     const key = extractKey(dataSource.id)

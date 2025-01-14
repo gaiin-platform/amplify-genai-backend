@@ -186,20 +186,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
     return key
 
 
-@op(
-    path="/files/upload",
-    name="getUploadUrl",
-    tags=["files"],
-    description="Get a url to upload a file to.",
-    params={
-        "name": "The name of the file to upload.",
-        "type": "The mime type of the file to upload as a string.",
-        "tags": "The tags associated with the file as a list of strings.",
-        "data": "The data associated with the file or an empty dictionary.",
-        "knowledgeBase": "The knowledge base associated with the file. You can put 'default' if you don't have a "
-                         "specific knowledge base. "
-    }
-)
+
 
 def create_and_store_fernet_key():
     # Read the parameter name from environment variable
@@ -298,13 +285,69 @@ def encrypt_account_data(data):
             'success': False,
             'error': f"Error {str(e)}"
         }
+    
+
+@op(
+    path="/files/upload",
+    name="uploadFile",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Initiate a file upload to the Amplify platform, enabling interaction via prompts and assistants.
+
+    Example request:
+    {
+        "data": {
+            "type": "application/fileExtension",
+            "name": "fileName.pdf",
+            "knowledgeBase": "default",
+            "tags": [],
+            "data": {}
+        }
+    }
+
+    Example response:
+    {
+        "success": true,
+        "uploadUrl": "<uploadUrl>",
+        "statusUrl": "<statusUrl>",
+        "contentUrl": "<contentUrl>",
+        "metadataUrl": "<metadataUrl>",
+        "key": "yourEmail@vanderbilt.edu/date/293088.json"
+    }
+
+    The user can use the presigned url 'uploadUrl' to upload their file to Amplify.
+    """,
+    params={
+        "type": "String. Required. MIME type of the file to be uploaded. Example: 'application/pdf'.",
+        "name": "String. Required. Name of the file to be uploaded.",
+        "knowledgeBase": "String. Required. Knowledge base the file should be associated with. Default: 'default'.",
+        "tags": "Array of strings. Tags to associate with the file. Example: ['tag1', 'tag2'].",
+        "data": "Object. Additional metadata associated with the file upload."
+    }
+)
+
+@op(
+    path="/files/upload",
+    name="getUploadUrl",
+    tags=["files"],
+    description="Get a url to upload a file to.",
+    params={
+        "name": "The name of the file to upload.",
+        "type": "The mime type of the file to upload as a string.",
+        "tags": "The tags associated with the file as a list of strings.",
+        "data": "The data associated with the file or an empty dictionary.",
+        "knowledgeBase": "The knowledge base associated with the file. You can put 'default' if you don't have a "
+                         "specific knowledge base. "
+    }
+)
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
+
     access = data['allowed_access']
     if ('file_upload' not in access and 'full_access' not in access):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
-    
+    ####
     # we need the perms to be under the groupId if applicable
     groupId = data['data'].get('groupId', None) 
     if (groupId): 
@@ -418,6 +461,24 @@ def get_presigned_url(event, context, current_user, name, data):
     params={
     }
 )
+
+@op(
+    path="/files/tags/list",
+    name="listFileTags",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""Retrieve a list of all tags associated with files, conversations, and assistants on the Amplify platform.
+
+    Example response:
+    {
+        "success": true,
+        "data": {
+            "tags": ["NewTag", "Important", "Archived"]
+        }
+    }
+    """,
+    params={}
+)
 @validated(op="list")
 def list_tags_for_user(event, context, current_user, name, data):
     dynamodb = boto3.resource('dynamodb')
@@ -450,6 +511,23 @@ def list_tags_for_user(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/files/tags/delete",
+    name="deleteFileTag",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Delete a specific tag from the Amplify platform.
+    Example request:
+    {
+        "data": {
+            "tag": "NewTag"
+        }
+    }
+    """,
+    params={
+        "tag": "String. Required. The tag to be deleted. Example: 'NewTag'."
+    }
+)
 @op(
     path="/files/tags/delete",
     name="deleteTagForUser",
@@ -501,7 +579,24 @@ def delete_tag_from_user(event, context, current_user, name, data):
                 'message': e.response['Error']['Message']
             }
 
+@op(
+    path="/files/tags/create",
+    name="createFileTags",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Create new tags to associate with files, conversations, and assistants.
 
+    Example request:
+    {
+        "data": {
+            "tags": ["NewTag"]
+        }
+    }
+    """,
+    params={
+        "tags": "Array of strings. Required. List of tags to create. Example: ['NewTag', 'Important']."
+    }
+)
 @op(
     path="/files/tags/create",
     name="createTagsForUser",
@@ -565,7 +660,26 @@ def add_tags_to_user(current_user, tags_to_add):
                 'message': e.response['Error']['Message']
             }
 
+@op(
+    path="/files/set_tags",
+    name="associateFileTags",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Associate one or more tags with a specific files only.
 
+    Example request:
+    {
+        "data": {
+            "id": "yourEmail@vanderbilt.edu/date/23094023573924890-208.json",
+            "tags": ["NewTag", "Important"]
+        }
+    }
+    """,
+    params={
+        "id": "String. Required. Unique identifier of the file. Example: 'yourEmail@vanderbilt.edu/date/23094023573924890-208.json'.",
+        "tags": "Array of strings. Required. List of tags to associate. Example: ['NewTag', 'Important']."
+    }
+)
 @op(
     path="/files/tags/set_tags",
     name="setTagsForFile",
@@ -623,6 +737,37 @@ def update_file_tags(current_user, item_id, tags):
         print(f"Unable to update tags: {e.response['Error']['Message']}")
         return False, "Unable to update tags"
 
+
+@op(
+    path="/files/query",
+    name="queryUploadedFiles",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Retrieve a list of uploaded files stored on the Amplify. A user can retrieve details about their files include id, types, size, and more.
+
+    Example request:
+    {
+        "data": {
+            "pageSize": 10,
+            "sortIndex": "",
+            "forwardScan": false
+        }
+    }
+    """,
+    params={
+        "startDate": "String (date-time). Optional. Start date for querying files. Default: '2021-01-01T00:00:00Z'.",
+        "pageSize": "Integer. Optional. Number of results to return. Default: 10.",
+        "pageKey": "Object. Optional. Includes 'id', 'createdAt', and 'type' for pagination purposes.",
+        "namePrefix": "String. Optional. Prefix for filtering file names.",
+        "createdAtPrefix": "String. Optional. Prefix for filtering creation date.",
+        "typePrefix": "String. Optional. Prefix for filtering file types.",
+        "types": "Array of strings. Optional. List of file types to filter by. Default: [].",
+        "tags": "Array of strings. Optional. List of tags to filter files by. Default: [].",
+        "pageIndex": "Integer. Optional. Page index for pagination. Default: 0.",
+        "forwardScan": "Boolean. Optional. Set to 'true' for forward scanning. Default: false.",
+        "sortIndex": "String. Optional. Attribute to sort results by. Default: 'createdAt'."
+    }
+)
 
 @op(
     path="/files/query",

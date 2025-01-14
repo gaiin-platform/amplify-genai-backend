@@ -45,6 +45,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     DATA_DISCLOSURE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
 
 
   iam:
@@ -59,7 +60,7 @@ functions:
   # determine if a user exists as an "accepted" record in the DataDisclosureAcceptanceTable
   check_data_disclosure_decision:
     handler: data_disclosure.check_data_disclosure_decision
-    memorySize: 128
+    memorySize: 512
     timeout: 30
     events:
       - http:
@@ -70,7 +71,6 @@ functions:
   # save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
   save_data_disclosure_decision:
     handler: data_disclosure.save_data_disclosure_decision
-    memorySize: 128
     timeout: 30
     events:
       - http:
@@ -81,7 +81,6 @@ functions:
   # get the most recent data disclosure from DataDisclosureVersionsTable
   get_latest_data_disclosure:
     handler: data_disclosure.get_latest_data_disclosure
-    memorySize: 128
     timeout: 30
     events:
       - http:
@@ -89,18 +88,25 @@ functions:
           method: get
           cors: true
 
-  # upload the locally stored data disclosure file to the DataDisclosureVersionsTable DynamoDB table and DataDisclosureStorage S3 bucket
-  # 
-  # This lambda will only run locally. Follow these steps to update the data disclosure document:
-  # Step 1a: Save the data disclosure document you want to show in the popup as HTML at data-disclosure/data_disclosure.html
-  # Step 1b: Save the data disclosure document you want at the download link as pdf at data-disclosure/data_disclosure.pdf
-  # Step 2:  Deploy the lambda via:         ~ serverless deploy --stage dev
-  # Step 3:  Locally invoke the lambda via: ~ serverless invoke local --function upload_data_disclosure
+
   upload_data_disclosure:
-    handler: data_disclosure.upload_data_disclosure
-    memorySize: 128
-    timeout: 30
-    events: [] # No associated HTTP events since this function runs locally
+    handler: data_disclosure.get_presigned_data_disclosure
+    timeout: 10
+    events:
+      - http:
+          path: data-disclosure/upload
+          method: post
+          cors: true
+
+
+  convertDataDisclosure:
+    handler: data_disclosure.convert_uploaded_data_disclosure
+    events:
+      - s3:
+          bucket: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
+          event: s3:ObjectCreated:*
+          existing: true
+
 
 resources:
   Resources:
@@ -135,7 +141,10 @@ resources:
               Action:
                 - "s3:PutObject"
                 - "s3:GetObject"
+                - "s3:HeadObject"
+                - "s3:PutBucketNotification"
               Resource: 
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"  
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  
     # contains records of what emails have accepted the data disclosure
     DataDisclosureAcceptanceTable:
@@ -178,5 +187,26 @@ resources:
     # contains all versions of the data disclosure
     DataDisclosureStorage:
       Type: 'AWS::S3::Bucket'
+      DependsOn: DataDisclosureIAMPolicy
       Properties:
         BucketName: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET', 'PUT']
+              AllowedHeaders: ['*']
+              MaxAge: 3000     
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256   
+        NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: 's3:ObjectCreated:Put'
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: suffix
+                        Value: '.pdf'
+                Function: !GetAtt ConvertDataDisclosureLambdaFunction.Arn
+                

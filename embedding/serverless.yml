@@ -70,6 +70,7 @@ provider:
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
     RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
+    MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
     OBJECT_ACCESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
@@ -105,6 +106,7 @@ provider:
     SENDER_EMAIL: ${self:custom.stageVars.SENDER_EMAIL}
     KEYWORD_MODEL_NAME: ${self:custom.stageVars.KEYWORD_MODEL_NAME}
     REGION: ${self:provider.region}
+    # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
     
   iam:
     role:
@@ -168,15 +170,12 @@ functions:
                 - Arn
       environment:
         RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
-        MODEL_NAME:  ${self:provider.environment.EMBEDDING_MODEL_NAME}
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
         SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
         ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
-        EMBEDDING_MODEL_NAME: ${self:provider.environment.EMBEDDING_MODEL_NAME}
-        KEYWORD_MODEL_NAME: ${self:provider.environment.KEYWORD_MODEL_NAME}
-        QA_MODEL_NAME: ${self:provider.environment.QA_MODEL_NAME}
+        MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
         API_VERSION: ${self:provider.environment.API_VERSION}
        
         EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
@@ -200,6 +199,49 @@ functions:
           method: post
           cors: true
 
+
+  terminate_embedding:
+    handler: embedding.terminate_embedding
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /embedding/terminate
+          method: post
+          cors: true
+
+
+  get_sqs_messages:
+    handler: embedding-sqs.get_in_flight_messages
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /embedding/sqs/get
+          method: get
+          cors: true
+
+  delete_embeddings:
+    runtime: python3.11
+    handler: embedding-delete.delete_embeddings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    vpc: 
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - ${self:provider.environment.PRIVATE_SUBNET_ONE}
+        - ${self:provider.environment.PRIVATE_SUBNET_TWO}
+    timeout: 300
+    events:
+      - http:
+          path: /embedding-delete
+          method: post
+          cors: true
+
+        
 
 resources:
   Conditions:
@@ -231,7 +273,7 @@ resources:
                 - sqs:ReceiveMessage
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
-
+                - bedrock:InvokeModel
               Resource:
                 - !GetAtt RagPostgresDbCluster.DBClusterArn
                 - !Ref RagPostgresDbSecret
@@ -251,9 +293,13 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:bedrock:*::foundation-model/*"
+
   
           
 
