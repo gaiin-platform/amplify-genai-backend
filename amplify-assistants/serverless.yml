@@ -45,7 +45,8 @@ provider:
     # Valid values are either "openai" or "azure"
     HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVariables.ASSISTANTS_OPENAI_PROVIDER}
-    ASSISTANTS_FILES_BUCKET_NAME: ${self:custom.stageVariables.ASSISTANTS_FILES_BUCKET_NAME}
+    ASSISTANTS_FILES_BUCKET_NAME: vu-amplify-${sls:stage}-rag-input
+    S3_IMAGE_INPUT_BUCKET_NAME: vu-amplify-${sls:stage}-image-input
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
@@ -526,6 +527,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
 
             - Effect: Allow
