@@ -2,28 +2,17 @@
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-
-
-def can_share(user, data):
+def can_retrieve(user, data):
   return True
 
-def can_publish_item(user, data):
+
+def can_terminate(user, data):
   return True
 
-def can_delete_item(user, data):
+
+def can_delete(user, data):
   return True
 
-def can_upload(user, data):
-  return True
-
-def can_create_assistant(user, data):
-  return True
-def can_create_assistant_thread(user, data):
-  return True
-
-def can_read_share(user, data):
-  # Read share automatically pulls data for the authenticated user
-  return True
 
 def get_permission_checker(user, type, op, data):
   print("Checking permissions for user: {} and type: {} and op: {}".format(user, type, op))
@@ -37,9 +26,18 @@ def get_data_owner(event, data):
 
 permissions_by_state_type = {
   "/embedding-retrieval": {
-    "retrieval": can_publish_item
+    "retrieval": can_retrieve
   },
   "/embedding-dual-retrieval": {
-    "dual-retrieval": can_publish_item
+    "dual-retrieval": can_retrieve
+  },
+  "/embedding/terminate": {
+    "terminate": can_terminate
+  },
+  "/embedding/sqs/get" : {
+    "get": can_retrieve
+  },
+  "/embedding-delete": {
+    "embedding-delete": can_delete
   }
 }

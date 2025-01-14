@@ -1,4 +1,3 @@
-import string
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
@@ -384,13 +383,6 @@ create_tags_schema = {
     "additionalProperties": False
 }
 
-user_list_tags_schema = {
-    "type": "object",
-    "properties": {
-    },
-    "additionalProperties": False
-}
-
 user_delete_tag_schema = {
     "type": "object",
     "properties": {
@@ -585,20 +577,20 @@ save_settings_schema = {
                     "type": "string",
                     "enum": ["light", "dark"]
                 },
-                "modelOptions": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "boolean"
-                    }
-                },
                 "featureOptions": {
                     "type": "object",
                     "additionalProperties": {
                         "type": "boolean"
                     }
+                },
+                "hiddenModelIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                    }
                 }
             },
-            "required": ["theme", "modelOptions", "featureOptions"]
+            "required": ["theme", "featureOptions", "hiddenModelIds"]
         }
     },
     "required": ["settings"]
@@ -689,9 +681,6 @@ validators = {
         "append": share_schema,
         "read": {}
     },
-    "/state/base-prompts/get": {
-        "get": {}
-    },
     "/state/share/load": {
         "load": share_load_schema
     },
@@ -714,7 +703,7 @@ validators = {
         "create": create_tags_schema
     },
     "/files/tags/list": {
-        "list": user_list_tags_schema
+        "list": {}
     },
     "/files/query": {
         "query": file_query_schema
@@ -734,13 +723,16 @@ validators = {
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
     },
-    "/state/conversation/get_multiple": {   
+    "/state/conversation/get/multiple": {   
         "get_multiple_conversations": conversation_ids_schema
     },
     "/state/conversation/get": {
         "read" : {}
     },
-    "/state/conversation/get_all": {
+    "/state/conversation/get/all": {
+        "read" : {}
+    },
+    "/state/conversation/get/empty": {
         "read" : {}
     },
     "/state/conversation/delete_multiple": {   
@@ -781,7 +773,7 @@ api_validators = {
         "create": create_tags_schema
     },
     "/files/tags/list": {
-        "list": user_list_tags_schema
+        "list": {}
     },
     "/files/query": {
         "query": file_query_schema

@@ -2,13 +2,12 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import axios from "axios";
-import {getAccessToken, setModel, getModel, getCheapestModelEquivalent} from "../../params.js";
+import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {LLM} from "../../llm.js";
-import {ModelID, Models} from "../../../models/models.js";
+import {getChatFn} from "../../params.js";
 import Bottleneck from "bottleneck";
-import {sendDeltaToStream} from "../../streams.js";
 import {trace} from "../../trace.js";
 
 const logger = getLogger("rag");
@@ -46,10 +45,13 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 }
 
 
-export const getContextMessages = async (chatFn, params, chatBody, dataSources) => {
-    const ragLLMParams = setModel(
-        {...params, options: {skipRag: true, dataSourceOptions:{}}}, //Models[process.env.RAG_ASSISTANT_MODEL_ID]);
-        getCheapestModelEquivalent(getModel(params)));
+export const getContextMessages = async (params, chatBody, dataSources) => {
+    const model = params.options.cheapestModel;
+    const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
+
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model, body, writable, context);
+    }
 
     const llm = new LLM(
         chatFn,

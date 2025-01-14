@@ -52,13 +52,107 @@ report_generator_schema = {
     "required": ["emails"],
 }
 
+update_models_schema = {
+    "type": "object",
+    "properties": {
+        "models": {
+            "type": "object",
+            "patternProperties": {
+                "^.*$": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "provider": {
+                            "type": "string"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                            "isAvailable": {
+                            "type": "boolean"
+                        },
+                        "isBuiltIn": {
+                            "type": "boolean"
+                        },
+                            "isDefault": {
+                            "type": "boolean"
+                        },
+                            "systemPrompt": {
+                            "type": "string"
+                        },
+                            "supportsSystemPrompts": {
+                            "type": "boolean"
+                        },
+                            "supportsImages": {
+                            "type": "boolean"
+                        },
+                            "defaultCheapestModel": {
+                            "type": "boolean"
+                        },
+                            "defaultAdvancedModel": {
+                            "type": "boolean"
+                        },
+                            "defaultEmbeddingsModel": {
+                            "type": "boolean"
+                        },
+                            "defaultQAModel": {
+                            "type": "boolean"
+                        },
+                            "inputContextWindow": {
+                            "type": "number"
+                        },
+                            "outputTokenLimit": {
+                            "type": "number"
+                        },
+                        "inputTokenCost": {
+                            "type": "number"
+                        },
+                            "outputTokenCost": {
+                            "type": "number"
+                        },
+                        "exclusiveGroupAvailability": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
+                                    "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
+                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost",
+                                    "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],
+                    "additionalProperties": False
+                }
+            },
+            "required": []
+        },
+    },
+    "required": ["models"],
+}
+
 
 validators = {
     "/billing": {"report_generator": report_generator_schema},
+    "/available_models": {
+        "read": {}
+    },
+    "/supported_models/update": {
+        "update": update_models_schema
+    },
+    "/supported_models/get": {
+        "read": {}
+    }
 }
 
 api_validators = {
-    "/billing": {"report_generator": report_generator_schema},
+    "/available_models": {
+        "read": {}
+    },
 }
 
 
@@ -291,8 +385,9 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('billing' not in access):
-            # and 'full_access' not in access
+        if ('chat' not in access and 
+            "full_access" not in access and
+            "admin" not in access):
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")
         

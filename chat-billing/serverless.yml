@@ -62,6 +62,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     CHAT_BILLING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     
 
   iam:
@@ -79,9 +80,46 @@ functions:
   #       or else the DynamoDB table will not update with what you have locally
   updateModelRateTable:
     handler: model_rates/update_table.updateModelRateTable
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
     memorySize: 128
     environment:
       MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+
+
+  get_user_available_models:
+    handler: service/core.get_user_available_models
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /available_models
+          method: get
+          cors: true
+
+
+  update_supported_models:
+    handler: service/core.update_supported_models
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /supported_models/update
+          method: post
+          cors: true
+
+  get_supported_models:
+    handler: service/core.get_supported_models_as_admin
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /supported_models/get
+          method: get
+          cors: true
 
   
   # triggered at the start of each day and month
@@ -141,6 +179,9 @@ resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:CreateTable
+                - "dynamodb:BatchWriteItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:DeleteItem"
               Resource:
                 - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
