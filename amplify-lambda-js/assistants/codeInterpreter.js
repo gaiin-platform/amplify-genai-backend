@@ -184,12 +184,14 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             if (codeInterpreterResponse) {
                 dataSourceOptions.disableDataSources = true;
                 ds = [];
-                updatedMessages.map(m => {
+                if (!body?.options?.model?.supportsImages) {
+                    updatedMessages.map(m => {
                     if (m.data && m.data.dataSources) {
                         m.data.dataSources = []
                     }
-                });
-                body.imageSources = [];
+                    });
+                    body.imageSources = [];
+                }
                 updatedMessages.push({
                     role: 'user',
                     content: reviewPrompt(userPrompt, codeInterpreterResponse),
