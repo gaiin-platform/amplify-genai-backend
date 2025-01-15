@@ -17,7 +17,7 @@ const additionalPrompt = `You have access to a sandboxed environment for writing
                             3. Show us the input data and output of your code in Markdown
                             Always display code blocks in markdown. comment the code with explanations of what the code is doing for any complex sections of code. 
                             Do not include download links or mock download links! Instead tell me some information about the files you have produced and refer to them by their corresponding file name. For any created files, draw connections between the users prompt and how it relates to your generated files. Always attach and send back generated files.
-                            
+                            Do not generate or attach files with IDENTICAL content, regardless of their extensions. Ensure each file is unique in content before attaching to your response.
                             DO NOT FORGET TO INLCUDE YOUR GENERATE FILES IN YOUR RESPONSE !IMPORTANT` 
 
 
@@ -187,11 +187,19 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             let dataSourceOptions = {disableDataSources: false};
             if (codeInterpreterResponse) {
                 dataSourceOptions.disableDataSources = true;
+                ds = [];
+                if (!body?.options?.model?.supportsImages) {
+                    updatedMessages.map(m => {
+                    if (m.data && m.data.dataSources) {
+                        m.data.dataSources = []
+                    }
+                    });
+                    body.imageSources = [];
+                }
                 updatedMessages.push({
                     role: 'user',
                     content: reviewPrompt(userPrompt, codeInterpreterResponse),
                 });
-                // console.log(updatedMessages.at(-1)['content']);
             } else {
                 console.log("Code interpreter was unavailable...");
                 updatedMessages.push({
