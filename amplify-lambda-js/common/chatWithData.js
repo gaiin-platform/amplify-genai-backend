@@ -9,8 +9,9 @@ import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
-import {claudeTransform, mistralTransform, bedrockConverseTransform} from "./chat/events/bedrock.js";
+import {bedrockConverseTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
+import {getMaxTokens} from "./params.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
@@ -228,6 +229,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     const account = params.account;
     const model = params.model;
     const options = params.options || {};
+    const details = {userSetMaxTokenLimit: getMaxTokens(params)};
 
     let srcPrefix = options.source || defaultSource;
 
@@ -237,7 +239,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     let totalTokens = 0;
     const tokenReporting = async (id, tokenCount) => {
         totalTokens += tokenCount;
-        await recordUsage(account, requestId, model, tokenCount, 0, {});
+        await recordUsage(account, requestId, model, tokenCount, 0, details);
         logger.debug(`Recorded request tokens for ${totalTokens}/${id}`);
     }
 
@@ -272,7 +274,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     const increment = 100;
 
     // forward bill for 100 tokens, we will account for this at the end
-    await recordUsage(account, requestId, model, 0, increment, {});
+    await recordUsage(account, requestId, model, 0, increment, details);
 
     // This is a block detector that is used to detect the end of an assistant operation
     // and automatically ignore the rest of the output. If it isn't set, nothing will
@@ -293,7 +295,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         outputTokenCount++;
         if(outputTokenCount % increment === 0){
             logger.debug(`Recording incremental output token count: ${increment}`);
-            recordUsage(account, requestId, model, 0, increment, {});
+            recordUsage(account, requestId, model, 0, increment, details);
         }
 
         const selectedModel = model.id;
@@ -307,12 +309,6 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             result = bedrockConverseTransform(event);
         }
  
-        // (selectedModel.includes("anthropic")) {
-        //     result = claudeTransform(event);
-
-        // } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
-        //     result = mistralTransform(event);
-        // }
         if(result && result.d){
             const [blockEnded, remaining] = blockTerminator(result.d);
             if(blockEnded){
@@ -469,7 +465,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
     const billAdjustment = increment - (outputTokenCount % increment);
     if(billAdjustment > 0) {
-        await recordUsage(account, requestId, model, 0, -1 * billAdjustment, {});
+        await recordUsage(account, requestId, model, 0, -1 * billAdjustment, details);
         logger.debug("Remainder usage recorded.");
     }
 

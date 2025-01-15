@@ -6,7 +6,7 @@ import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {LLM} from "../../llm.js";
-import {getChatFn} from "../../params.js";
+import {getChatFn, getCheapestModel} from "../../params.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
 
@@ -46,7 +46,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 
 
 export const getContextMessages = async (params, chatBody, dataSources) => {
-    const model = params.options.cheapestModel;
+    const model = getCheapestModel(params);
     const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
 
     const chatFn = async (body, writable, context) => {
