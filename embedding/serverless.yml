@@ -103,7 +103,6 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
     EMBEDDING_PROVIDER: ${self:custom.stageVars.EMBEDDING_PROVIDER}
-    SENDER_EMAIL: ${self:custom.stageVars.SENDER_EMAIL}
     KEYWORD_MODEL_NAME: ${self:custom.stageVars.KEYWORD_MODEL_NAME}
     REGION: ${self:provider.region}
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
@@ -173,11 +172,9 @@ functions:
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-        SENDER_EMAIL: ${self:provider.environment.SENDER_EMAIL}
         ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
         MODEL_RATE_TABLE: chat-billing-${sls:stage}-model-rates
         API_VERSION: ${self:provider.environment.API_VERSION}
-       
         EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
         REGION: ${self:provider.region}
 

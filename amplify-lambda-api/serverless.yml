@@ -44,7 +44,8 @@ provider:
     S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    API_BASE_URL: ${self:custom.stageVars.API_BASE_URL}
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+
 
   iam:
     role:
