@@ -1,29 +1,20 @@
 FEATURE_FLAGS = {
-    'assistantsEnabled': True,
     'promptOptimizer': True,
     'ragEnabled': True,
-    'sourcesEnabled': True,
     'uploadDocuments': True,
-    'assistantCreator': True,
-    'assistants': True,
-    'overrideUneditablePrompts': False,
     'overrideInvisiblePrompts': False,
-    'extractDocumentsLocally': False,
-    'enableMarket': False,
-    'promptPrefixCreate': False,
-    'outputTransformerCreate': False,
-    'workflowRun': True,
-    'workflowCreate': False,
-    'rootPromptCreate': True,
+    'market': False,
+    'promptPrefixCreate': False, # ask jules
+    'outputTransformerCreate': False, # ask jules
+    'followUpCreate': True, # ask jules
+    'workflowCreate': False, # ask jules
+    'rootPromptCreate': True, # ask jules
     'pluginsOnInput': True, # if all plugin features are disables, then this should be disabled. ex. ragEnabled, codeInterpreterEnabled etc.
     'dataSourceSelectorOnInput': True,
-    'followUpCreate': True,
-    'marketItemDelete': False,
     'automation': True,
     'codeInterpreterEnabled': False,
     'dataDisclosure': False,
     'storeCloudConversations': False,
-    'qiSummary': False,
     'apiKeys': True,
     'assistantAdminInterface': False,
     'createAstAdminGroups': False,
