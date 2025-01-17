@@ -34,4 +34,4 @@ FEATURE_FLAGS = {
     'assistantApis': False,
     'mixPanel': False,
     'integrations': False
-  },
+  }
