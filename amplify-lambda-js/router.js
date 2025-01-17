@@ -13,7 +13,7 @@ import {isRateLimited} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 
 
-const doTrace = process.env.TRACING_ENABLED === 'true';;
+const doTrace = process.env.TRACING_ENABLED === 'true';
 
 const logger = getLogger("router");
 
