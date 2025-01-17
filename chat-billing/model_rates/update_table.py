@@ -29,6 +29,17 @@ def load_model_rate_table():
                 # Convert specific columns to Decimal (or whatever type you need)
                 item["InputCostPerThousandTokens"] = Decimal(row["InputCostPerThousandTokens"])
                 item["OutputCostPerThousandTokens"] = Decimal(row["OutputCostPerThousandTokens"])
+                
+                item["InputContextWindow"] = Decimal(row["InputContextWindow"])
+                item["OutputTokenLimit"] = Decimal(row["OutputTokenLimit"])
+                item["ExclusiveGroupAvailability"] = []
+                    
+                 # Convert "TRUE" or "FALSE" in any other columns into booleans.
+                for key, value in list(item.items()):
+                    if value == "TRUE":
+                        item[key] = True
+                    elif value == "FALSE":
+                        item[key] = False
 
                 response = table.put_item(Item=item)
             except ClientError as e:
