@@ -14,7 +14,7 @@ plugins:
 custom:
   pythonRequirements:
     dockerizePip: non-linux
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
@@ -30,25 +30,26 @@ provider:
   logRetentionInDays: 365
   apiGateway:
     restApiId:
-      ${self:custom.stageVars.REST_API_ID}
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
-      ${self:custom.stageVars.REST_API_ROOT_RESOURCE_ID}    
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
   environment:
-    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-accounts
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: ${self:custom.stageVars.API_BASE_URL}
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-configs
     AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-logs
     ADMINS: ${self:custom.stageVars.ADMINS}
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${sls:stage}-openai-endpoints
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: vu-amplify-${sls:stage}-document-conversion-output
-    AMPLIFY_GROUPS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-amplify-groups
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-document-conversion-output
+    AMPLIFY_GROUPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:
     role:
@@ -162,6 +163,8 @@ resources:
                 - s3:ListBucket
                 - s3:PutObject
                 - s3:DeleteObject
+                - s3:HeadObject
+                - s3:GetObject
                 - secretsmanager:GetSecretValue
                 - secretsmanager:PutSecretValue
                 - secretsmanager:UpdateSecretVersionStage

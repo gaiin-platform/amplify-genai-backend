@@ -1,104 +1,104 @@
-  service: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js
-  frameworkVersion: '3'
+service: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js
+frameworkVersion: '3'
 
-  plugins:
-    - serverless-offline
-    - serverless-prune-plugin 
+plugins:
+  - serverless-offline
+  - serverless-prune-plugin 
 
-  custom:
-    serverless-offline: 
-      custom:
-        config: ${file(../var/${self:provider.stage}-var.yml)} 
-    stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+custom:
+  serverless-offline: 
+    custom:
+      config: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
 
-    stages:
-      - dev
-      - staging
-      - prod
-      
-    prune:
-      automatic: true
-      includeLayers: true
-      number: 5    
+  stages:
+    - dev
+    - staging
+    - prod
+    
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 5    
 
 
-  provider:
-    name: aws
-    runtime: nodejs18.x
-    stage: ${opt:stage, 'dev'}
-    region: ${self:custom.stageVars.DEP_REGION}
-    versionFunctions: false
-    logRetentionInDays: 365
-    apiGateway:
-      restApiId:
-        Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
-      restApiRootResourceId:
-        Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.stageVars.DEP_REGION}
+  versionFunctions: false
+  logRetentionInDays: 365
+  apiGateway:
+    restApiId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+    restApiRootResourceId:
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
 
-      
+    
+  environment:
+    #Unused Hold
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    ##S3_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
+    ##OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    ##OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    #SECRETS_ARN_NAME: ${self:custom.stageVars.SECRETS_ARN_NAME}
+    DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
+    ##AZURE_OPENAI_RESOURCE_NAME: openai
+    ##SECRETS_NAME: ${self:custom.stageVariables.SECRETS_NAME}
+    ##OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
+    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
+
+    #Combined Vars:
+    RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVars.RAG_ASSISTANT_MODEL_ID}
+    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
+    S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
+    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
+    COGNITO_CLIENT_ID: ${self:custom.stageVars.COGNITO_CLIENT_ID}
+    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
+    ASSISTANT_QUEUE_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-queue
+    ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-results
+    ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
+    ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
+    CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
+    REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-request-state
+    TRACE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-chat-traces
+    TRACING_ENABLED: false
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-history-cost-calculations
+    MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-exchange-rates
+    LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-assistant-conversations
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-conversations-content
+    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-image-input
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+    DEP_REGION: ${self:custom.stageVars.DEP_REGION}
+    
+    
+
+  iam:
+    role:
+      managedPolicies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Ref LambdaJSIAMPolicy
+        #- arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_JS_IAM_POLICY_NAME}
+
+
+functions:
+  chat:
+    handler: index.handler
+    memorySize: 1024
+    timeout: 900
+    url:
+      cors: true
+      invokeMode: RESPONSE_STREAM
     environment:
-      #Unused Hold
-      LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-      ##S3_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
-      ##OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-      ##OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-      #SECRETS_ARN_NAME: ${self:custom.stageVars.SECRETS_ARN_NAME}
-      DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
-      ##AZURE_OPENAI_RESOURCE_NAME: openai
-      ##SECRETS_NAME: ${self:custom.stageVariables.SECRETS_NAME}
-      ##OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
-      OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
-
-      #Combined Vars:
-      RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVars.RAG_ASSISTANT_MODEL_ID}
-      LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
-      S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
-      COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-      COGNITO_CLIENT_ID: ${self:custom.stageVars.COGNITO_CLIENT_ID}
-      HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
-      ASSISTANT_QUEUE_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-queue
-      ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-results
-      ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
-      ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
-      ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
-      CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
-      REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-request-state
-      TRACE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-chat-traces
-      TRACING_ENABLED: false
-      API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-      API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
-      COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-      HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-history-cost-calculations
-      MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-exchange-rates
-      LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-      GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-assistant-conversations
-      S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-conversations-content
-      S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-image-input
-      IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-      ADMIN_DYNAMODB_TABLE: vu-amplify-admin-${sls:stage}-admin-configs
-      DEP_REGION: ${self:custom.stageVars.DEP_REGION}
-      
-      
-
-    iam:
-      role:
-        managedPolicies:
-          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-          - !Ref LambdaJSIAMPolicy
-          #- arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_JS_IAM_POLICY_NAME}
-
-
-  functions:
-    chat:
-      handler: index.handler
-      memorySize: 1024
-      timeout: 900
-      url:
-        cors: true
-        invokeMode: RESPONSE_STREAM
-      environment:
-          assistant_task_queue_url:
-            Ref: AssistantTaskQueue
+        assistant_task_queue_url:
+          Ref: AssistantTaskQueue
 
   api_g_chat:
     handler: indexApiG.handler
@@ -127,7 +127,7 @@
     environment:
         assistant_task_queue_url:
           Ref: AssistantTaskQueue
-  
+
   reset_billing:
     handler: billing/reset.handler
     memorySize: 512 # increased memory size to increase speed
@@ -135,7 +135,7 @@
     events:
       - schedule:
           rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
-  
+
   # provides real-time usage information via API gateway
   mtd_cost_reporter:
     handler: billing/mtd.handler
@@ -181,7 +181,6 @@ resources:
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
               Resource:
-                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
@@ -298,19 +297,19 @@ resources:
             KeyType: RANGE
         TableName: ${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}
     ChatTracesBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-           BucketName: ${self:provider.environment.TRACE_BUCKET_NAME}
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.TRACE_BUCKET_NAME}
     AssistantTaskQueue:
           Type: "AWS::SQS::Queue"
           Properties:
             VisibilityTimeout: 900
             QueueName: ${self:provider.environment.ASSISTANT_QUEUE_NAME}            
-      AssistantTaskResultsBucket:
-          Type: AWS::S3::Bucket
-          Properties:
-            BucketName: ${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}
-      AssistantLogsBucket:
-          Type: AWS::S3::Bucket
-          Properties:
-            BucketName: ${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}
+    AssistantTaskResultsBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}
+    AssistantLogsBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}

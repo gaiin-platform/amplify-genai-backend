@@ -226,7 +226,7 @@ functions:
           path: /groups/list
           method: get
           cors: true
- list_all_groups:
+  list_all_groups:
     handler: groups.list_all_groups_for_admins
     layers:
       - Ref: PythonRequirementsLambdaLayer

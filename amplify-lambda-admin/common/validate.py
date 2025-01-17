@@ -596,8 +596,8 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
-
+        idp_prefix = os.getenv('IDP_PREFIX')
+        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
         user = get_email(payload['username'])
 
         # grab deafault account from accounts table 

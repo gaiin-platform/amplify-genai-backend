@@ -3,28 +3,49 @@ services:
   amplify-assistants:
     path: ./amplify-assistants
 
-  amplify-lambda-js:
-    path: ./amplify-lambda-js
-    #params:
-      #ASSISTANTS_OPENAI_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ChatUnderscoreassistantUnderscoreurlLambdaFunctionUrl}
-      #ASSISTANTS_CREATE_CODE_INTERPRETER_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
-    dependsOn:
-      - amplify-assistants
-  
   amplify-lambda:
     path: ./amplify-lambda
-    #params:
-      #SHARE_ASSISTANTS_ENDPOINT: ${amplify-assistants.ApiGatewayUrl}
     dependsOn:
       - amplify-assistants
 
-  amplify-utilities:
-    path: ./utilities
+  amplify-lambda-admin:
+    path: ./amplify-lambda-admin
+    dependsOn:
+      - amplify-lambda
+
+  amplify-lambda-api:
+    path: ./amplify-lambda-api
+    dependsOn:
+      - amplify-lambda
+
+  amplify-lambda-artifacts:
+    path: ./amplify-lambda-artifacts
+    dependsOn:
+      - amplify-lambda
+
+
+  amplify-lambda-js:
+    path: ./amplify-lambda-js
+    dependsOn:
+      - amplify-assistants
+    
+  amplify-lambda-ops:
+    path: ./amplify-lambda-ops
+    dependsOn:
+      - amplify-lambda
+
+  amplify-lambda-optimizer:
+    path: ./amplify-lambda-optimizer
     dependsOn:
       - amplify-lambda
 
   chat-billing:
     path: ./chat-billing
+    dependsOn:
+      - amplify-lambda
+
+  data-disclosure:
+    path: ./data-disclosure
     dependsOn:
       - amplify-lambda
   
@@ -38,19 +59,11 @@ services:
     dependsOn:
       - amplify-lambda
   
-  amplify-lambda-optimizer:
-    path: ./amplify-lambda-optimizer
-    dependsOn:
-      - amplify-lambda
 
-  amplify-lambda-api:
-    path: ./amplify-lambda-api
-    dependsOn:
-      - amplify-lambda
+
+
   
-  amplify-lambda-artifacts:
-    path: ./amplify-lambda-artifacts
-    dependsOn:
-      - amplify-lambda
-  
+
+
+
 

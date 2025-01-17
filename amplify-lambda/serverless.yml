@@ -18,22 +18,16 @@ custom:
     dockerizePip: true
     layer: true
 
-
   prune:
     automatic: true
-    number: 1
-
+    includeLayers: true
+    number: 5
 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
-
-  prune:
-    automatic: true
-    includeLayers: true
-    number: 5
 
   customDomain:
     domainName: ${self:custom.stageVars.CUSTOM_API_DOMAIN}
@@ -1129,10 +1123,4 @@ resources:
           Name: 
             Fn::Sub: "${sls:stage}-RestApiRootResourceId"
 
-      BasePromptsBucketOutput:
-        Description: "The S3 bucket name for base prompts"
-        Value: !Ref BasePromptsBucket
-        Export:
-          Name: 
-            Fn::Sub: "${sls:stage}-BasePromptsBucket"
 
