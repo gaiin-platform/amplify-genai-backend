@@ -326,7 +326,8 @@ def initialize_config(config_type):
             item['data'] = templates
 
         except Exception as e:
-            raise Exception(f"Error listing PPTX templates from S3: {str(e)}")
+            item['data'] = []
+            print(f"Error listing PPTX templates from S3: {str(e)}")
 
     elif config_type == AdminConfigTypes.AMPLIFY_GROUPS:
         item['data'] = {} # no groups means none have been added through cognito now the admin interface
@@ -344,7 +345,7 @@ def initialize_config(config_type):
     try:
         admin_table.put_item(Item=item)
     except Exception as e:
-        raise Exception(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
+        print(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
 
     return item['data']
 
