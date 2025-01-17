@@ -7,7 +7,7 @@ import { createHash } from 'crypto';
 
 const client = new S3Client();
 const bucket = process.env.TRACE_BUCKET_NAME;
-const doTrace = process.env.TRACING_ENABLED;
+const doTrace = process.env.TRACING_ENABLED === 'true';
 
 const traces = {
 

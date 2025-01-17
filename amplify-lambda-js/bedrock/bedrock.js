@@ -2,6 +2,7 @@ import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
+import {trace} from "../common/trace.js";
 
 const logger = getLogger("bedrock");
 
@@ -56,6 +57,8 @@ export const chatBedrock = async (chatBody, writable) => {
 
             input.messages = sanitizedMessagesCopy;
         }
+
+        trace(options.requestId, ["Bedrock"], {modelId : currentModel.id, data: input})
 
         const response = await client.send( new ConverseStreamCommand(input) );
         const { messageStream } = response.stream.options;
