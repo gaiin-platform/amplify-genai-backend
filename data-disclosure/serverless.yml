@@ -140,7 +140,6 @@ resources:
               Action:
                 - "s3:PutObject"
                 - "s3:GetObject"
-                - "s3:HeadObject"
                 - "s3:PutBucketNotification"
               Resource: 
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"  

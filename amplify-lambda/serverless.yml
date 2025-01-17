@@ -502,7 +502,6 @@ resources:
                 - s3:PutObject
                 - s3:PutObjectHold
                 - s3:DeleteObject
-                - s3:HeadObject
                 - s3:ListBucket
                 - s3:CreateBucket
                 - s3:PutBucketNotification
