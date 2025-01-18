@@ -1,0 +1,4 @@
+litellm~=1.57.1
+bs4
+pydantic~=2.10.4
+requests~=2.32.3
