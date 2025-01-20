@@ -13,7 +13,6 @@ def get_imports_from_code(code_string):
     required_imports = set()
 
     additional = """
-from typing import Dict, Any
 import requests
 import os
 import json
@@ -35,8 +34,8 @@ import json
                     if module:  # handle 'from x import y'
                         required_imports.add(module)
 
-    except SyntaxError:
-        print("Failed to parse code")
+    except SyntaxError as e:
+        print(f"Failed to parse code: {str(e)}")
         return []
 
     return list(required_imports)
@@ -62,9 +61,14 @@ def prepare_exec_globals(code_string, context_dict):
 def exec_code(action_context: ActionContext, code: str):
     """
     Executes the provided Python code and returns the value of the 'result' variable if defined.
+    IMPORTANT!!! Make sure the code arg is a valid JSON attribute with all line breaks, quotes, etc. escaped like this:
+
+    "args": {
+        "code": "# This code generates 10 random numbers between 1 and 100 and converts them to JSON format.\nimport random\nimport json\n\n# Generate 10 random numbers\nrandom_numbers = [random.randint(1, 100) for _ in range(10)]\n# Convert the list of random numbers to JSON format\nresult = json.dumps(random_numbers)"
+    }
 
     Parameters:
-        code (str): The Python code to execute.
+        code (str): The Python code to execute. Make sure it is a valid JSON attribute with all line breaks, quotes, etc. escaped.
 
     Ideally, the start of your code should be a long set of comments explaining what it does and the variables
     that are in scope at the start of its execution.
@@ -96,6 +100,8 @@ def exec_code(action_context: ActionContext, code: str):
     # Execute the code
     try:
         send_event("tools/code_exec/execute/start", {"code": code})
+        print("Executing code:")
+        print(f"{code}")
         exec(code, exec_globals, exec_locals)
         send_event("tools/code_exec/execute/result_received", {"code": code})
 

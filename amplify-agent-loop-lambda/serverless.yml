@@ -46,6 +46,7 @@ provider:
     CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
     OPS_DYNAMODB_TABLE: vu-amplify-lambda-ops-${sls:stage}-ops
     AGENT_STATE_DYNAMODB_TABLE: vu-amplify-${sls:stage}-agent-state
+    AGENT_STATE_BUCKET: vu-amplify-${sls:stage}-agent-state
 
   iam:
     role:
@@ -64,6 +65,11 @@ functions:
           path: vu-agent/{proxy+}
           method: post
 
+  agentRouterFnUrl:
+    handler: service/core.route
+    timeout: 900
+    url:
+      cors: true
 
 resources:
   Resources:
@@ -87,6 +93,7 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -114,3 +121,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+
+    AgentStateBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.AGENT_STATE_BUCKET}

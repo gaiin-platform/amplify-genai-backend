@@ -62,6 +62,12 @@ class ActionContext:
             **{k: v.function for k, v in action_registry.actions.items()}
         }
 
+    def get(self, key: str, default=None):
+        return self.properties.get(key, default)
+
+    def set(self, key: str, value: Any):
+        self.properties[key] = value
+
     def get_environment(self):
         return self.properties.get("environment", None)
 

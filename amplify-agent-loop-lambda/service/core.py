@@ -83,7 +83,10 @@ def route(event, context, current_user, name, data):
     try:
         # get the request path from the event and remove the first component...if there aren't enough components
         # then the path is invalid
-        target_path_string = event['path']
+        print(f"Event: {event}")
+        print(f"Data: {data}")
+
+        target_path_string = event.get('path', event.get('rawPath', ''))
         print(f"Route: {target_path_string}")
 
         print(f"Route data: {route_data}")

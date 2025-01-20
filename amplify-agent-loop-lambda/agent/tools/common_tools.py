@@ -23,21 +23,21 @@ def get_user_input(message: str) -> str:
 
 
 @register_tool()
-def prompt_llm(prompt: str):
+def prompt_llm(action_context, prompt: str):
     """
     Generate a response to a prompt using the LLM model.
     The LLM cannot see the conversation history, so make sure to include all necessary context in the prompt.
     Make sure and include ALL text, data, or other information that the LLM needs
     directly in the prompt. The LLM can't access any external information or context.
     """
-    response = generate_response([
+    response = action_context.get('llm')([
         {"role": "user", "content": prompt}
     ])
     return response
 
 
 @register_tool()
-def prompt_llm_with_info(prompt: str, result_references: List[str] = None):
+def prompt_llm_with_info(action_context, prompt: str, result_references: List[str] = None):
     """
     Generate a response to a prompt using the LLM model.
     The LLM cannot see the conversation history, so make sure to include all necessary context in the prompt.
@@ -48,14 +48,14 @@ def prompt_llm_with_info(prompt: str, result_references: List[str] = None):
     result_references = result_references or []
     result_info = "\n".join(str(result_references))
 
-    response = generate_response([
+    response = action_context.get('llm')([
         {"role": "user", "content": "<info>\n" + result_info + "\n</info>\n" + prompt}
     ])
     return response
 
 
 @register_tool()
-def prompt_llm_for_json(schema: dict, prompt: str):
+def prompt_llm_for_json(action_context, schema: dict, prompt: str):
     """
     Have the LLM generate JSON in response to a prompt. Always use this tool when you need structured data out of the LLM.
     This function takes a JSON schema that specifies the structure of the expected JSON response.
@@ -63,7 +63,7 @@ def prompt_llm_for_json(schema: dict, prompt: str):
 
     for i in range(3):
         try:
-            response = generate_response([
+            response = action_context.get('llm')([
                 {"role": "system", "content": f"You MUST produce output that adheres to the following JSON schema:\n\n{json.dumps(schema, indent=4)}"},
                 {"role": "user", "content": prompt}
             ])
@@ -88,14 +88,14 @@ def prompt_llm_for_json(schema: dict, prompt: str):
 
 
 @register_tool()
-def prompt_expert(description_of_expert: str, prompt: str):
+def prompt_expert(action_context, description_of_expert: str, prompt: str):
     """
     Generate a response to a prompt using the LLM model, acting as the provided expert.
     You should provide a detailed description of the expert to act as. Explain the expert's background, knowledge, and expertise.
     Provide a rich and highly detailed prompt for the expert that considers the most important frameworks, methodologies,
     analyses, techniques, etc. of relevance.
     """
-    response = generate_response([
+    response = action_context.get('llm')([
         {"role": "system", "content": f"Act as the following expert and respond accordingly: {description_of_expert}"},
         {"role": "user", "content": prompt}
     ])

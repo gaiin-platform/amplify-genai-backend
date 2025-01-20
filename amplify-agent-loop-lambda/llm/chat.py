@@ -401,6 +401,8 @@ def chat_simple_messages(access_token, model, messages):
         raise ValueError("You must provide the URL of the Amplify chat API to @prompt. Please set the "
                          "environment variable 'CHAT_ENDPOINT'.")
 
+    print(f"Chat Endpoint: {os.getenv('CHAT_ENDPOINT')}")
+
     response, meta = chat(
         os.getenv("CHAT_ENDPOINT"),
         access_token,
