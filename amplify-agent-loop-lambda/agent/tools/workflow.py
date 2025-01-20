@@ -1,13 +1,13 @@
-import json
 import traceback
 from typing import List
 
-from agent.core import AgentContext
-from agent.tools.python_tool import register_tool
+from agent.game.action import ActionContext
+from agent.tool import register_tool
+from agent.util import resolve_references
 
 
 @register_tool()
-def execute_workflow(agent_context: AgentContext, workflow: List[dict]) -> dict:
+def execute_workflow(agent, action_context: ActionContext, workflow: List[dict]) -> dict:
     """
     Execute a workflow of actions.
 
@@ -144,7 +144,7 @@ def execute_workflow(agent_context: AgentContext, workflow: List[dict]) -> dict:
 
             try:
 
-                result = environment.execute_action(action_context, action_def, resolved_args)
+                result = environment.execute_action(agent, action_context, action_def, resolved_args)
                 results_full[step_name] = result
 
                 send_event("workflow/step/end",
@@ -188,39 +188,3 @@ def execute_workflow(agent_context: AgentContext, workflow: List[dict]) -> dict:
     return results
 
 
-def resolve_dict_references(args, results):
-    return {k: v for k, v in [(k, resolve_references(v, results)) for k, v in args.items()]}
-
-def resolve_list_references(args, results):
-    return [resolve_references(v, results) for v in args]
-
-def resolve_references(v, results):
-    if isinstance(v, dict):
-        if "ref" in v:
-            return results[v["ref"]]
-        else:
-            return resolve_dict_references(v, results)
-    elif isinstance(v, list):
-        return resolve_list_references(v, results)
-    elif isinstance(v, str):
-        return resolve_string(v, results)
-    else:
-        return v
-
-
-def resolve_string(v, results):
-    # check if $# is in the string
-    if "$#" not in v:
-        return v
-
-    for k, val in results.items():
-        val = json.dumps(val)
-        # escape all of the strings and newlines
-        val = val.replace('"', '\\"')
-        val = val.replace("\n", "\\n")
-        val = val.replace("\r", "\\r")
-        val = val.replace("'", "\\'")
-
-        v = v.replace(f"$#{k}", val)
-
-    return v

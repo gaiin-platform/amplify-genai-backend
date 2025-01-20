@@ -1,10 +1,11 @@
 import json
+import os
 import ast
 import traceback
-from uuid import uuid4
+from typing import Dict
 
-from agent.core import AgentContext
-from agent.tools.python_tool import register_tool
+from agent.game.action import ActionContext
+from agent.tool import register_tool
 
 
 def get_imports_from_code(code_string):
@@ -58,7 +59,7 @@ def prepare_exec_globals(code_string, context_dict):
 
 
 @register_tool()
-def exec_code(agent_context: AgentContext, code: str):
+def exec_code(action_context: ActionContext, code: str):
     """
     Executes the provided Python code and returns the value of the 'result' variable if defined.
 
@@ -78,7 +79,7 @@ def exec_code(agent_context: AgentContext, code: str):
     Returns:
         dict: A dictionary containing the status ('result' or 'error') and the 'result' or 'error_message'.
     """
-    context_dict = agent_context.get("code_exec_context", {})
+    context_dict = action_context.properties.get("code_exec_context", {})
 
     result_mode = "result_only"
     var_list=[]
@@ -90,15 +91,13 @@ def exec_code(agent_context: AgentContext, code: str):
     # exec_globals = globals().copy()
     # exec_globals.update({'context': context_dict})
 
-    session_id = str(uuid4())
-    session_data = {"code": code, "session_id": session_id}
+    send_event = action_context.incremental_event()
     exec_locals = {}
-
     # Execute the code
     try:
-        agent_context.emit("tools/code_exec/execute/start", session_data)
+        send_event("tools/code_exec/execute/start", {"code": code})
         exec(code, exec_globals, exec_locals)
-        agent_context.emit("tools/code_exec/execute/result_received", session_data)
+        send_event("tools/code_exec/execute/result_received", {"code": code})
 
         # Combine all serializable variables from exec_globals and exec_locals
         def get_serializable_vars(var_dict):
@@ -136,13 +135,13 @@ def exec_code(agent_context: AgentContext, code: str):
             all_serializable_vars = {**serializable_globals, **serializable_locals}
         # Assume the last expression in the code is the result
         result = exec_locals.get('result', exec_globals.get('result'))
-        agent_context.emit("tools/code_exec/execute/end", {**session_data, "result": result})
+        send_event("tools/code_exec/execute/end", {"result": result})
 
         return result
 
     except Exception as e:
         traceback_str = traceback.format_exc()
-        agent_context.emit("tools/code_exec/execute/error", {**session_data, "error": str(e), "traceback": traceback_str})
+        send_event("tools/code_exec/execute/error", {"error": str(e), "traceback": traceback_str})
         return {"error": str(e), "traceback": traceback_str}
 
 

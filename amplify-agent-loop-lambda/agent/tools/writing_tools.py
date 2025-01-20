@@ -1,10 +1,11 @@
 from typing import Dict, List, Any
 
-from agent.core import AgentContext
-from agent.tools.python_tool import register_tool
+from agent.prompt import generate_response
+from agent.tool import register_tool
+from agent.tools.common_tools import prompt_llm
 
 @register_tool()
-async def write_long_content(agent_context: AgentContext, outline: List[Dict[str, Any]]) -> str:
+def write_long_content(outline: List[Dict[str, Any]]) -> str:
     """
     Turn the outline into long-form written content. The LLM will be prompted
     to write the content for each section of the outline. Each section or subsection of the
@@ -48,15 +49,13 @@ async def write_long_content(agent_context: AgentContext, outline: List[Dict[str
 
     content = ""
 
-    llm = agent_context.get_llm_service()
-
     for section in outline:
-        content += await write_section(llm, content, section)
+        content += write_section(content, section)
 
     return content
 
 
-async def write_section(llm, content: str, section: Dict[str, Dict]) -> str:
+def write_section(content: str, section: Dict[str, Dict]) -> str:
     """
     Write a section of the outline.
 
@@ -70,7 +69,7 @@ async def write_section(llm, content: str, section: Dict[str, Dict]) -> str:
     # check if the section has subsections and recursively build the content from them if it does
     if section.get("subsections"):
         for subsection in section["subsections"]:
-            section_content += await write_section(llm, content, subsection)
+            section_content += write_section(content, subsection)
 
     else:
         title = section["section"]
@@ -92,6 +91,6 @@ async def write_section(llm, content: str, section: Dict[str, Dict]) -> str:
             {"role": "user", "content": f"Add a section: '{title}' with notes: {notes}"}
         ]
 
-        section_content = await llm.generate_response(prompt)
+        section_content = generate_response(prompt)
 
     return section_content
