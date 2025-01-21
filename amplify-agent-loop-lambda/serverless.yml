@@ -90,10 +90,12 @@ resources:
                 - dynamodb:DeleteItem
                 - s3:GetObject
                 - s3:PutObject
+                - s3:ListObjects
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"

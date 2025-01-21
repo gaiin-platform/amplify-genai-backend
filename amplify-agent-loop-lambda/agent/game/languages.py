@@ -1,10 +1,57 @@
 import json
+import re
 from typing import List, Any
 
 from agent.game.action import Action
 from agent.game.environment import Environment
 from agent.game.goal import Goal
 from agent.game.memory import Memory
+
+
+
+
+def ai_friendly_json_loads(input_str: str) -> dict:
+    """
+    Process a string that might contain JSON with triple-quoted blocks.
+    First attempts direct JSON parsing, then handles triple-quoted blocks if needed.
+
+    Sample Usage:
+
+      test_str = "{\n    "tool": "exec_code",\n    "args": {\n        "code": \"\"\"\nimport subprocess\nimport json\n\n# List of common Linux commands to execute\ncommands = [\'ls\', \'pwd\', \'whoami\']\nresults = []\n\nfor command in commands:\n    try:\n        # Execute the command\n        output = subprocess.check_output(command, shell=True, text=True).strip()\n        results.append({\'command\': command, \'output\': output, \'error\': None})\n    except subprocess.CalledProcessError as e:\n        # Capture the error if the command fails\n        results.append({\'command\': command, \'output\': None, \'error\': e.output.strip()})\n    except Exception as e:\n        # General exception handling\n        results.append({\'command\': command, \'output\': None, \'error\': str(e)})\n\n# Write results to a JSON file in the working directory\nfile_path = \'/tmp/1/linux_command_results.json\'\nwith open(file_path, \'w\') as file:\n    json.dump(results, file)\n\n# Define the result to return the file path\nresult = {\'file_path\': file_path}\n\"\"\"\n    }}"
+      json = ai_friendly_json_loads(test_str)
+      print(f"JSON: {json}")
+
+    Args:
+        input_str: String that might contain JSON with triple-quoted blocks
+
+    Returns:
+        Parsed JSON dictionary
+
+    Raises:
+        json.JSONDecodeError: If string cannot be parsed as JSON after processing
+    """
+    # First try direct JSON parsing
+    try:
+        return json.loads(input_str)
+    except json.JSONDecodeError:
+        # Find all triple-quoted blocks
+        pattern = r'"""((?:.|\n)*?)"""'
+
+        def escape_block(match):
+            """Helper function to escape content within a triple-quoted block."""
+            content = match.group(1)
+            # Escape newlines and quotes
+            escaped = content.replace('\n', '\\n').replace('"', '\\"')
+            # Return the content wrapped in regular quotes
+            return f'"{escaped}"'
+
+        # Replace all triple-quoted blocks with escaped versions
+        processed_str = re.sub(pattern, escape_block, input_str)
+
+        # Try parsing the processed string
+        return json.loads(processed_str)
+
+
 
 class AgentLanguage:
     def __init__(self):
@@ -220,6 +267,9 @@ You must ALWAYS respond in this format:
     def parse_response(self, response: str) -> dict:
         """Parse LLM response into structured format by extracting the ```json block"""
         try:
+            if response is None:
+                raise ValueError("The agent's response is None.")
+
             start_marker = "```action"
             end_marker = "```"
 
@@ -227,8 +277,14 @@ You must ALWAYS respond in this format:
             stripped_response = response.strip()
             start_index = stripped_response.find(start_marker)
             end_index = stripped_response.rfind(end_marker)
+
+            if start_index == -1:
+                raise ValueError("The agent's response did not contain a starting ```action block.")
+            if end_index == -1:
+                raise ValueError("The agent's response did not contain a valid end to the ```action block. Missing terminating ``` after ```action")
+
             stripped_response = stripped_response[start_index + len(start_marker):end_index].strip()
-            return json.loads(stripped_response)
+            return ai_friendly_json_loads(stripped_response)
         except Exception as e:
             print(f"Agent language failed to parse response: {str(e)}")
             raise e

@@ -6,6 +6,7 @@ from agent.agents import actions_agent
 from agent.game.action import ActionRegistry
 from agent.game.agent_registry import AgentRegistry
 from agent.game.environment import Environment
+from agent.game.goal import Goal
 from agent.prompt import create_llm
 from common.ops import vop
 import boto3
@@ -18,6 +19,9 @@ from datetime import datetime
 import os
 from typing import List, Dict, Any
 from botocore.exceptions import ClientError
+
+from service.session_files import create_file_tracker
+
 
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -179,6 +183,8 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
     print(f"[{session_id}] Handling event '{prompt}'")
 
     try:
+        tracker = create_file_tracker(current_user, session_id)
+
         metadata = metadata or {}
         environment = Environment()
         action_registry = ActionRegistry()
@@ -194,11 +200,23 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         def event_printer_wrapper(event_id: str, event: Dict[str, Any]):
             return event_printer(event_id, event, current_user, session_id)
 
+        work_directory = f"/tmp/{session_id}"
+        if not os.path.exists(work_directory):
+            os.makedirs(work_directory)
+
         action_context_props={
             "event_handler": event_printer_wrapper,
             "agent_registry": agent_registry,
             "llm": llm,
+            "work_directory": work_directory,
         }
+
+        agent.goals.append(
+            Goal(
+                name="Work Directory",
+                description=f"Any files you would like to save/write MUST be saved in {work_directory}. It is the only writable directory."
+            )
+        )
 
         user_input = prompt
 
@@ -225,11 +243,28 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         if not save_result["success"]:
             print(f"Warning: Failed to save conversation state: {save_result['error']}")
 
+        print(f"Conversation state saved to S3: {save_result['s3_location']}")
+        print(f"Checking for changed files...")
+        file_results = tracker.upload_changed_files()
+        session_files = tracker.get_tracked_files()
+
+        if file_results["status"] == "success" and file_results["files_processed"] > 0:
+            print(f"Uploaded {file_results['files_processed']} changed files to S3")
+            return {
+                "session": session_id,
+                "handled": True,
+                "result": processed_result,
+                "changed_files": file_results["mappings"],
+                "files": session_files
+            }
 
         return {
+            "session": session_id,
             "handled": True,
-            "result": processed_result
+            "result": processed_result,
+            "files": session_files
         }
+
     except Exception as e:
         # print a stack trace for the exception
         traceback.print_exc()
