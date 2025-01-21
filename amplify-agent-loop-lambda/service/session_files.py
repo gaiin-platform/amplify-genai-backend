@@ -13,6 +13,7 @@ class LambdaFileTracker:
     def __init__(self, current_user: str, session_id: str):
         self.current_user = current_user
         self.session_id = session_id
+        self.existing_mappings: Dict[str, str] = {}
         self.initial_state: Dict[str, Dict] = {}
         self.s3_client = boto3.client('s3')
         self.bucket = os.getenv('AGENT_STATE_BUCKET')
@@ -64,7 +65,11 @@ class LambdaFileTracker:
                     Bucket=self.bucket,
                     Key=index_key
                 )
-                return json.loads(response['Body'].read().decode('utf-8'))
+                session_data = json.loads(response['Body'].read().decode('utf-8'))
+                # Store existing mappings when session is found
+                self.existing_mappings = session_data.get('mappings', {})
+                return session_data
+
             except ClientError as e:
                 print(f"Error checking for existing session: {e}")
                 if e.response['Error']['Code'] == 'NoSuchKey':
@@ -175,7 +180,7 @@ class LambdaFileTracker:
         """Get list of changed/new files and their S3 mappings."""
         current_state = self.scan_directory()
         changed_files = []
-        filename_mapping = {}
+        filename_mapping = self.existing_mappings.copy()
 
         # Check for modified or new files
         for filepath, current_info in current_state.items():
@@ -198,7 +203,7 @@ class LambdaFileTracker:
                 "status": "success",
                 "message": "No files changed",
                 "files_processed": 0,
-                "mappings": {}
+                "mappings": self.existing_mappings
             }
 
         upload_results = {}

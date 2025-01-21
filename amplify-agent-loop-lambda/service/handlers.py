@@ -46,11 +46,8 @@ def save_conversation_state(current_user: str, session_id: str, conversation_res
         if not bucket:
             raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
-        # Generate date string for the folder structure
-        current_date = datetime.utcnow().strftime('%Y-%m-%d')
-
         # Construct S3 key
-        s3_key = f"{current_user}/{current_date}/{session_id}.json"
+        s3_key = f"{current_user}/{session_id}/agent_state.json"
 
         # Convert conversation results to JSON and store in S3
         try:
