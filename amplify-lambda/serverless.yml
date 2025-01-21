@@ -84,7 +84,8 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-$*{self:custom:stageVars.DEP_NAME}-${sls:stage}-admin-configs
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-admin-configs
+
 
   iam:
     role:

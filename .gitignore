@@ -26,6 +26,7 @@ Scripts/
 .env* 
 .*venv*
 .requirements.zip*
+requirements.in
 .*venv
 
 
