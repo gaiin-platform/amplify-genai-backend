@@ -251,7 +251,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                 "session": session_id,
                 "handled": True,
                 "result": processed_result,
-                "changed_files": file_results["mappings"],
+                "changed_files": file_results["changed_files"],
                 "files": session_files
             }
 

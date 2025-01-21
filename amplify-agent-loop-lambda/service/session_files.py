@@ -252,6 +252,7 @@ class LambdaFileTracker:
                 "status": "success",
                 "message": f"Processed {len(changed_files)} files",
                 "files_processed": len(changed_files),
+                'changed_files': changed_files,
                 "mappings": filename_mapping,
                 "upload_results": upload_results,
                 "index_location": {
