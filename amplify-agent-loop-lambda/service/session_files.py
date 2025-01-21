@@ -16,7 +16,6 @@ class LambdaFileTracker:
         self.initial_state: Dict[str, Dict] = {}
         self.s3_client = boto3.client('s3')
         self.bucket = os.getenv('AGENT_STATE_BUCKET')
-        self.current_date = datetime.utcnow().strftime('%Y-%m-%d')
 
         # Create session working directory in /tmp
         self.working_dir = f"/tmp/{self.session_id}"
@@ -46,10 +45,10 @@ class LambdaFileTracker:
         file_info = {}
         for root, _, files in os.walk(self.working_dir):
             for file in files:
-                # Get path relative to working directory
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, self.working_dir)
                 try:
+                    print(f"Found file {rel_path}")
                     file_info[rel_path] = self.get_file_info(full_path)
                 except (IOError, OSError) as e:
                     print(f"Error reading file {full_path}: {e}")
@@ -58,25 +57,21 @@ class LambdaFileTracker:
     def find_existing_session(self) -> Optional[Dict]:
         """Look for existing session files in S3."""
         try:
-            # List objects in the user's directory to find possible dates
-            prefix = f"{self.current_user}/"
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket,
-                Prefix=prefix
-            )
+            # Look for index.json directly under user/session_id
+            index_key = f"{self.current_user}/{self.session_id}/index.json"
+            try:
+                response = self.s3_client.get_object(
+                    Bucket=self.bucket,
+                    Key=index_key
+                )
+                return json.loads(response['Body'].read().decode('utf-8'))
+            except ClientError as e:
+                print(f"Error checking for existing session: {e}")
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    return None
+                raise
 
-            # Check each date directory for our session
-            for obj in response.get('Contents', []):
-                if f"/{self.session_id}/index.json" in obj['Key']:
-                    response = self.s3_client.get_object(
-                        Bucket=self.bucket,
-                        Key=obj['Key']
-                    )
-                    return json.loads(response['Body'].read().decode('utf-8'))
-
-            return None
-
-        except ClientError as e:
+        except Exception as e:
             print(f"Error checking for existing session: {e}")
             return None
 
@@ -85,8 +80,8 @@ class LambdaFileTracker:
         try:
             # Download each file from the index
             for original_path, s3_name in index_content['mappings'].items():
-                # Construct the S3 key
-                s3_key = f"{self.current_user}/{index_content['date']}/{self.session_id}/{s3_name}"
+                # Construct the S3 key without date
+                s3_key = f"{self.current_user}/{self.session_id}/{s3_name}"
                 print(f"Restoring {original_path} from {s3_key}")
                 local_path = os.path.join(self.working_dir, original_path)
 
@@ -137,7 +132,11 @@ class LambdaFileTracker:
         existing_session = self.find_existing_session()
 
         if existing_session:
-            print(f"Found existing session from {existing_session['date']}")
+            print("Found existing session:")
+
+            # Print the full existing session details
+            print(json.dumps(existing_session, indent=2))
+
             if self.restore_session_files(existing_session):
                 print("Successfully restored session files")
             else:
@@ -151,8 +150,7 @@ class LambdaFileTracker:
 
         return {
             "session_restored": existing_session is not None,
-            "files_tracking": len(self.initial_state),
-            "date": self.current_date
+            "files_tracking": len(self.initial_state)
         }
 
     def get_tracked_files(self) -> Dict[str, Dict]:
@@ -210,12 +208,11 @@ class LambdaFileTracker:
             index_content = {
                 "user": self.current_user,
                 "session_id": self.session_id,
-                "date": self.current_date,
                 "mappings": filename_mapping,
                 "timestamp": datetime.utcnow().isoformat()
             }
 
-            index_key = f"{self.current_user}/{self.current_date}/{self.session_id}/index.json"
+            index_key = f"{self.current_user}/{self.session_id}/index.json"
             self.s3_client.put_object(
                 Bucket=self.bucket,
                 Key=index_key,
@@ -226,7 +223,7 @@ class LambdaFileTracker:
             # Upload changed files
             for original_path in changed_files:
                 safe_name = filename_mapping[original_path]
-                s3_key = f"{self.current_user}/{self.current_date}/{self.session_id}/{safe_name}"
+                s3_key = f"{self.current_user}/{self.session_id}/{safe_name}"
                 local_path = os.path.join(self.working_dir, original_path)
 
                 try:
