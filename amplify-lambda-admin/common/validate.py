@@ -379,6 +379,49 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                    {
+                        # Configuration for 'promtCostAlert'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "promtCostAlert"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "alertMessage": {"type": "string"},
+                                    "cost": {"type": "number"},
+                                },
+                                "required": ["isActive", "alertMessage", "cost"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'rateLimit'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "rateLimit"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "period": {"type": "string"},
+                                    "rate": { "type": ["number", "null"] }, 
+                                },
+                                "required": ["period", "rate"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                 ]
             }
         }
