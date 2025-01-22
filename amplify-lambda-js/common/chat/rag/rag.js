@@ -60,8 +60,10 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
 
     const updatedBody = {
         ...chatBody,
+        model: model.id,
         options: {
             ...chatBody.options,
+            model,
             skipRag: true, // Prevent the use of documents
             ragOnly: true  // in any way
         }

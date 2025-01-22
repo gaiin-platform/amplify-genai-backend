@@ -24,7 +24,8 @@ export const getAdvancedModel = (params) => {
 }
 
 export const setModel = (params, model) => {
-    return {...params, model};
+    const options = params.options || {};
+    return {...params, options: {...options, model}, model};
 }
 
 export const getOptions = (params) => {
