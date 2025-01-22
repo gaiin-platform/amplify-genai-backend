@@ -271,7 +271,7 @@ def get_configs(event, context, current_user, name, data):
 
 
 def initialize_config(config_type):
-
+    print("Initializing data: ", config_type.value)
     item = {
         'config_id':config_type.value,
         'data': None,
@@ -326,7 +326,8 @@ def initialize_config(config_type):
             item['data'] = templates
 
         except Exception as e:
-            raise Exception(f"Error listing PPTX templates from S3: {str(e)}")
+            item['data'] = []
+            print(f"Error listing PPTX templates from S3: {str(e)}")
 
     elif config_type == AdminConfigTypes.AMPLIFY_GROUPS:
         item['data'] = {} # no groups means none have been added through cognito now the admin interface
@@ -344,7 +345,7 @@ def initialize_config(config_type):
     try:
         admin_table.put_item(Item=item)
     except Exception as e:
-        raise Exception(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
+        print(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
 
     return item['data']
 
@@ -611,8 +612,12 @@ def authorized_admin(current_user, forFeatureFlags = False):
             admins_list = response['Item'].get('data', [])
             if current_user in admins_list:
                 print(current_user + " is authorized to make changes.")
-
                 return True
+        else:
+            print("No admins list in the admins table...")
+            init_admins = initialize_config(AdminConfigTypes.ADMINS)
+            return current_user in init_admins
+
     except Exception as e:
         print(f"Error in authorized_admin: {str(e)}")
     print(current_user + " is not authorized to make changes.")
