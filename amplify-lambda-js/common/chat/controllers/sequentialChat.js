@@ -11,6 +11,7 @@ import { getLogger } from "../../logging.js";
 import { sendStatusEventToStream } from "../../streams.js";
 import { addContextMessage, createContextMessage } from "./common.js";
 import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
+import {trace} from "../../trace.js";
 
 const logger = getLogger("sequentialChat");
 
@@ -134,6 +135,8 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             responseStream,
             status);
     }
+    
+    trace(requestId, ["LLM Complete Response"], {data: llmResponse});
     // console.log("--llm response: ", llmResponse );
                                                    //prod ast
     if ((chatRequest.options.analysisCategories || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && 
