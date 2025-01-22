@@ -151,41 +151,40 @@ update_admin_config_schema = {
                                 "const": "openaiEndpoints"
                             },
                             "data": {
-                                "type": "object",
-                                "properties": {
-                                    "models": {
+                            "type": "object",
+                            "properties": {
+                                "models": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                    "^.*$": {
                                         "type": "object",
-                                        "patternProperties": {
-                                            "^.*$": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "endpoints": {
-                                                        "type": "array",
-                                                        "items": {
-                                                            "type": "object",
-                                                            "properties": {
-                                                                "url": {
-                                                                    "type": "string"
-                                                                },
-                                                                "key": {
-                                                                    "type": "string"
-                                                                }
-                                                            },
-                                                            "required": ["url", "key"],
-                                                            "additionalProperties": False
-                                                        },
-                                                        "minItems": 1
-                                                    }
-                                                },
-                                                "required": ["endpoints"],
-                                                "additionalProperties": False
-                                            }
+                                        "properties": {
+                                        "endpoints": {
+                                            "type": "array",
+                                            "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "url": { "type": "string" },
+                                                "key": { "type": "string" }
+                                            },
+                                            "required": ["url", "key"],
+                                            "additionalProperties": False
+                                            },
+                                            "minItems": 1
+                                        }
                                         },
+                                        "required": ["endpoints"],
                                         "additionalProperties": False
                                     }
-                                },
-                                "required": ["models"],
-                                "additionalProperties": False
+                                    },
+                                    "additionalProperties": False
+                                }
+                                }
+                            },
+                            "required": ["models"],
+                            "additionalProperties": False
                             }
                         },
                         "required": ["type", "data"],

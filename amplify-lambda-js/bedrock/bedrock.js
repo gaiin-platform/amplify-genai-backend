@@ -1,6 +1,6 @@
 import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
-import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
+import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 
 const logger = getLogger("bedrock");
@@ -28,7 +28,7 @@ export const chatBedrock = async (chatBody, writable) => {
     }
 
     const combinedMessages = combineMessages(withoutSystemMessages, options.prompt);
-    const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources)
+    const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources, currentModel)
     
     try {
         
@@ -79,7 +79,7 @@ export const chatBedrock = async (chatBody, writable) => {
          
     } catch (error) {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        sendDeltaToStream(writable, "answer", "Error retrieving response. Please try again.");
+        // sendDeltaToStream(writable, "answer", "Error retrieving response. Please try again.");
     }
 }
 
@@ -117,8 +117,15 @@ function combineMessages(oldMessages, failSafeUserMessage) {
 }
 
 
-async function sanitizeMessages(messages, imageSources) {
+async function sanitizeMessages(messages, imageSources, model) {
     if (!messages) return messages;
+
+    const containsImages = imageSources && imageSources.length > 0;
+
+    if (!model.supportsImages && containsImages) {
+        messages.slice(-1)[0].content += doesNotSupportImagesInstructions(model.name)
+    }
+
     let updatedMessages = [
         ...(messages.map(m => {
             return { "role": m['role'],
@@ -128,7 +135,7 @@ async function sanitizeMessages(messages, imageSources) {
             }))
     ];
 
-    if (imageSources && imageSources.length > 0) {
+    if (model.supportsImages && containsImages) {
         updatedMessages = await includeImageSources(imageSources, updatedMessages); 
     }
     return updatedMessages;
@@ -151,9 +158,9 @@ async function includeImageSources(dataSources, messages) {
             }
             imageMessageContent[listIdx].push({
                 "image": {
-                    "format": ds.type, //"png | jpeg | gif | webp"
+                    "format": ds.type.split('/')[1], 
                     "source": {
-                        "bytes": encoded_image
+                        "bytes": Uint8Array.from(atob(encoded_image), char => char.charCodeAt(0))
                     }
                 }
             })

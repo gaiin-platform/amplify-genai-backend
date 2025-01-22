@@ -156,7 +156,7 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: state/conversation/get_multiple
+          path: state/conversation/get/multiple
           method: post
           cors: true
 
@@ -167,10 +167,20 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: state/conversation/get_all
+          path: state/conversation/get/all
           method: get
           cors: true
 
+  get_empty_conversation:
+    handler: state/conversation.get_empty_conversations
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/get/empty
+          method: get
+          cors: true
 
   upload_file:
     handler: files/file.get_presigned_url
@@ -356,7 +366,7 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - arn:aws:lambda:us-east-1:514391678313:layer:pandoc:1  # replace this with the actual Pandoc layer ARN
-      # - Ref: PythonRequirementsLambdaLayer
+      - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:

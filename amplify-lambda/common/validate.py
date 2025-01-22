@@ -723,13 +723,16 @@ validators = {
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
     },
-    "/state/conversation/get_multiple": {   
+    "/state/conversation/get/multiple": {   
         "get_multiple_conversations": conversation_ids_schema
     },
     "/state/conversation/get": {
         "read" : {}
     },
-    "/state/conversation/get_all": {
+    "/state/conversation/get/all": {
+        "read" : {}
+    },
+    "/state/conversation/get/empty": {
         "read" : {}
     },
     "/state/conversation/delete_multiple": {   
