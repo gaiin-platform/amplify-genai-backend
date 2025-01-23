@@ -13,6 +13,6 @@ openpyxl
 beautifulsoup4
 pypdfium2
 python-pptx
-nltk
+nltk==3.8.1
 python-docx
 tiktoken
