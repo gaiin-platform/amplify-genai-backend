@@ -70,7 +70,7 @@ provider:
     AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
     AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}  
-    HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
   iam:
     role:
