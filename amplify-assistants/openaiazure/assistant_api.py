@@ -31,8 +31,8 @@ def get(dictionary, *keys):
 
 
 def get_openai_client():
-    openai_api_key = get_secret_value("OPENAI_API_KEY")
     if openai_provider == "openai":
+        openai_api_key = get_secret_value("OPENAI_API_KEY")
         openai_api_key = openai_api_key
         client = OpenAI(
             api_key=openai_api_key
