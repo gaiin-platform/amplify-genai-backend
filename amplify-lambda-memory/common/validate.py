@@ -75,6 +75,22 @@ remove_memory_schema = {
     "required": ["memory_id"],
 }
 
+create_project_schema = {
+    "type": "object",
+    "properties": {
+        "ProjectName": {"type": "string"},
+    },
+    "required": ["ProjectName"],
+}
+
+delete_project_schema = {
+    "type": "object",
+    "properties": {
+        "ProjectName": {"type": "string"},
+    },
+    "required": ["ProjectID"],
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -84,6 +100,8 @@ validators = {
     "/memory/extract-facts": {"extract_facts": extract_facts_schema},
     "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
+    "/memory/create-project": {"create_project": create_project_schema},
+    "/memory/delete-project": {"delete_project": delete_project_schema},
 }
 
 api_validators = {
@@ -91,6 +109,8 @@ api_validators = {
     "/memory/extract-facts": {"extract_facts": extract_facts_schema},
     "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
+    "/memory/create-project": {"create_project": create_project_schema},
+    "/memory/delete-project": {"delete_project": delete_project_schema},
 }
 
 
