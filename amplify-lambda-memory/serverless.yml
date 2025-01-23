@@ -42,6 +42,7 @@ provider:
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
     MEMORY_DYNAMO_TABLE: ${self:service}-${sls:stage}-memory
+    PROJECTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-projects
 
   iam:
     role:
@@ -53,6 +54,7 @@ functions:
   # converts a conversation into facts that can be inserted into the memory table
   extract_facts:
     handler: service/core.extract_facts
+    timeout: 180 # TODO: what should this value be
     events:
       - http:
           path: /memory/extract-facts
@@ -83,6 +85,31 @@ functions:
     events:
       - http:
           path: /memory/remove-memory
+          method: post
+          cors: true
+  
+  # TODO: implement the below functions 
+  create_project:
+    handler: service/core.create_project
+    events:
+      - http:
+          path: /memory/create-project
+          method: post
+          cors: true
+  
+  get_projects:
+    handler: service/core.get_projects
+    events:
+      - http:
+          path: /memory/get-projects
+          method: get
+          cors: true
+
+  delete_project:
+    handler: service/core.delete_project
+    events:
+      - http:
+          path: /memory/delete-project
           method: post
           cors: true
 
@@ -117,6 +144,31 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MEMORY_DYNAMO_TABLE}/*"
 
     MemoryDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.MEMORY_DYNAMO_TABLE}
+
+    ProjectsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
         BillingMode: PAY_PER_REQUEST

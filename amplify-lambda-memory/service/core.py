@@ -10,12 +10,13 @@ import requests
 # Initialize DynamoDB client
 dynamodb = boto3.resource("dynamodb")
 memory_table = dynamodb.Table(os.environ["MEMORY_DYNAMO_TABLE"])
+projects_table = dynamodb.Table(os.environ["PROJECTS_DYNAMO_TABLE"])
 
 
 # helper function to call LLM to extract facts/memories from user's prompt
 def prompt_llm(prompt, access_token):
     # URL for the Amplify API
-    url = "https://dev-api.vanderbilt.ai/chat" # TODO: replace with prod endpoint
+    url = "https://dev-api.vanderbilt.ai/chat"  # TODO: replace with prod endpoint
 
     # Headers
     headers = {
@@ -64,6 +65,7 @@ def extract_facts(event, context, current_user, name, data):
     try:
         nested_data = data["data"]
         access_token = data["access_token"]
+        # print("Access Token:", access_token)
 
         # Extract user's input in the conversation from payload
         user_input = nested_data["user_input"]
@@ -71,15 +73,15 @@ def extract_facts(event, context, current_user, name, data):
         # extract facts from conversation
         prompt = f"""Analyze the given text and identify key factual information. Extract and list the most important facts, focusing on specific details, names, dates, locations, or any other concrete information that could be relevant for future reference. Avoid opinions or interpretations.
 
-        Present the extracted facts in the following format:
-        FACT: [Extracted fact]
-        FACT: [Extracted fact]
-        FACT: [Extracted fact]
+Present the extracted facts in the following format:
+FACT: [Extracted fact]
+FACT: [Extracted fact]
+FACT: [Extracted fact]
 
-        Here is the text to extract facts from:
-        {user_input}"""
+Here is the text to extract facts from:
+{user_input}"""
 
-        print("Prompt passed:", prompt)
+        # print("Prompt passed:", prompt)
         response = prompt_llm(prompt, access_token)
 
         extracted_facts = []
@@ -187,6 +189,94 @@ def remove_memory(event, context, current_user, name, data):
         return {
             "statusCode": 200,
             "body": json.dumps({"message": "Memory deleted successfully"}),
+        }
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+@validated("create_project")
+def create_project(event, context, current_user, name, data):
+    try:
+        nested_data = data["data"]
+
+        project_name = nested_data["ProjectName"]
+
+        # Generate unique project ID
+        project_id = str(uuid.uuid4())
+
+        current_time = datetime.now()
+        timestamp = current_time.isoformat()
+
+        project_item = {
+            "id": project_id,
+            "project": project_name,
+            "user": current_user,
+            "timestamp": timestamp,
+        }
+
+        response = projects_table.put_item(Item=project_item)
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "message": "Project created successfully",
+                    "id": project_id,
+                    "project": project_name,
+                }
+            ),
+        }
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+@validated("get_projects")
+def get_projects(event, context, current_user, name, data):
+    try:
+        response = projects_table.query(
+            IndexName="UserIndex", KeyConditionExpression=Key("user").eq(current_user)
+        )
+
+        projects = response.get("Items", [])
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"projects": projects}),
+        }
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+@validated("delete_project")
+def delete_project(event, context, current_user, name, data):
+    try:
+        nested_data = data["data"]
+
+        project_id = nested_data["ProjectID"]
+
+        # First verify the user owns this project
+        project = projects_table.get_item(Key={"id": project_id}).get("Item")
+
+        if not project:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Project not found"}),
+            }
+
+        if project["user"] != current_user:
+            return {
+                "statusCode": 403,
+                "body": json.dumps({"error": "Unauthorized to delete this project"}),
+            }
+
+        # Delete the project
+        response = projects_table.delete_item(Key={"id": project_id})
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {"message": "Project deleted successfully", "id": project_id}
+            ),
         }
     except Exception as e:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
