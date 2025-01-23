@@ -397,10 +397,11 @@ export const resolveDataSources = async (params, body, dataSources) => {
         !extractKey(ds.id).startsWith(params.user + "/")
     );
 
-    if (nonUserSources && nonUserSources.length > 0) {
+    if (nonUserSources && nonUserSources.length > 0  || 
+        (body.imageSources && body.imageSources.length > 0)) {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
-        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: ds.key })) : [];
+        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
