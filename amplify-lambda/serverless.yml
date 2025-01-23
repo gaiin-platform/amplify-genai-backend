@@ -79,7 +79,7 @@ provider:
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
     CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: ${self:service}/${sls:stage}/s3/metadata/encryption
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
@@ -481,7 +481,12 @@ resources:
                 - ssm:DescribeParameters
                 - ssm:PutParameter
               Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}*
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: 
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:*                
             - Effect: Allow
               Action:
                 - s3:ListBucket
