@@ -81,6 +81,7 @@ provider:
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
+
   iam:
     role:
       managedPolicies:
@@ -512,7 +513,7 @@ resources:
                 - s3:PutObject
                 - s3:ListBucket
               Resource:
-                #- "${self:provider.environment.OPENAI_API_KEY}"
+                - "arn:aws:secretsmanager:${aws:region}:*:${self:provider.environment.OPENAI_API_KEY}"
                 - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}"
