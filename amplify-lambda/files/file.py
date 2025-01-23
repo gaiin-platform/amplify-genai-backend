@@ -202,7 +202,7 @@ def create_and_store_fernet_key():
     # Initialize the SSM client
     ssm_client = boto3.client('ssm')
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    ssm_parameter_name=f"{parameter_name}_{timestamp}"
+    ssm_parameter_name= parameter_name
     # Store the key in the SSM Parameter Store
     try:
         response = ssm_client.put_parameter(
