@@ -4,6 +4,10 @@
 
 import {sendDeltaToStream} from "../common/streams.js";
 import {newStatus} from "../common/status.js";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("Code-Interpreter");
+
 
 const description =  `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
 It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
@@ -62,7 +66,7 @@ async function fetchRequest(token, data, url) {
             }
             return await response.json();
     } catch (error) {
-        console.error('Error invoking Code interpreter Lambda: ', error);
+        logger.error(`Error invoking Code interpreter Lambda: ${error}`);
         return null;
     }
 }
@@ -99,6 +103,18 @@ const sendStatusMessage = (llm, message, summary='') => {
             sticky: true
         }));
     llm.forceFlush();
+}
+
+const handleUserErrorMessage = (llm, responseErrorMessage) => {
+    if (responseErrorMessage) {
+        sendStatusMessage(llm, String(responseErrorMessage), "Code interpreter response failed. View Error:");
+        logger.debug(`Code interpreter Response was unsuccessful:  ${responseErrorMessage}`);
+        const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
+        llm.sendStateEventToStream({ codeInterpreter: { error: error } });
+    } else {
+        llm.sendStateEventToStream({ codeInterpreter: { error: "Unknown Error - Internal Server Error" } });
+    }
+    sendStatusMessage(llm, "Amplify Assistant is responding...");
 }
 
 export const codeInterpreterAssistant = async (assistantBase) => {
@@ -140,15 +156,16 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
                 }
     
-                const responseData = await fetchRequest(token, createData, process.env.ASSISTANTS_API_BASE_URL + '/assistant/create/codeinterpreter'); 
-                
-                if (responseData && responseData && responseData.success) {
+                const responseData = await fetchRequest(token, createData, process.env.API_BASE_URL + '/assistant/create/codeinterpreter'); 
+              
+                if (responseData && responseData.success && responseData.data) {
                     assistantId = responseData.data.assistantId
                     //we need to ensure we send the assistant_id back to be saved in the conversation
                     sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterAssistantId=${assistantId}`);
                     sendStatusMessage(llm, "Code interpreter is making progress on your request...");
+                    logger.debug("Code Interpreter Assistant Created...");
                 } else {
-                    console.log(`Error with creating an assistant: ${responseData}`)
+                    handleUserErrorMessage(llm, String(responseData && responseData.error));
                 }
 
             }
@@ -163,23 +180,14 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                 }
 
                     const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
-                    const responseSuccess = responseData && !!responseData.success;
-                    const responseErrorMessage = responseData && responseData.error;
-
-                    if (!responseSuccess) {
-                        sendStatusMessage(llm, String(responseErrorMessage ?? "This is a test"), "Code interpreter response failed. View Error:");
-                        sendStatusMessage(llm, "Amplify Assistant is responding...");
-                    }
                     // check for successfull response
-                    if (responseSuccess && responseData.data) {
+                    if (responseData && responseData.success && responseData.data) {
                         sendStatusMessage(llm, "Finalizing code interpreter results...");
                         const { textContent, ...messageData } = responseData.data.data;
                         codeInterpreterResponse = textContent;
                         llm.sendStateEventToStream({ codeInterpreter: messageData });
-                    } else if (responseErrorMessage) {
-                        console.log("Code interpreter Response was unsuccessful: ", responseErrorMessage);
-                        const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
-                        llm.sendStateEventToStream({ codeInterpreter: { error: error } });
+                    } else {
+                        handleUserErrorMessage(llm, String(responseData && responseData.error));
                     }
 
             } 
@@ -201,7 +209,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     content: reviewPrompt(userPrompt, codeInterpreterResponse),
                 });
             } else {
-                console.log("Code interpreter was unavailable...");
+                logger.debug("Code interpreter was unavailable...");
                 updatedMessages.push({
                     role: 'user',
                     content: `User Prompt:\n${userPrompt}\n\n The user expected to reach code interpreter however, we did not recieve a code interpreter response. If you can answer the query, please do so. 
