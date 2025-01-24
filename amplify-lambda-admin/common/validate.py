@@ -574,8 +574,9 @@ def validated(op, validate_body=True):
         def wrapper(event, context):
             try:
                 token = parseToken(event)
+                print("Token: ", token)
                 api_accessed = token[:4] == 'amp-'
-
+                
                 claims = api_claims(event, context, token) if (api_accessed) else get_claims(event, context, token)
 
                 current_user = claims['username']
@@ -610,13 +611,23 @@ def validated(op, validate_body=True):
 
 
 def get_claims(event, context, token):
+    print("Enter get_claims")
+
     # https://cognito-idp.<Region>.amazonaws.com/<userPoolId>/.well-known/jwks.json
 
     oauth_issuer_base_url = os.getenv('OAUTH_ISSUER_BASE_URL')
+    print("oauth_issuer_base_url ", oauth_issuer_base_url )
+
     oauth_audience = os.getenv('OAUTH_AUDIENCE')
+
+    print("oauth_audience ", oauth_audience )
+
 
     jwks_url = f'{oauth_issuer_base_url}/.well-known/jwks.json'
     jwks = requests.get(jwks_url).json()
+
+    print("jwks ", jwks )
+
 
     header = jwt.get_unverified_header(token)
     rsa_key = {}
@@ -629,6 +640,7 @@ def get_claims(event, context, token):
                 "n": key["n"],
                 "e": key["e"]
             }
+    print("rsa_key ", rsa_key )
 
     if rsa_key:
         payload = jwt.decode(
@@ -638,10 +650,14 @@ def get_claims(event, context, token):
             audience=oauth_audience,
             issuer=oauth_issuer_base_url
         )
-
+        print("payload decoded:  ", payload )
+        
         idp_prefix = os.getenv('IDP_PREFIX')
+        print("idp_prefix:  ", idp_prefix )
+
         get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
         user = get_email(payload['username'])
+        print("user:  ", user )
 
         # grab deafault account from accounts table 
         dynamodb = boto3.resource('dynamodb')
