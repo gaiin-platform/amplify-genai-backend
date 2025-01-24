@@ -233,11 +233,15 @@ def create_project(event, context, current_user, name, data):
 @validated("get_projects")
 def get_projects(event, context, current_user, name, data):
     try:
+        nested_data = data["data"]
+        email = nested_data["Email"]
+
         response = projects_table.query(
-            IndexName="UserIndex", KeyConditionExpression=Key("user").eq(current_user)
+            IndexName="UserIndex", KeyConditionExpression=Key("user").eq(email)
         )
 
         projects = response.get("Items", [])
+        print("Projects:", projects)
 
         return {
             "statusCode": 200,
