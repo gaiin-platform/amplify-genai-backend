@@ -48,11 +48,8 @@ def get_presigned_download_url(event, context, current_user, name, data):
     files_table = dynamodb.Table(files_table_name)
 
     print(f"Getting presigned download URL for {key} for user {current_user}")
-
-    # Since groups can have documents that belongs to other and the group itself only has permission we need to check this instead of if they are owner
-    # In case of wordpress plugin we will always be a system user so we will never be the owner
-    # 
-
+    print(f"GroupId attached to data source: {group_id}")
+ 
     # Retrieve the item from DynamoDB to check ownership
     try:
         response = files_table.get_item(Key={'id': key})
@@ -65,20 +62,81 @@ def get_presigned_download_url(event, context, current_user, name, data):
         # User doesn't match or item doesn't exist
         print(f"File not found for user {current_user}: {response}")
         return {'success': False, 'message': 'File not found'}
+    print("Item found: ", response['Item'])
+    if response['Item']['createdBy'] == group_id:
+        # ensure the user/system user has access to the group by either
+        # 1. group is public 
+        # 2. user is a member of the group 
+        try:
+            print("Checking if user is a member of the group")
+            group_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
+            member_response = group_table.get_item(Key={'group_id': group_id})
 
-    if response['Item']['createdBy'] != current_user and response['Item']['createdBy'] != group_id:
+            # Check if the item was found
+            if 'Item' in member_response:
+                item = member_response['Item']
+                # Check if the group is public or if the user is in the members
+                if not (item.get('isPublic', False) or current_user in item.get('members', {}).keys() or current_user in item.get('systemUsers', [])):
+                    return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
+            else:
+                return {'success': False, 'message': f"No group entry found for groupId: {group_id}"}
+
+        except Exception as e:
+            print(f"An error occurred while processing groupId {group_id}: {e}")
+            return {'success': False, 'message': f"An error occurred while processing groupId: {group_id}"}
+    elif response['Item']['createdBy'] != current_user:
         translated_ds = None
-        if (group_id):# check group_id has perms 
-            try:# need global 
-                translated_ds = translate_user_data_sources_to_hash_data_sources({"key" : key, 'type': response['Item']['type']})
-            except:
-                print("Translation for unauthorized user using group id failed")
-        if (not (translated_ds and can_access_objects(access_token, translated_ds))):
-            # User doesn't match or item doesn't exist
-            print(f"User doesn't match for file for {current_user}: {response['Item']}")
-            print(f"groupId attached? {group_id}")
-            return {'success': False, 'message': 'User does not have access'}
+        try:# need global 
+            translated_ds = translate_user_data_sources_to_hash_data_sources([{"id" : key, 'type': response['Item']['type']}])
+        except:
+            print("Datasource translation failed")
 
+        if (not translated_ds or len(translated_ds) == 0):
+            print("Translation for data source failed: ", translated_ds)
+            return {'success': False, 'message': 'Internal Server Error: Translation for data source failed'}
+        
+        # Since groups can have documents that belongs to others and the group itself only has permission to we need to check the table 
+        if (group_id):# checks can access of the group_id 
+            object_table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
+            
+            object_id = translated_ds[0]['id']
+            try:
+                print("Checking Object Access for groupId permission to the datasource")
+                # Check if any permissions already exist for the object_id
+                query_response = object_table.get_item(
+                    Key={
+                        'object_id': object_id,
+                        'principal_id': group_id
+                    }
+                )
+                item = query_response.get('Item')
+
+                if not item:
+                    print("Groupd Id does not have access")
+                    return {'success': False, 'message': 'GroupId does not have access to the data source'} 
+
+                
+                permission_level = item.get('permission_level')
+                policy = item.get('policy')
+                # sufficient privilege for read access
+                sufficient_privilege = permission_level in ['owner', 'write', 'read'] or policy == 'public'
+                if not sufficient_privilege:
+                    print("Groupd Id has insufficient privilege")
+                    return {'success': False, 'message': 'GroupId does not have sufficient privilege to access the data source'} 
+                
+                print("Groupd Id has sufficient privilege to download datasource")
+            except ClientError as e:
+                print(f"Error accessing DynamoDB for can_access_objects: {e.response['Error']['Message']}")
+                return {'success': False, 'message': f'Error performing can_access on ds with groupid {group_id}'} 
+
+            can_access = True
+            if (not can_access):
+                return {'success': False, 'message': 'GroupId does not have access to the data source'} 
+            
+        elif (not can_access_objects(access_token, translated_ds)): # checks can access on the user 
+            print(f"User {current_user} does not have acces to download: {response['Item']}")
+            return {'success': False, 'message': 'User does not have access to the data source'}
+    
     download_filename = response['Item']['name']
     is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES
     response_headers = {
