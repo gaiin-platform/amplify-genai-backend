@@ -24,14 +24,24 @@ def can_read_memory(user, data):
 def can_remove_memory(user, data):
     return True
 
+
+def can_edit_memory(user, data):
+    return True
+
+
 def can_create_project(user, data):
     return True
+
 
 def can_get_projects(user, data):
     return True
 
 
-def can_delete_project(user, data):
+def can_remove_project(user, data):
+    return True
+
+
+def can_edit_project(user, data):
     return True
 
 
@@ -48,7 +58,9 @@ permissions_by_state_type = {
     "/memory/extract-facts": {"extract_facts": can_extract_facts},
     "/memory/read-memory": {"read_memory": can_read_memory},
     "/memory/remove-memory": {"remove_memory": can_remove_memory},
+    "/memory/edit-memory": {"edit_memory": can_edit_memory},
     "/memory/create-project": {"create_project": can_create_project},
     "/memory/get-projects": {"get_projects": can_get_projects},
-    "/memory/delete-project": {"delete_project": can_delete_project},
+    "/memory/remove-project": {"remove_project": can_remove_project},
+    "/memory/edit-project": {"edit_project": can_edit_project},
 }

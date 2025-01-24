@@ -88,7 +88,14 @@ functions:
           method: post
           cors: true
   
-  # TODO: implement the below functions 
+  edit_memory:
+    handler: service/core.edit_memory
+    events:
+      - http:
+          path: /memory/edit-memory
+          method: post
+          cors: true
+  
   create_project:
     handler: service/core.create_project
     events:
@@ -105,11 +112,19 @@ functions:
           method: post
           cors: true
 
-  delete_project:
-    handler: service/core.delete_project
+  remove_project:
+    handler: service/core.remove_project
     events:
       - http:
-          path: /memory/delete-project
+          path: /memory/remove-project
+          method: post
+          cors: true
+  
+  edit_project:
+    handler: service/core.edit_project
+    events:
+      - http:
+          path: /memory/edit-project
           method: post
           cors: true
 
