@@ -83,6 +83,14 @@ create_project_schema = {
     "required": ["ProjectName"],
 }
 
+get_projects_schema = {
+    "type": "object",
+    "properties": {
+        "Email": {"type": "string"},
+    },
+    "required": ["Email"],
+}
+
 delete_project_schema = {
     "type": "object",
     "properties": {
@@ -101,6 +109,7 @@ validators = {
     "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
     "/memory/create-project": {"create_project": create_project_schema},
+    "/memory/get-projects": {"get_projects": get_projects_schema},
     "/memory/delete-project": {"delete_project": delete_project_schema},
 }
 
@@ -110,6 +119,7 @@ api_validators = {
     "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
     "/memory/create-project": {"create_project": create_project_schema},
+    "/memory/get-projects": {"get_projects": get_projects_schema},
     "/memory/delete-project": {"delete_project": delete_project_schema},
 }
 
