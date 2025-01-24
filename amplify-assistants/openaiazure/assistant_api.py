@@ -33,7 +33,6 @@ def get(dictionary, *keys):
 def get_openai_client():
     if openai_provider == "openai":
         openai_api_key = get_secret_value("OPENAI_API_KEY")
-        openai_api_key = openai_api_key
         client = OpenAI(
             api_key=openai_api_key
         )
@@ -356,7 +355,6 @@ def create_new_thread_for_chat(messages, info):
         print("Creating OpenAI thread...")
         thread_id = client.beta.threads.create().id 
 
-        print("Recording thread usage")
         info['thread_id'] = thread_id
         info['thread_key'] = thread_key
         op_details = {'type': "CREATE_THREAD", 'timestamp': timestamp}

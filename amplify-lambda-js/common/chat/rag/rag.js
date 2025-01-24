@@ -60,7 +60,9 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
 
     const updatedBody = {
         ...chatBody,
+        imageSources: [],
         model: model.id,
+        max_tokens: model.outputTokenLimit,
         options: {
             ...chatBody.options,
             model,
