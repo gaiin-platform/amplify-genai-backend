@@ -191,4 +191,4 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
-        TableName: ${self:provider.environment.MEMORY_DYNAMO_TABLE}
+        TableName: ${self:provider.environment.PROJECTS_DYNAMO_TABLE}
