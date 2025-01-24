@@ -170,6 +170,55 @@ def save_memory(event, context, current_user, name, data):
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 
+@validated("edit_memory")
+def edit_memory(event, context, current_user, name, data):
+    try:
+        nested_data = data["data"]
+        memory_id = nested_data["memory_id"]
+        new_content = nested_data["content"]
+
+        # First verify the memory exists and belongs to the user
+        memory = memory_table.get_item(Key={"id": memory_id}).get("Item")
+
+        if not memory:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Memory not found"}),
+            }
+
+        if memory["user"] != current_user:
+            return {
+                "statusCode": 403,
+                "body": json.dumps({"error": "Unauthorized to edit this memory"}),
+            }
+
+        # Update the memory content and timestamp
+        current_time = datetime.now()
+        timestamp = current_time.isoformat()
+
+        response = memory_table.update_item(
+            Key={"id": memory_id},
+            UpdateExpression="SET content = :content, #ts = :timestamp",
+            ExpressionAttributeValues={
+                ":content": new_content,
+                ":timestamp": timestamp,
+            },
+            ExpressionAttributeNames={"#ts": "timestamp"},
+            ReturnValues="ALL_NEW",
+        )
+
+        updated_item = response.get("Attributes", {})
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {"message": "Memory updated successfully", "memory": updated_item}
+            ),
+        }
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
 @validated("remove_memory")
 def remove_memory(event, context, current_user, name, data):
     try:
@@ -188,7 +237,7 @@ def remove_memory(event, context, current_user, name, data):
 
         return {
             "statusCode": 200,
-            "body": json.dumps({"message": "Memory deleted successfully"}),
+            "body": json.dumps({"message": "Memory removed successfully"}),
         }
     except Exception as e:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
@@ -251,8 +300,8 @@ def get_projects(event, context, current_user, name, data):
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 
-@validated("delete_project")
-def delete_project(event, context, current_user, name, data):
+@validated("remove_project")
+def remove_project(event, context, current_user, name, data):
     try:
         nested_data = data["data"]
 
@@ -270,7 +319,7 @@ def delete_project(event, context, current_user, name, data):
         if project["user"] != current_user:
             return {
                 "statusCode": 403,
-                "body": json.dumps({"error": "Unauthorized to delete this project"}),
+                "body": json.dumps({"error": "Unauthorized to remove this project"}),
             }
 
         # Delete the project
@@ -279,7 +328,55 @@ def delete_project(event, context, current_user, name, data):
         return {
             "statusCode": 200,
             "body": json.dumps(
-                {"message": "Project deleted successfully", "id": project_id}
+                {"message": "Project removed successfully", "id": project_id}
+            ),
+        }
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+@validated("edit_project")
+def edit_project(event, context, current_user, name, data):
+    try:
+        nested_data = data["data"]
+        project_id = nested_data["ProjectID"]
+        new_name = nested_data["ProjectName"]
+
+        # First verify the project exists and belongs to the user
+        project = projects_table.get_item(Key={"id": project_id}).get("Item")
+
+        if not project:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Project not found"}),
+            }
+
+        if project["user"] != current_user:
+            return {
+                "statusCode": 403,
+                "body": json.dumps({"error": "Unauthorized to edit this project"}),
+            }
+
+        current_time = datetime.now()
+        timestamp = current_time.isoformat()
+
+        response = projects_table.update_item(
+            Key={"id": project_id},
+            UpdateExpression="SET #proj = :project_name, #ts = :timestamp",
+            ExpressionAttributeValues={
+                ":project_name": new_name,
+                ":timestamp": timestamp,
+            },
+            ExpressionAttributeNames={"#proj": "project", "#ts": "timestamp"},
+            ReturnValues="ALL_NEW",
+        )
+
+        updated_item = response.get("Attributes", {})
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {"message": "Project updated successfully", "project": updated_item}
             ),
         }
     except Exception as e:

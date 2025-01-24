@@ -75,6 +75,15 @@ remove_memory_schema = {
     "required": ["memory_id"],
 }
 
+edit_memory_schema = {
+    "type": "object",
+    "properties": {
+        "memory_id": {"type": "string"},
+        "content": {"type": "string"},
+    },
+    "required": ["memory_id", "content"],
+}
+
 create_project_schema = {
     "type": "object",
     "properties": {
@@ -91,12 +100,21 @@ get_projects_schema = {
     "required": ["Email"],
 }
 
-delete_project_schema = {
+remove_project_schema = {
     "type": "object",
     "properties": {
-        "ProjectName": {"type": "string"},
+        "ProjectID": {"type": "string"},
     },
     "required": ["ProjectID"],
+}
+
+edit_project_schema = {
+    "type": "object",
+    "properties": {
+        "ProjectID": {"type": "string"},
+        "ProjectName": {"type": "string"},
+    },
+    "required": ["ProjectID", "ProjectName"],
 }
 
 """
@@ -108,9 +126,11 @@ validators = {
     "/memory/extract-facts": {"extract_facts": extract_facts_schema},
     "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
+    "/memory/edit-memory": {"edit_memory": edit_memory_schema},
     "/memory/create-project": {"create_project": create_project_schema},
     "/memory/get-projects": {"get_projects": get_projects_schema},
-    "/memory/delete-project": {"delete_project": delete_project_schema},
+    "/memory/remove-project": {"remove_project": remove_project_schema},
+    "/memory/edit-project": {"edit_project": edit_project_schema},
 }
 
 api_validators = {
@@ -118,9 +138,11 @@ api_validators = {
     "/memory/extract-facts": {"extract_facts": extract_facts_schema},
     "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
+    "/memory/edit-memory": {"edit_memory": edit_memory_schema},
     "/memory/create-project": {"create_project": create_project_schema},
     "/memory/get-projects": {"get_projects": get_projects_schema},
-    "/memory/delete-project": {"delete_project": delete_project_schema},
+    "/memory/remove-project": {"remove_project": remove_project_schema},
+    "/memory/edit-project": {"edit_project": edit_project_schema},
 }
 
 
