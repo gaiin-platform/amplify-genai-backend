@@ -96,9 +96,44 @@ const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
 }
 
 
-export const getUserDefinedAssistant = async (assistantBase, user, assistantPublicId) => {
+export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId) => {
+    if (!ast_owner) return null;
 
-    const assistantAlias = await getAssistantByAlias(user, assistantPublicId);
+    // verify the user has access to the group since this is a group assistant
+    if (assistantPublicId.startsWith("astgp")) {
+        console.error( `Checking if ${current_user} is a member of group: ${ast_owner}`);
+
+        try {
+            const params = {
+                TableName: process.env.GROUPS_DYNAMO_TABLE,
+                Key: {
+                    group_id: { S: ast_owner }
+                }
+            };
+        
+            const response = await dynamodbClient.send(new GetItemCommand(params));
+            
+            if (response.Item) {
+                const item = unmarshall(response.Item);
+                // Check if the group is public or if the user is in the members
+                if (!(item.isPublic || 
+                    (item.members && Object.keys(item.members).includes(current_user)) || 
+                    (item.systemUsers && item.systemUsers.includes(current_user)))) {
+                    console.error( `User is not a member of groupId: ${ast_owner}`);
+                    return null;
+                }
+            } else {
+                console.error(`No group entry found for groupId: ${ast_owner}`);
+                return null;
+            }
+        
+        } catch (error) {
+            console.error(`An error occurred while processing groupId ${ast_owner}:`, error);
+            return null;
+        }
+    }
+
+    const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
     if (assistantAlias) {
         const assistant = await getAssistantByAssistantDatabaseId(
@@ -276,7 +311,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             let blockTerminator = null;
 
-            if(assistant.data && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+            if(assistant.data?.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
                 const instructionsPreProcessor = langVersion.instructionsPreProcessor;

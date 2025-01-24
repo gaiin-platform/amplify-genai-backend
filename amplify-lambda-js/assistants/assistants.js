@@ -265,16 +265,24 @@ const isUserDefinedAssistant = (assistantId) => {
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
     logger.info(`Choose Assistant for Request `);
 
-    const clientSelectedAssistant = (body.options && body.options.assistantId) ?
-        body.options.assistantId : null;
+    const clientSelectedAssistant = body.options?.assistantId ?? null;
 
     let selectedAssistant = null;
     if(clientSelectedAssistant) {
-        logger.info(`Client Selected Assistant`);
+        logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group ast
-        const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : llm.params.account.user;
-        selectedAssistant = await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
-
+        const user = llm.params.account.user;
+        const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : user;
+        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, ast_owner, clientSelectedAssistant);
+        if (!selectedAssistant) {
+            llm.sendStatus(newStatus(
+                {   inProgress: false,
+                    message: "Selected Assistant Not Found",
+                    icon: "assistant",
+                    sticky: true
+                }));
+            llm.forceFlush();
+        }
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
         //codeInterpreterAssistant;
@@ -283,11 +291,12 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         console.log("ARTIFACT MODE DETERMINED")
     }
 
-    const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
-    llm.sendStatus(status);
-    llm.forceFlush();
-
+    
     if(selectedAssistant === null) {
+        const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
+        llm.sendStatus(status);
+        llm.forceFlush();
+
         // Look for any body.messages.data.state.currentAssistant going in reverse order through the messages
         // and choose the first one that is found.
         const currentAssistant = body.messages.map((m) => {
@@ -314,6 +323,8 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
         selectedAssistant = assistants.find((a) => a.name === selectedAssistantName);
 
+        status.inProgress = false;
+        llm.sendStatus(status);
     }
 
     const selected = selectedAssistant || defaultAssistant;
@@ -326,9 +337,6 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
     
     llm.sendStateEventToStream(stateInfo);
-
-    status.inProgress = false;
-    llm.sendStatus(status);
 
     llm.sendStatus(newStatus(
         {
