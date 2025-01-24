@@ -7,6 +7,8 @@ import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import { Transform } from "stream";
+import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
+import {extractKey} from "../datasource/datasources.js";
 
 const logger = getLogger("openai");
 
@@ -30,40 +32,6 @@ const isOpenAIEndpoint = (url) => {
     return url.startsWith("https://api.openai.com");
 }
 
-async function includeImageSources(dataSources, messages, model) {
-    if (!dataSources || dataSources.length === 0)  return messages;
-    const msgLen = messages.length - 1;
-    // does not support images
-    if (!model.supportsImages) {          
-        messages[msgLen]['content'] += doesNotSupportImagesInstructions(model.name);
-        return messages;
-    }
-
-    let imageMessageContent = []
-    for (let i = 0; i < dataSources.length; i++) {
-        const ds = dataSources[i];
-        const encoded_image = await getImageBase64Content(ds);
-        if (encoded_image) {
-            imageMessageContent.push( 
-                { "type": "image_url",
-                  "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
-                } 
-            )
-        }
-    }
-
-    
-    messages[msgLen]['content'] = [{ "type": "text",
-                                     "text": additionalImageInstruction
-                                    }, 
-                                    ...imageMessageContent, 
-                                    { "type": "text",
-                                        "text": messages[msgLen]['content']
-                                    }
-                                  ]
-
-    return messages 
-}
 
 export const chat = async (endpointProvider, chatBody, writable) => {
     let body = {...chatBody};
@@ -93,8 +61,14 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     let data = {
        ...body,
+       model: modelId,
         "stream": true,
     };
+
+    if (data.max_tokens > model.outputTokenLimit) {
+        data.max_tokens = model.outputTokenLimit
+    }
+
     // append additional system prompt
     if (model.systemPrompt) {
         data.messages[0].content += `\n${model.systemPrompt}`
@@ -106,7 +80,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         );
     }
 
-    data.messages = await includeImageSources(body.imageSources, data.messages, model);
+    data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
 
     if(tools){
         data.tools = tools;
@@ -181,15 +155,25 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     } else {
                         response.data.pipe(writableStream);
                     }
+                    // writableStream.destroy(new Error('Forced stream error'));
                     
                     // Handle the 'finish' event to resolve the promise
                     writableStream.on('finish', resolve);
 
                     // Handle errors
-                    response.data.on('error', reject);
-                    writableStream.on('error', reject);
+                    response.data.on('error', (err) => {
+                        sendErrorMessage(writableStream);
+                        reject(err);
+                    });
+                    
+                    writableStream.on('error', (err) => {
+                        sendErrorMessage(writableStream);
+                        reject(err);
+                    });
+                    
                 })
                 .catch((e)=>{
+                    sendErrorMessage(writableStream);
                     
                     if(e.response && e.response.data) {
                         console.log("Error invoking OpenAI API: ",e.response.statusText);
@@ -214,4 +198,51 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     }
 
     return streamAxiosResponseToWritable(url, writable);
+}
+
+
+async function includeImageSources(dataSources, messages, model, responseStream) {
+    if (!dataSources || dataSources.length === 0)  return messages;
+    const msgLen = messages.length - 1;
+    // does not support images
+    if (!model.supportsImages) {          
+        messages[msgLen]['content'] += doesNotSupportImagesInstructions(model.name);
+        return messages;
+    }
+
+    sendStateEventToStream(responseStream, {
+        sources: {
+            images: {
+                sources: dataSources.map(ds => {
+                    return {...ds, contentKey: extractKey(ds.id)}
+                })
+            }
+        }
+      });
+
+    let imageMessageContent = [];
+    
+    for (let i = 0; i < dataSources.length; i++) {
+        const ds = dataSources[i];
+        const encoded_image = await getImageBase64Content(ds);
+        if (encoded_image) {
+            imageMessageContent.push( 
+                { "type": "image_url",
+                  "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
+                } 
+            )
+        }
+    }
+
+    // message must be a user message
+    messages[msgLen]['content'] = [{ "type": "text",
+                                     "text": additionalImageInstruction
+                                    }, 
+                                    ...imageMessageContent, 
+                                    { "type": "text",
+                                        "text": messages[msgLen]['content']
+                                    }
+                                  ]
+
+    return messages 
 }

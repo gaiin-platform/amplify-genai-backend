@@ -13,6 +13,8 @@ export const transform = (event) => {
             return {d: event.choices[0].delta.content};
         } else if (event.choices[0].message && event.choices[0].message.content) {
             return {d: event.choices[0].message.content};
+        } else if (event && event.d && event.d.delta && event.d.delta.text) { // for error message
+            return {d: event.d.delta.text}
         }
     } 
     console.log("----NO MATCH---", event , "\n\n")

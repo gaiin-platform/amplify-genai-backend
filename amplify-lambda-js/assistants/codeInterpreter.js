@@ -93,10 +93,10 @@ const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 12000) => {
     });
 };
 
-const sendStatusMessage = (llm, message, summary='') => {
+const sendStatusMessage = (llm, message, inProgress=true, summary='', ) => {
     llm.sendStatus(newStatus(
         {
-            inProgress: false,
+            inProgress: inProgress,
             message: message,
             summary: summary,
             icon: "assistant",
@@ -107,7 +107,7 @@ const sendStatusMessage = (llm, message, summary='') => {
 
 const handleUserErrorMessage = (llm, responseErrorMessage) => {
     if (responseErrorMessage) {
-        sendStatusMessage(llm, String(responseErrorMessage), "Code interpreter response failed. View Error:");
+        sendStatusMessage(llm, String(responseErrorMessage), false, "Code interpreter response failed. View Error:");
         logger.debug(`Code interpreter Response was unsuccessful:  ${responseErrorMessage}`);
         const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
         llm.sendStateEventToStream({ codeInterpreter: { error: error } });
