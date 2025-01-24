@@ -100,6 +100,7 @@ def read_memory(event, context, current_user, name, data):
     try:
         nested_data = data["data"]
         assistant_id = nested_data.get("assistant_id")
+        project_id = nested_data.get("project_id")  # Add this line
 
         # Use the GSI to query records for the current user
         response = memory_table.query(
@@ -108,24 +109,29 @@ def read_memory(event, context, current_user, name, data):
 
         items = response.get("Items", [])
 
-        if assistant_id:
-            # Include user memories AND assistant memories
-            items = [
-                item
-                for item in items
-                if (
-                    item.get("memory_type") == "user"
-                    or (
-                        item.get("memory_type") == "assistant"
-                        and item.get("memory_type_id") == assistant_id
-                    )
+        # Filter based on memory types and IDs
+        filtered_items = []
+        for item in items:
+            memory_type = item.get("memory_type")
+            if (
+                memory_type == "user"
+                or (
+                    memory_type == "assistant"
+                    and assistant_id
+                    and item.get("memory_type_id") == assistant_id
                 )
-            ]
-        else:
-            # Include ONLY user memories
-            items = [item for item in items if item.get("memory_type") == "user"]
+                or (
+                    memory_type == "project"
+                    and project_id
+                    and item.get("memory_type_id") == project_id
+                )
+                or (
+                    memory_type == "project" and not project_id
+                )  # Include all project memories if no specific project_id
+            ):
+                filtered_items.append(item)
 
-        return {"statusCode": 200, "body": json.dumps({"memories": items})}
+        return {"statusCode": 200, "body": json.dumps({"memories": filtered_items})}
     except Exception as e:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
@@ -139,7 +145,7 @@ def save_memory(event, context, current_user, name, data):
         memory_type = nested_data["MemoryType"]
         memory_type_id = nested_data["MemoryTypeID"]
 
-        valid_types = ["user", "assistant"]  # "group", "project", "conversation",
+        valid_types = ["user", "assistant", "project"]
         if memory_type not in valid_types:
             return {
                 "statusCode": 400,
