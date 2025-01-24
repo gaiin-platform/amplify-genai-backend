@@ -24,13 +24,14 @@ def translate_user_data_sources_to_hash_data_sources(data_sources):
         key = ds['id']
 
         try:
-            if ("image/" in ds['type']):
-                ds['id'] = extract_key(ds['id']) 
-                translated_data_sources.append(ds)
-                continue
-
             if key.startswith("s3://"):
                 key = extract_key(key)
+
+            if ("image/" in ds['type']):
+                # overwrite the id and append to list as it 
+                ds['id'] = key
+                translated_data_sources.append(ds)
+                continue
 
             response = dynamodb_client.get_item(
                 TableName=hash_files_table_name,

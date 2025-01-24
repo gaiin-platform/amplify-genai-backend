@@ -277,21 +277,29 @@ def remove_old_ast_versions(current_assistants, astp):
             del current_assistants[i]
     return current_assistants
 
+def is_ds_owner(ds, group_id):
+    return group_id in ds.get('id','') or group_id in ds.get('key','')
 
 def update_group_ds_perms(ast_ds, group_type_data, group_id):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
-    #compie ds into one list 
+    print("ast ds: ", ast_ds)
+    print("groupType ds: ", group_type_data)
+
+    #compile ds into one list 
     # uploaded ones have the correct permissions, data selected from the user files do not, so we need to share it with the group 
     ds_selector_ds = [
         ds for info in group_type_data.values()
         if 'dataSources' in info
         for ds in info['dataSources']
-        if 'groupId' not in ds
+        if  not is_ds_owner(ds, group_id)
     ]
     ds_selector_ds.extend(
-        ds for ds in ast_ds if 'groupId' not in ds
+        ds for ds in ast_ds if not is_ds_owner(ds, group_id)
     )
+
+    # print("Updating permissions for the following ds prior to translation: ", ds_selector_ds)
+
 
     try:
         translated_ds = translate_user_data_sources_to_hash_data_sources(ds_selector_ds)
