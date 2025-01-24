@@ -1,10 +1,14 @@
-import {sendDeltaToStream} from "../common/streams.js";
+import {sendDeltaToStream, sendStateEventToStream, sendErrorMessage} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 import {trace} from "../common/trace.js";
+import {extractKey} from "../datasource/datasources.js";
+
 
 const logger = getLogger("bedrock");
+
+const BLANK_MSG = "Intentionally Left Blank, please ignore";
 
 export const chatBedrock = async (chatBody, writable) => {
 
@@ -12,9 +16,9 @@ export const chatBedrock = async (chatBody, writable) => {
     const options = {...body.options}; 
     delete body.options; 
     const currentModel = options.model;
-
-    const systemPrompts = [{"text": options.prompt}];
-    if (currentModel.systemPrompt) {
+                                                             //very rare edge case
+    const systemPrompts = [{"text": options.prompt.trim() || BLANK_MSG}];
+    if (currentModel.systemPrompt.trim()) {
         systemPrompts.push({ "text": currentModel.systemPrompt });
     }
 
@@ -22,14 +26,14 @@ export const chatBedrock = async (chatBody, writable) => {
     // options.prompt is a match for the first message in messages 
     for (const msg of body.messages.slice(1)) {
         if (msg.role === "system") {
-            systemPrompts.push({ "text": msg.content });
+            if (msg.content.trim()) systemPrompts.push({ "text": msg.content });
         } else {
             withoutSystemMessages.push(msg);
         }
     }
 
     const combinedMessages = combineMessages(withoutSystemMessages, options.prompt);
-    const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources, currentModel)
+    const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources, currentModel, writable);
     
     try {
         
@@ -38,8 +42,12 @@ export const chatBedrock = async (chatBody, writable) => {
         
         logger.debug("Initiating call to Bedrock");
 
+        const maxModelTokens = 4096; // currently it seems like bedrock has it maxed out at 4096 not the models output max token
+        //options.model.outputTokenLimit;
+        const maxTokens = body.max_tokens || 1000;
         const inferenceConfigs = {"temperature": options.temperature, 
-                                  "maxTokens": chatBody.max_tokens || options.model.outputTokenLimit};
+                                  "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens};
+
         const input = { modelId: currentModel.id,
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
@@ -77,14 +85,16 @@ export const chatBedrock = async (chatBody, writable) => {
 
         writable.on('error', (error) => {
             logger.error('Error with Writable stream: ', error);
+            sendErrorMessage(writable);
             reject(error);
         });
          
     } catch (error) {
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        // sendDeltaToStream(writable, "answer", "Error retrieving response. Please try again.");
+        sendErrorMessage(writable);
     }
 }
+
 
 function combineMessages(oldMessages, failSafeUserMessage) {
     if (!oldMessages) return oldMessages;
@@ -120,7 +130,7 @@ function combineMessages(oldMessages, failSafeUserMessage) {
 }
 
 
-async function sanitizeMessages(messages, imageSources, model) {
+async function sanitizeMessages(messages, imageSources, model, responseStream) {
     if (!messages) return messages;
 
     const containsImages = imageSources && imageSources.length > 0;
@@ -131,22 +141,33 @@ async function sanitizeMessages(messages, imageSources, model) {
 
     let updatedMessages = [
         ...(messages.map(m => {
-            return { "role": m['role'],
-                     "content": [
-                        { "text":  m['content'] }
-                    ]}
-            }))
+                    return { "role": m['role'],
+                            "content": [
+                                { "text":  m['content'].trim() || BLANK_MSG }
+                            ]}
+                    }))
     ];
 
     if (model.supportsImages && containsImages) {
-        updatedMessages = await includeImageSources(imageSources, updatedMessages); 
+        updatedMessages = await includeImageSources(imageSources, updatedMessages, responseStream); 
     }
     return updatedMessages;
 
 }
 
-async function includeImageSources(dataSources, messages) {
+async function includeImageSources(dataSources, messages, responseStream) {
     if (!dataSources || dataSources.length === 0) return messages;
+
+    sendStateEventToStream(responseStream, {
+        sources: {
+            images: {
+                sources: dataSources.map(ds => {
+                    return {...ds, contentKey: extractKey(ds.id)}
+                })
+            }
+        }
+      });
+
 
     let imageMessageContent = [[]];
     let listIdx = 0;
