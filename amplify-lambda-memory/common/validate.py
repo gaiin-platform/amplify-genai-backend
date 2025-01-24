@@ -63,6 +63,7 @@ read_memory_schema = {
     "type": "object",
     "properties": {
         "assistant_id": {"type": "string"},
+        "project_id": {"type": "string"},
     },
     "required": [],
 }
