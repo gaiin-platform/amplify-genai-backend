@@ -2,6 +2,10 @@ from llm.chat import chat
 import os
 from common.validate import validated
 from common.ops import op
+import json
+import os
+from botocore.exceptions import ClientError
+import boto3
 
 @op(
     path="/chat",
@@ -12,9 +16,8 @@ from common.ops import op
     Example request: 
      {
     "data":{
-        "model": "gpt-4o",
         "temperature": 0.7,
-        "max_tokens": 150,
+        "max_tokens": 4000,
         "dataSources": [{"id": "s3://user@vanderbilt.edu/2014-qwertyuio","type": "application/pdf"}],
         "messages": [
             {
@@ -52,12 +55,50 @@ def chat_endpoint(event, context, current_user, name, data):
     if ('chat' not in access and 'full_access' not in access):
         return {'success': False, 'message': 'API key does not have access to chat functionality'}
     try:
-        payload = data['data']
-        # print(payload)
-        chat_url = os.environ['CHAT_ENDPOINT']
+        
+        chat_endpoint = get_chat_endpoint()
+        if (not chat_endpoint):
+            return {"success": False, "message": "We are unable to make the request. Error: No chat endpoint found."}
         access_token = data['access_token']
 
-        response, metadata = chat(chat_url, access_token, payload)
-        return {"success": True, "message": "Chat completed successfully", "data": response}
+        payload = data['data']
+        payload_options = payload["options"]
+        payload["model"] = payload_options["model"]["id"]
+        messages = payload["messages"]
+
+        SYSTEM_ROLE = "system"
+        if (messages[0]["role"] != SYSTEM_ROLE):
+            print("Adding system prompt message")
+            user_prompt = payload_options.get("prompt", "No Prompt Provided")
+            payload["messages"] = [{"role": SYSTEM_ROLE, "content": user_prompt}] + messages
+
+        response, metadata = chat(chat_endpoint, access_token, payload)
+        return {"success": True, "message": "Chat endpoint response retrieved", "data": response}
     except Exception as e:
         return {"success": False, "message": {f"Error: {e}"}}
+    
+
+def get_chat_endpoint():
+    secret_name = os.environ['APP_ARN_NAME']
+    region_name = os.environ.get('AWS_REGION', 'us-east-1')
+    # Create a Secrets Manager client
+    session = boto3.session.Session()
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name
+    )
+    try:
+        print("Retrieving Chat Endpoint")
+        get_secret_value_response = client.get_secret_value(
+            SecretId=secret_name
+        )
+        secret_string = get_secret_value_response['SecretString']
+        secret_dict = json.loads(secret_string)
+        if ("CHAT_ENDPOINT" in secret_dict):
+            return secret_dict["CHAT_ENDPOINT"]
+        print("Chat Endpoint Not Found")
+    except ClientError as e:
+        print(f"Error getting secret: {e}")
+
+    return None
+

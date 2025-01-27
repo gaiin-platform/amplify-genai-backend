@@ -41,111 +41,88 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 chat_input_schema = {
-  "type": "object",
-  "required": [
-    "model",
-    "temperature",
-    "max_tokens",
-    "messages"
-  ],
-  "properties": {
-    "model": {
-      "type": "string",
-      "enum": [
-        "gpt-35-turbo",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4-1106-Preview",
-        "anthropic.claude-3-haiku-20240307-v1:0",
-        "anthropic.claude-3-5-sonnet-20240620-v1:0",
-        "anthropic.claude-3-opus-20240229-v1:0",
-        "mistral.mistral-7b-instruct-v0:2",
-        "mistral.mixtral-8x7b-instruct-v0:1",
-        "mistral.mistral-large-2402-v1:0"
-      ]
-    },
-    "temperature": {
-      "type": "number"
-    },
-    "max_tokens": {
-      "type": "integer"
-    },
-    "dataSources": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "messages": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "role",
-          "content"
-        ],
-        "properties": {
-          "role": {
-            "type": "string",
-            "enum": [
-              "system",
-              "assistant",
-              "user"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "prompt"
-            ]
-          }
+    "type": "object",
+    "properties": {
+        "temperature": {
+        "type": "number"
+        },
+        "model": { 
+        "type": "string"
+        },
+        "max_tokens": {
+        "type": "integer"
+        },
+        "dataSources": {
+        "type": "array",
+        "items": {
+            "type": "object"
         }
-      }
-    },
-    "options": {
-      "type": "object",
-      "properties": {
-        "dataSourceOptions": {
-          "type": "object"
         },
-        "ragOnly": {
-          "type": "boolean"
-        },
-        "skipRag": {
-          "type": "boolean"
-        },
-        "assistantId": {
-          "type": "string"
-        },
-        "model": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "enum": [
-                "gpt-35-turbo",
-                "gpt-4o",
-                "gpt-4-1106-Preview",
-                "anthropic.claude-3-haiku-20240307-v1:0",
-                "anthropic.claude-3-5-sonnet-20240620-v1:0",
-                "anthropic.claude-3-opus-20240229-v1:0",
-                "mistral.mistral-7b-instruct-v0:2",
-                "mistral.mixtral-8x7b-instruct-v0:1",
-                "mistral.mistral-large-2402-v1:0"
-              ]
+        "messages": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": [
+            "role",
+            "content"
+            ],
+            "properties": {
+            "role": {
+                "type": "string",
+                "enum": [
+                "system",
+                "assistant",
+                "user"
+                ]
+            },
+            "content": {
+                "type": "string"
+            },
+            "type": {
+                "type": "string",
+                "enum": [
+                "prompt"
+                ]
             }
-          }
-        },
-        "prompt": {
-          "type": "string"
+            }
         }
-      }
-    }
-  }
+        },
+        "options": {
+        "type": "object",
+        "properties": {
+            "dataSourceOptions": {
+            "type": "object"
+            },
+            "ragOnly": {
+            "type": "boolean"
+            },
+            "skipRag": {
+            "type": "boolean"
+            },
+            "assistantId": {
+            "type": "string"
+            },
+            "model": {
+            "type": "object",
+                "required": ["id"],
+                "properties": {
+                    "id": {
+                    "type": "string"
+                    }
+                }
+            },
+            "prompt": {
+            "type": "string"
+            }
+        },
+         "required": [ "model" ],
+        }
+    },
+    "required": [ "temperature", "max_tokens", "messages", "options" ],
 }
+
+
+
 
 export_schema = {
     "type": "object",

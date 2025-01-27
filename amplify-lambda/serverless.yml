@@ -86,7 +86,8 @@ provider:
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
- 
+    #AWS_REGION optional for /chat/service.py 
+    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
 
 
   iam:
@@ -523,7 +524,9 @@ resources:
                 - rds-data:BeginTransaction
                 - rds-data:CommitTransaction
                 - rds-data:RollbackTransaction
+                - secretsmanager:GetSecretValue
               Resource:
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
