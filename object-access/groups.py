@@ -917,9 +917,12 @@ def create_amplify_assistants(event, context, current_user, name, data):
      # verify is admin 
     if (not verify_user_as_admin(token, 'Create Amplify Assistants Admin Group')):
         return {'success': False , 'error': 'Unable to authenticate user as admin'}
-
-    assistants = data['data'].get('assistants', [])
-    create_result = group_creation(current_user, "Amplify Assistants", {current_user:"admin"}, [])
+    data = data['data']
+    members = data.get('members', [])
+    members_access_map = {member: 'admin' for member in members} 
+    
+    assistants = data.get('assistants', [])
+    create_result = group_creation(current_user, "Amplify Assistants", members_access_map, [])
     if (not create_result['success']): 
         print("Failed to create group")
         return create_result

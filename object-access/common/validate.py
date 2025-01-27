@@ -266,8 +266,12 @@ create_amplify_assistants_group_schema = {
             "items": create_assistant_schema
             
         },
+        "members": {
+            "type": "array",
+            "items": {"type": "string"}
+        }
     },
-    "required": ["assistants"]
+    "required": ["assistants", "members"]
 }
 
 update_ast_schema = {
