@@ -43,9 +43,8 @@ Example response:
 Example request: 
     {
     "data":{
-        "model": "gpt-4o",
         "temperature": 0.7,
-        "max_tokens": 150,
+        "max_tokens": 4000,
         "dataSources": [{"id": "s3://user@vanderbilt.edu/2014-qwertyuio","type": "application/pdf"}],
         "messages": [
             {
