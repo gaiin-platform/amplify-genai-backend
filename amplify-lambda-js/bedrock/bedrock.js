@@ -158,16 +158,7 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
 async function includeImageSources(dataSources, messages, responseStream) {
     if (!dataSources || dataSources.length === 0) return messages;
 
-    sendStateEventToStream(responseStream, {
-        sources: {
-            images: {
-                sources: dataSources.map(ds => {
-                    return {...ds, contentKey: extractKey(ds.id)}
-                })
-            }
-        }
-      });
-
+    const retrievedImages = [];
 
     let imageMessageContent = [[]];
     let listIdx = 0;
@@ -175,6 +166,7 @@ async function includeImageSources(dataSources, messages, responseStream) {
         const ds = dataSources[i];
         const encoded_image = await getImageBase64Content(ds);
         if (encoded_image) {
+            retrievedImages.push({...ds, contentKey: extractKey(ds.id)});
             // only 20 per content allowed
             if (imageMessageContent[listIdx].length > 19) {
                 listIdx++;
@@ -191,6 +183,12 @@ async function includeImageSources(dataSources, messages, responseStream) {
         } else {
             logger.info("Failed to get base64 encoded image: ", ds);
         }
+    }
+
+    if (retrievedImages.length > 0) {
+        sendStateEventToStream(responseStream, {
+            sources: { images: { sources: retrievedImages} }
+          });
     }
 
     const msgLen = messages.length - 1;

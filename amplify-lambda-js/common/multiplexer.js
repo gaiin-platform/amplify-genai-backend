@@ -36,8 +36,10 @@ export class StreamMultiplexer {
                     if(data.trim().length === 0) {
                         continue;
                     }
-
-                    if (data.startsWith('data:')) {
+                    if (data.startsWith('data: {"s":"meta","state"')) {
+                        logger.debug("Sending meta data...", data);
+                        this.outputStream.write(data + '\n\n');
+                    } else if (data.startsWith('data:')) {
                         data = data.slice(6);
 
                         if (data.trim() === '[DONE]') {
@@ -60,7 +62,7 @@ export class StreamMultiplexer {
                             }
 
                             if (transformed) {
-                                transformed.s = src;
+                                if (transformed.s !== 'meta') transformed.s = src;
                                 this.outputStream.write("data: "+JSON.stringify(transformed) + '\n\n');
                                 logger.debug("Event Transformed Sent... ", transformed);
                             }

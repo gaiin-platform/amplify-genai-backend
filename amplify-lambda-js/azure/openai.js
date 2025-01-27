@@ -219,6 +219,7 @@ async function includeImageSources(dataSources, messages, model, responseStream)
             }
         }
       });
+    const retrievedImages = [];
 
     let imageMessageContent = [];
     
@@ -226,12 +227,19 @@ async function includeImageSources(dataSources, messages, model, responseStream)
         const ds = dataSources[i];
         const encoded_image = await getImageBase64Content(ds);
         if (encoded_image) {
+            retrievedImages.push({...ds, contentKey: extractKey(ds.id)});
             imageMessageContent.push( 
                 { "type": "image_url",
                   "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
                 } 
             )
         }
+    }
+    
+    if (retrievedImages.length > 0) {
+        sendStateEventToStream(responseStream, {
+            sources: { images: { sources: retrievedImages} }
+          });
     }
 
     // message must be a user message
