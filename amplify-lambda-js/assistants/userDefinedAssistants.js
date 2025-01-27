@@ -8,7 +8,7 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus} from "../common/status.js";
-import {sendDeltaToStream, sendResultToStream} from "../common/streams.js";
+import {sendDeltaToStream, sendResultToStream, sendStateEventToStream} from "../common/streams.js";
 import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
 
 const s3Client = new S3Client();
@@ -288,7 +288,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 const response = invokeAgent(
                     params.account.accessToken,
                     params.options.conversationId,
-                    body.messages.slice(-1)[0].content
+                    body.messages.slice(-1)[0].content,
+                    {assistant}
                 );
                 llm.sendStatus(statusInfo);
                 llm.forceFlush();
@@ -327,7 +328,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                                 const tool_call = JSON.parse(state.state);
                                 const tool = tool_call.tool;
                                 if(tool === "terminate"){
-                                    msg = "Responding..."
+                                    msg = "Hold on..."
                                 }
                                 else if(tool === "exec_code"){
                                     msg = "Executing code..."
@@ -337,7 +338,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                                     function formatToolCall(toolCall) {
                                         const lines = [`Calling: ${toolCall.tool}`, '   with:'];
                                         Object.entries(toolCall.args).forEach(([key, value]) => {
-                                            lines.push(`      ${key}: ${value}`);
+                                            lines.push(`      ${key}: ${JSON.stringify(value)}`);
                                         });
                                         return lines.join('\n');
                                     }
@@ -358,6 +359,11 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         return !stopPolling;
                     })
                 ]);
+
+                llm.sendStateEventToStream({
+                    agentLog: result
+                })
+                llm.forceFlush();
 
                 if (result.success) {
                     let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
