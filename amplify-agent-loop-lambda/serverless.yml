@@ -36,6 +36,8 @@ provider:
       ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
   environment:
     AGENT_MODEL: "gpt-4o-mini"
+    SECRETS_NAME: ${self:custom.stageVariables.SECRETS_NAME}
+    SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
@@ -108,6 +110,13 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
+
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
       Properties:
