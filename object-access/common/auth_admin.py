@@ -7,8 +7,6 @@ import json
 def verify_user_as_admin(access_token, purpose):
     print("Initiate authenticate user as admin call")
 
-    print(access_token)
-
     update_model_endpoint = os.environ['API_BASE_URL'] + '/amplifymin/auth'
  
     request = {

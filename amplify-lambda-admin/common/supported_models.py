@@ -6,7 +6,6 @@ import json
 
 def get_supported_models(access_token):
     print("Initiate get supported models call")
-    print(access_token)
 
     update_model_endpoint =  os.environ['API_BASE_URL'] + '/supported_models/get'
 

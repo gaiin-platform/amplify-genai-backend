@@ -520,7 +520,7 @@ def get_claims(event, context, token):
     jwks = requests.get(jwks_url).json()
 
     header = jwt.get_unverified_header(token)
-    print (token)
+    # print (token)
     rsa_key = {}
     for key in jwks["keys"]:
         if key["kid"] == header["kid"]:
