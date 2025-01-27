@@ -1,11 +1,70 @@
-from llm.chat import chat_simple_messages
+import json
+import os
+from typing import List
+
+import litellm
+from attr import dataclass
+from litellm import completion
+
+from common.secrets import get_llm_config
 
 
-def generate_response(access_token, model, messages: []) -> str:
-    response = chat_simple_messages(access_token, model, messages)
-    return response
+@dataclass
+class Prompt:
+    messages: List[dict]
+    tools: List[dict] = []
+    metadata: dict = {}
+
+
+def generate_response(model, prompt: Prompt) -> str:
+    """Call LLM to get response"""
+
+    messages = prompt.messages
+    tools = prompt.tools
+
+    result = None
+
+    if not tools:
+        response = completion(
+            model=model,
+            messages=messages,
+            max_tokens=1024
+        )
+        result = response.choices[0].message.content
+    else:
+        response = completion(
+            model=model,
+            messages=messages,
+            tools=tools,
+            max_tokens=1024
+        )
+
+        if response.choices[0].message.tool_calls:
+            tool = response.choices[0].message.tool_calls[0]
+            result = {
+                "tool": tool.function.name,
+                "args": json.loads(tool.function.arguments),
+            }
+            result = json.dumps(result)
+        else:
+            result = response.choices[0].message.content
+
+
+    return result
 
 def create_llm(access_token, model):
-    llm = lambda prompt: generate_response(access_token, model, prompt)
-    return llm
+    key, uri = get_llm_config(model)
 
+    base, version = uri.split("?")
+    version = version.split("=")[1]
+
+    base = base.split("/openai")[0]
+
+    os.environ["AZURE_API_KEY"] = key
+    os.environ["AZURE_API_BASE"] = base
+    os.environ["AZURE_API_VERSION"] = version
+
+    def llm(prompt):
+        return generate_response("azure/" + model, prompt)
+
+    return llm

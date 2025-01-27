@@ -3,11 +3,11 @@ from agent.game.action import ActionRegistry
 from agent.game.environment import Environment
 from agent.game.goal import Goal, BE_DIRECT, LARGE_RESULTS, PREFER_WORKFLOWS, USE_RESULT_REFERENCES_IN_RESPONSES, \
     PASS_RESULT_REFERENCES_TO_TOOLS
-from agent.game.languages import AgentJsonActionLanguage, AgentFunctionCallingActionLanguage
+from agent.game.languages import AgentJsonActionLanguage
 from agent.core import Agent
 
 
-def build(environment: Environment, action_registry: ActionRegistry, generate_response):
+def build(environment: Environment, action_registry: ActionRegistry, llm):
     """
     Initialize the base agent with initial actions and goals
     """
@@ -34,13 +34,13 @@ completely done with the task, you should tell the user the result and terminate
 
     agent = Agent(
         goals=goals,
-        agent_language=AgentFunctionCallingActionLanguage(),
+        agent_language=AgentJsonActionLanguage(),
         action_registry=action_registry,
-        generate_response=generate_response,
         environment=environment,
         capabilities=[
             PassResultsCapability()
-        ]
+        ],
+        generate_response=llm
     )
 
     return agent

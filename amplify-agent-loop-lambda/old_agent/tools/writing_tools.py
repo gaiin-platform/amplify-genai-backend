@@ -1,12 +1,11 @@
 from typing import Dict, List, Any
 
-from agent.game.action import ActionContext
-from agent.prompt import generate_response, Prompt
+from agent.prompt import generate_response
 from agent.tool import register_tool
-
+from agent.tools.common_tools import prompt_llm
 
 @register_tool()
-def write_long_content(action_context: ActionContext, outline: List[Dict[str, Any]]) -> str:
+def write_long_content(outline: List[Dict[str, Any]]) -> str:
     """
     Turn the outline into long-form written content. The LLM will be prompted
     to write the content for each section of the outline. Each section or subsection of the
@@ -51,12 +50,12 @@ def write_long_content(action_context: ActionContext, outline: List[Dict[str, An
     content = ""
 
     for section in outline:
-        content += write_section(action_context, content, section)
+        content += write_section(content, section)
 
     return content
 
 
-def write_section(action_context: ActionContext, content: str, section: Dict[str, Dict]) -> str:
+def write_section(content: str, section: Dict[str, Dict]) -> str:
     """
     Write a section of the outline.
 
@@ -64,7 +63,6 @@ def write_section(action_context: ActionContext, content: str, section: Dict[str
     :param section:
     :return:
     """
-    generate_response = action_context.get("llm")
 
     section_content = ""
 
@@ -79,7 +77,7 @@ def write_section(action_context: ActionContext, content: str, section: Dict[str
 
         prompt = [
             {"role": "system", "content": """
-            Be extremely careful to make sure that the material
+            Write as much as possible on the given topic. Be extremely careful to make sure that the material
             is completely cohesive with whatever comes before. 
             
             You should include the exact title of the section in consistent formatting with what comes before
@@ -87,13 +85,12 @@ def write_section(action_context: ActionContext, content: str, section: Dict[str
             
             Remember, more sections will come, so don't arbitrarily wrap up with "In conclusion..." type language,
             since that will likely not work with what comes next, unless this is truly a "conclusion" section. 
+            
             """},
             {"role": "user", "content": content},
-            {"role": "user", "content": f"Add a section: \n'{title}'\n Here are some notes to use in writing: "
-                                        f"\n------------\n{notes}\n------------\n"
-                                        f"Now, start with the markdown formatted section title and write the content:"}
+            {"role": "user", "content": f"Add a section: '{title}' with notes: {notes}"}
         ]
 
-        section_content = generate_response(Prompt(messages=prompt))
+        section_content = generate_response(prompt)
 
     return section_content

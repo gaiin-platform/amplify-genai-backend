@@ -1,6 +1,7 @@
 import json
 from typing import Dict, Any
-
+import json
+import re
 
 def event_printer(event_id: str, event: Dict[str, Any]):
     context_id_prefix = event.get("context_id", "na")
@@ -43,18 +44,20 @@ def resolve_string(v, results):
         return v
 
     for k, val in results.items():
-        if not isinstance(val, str):
-            val = json.dumps(val)
-            # # escape all of the strings and newlines
-            # val = val.replace('"', '\\"')
-            # val = val.replace("\n", "\\n")
-            # val = val.replace("\r", "\\r")
-            # val = val.replace("'", "\\'")
+        val = json.dumps(val)
 
         # check if k starts with $# and strip it off of k
         if k.startswith("$#"):
             k = k[2:]
 
+        # escape all of the strings and newlines
+        val = val.replace('"', '\\"')
+        val = val.replace("\n", "\\n")
+        val = val.replace("\r", "\\r")
+        val = val.replace("'", "\\'")
+
         v = v.replace(f"$#{k}", val)
 
     return v
+
+

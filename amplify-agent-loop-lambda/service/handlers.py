@@ -8,6 +8,12 @@ from agent.game.agent_registry import AgentRegistry
 from agent.game.environment import Environment
 from agent.game.goal import Goal
 from agent.prompt import create_llm
+import agent.tools.file_handling
+import agent.tools.common_tools
+import agent.tools.writing_tools
+import agent.tools.code_exec
+
+
 from common.ops import vop
 import boto3
 from typing import Dict, Any
@@ -177,16 +183,19 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
     }
 )
 def handle_event(current_user, access_token, session_id, prompt, metadata=None):
-    print(f"[{session_id}] Handling event '{prompt}'")
+    print(f"[{session_id}] Handling event")
 
     try:
         tracker = create_file_tracker(current_user, session_id)
 
         metadata = metadata or {}
+
+        model = metadata.get('agent_model', os.getenv("AGENT_MODEL"))
+
         environment = Environment()
         action_registry = ActionRegistry()
 
-        llm = create_llm(access_token, metadata.get('model', os.getenv("AGENT_MODEL")))
+        llm = create_llm(access_token, metadata.get('model', model))
 
         agent = actions_agent.build(environment, action_registry, llm)
 

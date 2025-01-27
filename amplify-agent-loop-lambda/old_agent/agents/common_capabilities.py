@@ -1,5 +1,3 @@
-import json
-
 from agent.core import Capability
 from agent.game.action import ActionContext
 from agent.util import resolve_references
@@ -15,17 +13,7 @@ def get_results_map(agent, action_context, response):
         if not result_history:
             return {}
 
-        def get_result_value(result):
-            result = result.get('result',result.get('error', ''))
-            if isinstance(result, str):
-                try:
-                    result = json.loads(result)
-                    return result
-                except:
-                    return result
-            return result
-
-        return {result["id"]: get_result_value(result) for result in result_history}
+        return {result["id"]: result.get('result',result.get('error', '')) for result in result_history}
 
     return {}
 

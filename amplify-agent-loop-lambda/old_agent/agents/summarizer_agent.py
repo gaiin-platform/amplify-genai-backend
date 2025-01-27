@@ -1,7 +1,6 @@
 import json
 import re
 
-from agent.agents.common_capabilities import ResponseResultReferencingCapability
 from agent.game.action import ActionRegistry, Action
 from agent.game.environment import Environment
 from agent.game.goal import Goal
@@ -10,7 +9,7 @@ from agent.core import Agent
 from agent.tools.common_tools import terminate
 
 
-def build(environment: Environment, generate_response):
+def build(environment: Environment):
     """
     Initialize the base agent with initial actions and goals
     """
@@ -65,12 +64,8 @@ def build(environment: Environment, generate_response):
     summarizer = Agent(
         goals=goals,
         agent_language=AgentNaturalLanguage(),
-        generate_response=generate_response,
         action_registry=actions,
-        environment=environment,
-        capabilities=[
-            ResponseResultReferencingCapability()
-        ]
+        environment=environment
     )
 
     return summarizer

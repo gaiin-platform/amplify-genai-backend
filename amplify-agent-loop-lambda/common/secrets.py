@@ -1,6 +1,4 @@
-import boto3
-import json
-
+import random
 import os
 import uuid
 
@@ -140,4 +138,38 @@ def store_secrets_in_dict(input_dict):
   return updated_dict
 
 
+def get_secret(secret_name):
+  client = boto3.client('secretsmanager', region_name='us-east-1')
+
+  try:
+    response = client.get_secret_value(SecretId=secret_name)
+    if 'SecretString' in response:
+      return response['SecretString']
+    else:
+      return response['SecretBinary'].decode('ascii')
+  except Exception as e:
+    raise e
+
+
+def get_endpoint_data(parsed_data, model_name):
+  if model_name in ['gpt-4-1106-Preview', 'gpt-4-1106-preview']:
+    model_name = 'gpt-4-turbo'
+  elif model_name in ['gpt-35-1106', 'gpt-35-1106']:
+    model_name = 'gpt-35-turbo'
+  elif model_name in ['gpt-4o', 'gpt-4o']:
+    model_name = 'gpt-4o'
+
+  endpoint_data = next((model for model in parsed_data['models'] if model_name in model), None)
+  if not endpoint_data:
+    raise ValueError("Model name not found in the secret data")
+
+  endpoint_info = random.choice(endpoint_data[model_name]['endpoints'])
+  return endpoint_info['key'], endpoint_info['url']
+
+
+def get_llm_config(model_name):
+  secret_name = os.environ.get('LLM_ENDPOINTS_SECRETS_NAME')
+  secret_data = get_secret(secret_name)
+  parsed_secret = json.loads(secret_data)
+  return get_endpoint_data(parsed_secret, model_name)
 

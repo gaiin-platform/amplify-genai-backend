@@ -1,14 +1,25 @@
 import json
+import re
+import time
 import traceback
 from functools import reduce
-from typing import List, Callable
+from statistics import correlation
+from typing import List, Dict, Any, Type, Callable
 
+from agent import tool
 from agent.game.action import ActionRegistry, ActionContext
+from agent.game.agent_registry import AgentRegistry
 from agent.game.environment import Environment
 from agent.game.goal import Goal
-from agent.game.languages import AgentLanguage
+from agent.game.languages import AgentJsonActionLanguage, AgentNaturalLanguage, AgentLanguage
 from agent.game.memory import Memory
-from agent.prompt import generate_response, Prompt
+from agent.prompt import generate_response
+from agent.tool import tools
+import agent.tools.common_tools
+import agent.tools.writing_tools
+import agent.tools.code_exec
+import agent.tools.workflow
+import agent.tools.file_handling
 
 
 class Capability:
@@ -22,7 +33,7 @@ class Capability:
     def process_response(self, agent, action_context: ActionContext, response: str) -> str:
         return response
 
-    def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:
+    def process_prompt(self, agent, action_context: ActionContext, prompt: List[dict]) -> List[dict]:
         return prompt
 
     def should_terminate(self, agent, action_context: ActionContext, response: str) -> bool:
@@ -34,27 +45,27 @@ class Agent:
                  goals: List[Goal],
                  agent_language: AgentLanguage,
                  action_registry: ActionRegistry,
-                 generate_response: Callable[[Prompt], str],
                  environment: Environment,
+                 generate_response: Callable[[List[dict]], str],
                  capabilities: List[Capability] = []):
         """
         Initialize an agent with its core GAME components
         """
         self.goals = goals
-        self.generate_response = generate_response
         self.agent_language = agent_language
         self.actions = action_registry
         self.environment = environment
+        self.generate_response = generate_response
         self.capabilities = capabilities or []
 
-    def construct_prompt(self, action_context: ActionContext, goals:List[Goal], memory: Memory) -> Prompt:
+    def construct_prompt(self, action_context: ActionContext, goals:List[Goal], memory: Memory) -> List[dict]:
         """Build prompt with memory context"""
         #context = self.memory.get_relevant_context(self.current_goal)
 
         prompt = self.agent_language.construct_prompt(
             actions=self.actions.get_actions(),
             environment=self.environment,
-            goals=goals,
+            goals=self.goals,
             memory=memory
         )
 
@@ -92,8 +103,6 @@ class Agent:
         environment responded to the action. This will likely be the output of the action, may include
         side effects, and may include other information about state changes in the environment.
 
-        :param action_context:
-        :param memory:
         :param response:
         :param result:
         :return:
@@ -129,7 +138,7 @@ class Agent:
         return result
 
 
-    def prompt_llm_for_action(self, action_context: ActionContext, full_prompt: Prompt) -> [str,None]:
+    def prompt_llm_for_action(self, action_context: ActionContext, full_prompt: List[dict]) -> [str,None]:
         # Try up to 3 times
         send_event = action_context.incremental_event()
         response = None
@@ -180,24 +189,20 @@ class Agent:
             'environment': self.environment,
             'action_registry': self.actions,
             'memory': memory,
-            'llm': self.generate_response,
             **user_action_context_props
         })
 
         # Record the initial task
         self.set_current_task(action_context, memory, user_input)
 
-        # ========================
-        # The Agent Loop
-        # ========================
         while True:
-            # 1. Construct the prompt for the LLM to generate a response
+            # 1. Sense & Think Phase
             prompt = self.construct_prompt(action_context, self.goals, memory)
 
-            # 2. Prompt the agent for its next action
+            # 2. Expression Phase
             response = self.prompt_llm_for_action(action_context, prompt)
 
-            # 3. Handle the agent's response and execute the action (if any)
+            # 3. Action Phase
             result = self.handle_agent_response(
                 action_context=action_context,
                 response=response
@@ -206,7 +211,7 @@ class Agent:
             # 4. Update memory with knowledge of what the agent did and how the environment responded
             self.update_memory(action_context, memory, response, result)
 
-            # 5. Decide if the loop should continue of if the agent should terminate
+            # 5. Continuation Decision
             if self.should_terminate(action_context, response):
                 break
 

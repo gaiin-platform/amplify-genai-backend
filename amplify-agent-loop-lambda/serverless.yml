@@ -36,6 +36,8 @@ provider:
       ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
   environment:
     AGENT_MODEL: "gpt-4o-mini"
+    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
     API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
