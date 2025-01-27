@@ -7,8 +7,6 @@ import json
 def register_ops(access_token, ops):
     print("Initiate amplify assistants write ops call")
 
-    print(access_token)
-
     update_model_endpoint = os.environ['API_BASE_URL'] + '/ops/register'
  
     request = {

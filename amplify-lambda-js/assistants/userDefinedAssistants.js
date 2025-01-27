@@ -100,8 +100,8 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, ast_o
     if (!ast_owner) return null;
 
     // verify the user has access to the group since this is a group assistant
-    if (assistantPublicId.startsWith("astgp")) {
-        console.error( `Checking if ${current_user} is a member of group: ${ast_owner}`);
+    if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
+        console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
 
         try {
             const params = {

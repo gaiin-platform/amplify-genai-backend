@@ -57,7 +57,7 @@ def get_user_available_models(event, context, current_user, name, data):
         extract_data(model_id, model_data) for model_id, model_data in supported_models 
         if (model_data.get("isAvailable", False) or verify_user_in_amp_group(data["access_token"], model_data.get("exclusiveGroupAvailability", [])))
     ]
-    print(available_models)
+    print("Available user models:" ,available_models)
 
     default_model = None
     advanced_model = None
@@ -67,7 +67,7 @@ def get_user_available_models(event, context, current_user, name, data):
         if model_data.get("defaultAdvancedModel", False): advanced_model = extract_data(model_id, model_data)
         if model_data.get("defaultCheapestModel", False): cheapest_model = extract_data(model_id, model_data)
 
-    print(advanced_model)
+    # print(advanced_model)
 
 
     return {"success": True, "data": { "models": available_models,
