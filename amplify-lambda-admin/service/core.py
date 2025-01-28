@@ -221,50 +221,58 @@ def update_pptx_data(pptx_type, update_data):
 def get_configs(event, context, current_user, name, data):
     if not authorized_admin(current_user): 
         return {"success": False, "message" : "User is not an authorized admin"}
-    region_name = os.environ.get('AWS_REGION', 'us-east-1')
+    
+    query_params = event.get('queryStringParameters', {})
+    lazy_load = int(query_params.get('lazy_load', '0'))
+
     configurations = {}
-   
-    # secrets manager info 
-    for config_type, secret_name in secret_name_map.items():
-        try:
-            secret_value = get_secret(secret_name, region_name)
-            print(secret_value)
-            configurations[config_type.value] = secret_value
-        except ClientError as e:
-            print( f"Error retrieving {config_type.value}: {str(e)}")
-    # dyanmo table rows
 
-    dynamo_config_types = [AdminConfigTypes.FEATURE_FLAGS, AdminConfigTypes.ADMINS, AdminConfigTypes.PPTX_TEMPLATES, 
-                           AdminConfigTypes.AMPLIFY_GROUPS, AdminConfigTypes.RATE_LIMIT, AdminConfigTypes.PROMPT_COST_ALERT]
-    
-    for config_type in dynamo_config_types:
-        try:
-            # Attempt to retrieve the configuration from DynamoDB
-            config_item = admin_table.get_item(Key={'config_id': config_type.value})
-            new_data = None
-            if 'Item' in config_item:
-                new_data = config_item['Item']['data']
-            else:
-                # Configuration does not exist, initialize it
-                new_data = initialize_config(config_type)
-            configurations[config_type.value] = new_data
-            print(new_data, '\n')
+    if (lazy_load):
+        print("Loading admin table configs only")
+        dynamo_config_types = [AdminConfigTypes.FEATURE_FLAGS, AdminConfigTypes.ADMINS, AdminConfigTypes.PPTX_TEMPLATES, 
+                            AdminConfigTypes.AMPLIFY_GROUPS, AdminConfigTypes.RATE_LIMIT, AdminConfigTypes.PROMPT_COST_ALERT]
+        
+        for config_type in dynamo_config_types:
+            try:
+                # Attempt to retrieve the configuration from DynamoDB
+                config_item = admin_table.get_item(Key={'config_id': config_type.value})
+                new_data = None
+                if 'Item' in config_item:
+                    new_data = config_item['Item']['data']
+                else:
+                    # Configuration does not exist, initialize it
+                    new_data = initialize_config(config_type)
+                configurations[config_type.value] = new_data
+                # print(new_data, '\n')
 
-        except Exception as e:
-            print(f"Error retrieving or initializing {config_type.value}: {str(e)}")
-            return {"success": False, "message": f"Error retrieving or initializing {config_type.value}: {str(e)}"}
+            except Exception as e:
+                print(f"Error retrieving or initializing {config_type.value}: {str(e)}")
+                return {"success": False, "message": f"Error retrieving or initializing {config_type.value}: {str(e)}"}
+    
+    else: 
+        print("Loading remaining configs only")
 
-    # print(data)
-    token = data['access_token']
-    
-    supported_models_result = get_supported_models(token)
-    configurations[AdminConfigTypes.AVAILABLE_MODELS.value] = supported_models_result['data'] if supported_models_result.get("success") else None
-    
-    ast_admin_groups_result = get_all_ast_admin_groups(token)
-    configurations[AdminConfigTypes.AST_ADMIN_GROUPS.value] = ast_admin_groups_result['data'] if ast_admin_groups_result.get("success") else None
-    
-    ops_result = get_all_op(token)
-    configurations[AdminConfigTypes.OPS.value] = ops_result['data'] if ops_result.get("success") else None
+        region_name = os.environ.get('AWS_REGION', 'us-east-1')
+        # secrets manager info 
+        for config_type, secret_name in secret_name_map.items():
+            try:
+                secret_value = get_secret(secret_name, region_name)
+                configurations[config_type.value] = secret_value
+            except ClientError as e:
+                print( f"Error retrieving {config_type.value}: {str(e)}")
+        # dyanmo table rows
+
+        # print(data)
+        token = data['access_token']
+        
+        supported_models_result = get_supported_models(token)
+        configurations[AdminConfigTypes.AVAILABLE_MODELS.value] = supported_models_result['data'] if supported_models_result.get("success") else None
+        
+        ast_admin_groups_result = get_all_ast_admin_groups(token)
+        configurations[AdminConfigTypes.AST_ADMIN_GROUPS.value] = ast_admin_groups_result['data'] if ast_admin_groups_result.get("success") else None
+        
+        ops_result = get_all_op(token)
+        configurations[AdminConfigTypes.OPS.value] = ops_result['data'] if ops_result.get("success") else None
 
     return {"success": True, "data": configurations}
 
