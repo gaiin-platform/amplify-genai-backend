@@ -306,6 +306,10 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }),
                     listenForAgentUpdates(params.account.accessToken, params.account.user, params.options.conversationId, (state) => {
 
+                        if(!state) {
+                            return !stopPolling;
+                        }
+
                         function getThinkingMessage() {
                             const messages = [
                                 "Thinking...",
