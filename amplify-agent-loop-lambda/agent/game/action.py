@@ -28,18 +28,30 @@ class Action:
 
 
 class ActionRegistry:
-    def __init__(self):
+    def __init__(self, tags: List[str] = None):
         self.actions = {}
 
-        for tool_name, tool_desc in tool.tools.items():
-            self.register(Action(
-                name=tool_name,
-                function=tool_desc["function"],
-                description=tool_desc["description"],
-                args=tool_desc.get("args",{}),
-                output=tool_desc.get("output", {}),
-                terminal=tool_desc.get("terminal", False)
-            ))
+        if tags:
+            for tag in tags:
+                for t in tool.tools_by_tag.get(tag, []):
+                    self.register(Action(
+                        name=t["tool_name"],
+                        function=t["function"],
+                        description=t["description"],
+                        args=t.get("args", {}),
+                        output=t.get("output", {}),
+                        terminal=t.get("terminal", False)
+                    ))
+        else:
+            for tool_name, tool_desc in tool.tools.items():
+                self.register(Action(
+                    name=tool_name,
+                    function=tool_desc["function"],
+                    description=tool_desc["description"],
+                    args=tool_desc.get("args",{}),
+                    output=tool_desc.get("output", {}),
+                    terminal=tool_desc.get("terminal", False)
+                ))
 
     def register(self, action: Action):
         self.actions[action.name] = action

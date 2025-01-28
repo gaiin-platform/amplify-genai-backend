@@ -51,6 +51,8 @@ provider:
     OPS_DYNAMODB_TABLE: vu-amplify-lambda-ops-${sls:stage}-ops
     AGENT_STATE_DYNAMODB_TABLE: vu-amplify-${sls:stage}-agent-state
     AGENT_STATE_BUCKET: vu-amplify-${sls:stage}-agent-state
+    # We will need to change this below in the policy when we migrate too
+    OPS_LAMBDA_NAME: vu-amplify-se-dev-opExecLambda
 
   iam:
     role:
@@ -84,6 +86,10 @@ resources:
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:vu-amplify-se-dev-opExecLambda
             - Effect: Allow
               Action:
                 - dynamodb:Query

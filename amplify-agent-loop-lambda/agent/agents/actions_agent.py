@@ -7,10 +7,12 @@ from agent.game.languages import AgentJsonActionLanguage, AgentFunctionCallingAc
 from agent.core import Agent
 
 
-def build(environment: Environment, action_registry: ActionRegistry, generate_response):
+def build(environment: Environment, action_registry: ActionRegistry, generate_response, additional_goals=None):
     """
     Initialize the base agent with initial actions and goals
     """
+    additional_goals = additional_goals or []
+
     goals = [
         Goal(
             name="Persona",
@@ -29,7 +31,8 @@ completely done with the task, you should tell the user the result and terminate
         LARGE_RESULTS,
         PREFER_WORKFLOWS,
         USE_RESULT_REFERENCES_IN_RESPONSES,
-        PASS_RESULT_REFERENCES_TO_TOOLS
+        PASS_RESULT_REFERENCES_TO_TOOLS,
+        *additional_goals
     ]
 
     agent = Agent(

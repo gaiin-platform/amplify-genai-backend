@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError
 import shutil
 
 class LambdaFileTracker:
-    def __init__(self, current_user: str, session_id: str):
+    def __init__(self, current_user: str, session_id: str, working_dir: str = "/tmp"):
         self.current_user = current_user
         self.session_id = session_id
         self.existing_mappings: Dict[str, str] = {}
@@ -19,7 +19,7 @@ class LambdaFileTracker:
         self.bucket = os.getenv('AGENT_STATE_BUCKET')
 
         # Create session working directory in /tmp
-        self.working_dir = f"/tmp/{self.session_id}"
+        self.working_dir = working_dir
         os.makedirs(self.working_dir, exist_ok=True)
 
     def __del__(self):
@@ -164,6 +164,9 @@ class LambdaFileTracker:
         Returns a dictionary mapping file IDs to their details.
         """
         current_files = self.scan_directory()
+
+        print(f"Found {len(current_files)} files in working directory")
+
         tracked_files = {}
 
         for filepath, info in current_files.items():
@@ -269,7 +272,7 @@ class LambdaFileTracker:
                 "mappings": {}
             }
 
-def create_file_tracker(current_user: str, session_id: str) -> LambdaFileTracker:
+def create_file_tracker(current_user: str, session_id: str, working_dir: str) -> LambdaFileTracker:
     """
     Create and initialize a LambdaFileTracker instance.
 
@@ -283,6 +286,8 @@ def create_file_tracker(current_user: str, session_id: str) -> LambdaFileTracker
         # At the end of your function
         results = tracker.upload_changed_files()
     """
-    tracker = LambdaFileTracker(current_user, session_id)
+    print(f"Creating file tracker for {current_user}/{session_id} with working directory {working_dir}")
+
+    tracker = LambdaFileTracker(current_user, session_id, working_dir)
     tracker.start_tracking()
     return tracker

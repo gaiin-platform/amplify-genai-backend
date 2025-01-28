@@ -2,27 +2,25 @@ import json
 import os
 import traceback
 
-from agent.agents import actions_agent
-from agent.game.action import ActionRegistry
-from agent.game.agent_registry import AgentRegistry
-from agent.game.environment import Environment
-from agent.game.goal import Goal
-from agent.prompt import create_llm
+import boto3
+
+# Need to stay for the action registry to discover tools
 import agent.tools.file_handling
 import agent.tools.common_tools
 import agent.tools.writing_tools
 import agent.tools.code_exec
+import agent.tools.http_requests
+import agent.tools.prompt_tools
 
-
+from agent.agents import actions_agent
+from agent.game.action import ActionRegistry, Action
+from agent.game.agent_registry import AgentRegistry
+from agent.game.environment import Environment
+from agent.game.goal import Goal
+from agent.prompt import create_llm
+from agent.tools.ops import ops_to_tools
 from common.ops import vop
-import boto3
-from typing import Dict, Any
 from datetime import datetime
-
-import boto3
-import json
-from datetime import datetime
-import os
 from typing import List, Dict, Any
 from botocore.exceptions import ClientError
 
@@ -186,18 +184,56 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
     print(f"[{session_id}] Handling event")
 
     try:
-        tracker = create_file_tracker(current_user, session_id)
+        work_directory = get_working_directory(session_id)
+
+        tracker = create_file_tracker(current_user, session_id, work_directory)
 
         metadata = metadata or {}
+        agent_id = "default"
+
+        additional_goals = [
+            Goal(
+                name="Work Directory",
+                description=f"Any files you would like to save/write MUST be saved in {work_directory}. It is the only writable directory."
+            )
+        ]
+
+        if 'assistant' in metadata:
+            assistant = metadata['assistant']
+            print(f"Assistant metadata: {json.dumps(metadata['assistant'])}")
+            if assistant['instructions']:
+                print(f"Adding assistant instructions to goals: {assistant['instructions']}")
+                additional_goals.append(Goal(
+                    name="What to Do",
+                    description=assistant['instructions']
+                ))
 
         model = metadata.get('agent_model', os.getenv("AGENT_MODEL"))
 
         environment = Environment()
         action_registry = ActionRegistry()
 
+        # op_tools = ops_to_tools(action_context)
+        # for op_tool in op_tools:
+        #     action_registry.register_action(
+        #         Action(
+        #             name=op_tool['tool_name'],
+        #             function=op_tool["function"],
+        #             description=op_tool["description"],
+        #             args=op_tool.get("args",{}),
+        #             output=op_tool.get("output", {}),
+        #             terminal=op_tool.get("terminal", False)
+        #         )
+        #     )
+
+
         llm = create_llm(access_token, metadata.get('model', model))
 
-        agent = actions_agent.build(environment, action_registry, llm)
+        agent = actions_agent.build(
+            environment=environment,
+            action_registry=action_registry,
+            generate_response=llm,
+            additional_goals=additional_goals)
 
         agent_registry = AgentRegistry()
         agent_registry.register("Action Agent", "Can use tools to take actions on behalf of the user.", agent)
@@ -206,23 +242,16 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         def event_printer_wrapper(event_id: str, event: Dict[str, Any]):
             return event_printer(event_id, event, current_user, session_id)
 
-        work_directory = f"/tmp/{session_id}"
-        if not os.path.exists(work_directory):
-            os.makedirs(work_directory)
-
         action_context_props={
+            'current_user': current_user,
+            'access_token': access_token,
+            'session_id': session_id,
+            'agent_id': agent_id,
             "event_handler": event_printer_wrapper,
             "agent_registry": agent_registry,
             "llm": llm,
             "work_directory": work_directory,
         }
-
-        agent.goals.append(
-            Goal(
-                name="Work Directory",
-                description=f"Any files you would like to save/write MUST be saved in {work_directory}. It is the only writable directory."
-            )
-        )
 
         user_input = prompt
 
@@ -254,22 +283,13 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         file_results = tracker.upload_changed_files()
         session_files = tracker.get_tracked_files()
 
-        if file_results["status"] == "success" and file_results["files_processed"] > 0:
-            print(f"Uploaded {file_results['files_processed']} changed files to S3")
-            return {
-                "session": session_id,
-                "handled": True,
-                "result": processed_result,
-                "changed_files": file_results["changed_files"],
-                "files": session_files
-            }
-
-        return {
-            "session": session_id,
-            "handled": True,
-            "result": processed_result,
-            "files": session_files
-        }
+        return build_response(
+            session_id=session_id,
+            current_user=current_user,
+            processed_result=processed_result,
+            file_results=file_results,
+            session_files=session_files
+        )
 
     except Exception as e:
         # print a stack trace for the exception
@@ -279,3 +299,141 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             "handled": False,
             "error": "Error handling event"
         }
+
+
+def get_working_directory(session_id):
+    work_directory = os.environ.get("WORK_DIRECTORY", None)
+    if not work_directory:
+        work_directory = f"/tmp/{session_id}"
+        if not os.path.exists(work_directory):
+            os.makedirs(work_directory)
+    work_directory = os.path.join(work_directory, session_id)
+    return work_directory
+
+
+def generate_file_download_urls(
+        current_user: str,
+        session_id: str,
+        files: Dict[str, Dict],
+        expiration: int = 3600
+) -> Dict[str, Dict]:
+    """
+    Generate presigned URLs for downloading files from S3.
+
+    Args:
+        current_user (str): The user ID or name
+        session_id (str): The session identifier
+        files (Dict[str, Dict]): Dictionary of files from handle_event response
+        expiration (int): URL expiration time in seconds (default: 1 hour)
+
+    Returns:
+        Dict[str, Dict]: Dictionary mapping file IDs to their download information
+    """
+    try:
+        s3_client = boto3.client('s3')
+        bucket = os.getenv('AGENT_STATE_BUCKET')
+
+        if not bucket:
+            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+
+        # First get the index file to map original names to S3 keys
+        index_key = f"{current_user}/{session_id}/index.json"
+        try:
+            index_response = s3_client.get_object(
+                Bucket=bucket,
+                Key=index_key
+            )
+            index_content = json.loads(index_response['Body'].read().decode('utf-8'))
+            filename_mappings = index_content.get('mappings', {})
+        except ClientError as e:
+            print(f"Error reading index file: {e}")
+            return {}
+
+        download_info = {}
+
+        # Generate signed URLs for each file
+        for file_id, file_details in files.items():
+            original_name = file_details['original_name']
+
+            # Look up the S3 key from mappings
+            if original_name not in filename_mappings:
+                print(f"Warning: No mapping found for {original_name}")
+                continue
+
+            s3_key = f"{current_user}/{session_id}/{filename_mappings[original_name]}"
+
+            try:
+                url = s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={
+                        'Bucket': bucket,
+                        'Key': s3_key
+                    },
+                    ExpiresIn=expiration
+                )
+
+                download_info[file_id] = {
+                    "original_name": original_name,
+                    "size": file_details['size'],
+                    "last_modified": file_details['last_modified'],
+                    "download_url": url,
+                    "expires_in": expiration
+                }
+
+            except ClientError as e:
+                print(f"Error generating presigned URL for {original_name}: {e}")
+                continue
+
+        return download_info
+
+    except Exception as e:
+        print(f"Error generating download URLs: {e}")
+        return {}
+
+
+
+def build_response(
+        session_id: str,
+        current_user: str,
+        processed_result: List,
+        file_results: Dict = None,
+        session_files: Dict = None
+) -> Dict:
+    """
+    Build a standardized response including file download URLs.
+
+    Args:
+        session_id (str): The session identifier
+        current_user (str): The user ID or name
+        processed_result (List): The processed conversation result
+        file_results (Dict, optional): Results from file uploads
+        session_files (Dict, optional): Dictionary of tracked files
+
+    Returns:
+        Dict: Standardized response with file information and download URLs
+    """
+    print(f"Building response for session {session_id}")
+    response = {
+        "session": session_id,
+        "handled": True,
+        "result": processed_result
+    }
+
+    if session_files:
+        print("Creating download URLs for session files")
+        print(f"Session files: {session_files}")
+
+        # Generate download URLs for all files
+        download_info = generate_file_download_urls(
+            current_user=current_user,
+            session_id=session_id,
+            files=session_files
+        )
+
+        response["files"] = session_files
+        response["downloads"] = download_info
+
+    if file_results and file_results["status"] == "success" and file_results["files_processed"] > 0:
+        response["changed_files"] = file_results["changed_files"]
+
+    return response

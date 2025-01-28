@@ -1,9 +1,8 @@
 import inspect
-from functools import wraps
 from typing import get_type_hints, List
 
 tools = {}
-
+tools_by_tag = {}
 
 
 def to_openai_tools(tools_metadata: List[dict]):
@@ -20,7 +19,7 @@ def to_openai_tools(tools_metadata: List[dict]):
     ]
     return openai_tools
 
-def get_tool_metadata(func, tool_name=None, description=None, args_override=None, terminal=False):
+def get_tool_metadata(func, tool_name=None, description=None, args_override=None, terminal=False, tags=None):
     """
     Extracts metadata for a function to use in tool registration.
 
@@ -30,6 +29,7 @@ def get_tool_metadata(func, tool_name=None, description=None, args_override=None
         description (str, optional): Description of the tool. Defaults to the function's docstring.
         args_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
         terminal (bool, optional): Whether the tool is terminal. Defaults to False.
+        tags (List[str], optional): List of tags to associate with the tool.
 
     Returns:
         dict: A dictionary containing metadata about the tool, including description, args schema, and the function.
@@ -90,11 +90,12 @@ def get_tool_metadata(func, tool_name=None, description=None, args_override=None
         "description": description,
         "args": args_schema,
         "function": func,
-        "terminal": terminal
+        "terminal": terminal,
+        "tags": tags or []
     }
 
 
-def register_tool(tool_name=None, description=None, args_override=None, terminal=False):
+def register_tool(tool_name=None, description=None, args_override=None, terminal=False, tags=None):
     """
     A decorator to dynamically register a function in the tools dictionary with its parameters, schema, and docstring.
 
@@ -102,6 +103,8 @@ def register_tool(tool_name=None, description=None, args_override=None, terminal
         tool_name (str, optional): The name of the tool to register. Defaults to the function name.
         description (str, optional): Override for the tool's description. Defaults to the function's docstring.
         args_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
+        terminal (bool, optional): Whether the tool is terminal. Defaults to False.
+        tags (List[str], optional): List of tags to associate with the tool.
 
     Returns:
         function: The wrapped function.
@@ -113,15 +116,26 @@ def register_tool(tool_name=None, description=None, args_override=None, terminal
             tool_name=tool_name,
             description=description,
             args_override=args_override,
-            terminal=terminal
+            terminal=terminal,
+            tags=tags
         )
 
-        # Register the tool in the global dictionary
-        tools[metadata["tool_name"]] = {
+        entry = {
+            "tool_name": metadata["tool_name"],
             "description": metadata["description"],
             "args": metadata["args"],
             "function": metadata["function"],
-            "terminal": metadata["terminal"]
+            "terminal": metadata["terminal"],
+            "tags": metadata["tags"] or []
         }
+
+        # Register the tool in the global dictionary
+        tools[metadata["tool_name"]] = entry
+
+        for tag in metadata["tags"]:
+            if tag not in tools_by_tag:
+                tools_by_tag[tag] = []
+            tools_by_tag[tag].append(entry)
+
         return func
     return decorator

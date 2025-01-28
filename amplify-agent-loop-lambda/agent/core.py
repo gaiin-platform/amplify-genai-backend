@@ -1,4 +1,5 @@
 import json
+import time
 import traceback
 from functools import reduce
 from typing import List, Callable
@@ -36,7 +37,9 @@ class Agent:
                  action_registry: ActionRegistry,
                  generate_response: Callable[[Prompt], str],
                  environment: Environment,
-                 capabilities: List[Capability] = []):
+                 capabilities: List[Capability] = [],
+                 max_iterations: int = 10,
+                 max_duration_seconds: int = 180):
         """
         Initialize an agent with its core GAME components
         """
@@ -46,6 +49,9 @@ class Agent:
         self.actions = action_registry
         self.environment = environment
         self.capabilities = capabilities or []
+        self.max_iterations = max_iterations
+        self.max_duration_seconds = max_duration_seconds
+
 
     def construct_prompt(self, action_context: ActionContext, goals:List[Goal], memory: Memory) -> Prompt:
         """Build prompt with memory context"""
@@ -103,7 +109,7 @@ class Agent:
 
         send_event("agent/memory/update", {"response": response, "result": result})
 
-        result_summary_length_limit = 1000
+        result_summary_length_limit = 100000
         result_summary = json.dumps(result)
         # Check if the result summary is longer than the limit
         if len(result_summary) > result_summary_length_limit and not result.get("complete_result", False):
@@ -187,10 +193,22 @@ class Agent:
         # Record the initial task
         self.set_current_task(action_context, memory, user_input)
 
+        iterations = 0
+        start_time = time.time()
+
         # ========================
         # The Agent Loop
         # ========================
         while True:
+
+            if iterations > self.max_iterations:
+                self.update_memory(action_context, memory, "Agent stopped. Max iterations reached.", {})
+                break
+
+            if time.time() - start_time > self.max_duration_seconds:
+                self.update_memory(action_context, memory, "Agent stopped. Max duration reached.", {})
+                break
+
             # 1. Construct the prompt for the LLM to generate a response
             prompt = self.construct_prompt(action_context, self.goals, memory)
 

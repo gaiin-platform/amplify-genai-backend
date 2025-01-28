@@ -14,7 +14,7 @@ import agent.tools.file_handling
 import agent.tools.agent_communication
 import agent.agents.summarizer_agent
 from agent.util import event_printer
-from old_agent.prompt import generate_response
+from agent.prompt import generate_response
 
 if __name__ == "__main__":
 

@@ -322,7 +322,10 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
             return json.loads(response)
 
         except Exception as e:
+            # if the agent dumps out a string, it is almost always because it just wants to tell
+            # the user something. In this case, we will just return the string as the message
+            # to terminate.
             return {
                 "tool": "terminate",
-                "args": response
+                "args": {"message": response}
             }

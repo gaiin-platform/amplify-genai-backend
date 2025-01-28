@@ -2,7 +2,7 @@ from typing import Dict, List
 from agent.tool import register_tool
 
 
-@register_tool()
+#@register_tool()
 def get_user_input(message: str) -> str:
     """
     Get user input based on the provided message.

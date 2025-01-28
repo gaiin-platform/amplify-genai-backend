@@ -71,7 +71,7 @@ def write_section(action_context: ActionContext, content: str, section: Dict[str
     # check if the section has subsections and recursively build the content from them if it does
     if section.get("subsections"):
         for subsection in section["subsections"]:
-            section_content += write_section(content, subsection)
+            section_content += write_section(action_context, content, subsection)
 
     else:
         title = section["section"]
