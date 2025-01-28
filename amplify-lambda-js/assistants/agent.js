@@ -26,6 +26,7 @@ export const getLatestAgentState = async function(accessToken, currentUser, sess
 }
 
 export const listenForAgentUpdates = async function(accessToken, currentUser, sessionId, onAgentStateUpdate) {
+    let errorsRemaining = 15;
     while (true) {
         try {
             const state = await getLatestAgentState(accessToken, currentUser, sessionId);
@@ -33,10 +34,17 @@ export const listenForAgentUpdates = async function(accessToken, currentUser, se
             if (!shouldContinue) {
                 break;
             }
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (error) {
+            // It is possible the state has not been written yet, so we will retry a few times
             console.error("Error checking agent state:", error);
-            break;
+            if (errorsRemaining <= 0) {
+                break;
+            }
+            else {
+                errorsRemaining--;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
         }
     }
 }
