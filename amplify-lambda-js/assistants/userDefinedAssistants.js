@@ -371,6 +371,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 if (result.success) {
                     let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
+
                     if(responseFromAssistant.args && responseFromAssistant.args.message){
                         responseFromAssistant = responseFromAssistant.args.message;
                     }
