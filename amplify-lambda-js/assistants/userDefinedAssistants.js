@@ -288,7 +288,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 const response = invokeAgent(
                     params.account.accessToken,
                     params.options.conversationId,
-                    body.messages.slice(-1)[0].content,
+                    body.messages,
                     {assistant}
                 );
                 llm.sendStatus(statusInfo);
@@ -397,7 +397,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 return;
 
             }
-            else if(assistant.data && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+            else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
 
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
