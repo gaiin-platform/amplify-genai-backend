@@ -46,6 +46,20 @@ def common_handler(operation, *required_params, **optional_params):
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string",
         "cellRange": "The range of cells to read as a string, such as A1:A"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet as a string"
+            },
+            "cellRange": {
+                "type": "string",
+                "description": "The range of cells to read as a string, such as A1:A"
+            }
+        },
+        "required": ["spreadsheetId", "cellRange"]
     }
 )
 @validated("get_rows")
@@ -59,6 +73,16 @@ def get_sheet_rows(event, context, current_user, name, data):
     description="Returns information about Google Sheets, including sheet names and sample data.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet as a string"
+            }
+        },
+        "required": ["spreadsheetId"]
     }
 )
 @validated("get_google_sheets_info")
@@ -72,6 +96,16 @@ def get_google_sheets_info(event, context, current_user, name, data):
     description="Returns the list of sheet names in a Google Sheets document.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet as a string"
+            }
+        },
+        "required": ["spreadsheetId"]
     }
 )
 @validated("get_sheet_names")
@@ -83,11 +117,31 @@ def get_sheet_names_handler(event, context, current_user, name, data):
     tags=["default"],
     name="insertRows",
     description="Inserts multiple new rows into a Google Sheet.",
-    params={
-        "spreadsheetId": "The ID of the spreadsheet as a string",
-        "rowsData": "An array of arrays, each representing a row to insert",
-        "sheetName": "Optional: The name of the sheet to insert into",
-        "insertionPoint": "Optional: The row number to start insertion at"
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "rowsData": {
+                "type": "array",
+                "items": {
+                    "type": "array"
+                },
+                "description": "An array of arrays, each representing a row to insert"
+            },
+            "sheetName": {
+                "type": "string",
+                "description": "The name of the sheet to insert into (leave blank for first sheet)",
+            },
+            "insertionPoint": {
+                "type": "integer",
+                "description": "The row number to start insertion at",
+                "default": 1  # Start at first row by default
+            }
+        },
+        "required": ["spreadsheetId", "rowsData"]
     }
 )
 @validated("insert_rows")
@@ -104,6 +158,28 @@ def insert_rows_handler(event, context, current_user, name, data):
         "startRow": "The first row to delete",
         "endRow": "The last row to delete (inclusive)",
         "sheetName": "Optional: The name of the sheet to delete from"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet as a string"
+            },
+            "startRow": {
+                "type": "integer",
+                "description": "The first row to delete"
+            },
+            "endRow": {
+                "type": "integer",
+                "description": "The last row to delete (inclusive)"
+            },
+            "sheetName": {
+                "type": ["string"],
+                "description": "Optional: The name of the sheet to delete from (omit for first sheet)"
+            }
+        },
+        "required": ["spreadsheetId", 'startRow', 'endRow']
     }
 )
 @validated("delete_rows")
@@ -119,6 +195,27 @@ def delete_rows_handler(event, context, current_user, name, data):
         "spreadsheetId": "The ID of the spreadsheet as a string",
         "rowsData": "An array of arrays, each representing a row to update. The first item in each array should be the row number to update. Example to update rows 3 and 8: [[3, 'something'],[8, 'new value 1', 'new value 2']]",
         "sheetName": "Optional: The name of the sheet to update"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet as a string"
+            },
+            "rowsData": {
+                "type": "array",
+                "items": {
+                    "type": "array"
+                },
+                "description": "An array of arrays, each representing a row to update. The first item in each array should be the row number to update. Example to update rows 3 and 8: [[3, 'something'],[8, 'new value 1', 'new value 2']]"
+            },
+            "sheetName": {
+                "type": ["string"],
+                "description": "Optional: The name of the sheet to update (omit for first sheet)",
+            }
+        },
+        "required": ["spreadsheetId", 'rowsData']
     }
 )
 @validated("update_rows")
@@ -132,6 +229,16 @@ def update_rows_handler(event, context, current_user, name, data):
     description="Creates a new Google Sheets spreadsheet.",
     params={
         "title": "The title of the new spreadsheet"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "The title of the new spreadsheet"
+            }
+        },
+        "required": ["title"]
     }
 )
 @validated("create_spreadsheet")
@@ -147,6 +254,24 @@ def create_spreadsheet_handler(event, context, current_user, name, data):
         "spreadsheetId": "The ID of the spreadsheet",
         "sheetId": "The ID of the sheet to duplicate",
         "newSheetName": "The name for the new duplicated sheet"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet to duplicate"
+            },
+            "newSheetName": {
+                "type": "string",
+                "description": "The name for the new duplicated sheet"
+            }
+        },
+        "required": ["spreadsheetId", 'sheetId', 'newSheetName']
     }
 )
 @validated("duplicate_sheet")
@@ -162,6 +287,24 @@ def duplicate_sheet_handler(event, context, current_user, name, data):
         "spreadsheetId": "The ID of the spreadsheet",
         "sheetId": "The ID of the sheet to rename",
         "newName": "The new name for the sheet"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet to rename"
+            },
+            "newName": {
+                "type": "string",
+                "description": "The new name for the sheet"
+            }
+        },
+        "required": ["spreadsheetId", 'sheetId', 'newName']
     }
 )
 @validated("rename_sheet")
@@ -176,6 +319,20 @@ def rename_sheet_handler(event, context, current_user, name, data):
     params={
         "spreadsheetId": "The ID of the spreadsheet",
         "rangeName": "The A1 notation of the range to clear"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "rangeName": {
+                "type": "string",
+                "description": "The A1 notation of the range to clear"
+            }
+        },
+        "required": ["spreadsheetId", 'rangeName']
     }
 )
 @validated("clear_range")
@@ -195,6 +352,40 @@ def clear_range_handler(event, context, current_user, name, data):
         "startCol": "The starting column (1-indexed)",
         "endCol": "The ending column (1-indexed)",
         "formatJson": "The formatting to apply as a JSON object"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet"
+            },
+            "startRow": {
+                "type": "integer",
+                "description": "The starting row (1-indexed)"
+            },
+            "endRow": {
+                "type": "integer",
+                "description": "The ending row (1-indexed)"
+            },
+            "startCol": {
+                "type": "integer",
+                "description": "The starting column (1-indexed)"
+            },
+            "endCol": {
+                "type": "integer",
+                "description": "The ending column (1-indexed)"
+            },
+            'formatJson': {
+                'type': 'object',
+                'description': 'The formatting to apply as a JSON object'
+            }
+        },
+        'required': ['spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'formatJson']
     }
 )
 @validated("apply_formatting")
@@ -210,6 +401,24 @@ def apply_formatting_handler(event, context, current_user, name, data):
         "spreadsheetId": "The ID of the spreadsheet",
         "sheetId": "The ID of the sheet",
         "chartSpec": "The chart specification as a JSON object"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet"
+            },
+            'chartSpec': {
+                'type': 'object',
+                'description': 'The chart specification as a JSON object'
+            }
+        },
+        'required': ['spreadsheetId', 'sheetId', 'chartSpec']
     }
 )
 @validated("add_chart")
@@ -224,6 +433,20 @@ def add_chart_handler(event, context, current_user, name, data):
     params={
         "spreadsheetId": "The ID of the spreadsheet",
         "rangeName": "The A1 notation of the range to get formulas from"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "rangeName": {
+                "type": "string",
+                "description": "The A1 notation of the range to get formulas from"
+            }
+        },
+        "required": ["spreadsheetId", 'rangeName']
     }
 )
 @validated("get_cell_formulas")
@@ -235,11 +458,28 @@ def get_cell_formulas_handler(event, context, current_user, name, data):
     tags=["default"],
     name="findReplace",
     description="Finds and replaces text in a Google Sheets spreadsheet.",
-    params={
-        "spreadsheetId": "The ID of the spreadsheet",
-        "find": "The text to find",
-        "replace": "The text to replace with",
-        "sheetId": "Optional: The ID of the sheet to perform find/replace on"
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "find": {
+                "type": "string",
+                "description": "The text to find"
+            },
+            "replace": {
+                "type": "string",
+                "description": "The text to replace with"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet to perform find/replace on",
+                "default": 0  # Default to first sheet
+            }
+        },
+        "required": ["spreadsheetId", "find", "replace"]
     }
 )
 @validated("find_replace")
@@ -259,6 +499,40 @@ def find_replace_handler(event, context, current_user, name, data):
         "startCol": "The starting column (1-indexed)",
         "endCol": "The ending column (1-indexed)",
         "sortOrder": "The sort order specification as a JSON object"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet"
+            },
+            "startRow": {
+                "type": "integer",
+                "description": "The starting row (1-indexed)"
+            },
+            "endRow": {
+                "type": "integer",
+                "description": "The ending row (1-indexed)"
+            },
+            "startCol": {
+                "type": "integer",
+                "description": "The starting column (1-indexed)"
+            },
+            "endCol": {
+                "type": "integer",
+                "description": "The ending column (1-indexed)"
+            },
+            'sortOrder': {
+                'type': 'object',
+                'description': 'The sort order specification as a JSON object'
+            }
+        },
+        'required': ['spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'sortOrder']
     }
 )
 @validated("sort_range")
@@ -279,6 +553,44 @@ def sort_range_handler(event, context, current_user, name, data):
         "endCol": "The ending column (1-indexed)",
         "condition": "The condition for the formatting as a JSON object",
         "format": "The format to apply as a JSON object"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "sheetId": {
+                "type": "integer",
+                "description": "The ID of the sheet"
+            },
+            "startRow": {
+                "type": "integer",
+                "description": "The starting row (1-indexed)"
+            },
+            "endRow": {
+                "type": "integer",
+                "description": "The ending row (1-indexed)"
+            },
+            "startCol": {
+                "type": "integer",
+                "description": "The starting column (1-indexed)"
+            },
+            "endCol": {
+                "type": "integer",
+                "description": "The ending column (1-indexed)"
+            },
+            'condition': {
+                'type': 'object',
+                'description': 'The condition for the formatting as a JSON object'
+            },
+            'format': {
+                'type': 'object',
+                'description': 'The format to apply as a JSON object'
+            }
+        },
+        'required': ['spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'condition', 'format']
     }
 )
 @validated("apply_conditional_formatting")
@@ -291,10 +603,23 @@ def apply_conditional_formatting_handler(event, context, current_user, name, dat
     tags=["default"],
     name="executeQuery",
     description="Executes a SQL-like query on a Google Sheets spreadsheet.",
-    params={
-        "spreadsheetId": "The ID of the spreadsheet",
-        "query": "The SQL-like query to execute e.g., a == 1 and b < 34",
-        "sheetName": "(Optional) The name of the sheet to query"
+    parameters={
+        "type": "object",
+        "properties": {
+            "spreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet"
+            },
+            "query": {
+                "type": "string",
+                "description": "The SQL-like query to execute e.g., a == 1 and b < 34"
+            },
+            "sheetName": {
+                "type": "string",
+                "description": "The name of the sheet to query (omit for first sheet)",
+            }
+        },
+        "required": ["spreadsheetId", "query"]
     }
 )
 @validated("execute_query")
@@ -308,6 +633,16 @@ def execute_query_handler(event, context, current_user, name, data):
     description="Creates a new Google Docs document.",
     params={
         "title": "The title of the new document"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "The title of the new document"
+            }
+        },
+        "required": ["title"]
     }
 )
 @validated("create_new_document")
@@ -321,6 +656,16 @@ def create_new_document_handler(event, context, current_user, name, data):
     description="Retrieves the contents of a Google Docs document.",
     params={
         "documentId": "The ID of the document"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            }
+        },
+        "required": ["documentId"]
     }
 )
 @validated("get_document_contents")
@@ -336,6 +681,24 @@ def get_document_contents_handler(event, context, current_user, name, data):
         "documentId": "The ID of the document",
         "text": "The text to insert",
         "index": "The index at which to insert the text"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "text": {
+                "type": "string",
+                "description": "The text to insert"
+            },
+            'index': {
+                'type': 'integer',
+                'description': 'The index at which to insert the text'
+            }
+        },
+        'required': ['documentId', 'text', 'index']
     }
 )
 @validated("insert_text")
@@ -350,6 +713,20 @@ def insert_text_handler(event, context, current_user, name, data):
     params={
         "documentId": "The ID of the document",
         "text": "The text to append"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "text": {
+                "type": "string",
+                "description": "The text to append"
+            }
+        },
+        'required': ['documentId', 'text']
     }
 )
 @validated("append_text")
@@ -365,6 +742,24 @@ def append_text_handler(event, context, current_user, name, data):
         "documentId": "The ID of the document",
         "oldText": "The text to be replaced",
         "newText": "The text to replace with"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "oldText": {
+                "type": "string",
+                "description": "The text to be replaced"
+            },
+            'newText': {
+                'type': 'string',
+                'description': 'The text to replace with'
+            }
+        },
+        'required': ['documentId', 'oldText', 'newText']
     }
 )
 @validated("replace_text")
@@ -379,6 +774,34 @@ def replace_text_handler(event, context, current_user, name, data):
     params={
         "documentId": "The ID of the document",
         "outlineItems": "An array of objects with 'start' and 'end' indices for each outline item"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "outlineItems": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "start": {
+                            "type": "integer",
+                            "description": "The start index of the outline item"
+                        },
+                        "end": {
+                            "type": "integer",
+                            "description": "The end index of the outline item"
+                        }
+                    },
+                    "required": ["start", "end"]
+                },
+                "description": "An array of objects with 'start' and 'end' indices for each outline item"
+            }
+        },
+        'required': ['documentId', 'outlineItems']
     }
 )
 @validated("create_document_outline")
@@ -393,6 +816,20 @@ def create_document_outline_handler(event, context, current_user, name, data):
     params={
         "documentId": "The ID of the document",
         "mimeType": "The MIME type of the format to export to"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "mimeType": {
+                "type": "string",
+                "description": "The MIME type of the format to export to"
+            }
+        },
+        'required': ['documentId', 'mimeType']
     }
 )
 @validated("export_document")
@@ -408,6 +845,24 @@ def export_document_handler(event, context, current_user, name, data):
         "documentId": "The ID of the document",
         "email": "The email address of the user to share with",
         "role": "The role to grant to the user (e.g., 'writer', 'reader')"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "email": {
+                "type": "string",
+                "description": "The email address of the user to share with"
+            },
+            'role': {
+                'type': 'string',
+                'description': 'The role to grant to the user (e.g., \'writer\', \'reader\')'
+            }
+        },
+        'required': ['documentId', 'email', 'role']
     }
 )
 @validated("share_document")
@@ -422,6 +877,20 @@ def share_document_handler(event, context, current_user, name, data):
     params={
         "documentId": "The ID of the document",
         "searchText": "The text to search for"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "documentId": {
+                "type": "string",
+                "description": "The ID of the document"
+            },
+            "searchText": {
+                "type": "string",
+                "description": "The text to search for"
+            }
+        },
+        'required': ['documentId', 'searchText']
     }
 )
 @validated("find_text_indices")
@@ -439,6 +908,35 @@ def find_text_indices_handler(event, context, current_user, name, data):
         "includeDescription": "Optional. Include event description (default: false)",
         "includeAttendees": "Optional. Include event attendees (default: false)",
         "includeLocation": "Optional. Include event location (default: false)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "startDate": {
+                "type": "string",
+                "description": "The start date in ISO 8601 format (e.g., 2024-12-20T23:59:59Z)"
+            },
+            "endDate": {
+                "type": "string",
+                "description": "The end date in ISO 8601 format (e.g., 2024-12-20T23:59:59Z)"
+            },
+            "includeDescription": {
+                "type": ["boolean"],
+                "description": "Optional. Include event description (default: false)",
+                "default": False
+            },
+            "includeAttendees": {
+                "type": ["boolean"],
+                "description": "Optional. Include event attendees (default: false)",
+                "default": False
+            },
+            'includeLocation': {
+                'type': ['boolean'],
+                'description': 'Optional. Include event location (default: false)',
+                "default": False
+            }
+        },
+        'required': ['startDate', 'endDate']
     }
 )
 @validated("get_events_between_dates")
@@ -455,11 +953,37 @@ def get_events_between_dates_handler(event, context, current_user, name, data):
         "startTime": "The start time of the event in ISO 8601 format",
         "endTime": "The end time of the event in ISO 8601 format",
         "description": "The description of the event"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "The title of the event"
+            },
+            "startTime": {
+                "type": "string",
+                "description": "The start time of the event in ISO 8601 format"
+            },
+            "endTime": {
+                "type": "string",
+                "description": "The end time of the event in ISO 8601 format"
+            },
+            'description': {
+                'type': ['string'],
+                'description': 'Optional: The description of the event'
+            },
+            'attendees': {
+                'type': ['array'],
+                'description': 'Optional: List of attendees\' email addresses'
+            },
+        },
+        'required': ['title', 'startTime', 'endTime', 'description']
     }
 )
 @validated("create_event")
 def create_event_handler(event, context, current_user, name, data):
-    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description')(event, context, current_user, name, data)
+    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description', attendees=[])(event, context, current_user, name, data)
 
 @vop(
     path="/google/integrations/calendar/update-event",
@@ -469,6 +993,20 @@ def create_event_handler(event, context, current_user, name, data):
     params={
         "eventId": "The ID of the event to update",
         "updatedFields": "A dictionary of fields to update and their new values"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "eventId": {
+                "type": "string",
+                "description": "The ID of the event to update"
+            },
+            "updatedFields": {
+                "type": "object",
+                "description": "A dictionary of fields to update and their new values"
+            }
+        },
+        'required': ['eventId', 'updatedFields']
     }
 )
 @validated("update_event")
@@ -482,6 +1020,16 @@ def update_event_handler(event, context, current_user, name, data):
     description="Deletes an event from Google Calendar.",
     params={
         "eventId": "The ID of the event to delete"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "eventId": {
+                "type": "string",
+                "description": "The ID of the event to delete"
+            }
+        },
+        'required': ['eventId']
     }
 )
 @validated("delete_event")
@@ -495,6 +1043,16 @@ def delete_event_handler(event, context, current_user, name, data):
     description="Retrieves details of a specific event from Google Calendar.",
     params={
         "eventId": "The ID of the event to retrieve"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "eventId": {
+                "type": "string",
+                "description": "The ID of the event to retrieve"
+            }
+        },
+        'required': ['eventId']
     }
 )
 @validated("get_event_details")
@@ -511,6 +1069,31 @@ def get_event_details_handler(event, context, current_user, name, data):
         "includeDescription": "Optional. Include event description (default: false)",
         "includeAttendees": "Optional. Include event attendees (default: false)",
         "includeLocation": "Optional. Include event location (default: false)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "date": {
+                "type": "string",
+                "description": "The date in ISO 8601 format (YYYY-MM-DD)"
+            },
+            "includeDescription": {
+                "type": ["boolean"],
+                "description": "Optional. Include event description (default: false)",
+                "default": False
+            },
+            "includeAttendees": {
+                "type": ["boolean"],
+                "description": "Optional. Include event attendees (default: false)",
+                "default": False
+            },
+            'includeLocation': {
+                'type': ['boolean'],
+                'description': 'Optional. Include event location (default: false)',
+                "default": False
+            }
+        },
+        'required': ['date']
     }
 )
 @validated("get_events_for_date")
@@ -527,6 +1110,29 @@ def get_events_for_date_handler(event, context, current_user, name, data):
         "endDate": "The end date in ISO 8601 format",
         "duration": "The minimum duration of free time slots in minutes",
         'userTimeZone': "Optional. The time zone of the user (default: 'America/Chicago')"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "startDate": {
+                "type": "string",
+                "description": "The start date in ISO 8601 format"
+            },
+            "endDate": {
+                "type": "string",
+                "description": "The end date in ISO 8601 format"
+            },
+            "duration": {
+                "type": "integer",
+                "description": "The minimum duration of free time slots in minutes"
+            },
+            'userTimeZone': {
+                'type': ['string'],
+                'description': 'Optional. The time zone of the user (default: \'America/Chicago\')',
+                "default": "America/Chicago"
+            }
+        },
+        'required': ['startDate', 'endDate', 'duration']
     }
 )
 @validated("get_free_time_slots")
@@ -542,6 +1148,25 @@ def get_free_time_slots_handler(event, context, current_user, name, data):
         "proposedStartTime": "The proposed start time in ISO 8601 format",
         "proposedEndTime": "The proposed end time in ISO 8601 format",
         "returnConflictingEvents": "Optional. Return details of conflicting events (default: false)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "proposedStartTime": {
+                "type": "string",
+                "description": "The proposed start time in ISO 8601 format"
+            },
+            "proposedEndTime": {
+                "type": "string",
+                "description": "The proposed end time in ISO 8601 format"
+            },
+            'returnConflictingEvents': {
+                'type': ['boolean'],
+                'description': 'Optional. Return details of conflicting events (default: false)',
+                "default": False
+            }
+        },
+        'required': ['proposedStartTime', 'proposedEndTime']
     }
 )
 @validated("check_event_conflicts")
@@ -555,6 +1180,16 @@ def check_event_conflicts_handler(event, context, current_user, name, data):
     description="Lists files in a specific folder or root directory of Google Drive.",
     params={
         "folderId": "The ID of the folder to list files from (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "folderId": {
+                "type": ["string"],
+                "description": "The ID of the folder to list files from (optional)"
+            }
+        },
+        'required': []
     }
 )
 @validated("list_files")
@@ -568,6 +1203,16 @@ def list_files_handler(event, context, current_user, name, data):
     description="Searches for files in Google Drive based on a query. You should know that \"name contains '<query>'\" is added automatically to the query.",
     params={
         "query": "The search query string"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query string"
+            }
+        },
+        'required': ['query']
     }
 )
 @validated("search_files")
@@ -581,6 +1226,16 @@ def search_files_handler(event, context, current_user, name, data):
     description="Retrieves metadata for a specific file in Google Drive.",
     params={
         "fileId": "The ID of the file"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file"
+            }
+        },
+        'required': ['fileId']
     }
 )
 @validated("get_file_metadata")
@@ -594,6 +1249,16 @@ def get_file_metadata_handler(event, context, current_user, name, data):
     description="Gets the content of a file in Google Drive as text.",
     params={
         "fileId": "The ID of the file"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file"
+            }
+        },
+        'required': ['fileId']
     }
 )
 @validated("get_file_content")
@@ -609,6 +1274,25 @@ def get_file_content_handler(event, context, current_user, name, data):
         "fileName": "The name of the file to create",
         "content": "The content of the file",
         "mimeType": "The MIME type of the file (optional, defaults to 'text/plain')"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileName": {
+                "type": "string",
+                "description": "The name of the file to create"
+            },
+            "content": {
+                "type": "string",
+                "description": "The content of the file"
+            },
+            'mimeType': {
+                'type': ['string'],
+                'description': 'Optional: The MIME type of the file (default: \'text/plain\')',
+                "default": "text/plain"
+            }
+        },
+        'required': ['fileName', 'content']
     }
 )
 @validated("create_file")
@@ -622,6 +1306,16 @@ def create_file_handler(event, context, current_user, name, data):
     description="Gets the download link for a file in Google Drive.",
     params={
         "fileId": "The ID of the file"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file"
+            }
+        },
+        'required': ['fileId']
     }
 )
 @validated("get_download_link")
@@ -636,6 +1330,20 @@ def get_download_link_handler(event, context, current_user, name, data):
     params={
         "fileId": "The ID of the file",
         "permission": "The permission level ('view' or 'edit')"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file"
+            },
+            "permission": {
+                "type": "string",
+                "description": "The permission level ('view' or 'edit')"
+            }
+        },
+        'required': ['fileId', 'permission']
     }
 )
 @validated("create_shared_link")
@@ -651,6 +1359,27 @@ def create_shared_link_handler(event, context, current_user, name, data):
         "fileId": "The ID of the file",
         "emails": "List of email addresses to share the file with",
         "role": "The role to assign ('reader', 'commenter', or 'writer')"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file"
+            },
+            "emails": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "List of email addresses to share the file with"
+            },
+            'role': {
+                'type': 'string',
+                'description': 'The role to assign (\'reader\', \'commenter\', or \'writer\')'
+            }
+        },
+        'required': ['fileId', 'emails', 'role']
     }
 )
 @validated("share_file")
@@ -665,6 +1394,20 @@ def share_file_handler(event, context, current_user, name, data):
     params={
         "fileId": "The ID of the file to convert",
         "targetMimeType": "The target MIME type for conversion"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file to convert"
+            },
+            "targetMimeType": {
+                "type": "string",
+                "description": "The target MIME type for conversion"
+            }
+        },
+        'required': ['fileId', 'targetMimeType']
     }
 )
 @validated("convert_file")
@@ -678,6 +1421,16 @@ def convert_file_handler(event, context, current_user, name, data):
     description="Lists folders in Google Drive, optionally within a specific parent folder.",
     params={
         "parentFolderId": "The ID of the parent folder (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "parentFolderId": {
+                "type": ["string"],
+                "description": "The ID of the parent folder (optional)"
+            }
+        },
+        'required': []
     }
 )
 @validated("list_folders")
@@ -692,6 +1445,20 @@ def list_folders_handler(event, context, current_user, name, data):
     params={
         "itemId": "The ID of the file or folder to move",
         "destinationFolderId": "The ID of the destination folder"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "itemId": {
+                "type": "string",
+                "description": "The ID of the file or folder to move"
+            },
+            "destinationFolderId": {
+                "type": "string",
+                "description": "The ID of the destination folder"
+            }
+        },
+        'required': ['itemId', 'destinationFolderId']
     }
 )
 @validated("move_item")
@@ -706,6 +1473,20 @@ def move_item_handler(event, context, current_user, name, data):
     params={
         "itemId": "The ID of the file or folder to copy",
         "newName": "The name for the copied item (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "itemId": {
+                "type": "string",
+                "description": "The ID of the file or folder to copy"
+            },
+            "newName": {
+                "type": ["string"],
+                "description": "The name for the copied item (optional)"
+            }
+        },
+        'required': ['itemId']
     }
 )
 @validated("copy_item")
@@ -720,6 +1501,20 @@ def copy_item_handler(event, context, current_user, name, data):
     params={
         "itemId": "The ID of the file or folder to rename",
         "newName": "The new name for the item"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "itemId": {
+                "type": "string",
+                "description": "The ID of the file or folder to rename"
+            },
+            "newName": {
+                "type": "string",
+                "description": "The new name for the item"
+            }
+        },
+        'required': ['itemId', 'newName']
     }
 )
 @validated("rename_item")
@@ -735,6 +1530,16 @@ def rename_item_handler(event, context, current_user, name, data):
     description="Gets the revision history of a file in Google Drive.",
     params={
         "fileId": "The ID of the file to get revisions for"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file to get revisions for"
+            }
+        },
+        'required': ['fileId']
     }
 )
 @validated("get_file_revisions")
@@ -750,6 +1555,20 @@ def get_file_revisions_handler(event, context, current_user, name, data):
     params={
         "folderName": "The name of the new folder",
         "parentId": "The ID of the parent folder (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "folderName": {
+                "type": "string",
+                "description": "The name of the new folder"
+            },
+            "parentId": {
+                "type": ["string"],
+                "description": "The ID of the parent folder (optional)"
+            }
+        },
+        'required': ['folderName']
     }
 )
 @validated("create_folder")
@@ -764,6 +1583,16 @@ def create_folder_handler(event, context, current_user, name, data):
     description="Gets the revision history of a file in Google Drive.",
     params={
         "fileId": "The ID of the file to get revisions for"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file to get revisions for"
+            }
+        },
+        'required': ['fileId']
     }
 )
 @validated("get_file_revisions")
@@ -780,6 +1609,20 @@ def get_file_revisions_handler(event, context, current_user, name, data):
     params={
         "folderName": "The name of the new folder",
         "parentId": "The ID of the parent folder (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "folderName": {
+                "type": "string",
+                "description": "The name of the new folder"
+            },
+            "parentId": {
+                "type": ["string"],
+                "description": "The ID of the parent folder (optional)"
+            }
+        },
+        'required': ['folderName']
     }
 )
 @validated("create_folder")
@@ -793,6 +1636,16 @@ def create_folder_handler(event, context, current_user, name, data):
     description="Gets the revision history of a file in Google Drive.",
     params={
         "fileId": "The ID of the file to get revisions for"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "fileId": {
+                "type": "string",
+                "description": "The ID of the file to get revisions for"
+            }
+        },
+        'required': ['fileId']
     }
 )
 @validated("get_file_revisions")
@@ -807,6 +1660,16 @@ def get_file_revisions_handler(event, context, current_user, name, data):
     description="Permanently deletes a file or folder from Google Drive.",
     params={
         "itemId": "The ID of the file or folder to delete"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "itemId": {
+                "type": "string",
+                "description": "The ID of the file or folder to delete"
+            }
+        },
+        'required': ['itemId']
     }
 )
 @validated("delete_item_permanently")
@@ -820,6 +1683,10 @@ def delete_item_permanently_handler(event, context, current_user, name, data):
     name="getRootFolderIds",
     description="Retrieves the IDs of root-level folders in Google Drive.",
     params={
+    },
+    parameters={
+        "type": "object",
+        "properties": {}
     }
 )
 @validated("get_root_folder_ids")
@@ -835,6 +1702,20 @@ def get_root_folder_ids_handler(event, context, current_user, name, data):
     params={
         "title": "The title of the new form",
         "description": "Optional description for the form"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "The title of the new form"
+            },
+            "description": {
+                "type": ["string"],
+                "description": "Optional description for the form"
+            }
+        },
+        'required': ['title']
     }
 )
 @validated("create_form")
@@ -848,6 +1729,16 @@ def create_form_handler(event, context, current_user, name, data):
     description="Retrieves details of a specific Google Form.",
     params={
         "formId": "The ID of the form to retrieve"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form to retrieve"
+            }
+        },
+        'required': ['formId']
     }
 )
 @validated("get_form_details")
@@ -865,6 +1756,34 @@ def get_form_details_handler(event, context, current_user, name, data):
         "title": "The title of the question",
         "required": "Whether the question is required (default: false)",
         "options": "List of options for multiple choice or checkbox questions (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            },
+            "questionType": {
+                "type": "string",
+                "description": "The type of question (e.g., 'TEXT', 'MULTIPLE_CHOICE', 'CHECKBOX')"
+            },
+            "title": {
+                "type": "string",
+                "description": "The title of the question"
+            },
+            'required': {
+                'type': ['boolean'],
+                'description': 'Optional: Whether the question is required (default: false)',
+                "default": False
+            },
+            'options': {
+                'type': ['array'],
+                'items': {'type': 'string'},
+                'description': 'Optional: List of options for multiple choice or checkbox questions'
+            }
+        },
+        'required': ['formId', 'questionType', 'title']
     }
 )
 @validated("add_question")
@@ -882,6 +1801,34 @@ def add_question_handler(event, context, current_user, name, data):
         "title": "The new title of the question (optional)",
         "required": "Whether the question is required (optional)",
         "options": "New list of options for multiple choice or checkbox questions (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            },
+            "questionId": {
+                "type": "string",
+                "description": "The ID of the question to update"
+            },
+            'title': {
+                'type': ['string'],
+                'description': 'Optional: The new title of the question'
+            },
+            'required': {
+                'type': ['boolean'],
+                'description': 'Optional: Whether the question is required',
+                "default": False
+            },
+            'options': {
+                'type': ['array'],
+                'items': {'type': 'string'},
+                'description': 'Optional: New list of options for multiple choice or checkbox questions'
+            }
+        },
+        'required': ['formId', 'questionId']
     }
 )
 @validated("update_question")
@@ -896,6 +1843,20 @@ def update_question_handler(event, context, current_user, name, data):
     params={
         "formId": "The ID of the form",
         "questionId": "The ID of the question to delete"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            },
+            "questionId": {
+                "type": "string",
+                "description": "The ID of the question to delete"
+            }
+        },
+        'required': ['formId', 'questionId']
     }
 )
 @validated("delete_question")
@@ -909,6 +1870,16 @@ def delete_question_handler(event, context, current_user, name, data):
     description="Retrieves all responses for a Google Form.",
     params={
         "formId": "The ID of the form"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            }
+        },
+        'required': ['formId']
     }
 )
 @validated("get_responses")
@@ -923,6 +1894,20 @@ def get_responses_handler(event, context, current_user, name, data):
     params={
         "formId": "The ID of the form",
         "responseId": "The ID of the response to retrieve"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            },
+            "responseId": {
+                "type": "string",
+                "description": "The ID of the response to retrieve"
+            }
+        },
+        'required': ['formId', 'responseId']
     }
 )
 @validated("get_response")
@@ -937,6 +1922,20 @@ def get_response_handler(event, context, current_user, name, data):
     params={
         "formId": "The ID of the form",
         "settings": "A dictionary of settings to update"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            },
+            "settings": {
+                "type": "object",
+                "description": "A dictionary of settings to update"
+            }
+        },
+        'required': ['formId', 'settings']
     }
 )
 @validated("set_form_settings")
@@ -950,6 +1949,16 @@ def set_form_settings_handler(event, context, current_user, name, data):
     description="Retrieves the public link for a Google Form.",
     params={
         "formId": "The ID of the form"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            }
+        },
+        'required': ['formId']
     }
 )
 @validated("get_form_link")
@@ -965,6 +1974,24 @@ def get_form_link_handler(event, context, current_user, name, data):
         "formId": "The ID of the form",
         "title": "The new title for the form (optional)",
         "description": "The new description for the form (optional)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "formId": {
+                "type": "string",
+                "description": "The ID of the form"
+            },
+            'title': {
+                'type': ['string'],
+                'description': 'Optional: The new title for the form'
+            },
+            'description': {
+                'type': ['string'],
+                'description': 'Optional: The new description for the form'
+            }
+        },
+        'required': ['formId']
     }
 )
 @validated("update_form_info")
@@ -976,7 +2003,11 @@ def update_form_info_handler(event, context, current_user, name, data):
     tags=["default"],
     name="listUserForms",
     description="Lists all forms owned by the current user.",
-    params={}
+    params={},
+    parameters={
+        "type": "object",
+        "properties": {}
+    }
 )
 @validated("list_user_forms")
 def list_user_forms_handler(event, context, current_user, name, data):
@@ -994,6 +2025,36 @@ def list_user_forms_handler(event, context, current_user, name, data):
         "cc": "Optional: CC recipient(s) email address(es)",
         "bcc": "Optional: BCC recipient(s) email address(es)",
         "scheduleTime": "Optional: ISO format datetime string for scheduled sending"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "string",
+                "description": "Recipient email address(es) as a string, comma-separated for multiple recipients"
+            },
+            "subject": {
+                "type": "string",
+                "description": "Email subject"
+            },
+            "body": {
+                "type": "string",
+                "description": "Email body content"
+            },
+            'cc': {
+                'type': ['string'],
+                'description': 'Optional: CC recipient(s) email address(es)'
+            },
+            'bcc': {
+                'type': ['string'],
+                'description': 'Optional: BCC recipient(s) email address(es)'
+            },
+            'scheduleTime': {
+                'type': ['string'],
+                'description': 'Optional: ISO format datetime string for scheduled sending'
+            }
+        },
+        'required': ['to', 'subject', 'body']
     }
 )
 @validated("compose_and_send_email")
@@ -1005,12 +2066,31 @@ def compose_and_send_email_handler(event, context, current_user, name, data):
     tags=["default"],
     name="composeEmailDraft",
     description="Composes an email draft.",
-    params={
-        "to": "Recipient email address(es) as a string, comma-separated for multiple recipients",
-        "subject": "Email subject",
-        "body": "Email body content",
-        "cc": "Optional: CC recipient(s) email address(es)",
-        "bcc": "Optional: BCC recipient(s) email address(es)"
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "string",
+                "description": "Recipient email address(es), comma-separated for multiple. Must be valid email addresses."
+            },
+            "subject": {
+                "type": "string",
+                "description": "Email subject"
+            },
+            "body": {
+                "type": "string",
+                "description": "Email body content"
+            },
+            "cc": {
+                "type": "string",
+                "description": "CC recipient(s) email address(es)"
+            },
+            "bcc": {
+                "type": "string",
+                "description": "BCC recipient(s) email address(es)",
+            }
+        },
+        "required": ["to", "subject", "body"]
     }
 )
 @validated("compose_email_draft")
@@ -1026,6 +2106,24 @@ def compose_email_draft_handler(event, context, current_user, name, data):
         "n": "Number of messages to retrieve",
         "startDate": "Start date in YYYY-MM-DD format",
         "label": "Optional: Label to filter messages"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "n": {
+                "type": "integer",
+                "description": "Number of messages to retrieve"
+            },
+            "startDate": {
+                "type": "string",
+                "description": "Start date in YYYY-MM-DD format"
+            },
+            'label': {
+                'type': ['string'],
+                'description': 'Optional: Label to filter messages'
+            }
+        },
+        'required': ['n', 'startDate']
     }
 )
 @validated("get_messages_from_date")
@@ -1040,6 +2138,20 @@ def get_messages_from_date_handler(event, context, current_user, name, data):
     params={
         "n": "Number of messages to retrieve (default 25)",
         "label": "Optional: Label to filter messages"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "n": {
+                "type": "integer",
+                "description": "Number of messages to retrieve",
+                "default": 25
+            },
+            "label": {
+                "type": "string",
+                "description": "Optional: Label to filter messages"
+            }
+        }
     }
 )
 @validated("get_recent_messages")
@@ -1054,6 +2166,16 @@ def get_recent_messages_handler(event, context, current_user, name, data):
     description="Searches for messages using the Gmail search language.",
     params={
         "query": "Search query string using Gmail search language"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query string using Gmail search language"
+            }
+        },
+        'required': ['query']
     }
 )
 @validated("search_messages")
@@ -1067,6 +2189,16 @@ def search_messages_handler(event, context, current_user, name, data):
     description="Gets links to download attachments for a specific email.",
     params={
         "messageId": "ID of the email message"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "messageId": {
+                "type": "string",
+                "description": "ID of the email message"
+            }
+        },
+        'required': ['messageId']
     }
 )
 @validated("get_attachment_links")
@@ -1081,6 +2213,20 @@ def get_attachment_links_handler(event, context, current_user, name, data):
     params={
         "messageId": "ID of the email message",
         "attachmentId": "ID of the attachment"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "messageId": {
+                "type": "string",
+                "description": "ID of the email message"
+            },
+            "attachmentId": {
+                "type": "string",
+                "description": "ID of the attachment"
+            }
+        },
+        'required': ['messageId', 'attachmentId']
     }
 )
 @validated("get_attachment_content")
@@ -1095,6 +2241,20 @@ def get_attachment_content_handler(event, context, current_user, name, data):
     params={
         "criteria": "Filter criteria as a dictionary",
         "action": "Action to take when filter criteria are met, as a dictionary"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "criteria": {
+                "type": "object",
+                "description": "Filter criteria as a dictionary"
+            },
+            "action": {
+                "type": "object",
+                "description": "Action to take when filter criteria are met, as a dictionary"
+            }
+        },
+        'required': ['criteria', 'action']
     }
 )
 @validated("create_filter")
@@ -1108,6 +2268,16 @@ def create_filter_handler(event, context, current_user, name, data):
     description="Creates a new label.",
     params={
         "name": "Name of the new label"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Name of the new label"
+            }
+        },
+        'required': ['name']
     }
 )
 @validated("create_label")
@@ -1122,6 +2292,20 @@ def create_label_handler(event, context, current_user, name, data):
     params={
         "criteria": "Filter criteria as a dictionary",
         "labelName": "Name of the label to apply"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "criteria": {
+                "type": "object",
+                "description": "Filter criteria as a dictionary"
+            },
+            "labelName": {
+                "type": "string",
+                "description": "Name of the label to apply"
+            }
+        },
+        'required': ['criteria', 'labelName']
     }
 )
 @validated("create_auto_filter_label_rule")
@@ -1136,6 +2320,22 @@ def create_auto_filter_label_rule_handler(event, context, current_user, name, da
     params={
         "message_id": "ID of the message to retrieve details for",
         "fields": "Optional: List of fields to include in the response. Default is (id, sender, subject, labels, date). Full list is (id, threadId, historyId, sizeEstimate, raw, payload, mimeType, attachments, sender, subject, labels, date, snippet, body, cc, bcc, deliveredTo, receivedTime, sentTime)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "message_id": {
+                "type": "string",
+                "description": "ID of the message to retrieve details for"
+            },
+            "fields": {
+                "type": ["array"],
+                "items": {"type": "string"},
+                "description": "Optional: List of fields to include in the response. Default is (id, sender, subject, labels, date). Full list is (id, threadId, historyId, sizeEstimate, raw, payload, mimeType, attachments, sender, subject, labels, date, snippet, body, cc, bcc, deliveredTo, receivedTime, sentTime)",
+                "default": ["id", "sender", "subject", "labels", "date"]
+            }
+        },
+        'required': ['message_id']
     }
 )
 @validated("get_message_details")
@@ -1150,6 +2350,21 @@ def get_message_details_handler(event, context, current_user, name, data):
     params={
         "query": "Search query string",
         "page_size": "Optional: Number of results to return (default 10)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query string"
+            },
+            'page_size': {
+                'type': ['integer'],
+                'description': 'Optional: Number of results to return (default 10)',
+                'default': 10
+            }
+        },
+        'required': ['query']
     }
 )
 @validated("search_contacts")
@@ -1163,6 +2378,16 @@ def search_contacts_handler(event, context, current_user, name, data):
     description="Gets details for a specific contact.",
     params={
         "resource_name": "Resource name of the contact"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact"
+            }
+        },
+        'required': ['resource_name']
     }
 )
 @validated("get_contact_details")
@@ -1176,6 +2401,16 @@ def get_contact_details_handler(event, context, current_user, name, data):
     description="Creates a new contact.",
     params={
         "contact_info": "Contact information"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "contact_info": {
+                "type": "object",
+                "description": "Contact information"
+            }
+        },
+        'required': ['contact_info']
     }
 )
 @validated("create_contact")
@@ -1190,6 +2425,20 @@ def create_contact_handler(event, context, current_user, name, data):
     params={
         "resource_name": "Resource name of the contact",
         "contact_info": "Updated contact information"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact"
+            },
+            "contact_info": {
+                "type": "object",
+                "description": "Updated contact information"
+            }
+        },
+        'required': ['resource_name', 'contact_info']
     }
 )
 @validated("update_contact")
@@ -1203,6 +2452,16 @@ def update_contact_handler(event, context, current_user, name, data):
     description="Deletes a contact.",
     params={
         "resource_name": "Resource name of the contact to delete"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact to delete"
+            }
+        },
+        'required': ['resource_name']
     }
 )
 @validated("delete_contact")
@@ -1213,7 +2472,12 @@ def delete_contact_handler(event, context, current_user, name, data):
     path="/google/integrations/people/list-contact-groups",
     tags=["default"],
     name="listContactGroups",
-    description="Lists all contact groups."
+    description="Lists all contact groups.",
+    params={},
+    parameters={
+        "type": "object",
+        "properties": {}
+    }
 )
 @validated("list_contact_groups")
 def list_contact_groups_handler(event, context, current_user, name, data):
@@ -1226,6 +2490,16 @@ def list_contact_groups_handler(event, context, current_user, name, data):
     description="Creates a new contact group.",
     params={
         "group_name": "Name of the new contact group"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_name": {
+                "type": "string",
+                "description": "Name of the new contact group"
+            }
+        },
+        'required': ['group_name']
     }
 )
 @validated("create_contact_group")
@@ -1240,6 +2514,20 @@ def create_contact_group_handler(event, context, current_user, name, data):
     params={
         "resource_name": "Resource name of the contact group",
         "new_name": "New name for the contact group"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact group"
+            },
+            "new_name": {
+                "type": "string",
+                "description": "New name for the contact group"
+            }
+        },
+        'required': ['resource_name', 'new_name']
     }
 )
 @validated("update_contact_group")
@@ -1253,6 +2541,16 @@ def update_contact_group_handler(event, context, current_user, name, data):
     description="Deletes a contact group.",
     params={
         "resource_name": "Resource name of the contact group to delete"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact group to delete"
+            }
+        },
+        'required': ['resource_name']
     }
 )
 @validated("delete_contact_group")
@@ -1267,6 +2565,21 @@ def delete_contact_group_handler(event, context, current_user, name, data):
     params={
         "group_resource_name": "Resource name of the contact group",
         "contact_resource_names": "List of resource names of contacts to add"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact group"
+            },
+            "contact_resource_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of resource names of contacts to add"
+            }
+        },
+        'required': ['group_resource_name', 'contact_resource_names']
     }
 )
 @validated("add_contacts_to_group")
@@ -1281,6 +2594,21 @@ def add_contacts_to_group_handler(event, context, current_user, name, data):
     params={
         "group_resource_name": "Resource name of the contact group",
         "contact_resource_names": "List of resource names of contacts to remove"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_resource_name": {
+                "type": "string",
+                "description": "Resource name of the contact group"
+            },
+            "contact_resource_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of resource names of contacts to remove"
+            }
+        },
+        'required': ['group_resource_name', 'contact_resource_names']
     }
 )
 @validated("remove_contacts_from_group")

@@ -4,8 +4,34 @@ from google.oauth2.credentials import Credentials
 from datetime import datetime, timedelta, timezone
 from dateutil import tz
 from zoneinfo import ZoneInfo
+import re
 
 integration_name = "google_calendar"
+
+
+def validate_email(email):
+    """
+    Validates if a given input is potentially a valid email address.
+
+    Args:
+        email: The email address to validate
+
+    Returns:
+        bool: True if validation passes
+
+    Raises:
+        ValueError: If email is invalid, with a descriptive message of why
+    """
+    if not isinstance(email, str):
+        raise ValueError(f"Invalid email '{email}': must be a string, got {type(email).__name__}")
+
+    email_pattern = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+    if not email_pattern.match(email):
+        raise ValueError(
+            f"Invalid email '{email}': must match pattern 'text@domain.tld'. "
+            "Email should contain a single @ symbol and at least one dot in the domain."
+        )
+    return True
 
 def format_event(event, include_description=False, include_attendees=False, include_location=False):
     formatted_event = {
@@ -22,16 +48,25 @@ def format_event(event, include_description=False, include_attendees=False, incl
         formatted_event['location'] = event.get('location', '')
     return formatted_event
 
-def create_event(current_user, title, start_time, end_time, description):
+
+
+
+def create_event(current_user, title, start_time, end_time, description, attendees=None):
+    if attendees:
+        for email in attendees:
+            validate_email(email)
+
     service = get_calendar_service(current_user)
     event = {
         'summary': title,
         'description': description,
         'start': {'dateTime': start_time},
         'end': {'dateTime': end_time},
+        'attendees': [{'email': email} for email in (attendees or [])]
     }
     created_event = service.events().insert(calendarId='primary', body=event).execute()
     return {'id': created_event['id'], 'title': created_event['summary']}
+
 
 def update_event(current_user, event_id, updated_fields):
     service = get_calendar_service(current_user)
