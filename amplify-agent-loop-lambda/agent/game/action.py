@@ -10,7 +10,7 @@ class Action:
                  name: str,
                  function: callable,
                  description: str,
-                 args: Dict,
+                 parameters: Dict,
                  output: Dict,
                  side_effects: Dict = {},
                  terminal: bool = False):
@@ -18,7 +18,7 @@ class Action:
         self.function = function
         self.description = description
         self.terminal = terminal
-        self.args = args
+        self.parameters = parameters
         self.output = output
         self.side_effects = side_effects
 
@@ -38,7 +38,7 @@ class ActionRegistry:
                         name=t["tool_name"],
                         function=t["function"],
                         description=t["description"],
-                        args=t.get("args", {}),
+                        parameters=t.get("args", {}),
                         output=t.get("output", {}),
                         terminal=t.get("terminal", False)
                     ))
@@ -48,7 +48,7 @@ class ActionRegistry:
                     name=tool_name,
                     function=tool_desc["function"],
                     description=tool_desc["description"],
-                    args=tool_desc.get("args",{}),
+                    parameters=tool_desc.get("args", {}),
                     output=tool_desc.get("output", {}),
                     terminal=tool_desc.get("terminal", False)
                 ))

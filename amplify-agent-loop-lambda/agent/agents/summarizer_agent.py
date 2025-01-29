@@ -57,7 +57,7 @@ def build(environment: Environment, generate_response):
             function=terminate,
             terminal=True,
             output={"message": "str"},
-            args={}
+            parameters={}
         )
     )
 

@@ -45,7 +45,7 @@ def op_to_tool(api):
     }
 
     tool_metadata = get_tool_metadata(
-        func=api_func, tool_name=id, description=desc, args_override=schema, terminal=False, tags=tags
+        func=api_func, tool_name=id, description=desc, parameters_override=schema, terminal=False, tags=tags
     )
 
     return tool_metadata

@@ -229,7 +229,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                         name=op_tool['tool_name'],
                         function=op_tool["function"],
                         description=op_tool["description"],
-                        args=op_tool.get("args",{}),
+                        parameters=op_tool.get("args", {}),
                         output=op_tool.get("output", {}),
                         terminal=op_tool.get("terminal", False)
                     )
@@ -263,6 +263,9 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             "work_directory": work_directory,
         }
 
+        # Get the content of the last message from the prompt that is from the user
+        user_last_message = next((entry['content'] for entry in reversed(prompt) if entry['role'] == 'user'), None)
+
         # Remove any messages from the prompt that aren't user or assistant
         prompt = [entry for entry in prompt if entry['role'] in ['user', 'assistant']]
         # Combine all of the content attributes of the prompt entries into one string separated by newlines and
@@ -270,6 +273,13 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         user_input = "\n".join([f"{entry['role']}: {entry['content']}" for entry in prompt])
 
         result = agent.run(user_input=user_input, action_context_props=action_context_props)
+
+        # Find the first user message in the result and replace it with the last user message from the prompt
+        # We do this so that the memories start from the last user message rather than the entire conversation
+        for entry in result.items:
+            if entry['type'] == 'user':
+                entry['content'] = user_last_message
+                break
 
         def load_memory_content(memory):
             content = memory['content']

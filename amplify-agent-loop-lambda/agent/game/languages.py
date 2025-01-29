@@ -171,7 +171,7 @@ class AgentJsonActionLanguage(AgentLanguage):
         """Generate response from language model"""
 
         action_descriptions = \
-            [{"name": action.name, "description": action.description, "args": action.args} for
+            [{"name": action.name, "description": action.description, "parameters": action.parameters} for
              action in actions]
 
         return [
@@ -285,7 +285,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                     "name": action.name,
                     # Include up to 1024 characters of the description
                     "description": action.description[:1024],
-                    "parameters": action.args,
+                    "parameters": action.parameters,
                 },
             } for action in actions
         ]

@@ -13,13 +13,13 @@ def to_openai_tools(tools_metadata: List[dict]):
                 "name": t['tool_name'],
                 # Include up to 1024 characters of the description
                 "description": t.get('description',"")[:1024],
-                "parameters": t.get('args',{}),
+                "parameters": t.get('parameters',{}),
             },
         } for t in tools_metadata
     ]
     return openai_tools
 
-def get_tool_metadata(func, tool_name=None, description=None, args_override=None, terminal=False, tags=None):
+def get_tool_metadata(func, tool_name=None, description=None, parameters_override=None, terminal=False, tags=None):
     """
     Extracts metadata for a function to use in tool registration.
 
@@ -27,7 +27,7 @@ def get_tool_metadata(func, tool_name=None, description=None, args_override=None
         func (function): The function to extract metadata from.
         tool_name (str, optional): The name of the tool. Defaults to the function name.
         description (str, optional): Description of the tool. Defaults to the function's docstring.
-        args_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
+        parameters_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
         terminal (bool, optional): Whether the tool is terminal. Defaults to False.
         tags (List[str], optional): List of tags to associate with the tool.
 
@@ -41,7 +41,7 @@ def get_tool_metadata(func, tool_name=None, description=None, args_override=None
     description = description or (func.__doc__.strip() if func.__doc__ else "No description provided.")
 
     # Discover the function's signature and type hints if no args_override is provided
-    if args_override is None:
+    if parameters_override is None:
         signature = inspect.signature(func)
         type_hints = get_type_hints(func)
 
@@ -82,27 +82,27 @@ def get_tool_metadata(func, tool_name=None, description=None, args_override=None
             if param.default == inspect.Parameter.empty:
                 args_schema["required"].append(param_name)
     else:
-        args_schema = args_override
+        args_schema = parameters_override
 
     # Return the metadata as a dictionary
     return {
         "tool_name": tool_name,
         "description": description,
-        "args": args_schema,
+        "parameters": args_schema,
         "function": func,
         "terminal": terminal,
         "tags": tags or []
     }
 
 
-def register_tool(tool_name=None, description=None, args_override=None, terminal=False, tags=None):
+def register_tool(tool_name=None, description=None, parameters_override=None, terminal=False, tags=None):
     """
     A decorator to dynamically register a function in the tools dictionary with its parameters, schema, and docstring.
 
     Parameters:
         tool_name (str, optional): The name of the tool to register. Defaults to the function name.
         description (str, optional): Override for the tool's description. Defaults to the function's docstring.
-        args_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
+        parameters_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
         terminal (bool, optional): Whether the tool is terminal. Defaults to False.
         tags (List[str], optional): List of tags to associate with the tool.
 
@@ -115,27 +115,18 @@ def register_tool(tool_name=None, description=None, args_override=None, terminal
             func=func,
             tool_name=tool_name,
             description=description,
-            args_override=args_override,
+            parameters_override=parameters_override,
             terminal=terminal,
             tags=tags
         )
 
-        entry = {
-            "tool_name": metadata["tool_name"],
-            "description": metadata["description"],
-            "args": metadata["args"],
-            "function": metadata["function"],
-            "terminal": metadata["terminal"],
-            "tags": metadata["tags"] or []
-        }
-
         # Register the tool in the global dictionary
-        tools[metadata["tool_name"]] = entry
+        tools[metadata["tool_name"]] = metadata
 
         for tag in metadata["tags"]:
             if tag not in tools_by_tag:
                 tools_by_tag[tag] = []
-            tools_by_tag[tag].append(entry)
+            tools_by_tag[tag].append(metadata)
 
         return func
     return decorator
