@@ -1,4 +1,5 @@
-from agent.agents.common_capabilities import PassResultsCapability, ResponseResultReferencingCapability
+from agent.agents.common_capabilities import PassResultsCapability, ResponseResultReferencingCapability, \
+    TimeAwareCapability
 from agent.game.action import ActionRegistry
 from agent.game.environment import Environment
 from agent.game.goal import Goal, BE_DIRECT, LARGE_RESULTS, PREFER_WORKFLOWS, USE_RESULT_REFERENCES_IN_RESPONSES, \
@@ -42,6 +43,7 @@ completely done with the task, you should tell the user the result and terminate
         generate_response=generate_response,
         environment=environment,
         capabilities=[
+            TimeAwareCapability(),
             PassResultsCapability()
         ]
     )

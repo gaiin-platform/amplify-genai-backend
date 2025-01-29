@@ -27,9 +27,10 @@ def op_to_tool(api):
     tags = api.get('tags', [])
     desc = api.get('description', "")
     params = api.get('params', [])
+    parameters = api.get('parameters', {})
 
-    def api_func_invoke(action_context: ActionContext, payload: dict = {}) -> dict:
-        return call_api(action_context=action_context, name=name, payload=payload)
+    def api_func_invoke(action_context: ActionContext, **kwargs) -> dict:
+        return call_api(action_context=action_context, name=name, payload=kwargs)
 
     api_func = api_func_invoke
 
@@ -45,7 +46,7 @@ def op_to_tool(api):
     }
 
     tool_metadata = get_tool_metadata(
-        func=api_func, tool_name=id, description=desc, parameters_override=schema, terminal=False, tags=tags
+        func=api_func, tool_name=id, description=desc, parameters_override=parameters or schema, terminal=False, tags=tags
     )
 
     return tool_metadata

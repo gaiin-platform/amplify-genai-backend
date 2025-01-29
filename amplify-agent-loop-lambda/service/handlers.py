@@ -224,12 +224,13 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             op_tools = ops_to_tools(ops)
             for op_tool in op_tools:
                 print(f"Registering tool: {op_tool['tool_name']}: {op_tool['description']}")
+                print(f"Parameters: {op_tool.get('parameters', {})}")
                 action_registry.register(
                     Action(
                         name=op_tool['tool_name'],
                         function=op_tool["function"],
                         description=op_tool["description"],
-                        parameters=op_tool.get("args", {}),
+                        parameters=op_tool.get("parameters", {}),
                         output=op_tool.get("output", {}),
                         terminal=op_tool.get("terminal", False)
                     )

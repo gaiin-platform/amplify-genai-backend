@@ -1,7 +1,9 @@
 import json
+import time
 
 from agent.core import Capability
 from agent.game.action import ActionContext
+from agent.prompt import Prompt
 from agent.util import resolve_references
 
 
@@ -40,6 +42,23 @@ class ResponseResultReferencingCapability(Capability):
     def process_response(self, agent, action_context, response):
         return resolve_references(response, get_results_map(agent, action_context, response))
 
+
+class TimeAwareCapability(Capability):
+    def __init__(self):
+        super().__init__(
+            name="Time Awareness",
+            description="Allows the agent to be aware of time"
+        )
+
+    def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:
+        iso_time = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+        prompt.messages = [{
+            "role": "system",
+            "content": f"The current time is {iso_time}. Please consider the day/time, if relevant, when responding."
+        }] + prompt.messages
+
+        return prompt
 
 class PassResultsCapability(Capability):
     def __init__(self):
