@@ -192,7 +192,7 @@ def generate_bedrock_questions(content):
             "success": True,
             "data": questions,
             "input_tokens": input_tokens,
-            "output_tokens": output_tokens
+            "output_tokens": output_tokens,
             "success": True,
             "data": questions,
             "input_tokens": input_tokens,
