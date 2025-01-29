@@ -278,6 +278,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 const statusInfo = newStatus(
                     {
+                        animated: true,
                         inProgress: true,
                         sticky: true,
                         summary: `Thinking...`,
