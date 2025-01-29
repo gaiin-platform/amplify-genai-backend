@@ -5,7 +5,10 @@ import {BedrockRuntimeClient,InvokeModelWithResponseStreamCommand} from "@aws-sd
 import {sendDeltaToStream} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
 
+
+
 const logger = getLogger("mistral");
+const region = process.env.REGION || "us-east-1";
 
 
 export const chatMistral = async (chatBody, writable) => {
@@ -24,7 +27,7 @@ export const chatMistral = async (chatBody, writable) => {
 
         // Ensure credentials are in ~/.aws/credentials
         logger.debug("Initializing Bedrock Client");
-        const client = new BedrockRuntimeClient({region: "us-west-2"}); 
+        const client = new BedrockRuntimeClient({region: region}); 
 
         logger.debug("Format Messages array to string");
 

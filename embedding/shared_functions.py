@@ -20,6 +20,7 @@ from embedding_models import get_embedding_models
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version    = os.environ['API_VERSION']
 
@@ -46,7 +47,7 @@ if (model_result['success']):
 hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
 region = os.environ['REGION']
 openai_provider = os.environ['OPENAI_PROVIDER']
-keyword_model_name = os.environ['KEYWORD_MODEL_NAME']
+embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
 
 
 
@@ -188,6 +189,10 @@ def generate_bedrock_questions(content):
         
         logger.info(f"Questions generated: {questions}")
         return {
+            "success": True,
+            "data": questions,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
             "success": True,
             "data": questions,
             "input_tokens": input_tokens,

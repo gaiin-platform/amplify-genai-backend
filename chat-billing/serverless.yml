@@ -12,10 +12,16 @@ plugins:
   - serverless-prune-plugin
   - serverless-deployment-bucket
   - serverless-python-requirements
+  - serverless-cloudformation-changesets
+    
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    dockerizePip: true
     layer: true
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    
   serverless-offline: 
     custom:
       config: ${file(../var/${self:provider.stage}-var.yml)}
@@ -38,7 +44,7 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   logRetentionInDays: 365
   deploymentBucket:
@@ -52,9 +58,11 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
   environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     MODEL_RATE_TABLE: ${self:service}-${sls:stage}-model-rates
     ADDITIONAL_CHARGES_TABLE: ${self:service}-${sls:stage}-additional-charges
     HISTORY_USAGE_TABLE: ${self:service}-${sls:stage}-history-usage
+    CHAT_USAGE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
