@@ -35,19 +35,12 @@ provider:
     restApiRootResourceId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
 
-    
-  environment:
-    #Unused Hold
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    ##S3_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
-    ##OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    ##OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    #SECRETS_ARN_NAME: ${self:custom.stageVars.SECRETS_ARN_NAME}
-    DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
-    ##AZURE_OPENAI_RESOURCE_NAME: openai
-    ##SECRETS_NAME: ${self:custom.stageVariables.SECRETS_NAME}
-    ##OPENAI_ENDPOINT: ${self:custom.stageVariables.OPENAI_ENDPOINT}
-    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
+      
+    environment:
+      CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+      LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+      DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
+      OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
 
     #Combined Vars:
     RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVars.RAG_ASSISTANT_MODEL_ID}
@@ -57,7 +50,7 @@ provider:
     COGNITO_CLIENT_ID: ${self:custom.stageVars.COGNITO_CLIENT_ID}
     HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     ASSISTANT_QUEUE_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-queue
-    ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-results
+    ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-ast-results
     ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
@@ -101,19 +94,19 @@ functions:
         assistant_task_queue_url:
           Ref: AssistantTaskQueue
 
-  api_g_chat:
-    handler: indexApiG.handler
-    memorySize: 1024
-    timeout: 180
-    environment:
-        assistant_task_queue_url:
-          Ref: AssistantTaskQueue
-    events:
-      - http:
-          path: api_g_chat/chat
-          method: post
-          cors: true
-    
+    api_g_chat:
+      handler: indexApiG.handler
+      memorySize: 1024
+      timeout: 180
+      environment:
+          assistant_task_queue_url:
+            Ref: AssistantTaskQueue
+      events:
+        - http:
+            path: api_g_chat/chat
+            method: post
+            cors: true
+
 
   assistant_queue:
     handler: assistantQueueRouter.handler

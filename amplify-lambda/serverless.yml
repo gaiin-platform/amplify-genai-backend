@@ -12,6 +12,7 @@ plugins:
   - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-domain-manager
+  - serverless-cloudformation-changesets  
 
 custom:
   pythonRequirements:
@@ -22,6 +23,9 @@ custom:
     automatic: true
     includeLayers: true
     number: 5
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
@@ -43,10 +47,11 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false 
   environment:
     #Local Resources Created in this service
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     DYNAMODB_TABLE: ${self:service}-${sls:stage}
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
@@ -78,7 +83,6 @@ provider:
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
-    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
     MAX_CHUNKS: 1000
     FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
@@ -1136,4 +1140,11 @@ resources:
           Name: 
             Fn::Sub: "${sls:stage}-RestApiRootResourceId"
 
+
+      ConverstionTemplatesBucketOutput:
+        Description: "The S3 bucket name for ppt conversion templates"
+        Value: !Ref ConversionOutputBucket
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-ConversionOutputBucket"
 

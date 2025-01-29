@@ -808,6 +808,11 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
     return [name, data]
 
 
+
+# Make sure ALGORITHMS is defined somewhere, e.g., ALGORITHMS = ["RS256"]
+
+idpPrefix = os.environ['IDP_PREFIX']
+
 def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):

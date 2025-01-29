@@ -11,11 +11,15 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets  
 
 custom:
   pythonRequirements:
     dockerizePip: true
-    
+
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
@@ -27,7 +31,7 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   logRetentionInDays: 365
   apiGateway:
@@ -37,6 +41,7 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"  
 
   environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     OPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-ops
