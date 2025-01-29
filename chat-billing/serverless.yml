@@ -69,6 +69,8 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     CHAT_BILLING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     
 
   iam:
@@ -79,56 +81,42 @@ provider:
 
 
 functions:
-  # sets the value of the model input and output rates
-  # ONLY TRIGGERED MANUALLY VIA:
-  # ~ serverless invoke --function updateModelRateTable --stage dev --log
-  # NOTE: make sure you have deployed the most up to date version of the chat-billing/model_rates/model_rate_values.csv file 
-  #       or else the DynamoDB table will not update with what you have locally
-  updateModelRateTable:
-    handler: model_rates/update_table.updateModelRateTable
-    memorySize: 128
-    environment:
-      MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
+
+  get_user_available_models:
+    handler: service/core.get_user_available_models
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /available_models
+          method: get
+          cors: true
+
+
+  update_supported_models:
+    handler: service/core.update_supported_models
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /supported_models/update
+          method: post
+          cors: true
+
+  get_supported_models:
+    handler: service/core.get_supported_models_as_admin
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /supported_models/get
+          method: get
+          cors: true
 
   
-  # triggered at the start of each day and month
-  # calculates cost of all usage from the chat usage table and the additional charges table
-  # saves costs for each user, coa, and date to the history usage table
-  # removed @ 6pm Aug 8
-  # trackUsage:
-  #   handler: usage/track_usage.handler
-  #   memorySize: 512 # increased memory size to increase speed
-  #   timeout: 900 # 900 seconds (15 minutes) is the maximum
-  #   events:
-  #     - schedule:
-  #         rate: cron(0 0 * * ? *) # trigger at midnight UTC every day
-  #     - schedule:
-  #         rate: cron(0 0 1 * ? *) # trigger at midnight UTC on the first day of every month
-  #   environment:
-  #     MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
-  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
-  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
-  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
-
-
-  # provides real-time usage information via API gateway
-  # removed @ 6pm Aug 8
-  # reportGenerator:
-  #   handler: usage/report_generator.report_generator
-  #   memorySize: 128
-  #   layers:
-  #     - Ref: PythonRequirementsLambdaLayer
-  #   events:
-  #     - http:
-  #         path: billing/report-generator
-  #         method: post
-  #         cors: true
-  #   environment:
-  #     MODEL_RATE_TABLE: ${self:provider.environment.MODEL_RATE_TABLE}
-  #     HISTORY_USAGE_TABLE: ${self:provider.environment.HISTORY_USAGE_TABLE}
-  #     CHAT_USAGE_TABLE: ${self:provider.environment.CHAT_USAGE_TABLE}
-  #     ADDITIONAL_CHARGES_TABLE: ${self:provider.environment.ADDITIONAL_CHARGES_TABLE}
-
 resources:
   Resources:
     ChatBillingIAMPolicy:
@@ -148,28 +136,21 @@ resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:CreateTable
+                - "dynamodb:BatchWriteItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:DeleteItem"
               Resource:
                 - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}/*"
-                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}"
-                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HISTORY_USAGE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-            - Effect: Allow
-              Action:
-                - dynamodb:Query
-                - dynamodb:Scan
-                - dynamodb:GetItem
-              Resource:
-                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CHAT_USAGE_TABLE}"
-                - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CHAT_USAGE_TABLE}/*"  
     # model rates needed for usage cost calculations
     ModelRateTable:
       Type: 'AWS::DynamoDB::Table'

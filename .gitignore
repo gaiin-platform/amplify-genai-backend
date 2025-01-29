@@ -23,9 +23,10 @@ Scripts/
 
 # Environment
 .*venv
-.env*
-.*venv
+.env* 
+.*venv*
 .requirements.zip*
+requirements.in
 .*venv
 
 

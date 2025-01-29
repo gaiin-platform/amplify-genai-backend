@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from enum import Enum
 import json
 import re
 from common.validate import validated
@@ -12,11 +13,21 @@ import boto3
 import json
 import re
 from common.ops import op
+import subprocess
+from common.auth_admin import verify_user_as_admin
+from botocore.config import Config
 
 
+s3 = boto3.client('s3')
+bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
 dynamodb = boto3.resource('dynamodb')
 api_keys_table_name = os.environ['API_KEYS_DYNAMODB_TABLE']
 table = dynamodb.Table(api_keys_table_name)
+
+class APIFile(Enum):
+    PDF = 'Amplify_API_Documentation.pdf'
+    CSV = 'Amplify_API_Documentation.csv'
+    JSON = 'Postman_Amplify_API_Collection.json'
 
 @validated("read")
 def get_api_key(event, context, user, name, data):
@@ -26,10 +37,7 @@ def get_api_key(event, context, user, name, data):
     
     # Check if the API key ID is valid
     if not api_key_id or not is_valid_id_format(api_key_id):
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'success': False , 'error': 'Invalid or missing API key ID parameter'})
-        }
+        return {'success': False , 'error': 'Invalid or missing API key ID parameter'}
     
     try:
         print('Retrieve the item from DynamoDB')
@@ -48,41 +56,20 @@ def get_api_key(event, context, user, name, data):
             # Decided its okay to view deactivated keys- use case, you compromised one but unsure what name it was under, you just know what the api key is
             if (((item['owner'] == user and not delegate) or ( delegate == user))):
                 return {
-                    'statusCode': 200,
-                    'body': json.dumps({
                         'success': True,
                         'message': 'Successfully fetched API key',
                         'data': item['apiKey']  # Returning the actual apiKey
-                    })
-                }
+                    }
             else:
                 message = 'Unauthorized to access this API key' if item.get('active', False) else "The key has been deactivated"
-                return {
-                    'statusCode': 403,
-                    'body': json.dumps({'success': False , 'error': message})
-                }
+                return {'success': False , 'error': message}
         else:
-            return {
-                'statusCode': 404,
-                'body': json.dumps({'success': False , 'error': 'API key not found'})
-            }
+            return {'success': False , 'error': 'API key not found'}
     except Exception as e:
         # Handle potential errors
         print(f"An error occurred: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'success': False , 'error': 'Failed to fetch API key'})
-        }
+        return {'success': False , 'error': 'Failed to fetch API key'}
 
-@op(
-    path="/apiKeys/get_keys",
-    name="getApiKeys",
-    method='GET',
-    tags=["apiKeys"],
-    description="Get a list of the user's amplify api keys.",
-    params={
-    }
-)
 @validated("read")
 def get_api_keys_for_user(event, context, user, name, data):
     return get_api_keys(user)
@@ -127,8 +114,17 @@ def get_api_keys(user):
         # Handle potential errors
         print(f"An error occurred while retrieving API keys for user {user}: {e}")
         return {'success': False, 'data': [], 'message': str(e)}
+  
     
-
+@op(
+    path="/state/accounts/get",
+    name="getUserAccounts",
+    method="GET",
+    tags=["apiKeysAst"],
+    description="Get a list of the user's accounts that costs are charged to.",
+    params={
+    }
+)
 @op(
     path="/apiKeys/get_keys_ast",
     name="getApiKeysForAst",
@@ -183,14 +179,12 @@ def can_create_api_key(user, account):
         print(f"Error checking user existence: {e}")
         return {"success": False, "message": "Unable to verify user at this time"}
 
+# all accounts are valid for now 
 def is_valid_account(coa):
-    return coa is not None
-
-# Use Function Below if you need to validate the COA string
-#def is_valid_account(coa):
-#    # here we want to check valid coa string, 
-#    pattern = r'^[a-zA-Z0-9._]+$'
-#    return bool(pattern.match(coa))
+    return True
+    # here we want to check valid coa string, 
+    pattern = re.compile(r'^(\w{3}\.\w{2}\.\w{5}\.\w{4}\.\w{3}\.\w{3}\.\w{3}\.\w{3}\.\w{1})$')
+    return bool(pattern.match(coa))
     
 
 @validated("create")
@@ -300,7 +294,7 @@ def update_api_key(item_id, updates, user):
     update_expression = []
     expression_attribute_values = {}
     expression_attribute_names = {}
-    print("Updates performed on key: ", key_name)
+    print("Updates to perform on key: ", key_name)
     for field, value in updates.items():
         if field in updatable_fields:
             print("updates: ", field, "-", value)
@@ -312,11 +306,11 @@ def update_api_key(item_id, updates, user):
         if (field == 'rateLimit'): 
             value = formatRateLimit(value)
         # Use attribute names to avoid conflicts with DynamoDB reserved keywords
-            placeholder = f"#{field}"
-            value_placeholder = f":{field}"
-            update_expression.append(f"{placeholder} = {value_placeholder}")
-            expression_attribute_names[placeholder] = field
-            expression_attribute_values[value_placeholder] = value
+        placeholder = f"#{field}"
+        value_placeholder = f":{field}"
+        update_expression.append(f"{placeholder} = {value_placeholder}")
+        expression_attribute_names[placeholder] = field
+        expression_attribute_values[value_placeholder] = value
 
 
     # Join the update expression and check if it's empty
@@ -338,6 +332,7 @@ def update_api_key(item_id, updates, user):
         )
         return {'success': True, 'updated_attributes': response['Attributes']}
     except ClientError as e:
+        print("Updates save error: ", e)
         return {'success': False, 'error': str(e), "key_name": key_name}
 
 
@@ -345,10 +340,7 @@ def update_api_key(item_id, updates, user):
 def deactivate_key(event, context, user, name, data):
     item_id = data['data']["apiKeyId"]
     if not is_valid_id_format(item_id):
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'success': False, 'error': 'Invalid or missing API key ID parameter'})
-        }
+        return {'success': False, 'error': 'Invalid or missing API key ID parameter'}
     return deactivate_key_in_dynamo(user, item_id)
 
 
@@ -439,10 +431,10 @@ def get_system_ids(event, context, current_user, name, data):
 @validated("read")
 def get_documentation(event, context, current_user, name, data): 
     print(f"Getting presigned download URL for user {current_user}")
-    
-    doc_presigned_url = generate_presigned_url('Amplify_API_Documentation.pdf')
-    csv_presigned_url =  generate_presigned_url('Amplify_API_Documentation.csv')
-    postman_presigned_url = generate_presigned_url('Postman_Amplify_API_Collection.json')
+
+    doc_presigned_url = generate_presigned_url(APIFile.PDF.value)
+    csv_presigned_url =  generate_presigned_url(APIFile.CSV.value)
+    postman_presigned_url = generate_presigned_url(APIFile.JSON.value)
 
     res = {'success': True}
     if doc_presigned_url : res['doc_url'] =  doc_presigned_url
@@ -455,9 +447,9 @@ def get_documentation(event, context, current_user, name, data):
         print("Failed to retrieve a new presigned url")
         return {'success': False, 'message': 'Files not found' }
     
+
 def generate_presigned_url(file):
     s3 = boto3.client('s3')
-    bucket_name = os.environ['S3_API_DOCUMENTATION_BUCKET']
     try:
         return s3.generate_presigned_url(
                 ClientMethod='get_object',
@@ -477,3 +469,98 @@ def formatRateLimit(rateLimit):
     if rateLimit.get("rate", None):
         rateLimit["rate"] = Decimal(str(rateLimit["rate"]))
     return rateLimit
+
+
+@validated("upload")
+def get_api_doc_presigned_urls(event, context, current_user, name, data): 
+    # verify they are an admin 
+    if (not verify_user_as_admin(data["access_token"], 'Upload API Documentation')):
+        return {'success': False , 'error': 'Unable to authenticate user as admin'}
+    data = data['data']
+    filename = data.get("filename", "")
+    md5_content = data.get("content_md5", "")
+    file_names = {APIFile.PDF.value: "application/pdf", 
+                  APIFile.CSV.value: "text/csv", 
+                   APIFile.JSON.value: "application/json"}
+    print("Uploading: ", file_names[filename])
+    if (not filename in file_names.keys()):
+        return {'success': False , 'error': 'File name does not match the preset names.'}
+    
+
+    try:
+        config = Config(
+        signature_version='s3v4'  # Force AWS Signature Version 4
+        )
+        s3 = boto3.client('s3', config=config)
+        presigned = s3.generate_presigned_url('put_object',
+                                            Params={'Bucket': bucket_name,
+                                                    'Key': filename,
+                                                    'ContentType': file_names[filename],
+                                                    'ContentMD5': md5_content
+                                                    },
+                                            ExpiresIn=3600)
+        print("Presigned url generated")
+        return {'success': True , 'presigned_url': presigned}
+    except ClientError as e:
+        print(f"Error generating presigned upload URL: {e}")
+        return {'success': False , 'error': f"Error generating presigned upload URL: {e}"}
+
+
+@validated("read")
+def get_api_document_templates(event, context, current_user, name, data):
+    templates_key = 'Amplify_API_Templates.zip' 
+    
+    try:# Check if the templates.zip exists in S3
+        s3.head_object(Bucket=bucket_name, Key=templates_key)
+        # good to continue 
+    except ClientError as e:
+        print(e)
+        # If a 404 error is returned, then the object does not exist
+        if e.response['Error']['Code'] == '404':
+            print("templates.zip does not exist in S3. Uploading now...")
+            # Upload from local to S3
+            try:
+                
+                file_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "api_documentation", "templates", "Amplify_API_Templates.zip")
+                )
+                
+                with open(file_path, 'rb') as f:
+                    s3.put_object(
+                        Bucket=bucket_name,
+                        Key=templates_key,
+                        Body=f,
+                        ContentType='application/zip'  # Content type for a zip file
+                    )
+                print("Succesfully put templates.zip in the s3 bucket")
+            except FileNotFoundError:
+                print("Local templates.zip file not found in the Lambda package")
+                return {
+                    'success': False,
+                    'message': "Local templates.zip file not found in the Lambda package"
+                    }
+            except ClientError as e:
+                print(f"Error uploading {templates_key} to S3: {e}")
+                return {
+                    'success': False,
+                    'message': f"Error uploading {templates_key} to S3: {e}"
+                    }
+        else:
+            return {
+            'success': False,
+            'message': f'Failed to generate presigned URL {e}'
+            }
+        
+
+    # Now that the file should be in S3, generate the presigned URL
+    presigned_url = generate_presigned_url(templates_key)
+    if presigned_url:
+        return {
+            'success': True,
+            'presigned_url': presigned_url
+        }
+    else:
+        return {
+            'success': False,
+            'message': 'Failed to generate presigned URL'
+        }

@@ -34,7 +34,7 @@ export const chatAnthropic = async (chatBody, writable) => {
         const stream = await client.messages.create({
                     model: selectedModel,
                     system: sanitizedMessages.systemPrompt, 
-                    max_tokens: options.model.tokenLimit || chatBody.max_tokens,
+                    max_tokens: chatBody.max_tokens || options.model.outputTokenLimit,
                     messages: updatedMessages, 
                     stream: true, 
                     temperature: options.temperature,

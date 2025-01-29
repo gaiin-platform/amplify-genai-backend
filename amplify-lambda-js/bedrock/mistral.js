@@ -33,7 +33,7 @@ export const chatMistral = async (chatBody, writable) => {
 
         const payload = {
             prompt: sanitizedMessages,
-            max_tokens: options.model.tokenLimit,
+            max_tokens: chatBody.max_tokens || options.model.outputTokenLimit,
             temperature: options.temperature
         };        
         const command = new InvokeModelWithResponseStreamCommand({

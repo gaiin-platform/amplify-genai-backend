@@ -18,9 +18,23 @@ def get_user(event, data):
 def get_data_owner(event, data):
     return data["user"]
 
+def can_read(event, data):
+    return True
+
+def can_update(event, data):
+    return True
 
 permissions_by_state_type = {
     "/billing/report-generator": {
         "report_generator": can_generate_report,
+    },
+    "/available_models": {
+        "read": can_read
+    },
+    "/supported_models/update": {
+        "update": can_update
+    },
+    "/supported_models/get": {
+        "read": can_read
     },
 }

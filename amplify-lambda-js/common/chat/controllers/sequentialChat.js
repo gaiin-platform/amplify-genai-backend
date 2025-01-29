@@ -9,9 +9,9 @@ import { newStatus } from "../../status.js";
 import { isKilled } from "../../../requests/requestState.js";
 import { getLogger } from "../../logging.js";
 import { sendStatusEventToStream } from "../../streams.js";
-import { getUser, getModel, setModel, getCheapestModelEquivalent, getMostAdvancedModelEquivalent } from "../../../common/params.js";
 import { addContextMessage, createContextMessage } from "./common.js";
 import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
+import {trace} from "../../trace.js";
 
 const logger = getLogger("sequentialChat");
 
@@ -101,9 +101,14 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
 
                 try {
                     const chunkObj = JSON.parse(jsonStr);
-                    if (chunkObj?.d?.delta?.text) {
-                        llmResponse += chunkObj.d.delta.text;
+                    if (chunkObj?.d?.delta?.text) { // for bedrock
+                        llmResponse += chunkObj.d.delta.text;              
+                    } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.delta?.content) {// for openai models
+                        llmResponse += chunkObj.choices[0].delta.content;
+                    } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.message?.content) { // for o1 models
+                        llmResponse += chunkObj.choices[0].message.content;
                     }
+                    
                 } catch (e) {
                     // Log the error and the problematic chunk, but don't throw
                     logger.debug(`Warning: Error parsing chunk: ${e.message}`);
@@ -130,9 +135,12 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             responseStream,
             status);
     }
-
-    // if (chatRequest.options.assistantId.startsWith('astgp')) {
-    if ((chatRequest.options.assistantId === 'astgp/77cf78dd-172e-4660-ab25-e45bcc8d5876' || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {
+    
+    trace(requestId, ["LLM Complete Response"], {data: llmResponse});
+    // console.log("--llm response: ", llmResponse );
+                                                   //prod ast
+    if ((chatRequest.options.analysisCategories || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && 
+       ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {
         logger.debug("Performing AI Analysis on conversationId:", chatRequest.options.conversationId);
         analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
             logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);

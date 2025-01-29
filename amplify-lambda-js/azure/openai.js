@@ -5,7 +5,10 @@
 import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
-import {additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
+import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
+import { Transform } from "stream";
+import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
+import {extractKey} from "../datasource/datasources.js";
 
 const logger = getLogger("openai");
 
@@ -29,47 +32,13 @@ const isOpenAIEndpoint = (url) => {
     return url.startsWith("https://api.openai.com");
 }
 
-async function includeImageSources(dataSources, messages, model) {
-    if (!dataSources || dataSources.length === 0)  return messages;
-    const msgLen = messages.length - 1;
-    // does not support images
-    if (model === "gpt-35-turbo") {
-        messages[msgLen]['content'] += "\n At the end of your response, please let the user know the model GPT 3.5 does not support images. Advise them to try another GPT model.";
-        return messages;
-    }
-
-    let imageMessageContent = []
-    for (let i = 0; i < dataSources.length; i++) {
-        const ds = dataSources[i];
-        const encoded_image = await getImageBase64Content(ds);
-        if (encoded_image) {
-            imageMessageContent.push( 
-                { "type": "image_url",
-                  "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
-                } 
-            )
-        }
-    }
-
-    
-    messages[msgLen]['content'] = [{ "type": "text",
-                                     "text": additionalImageInstruction
-                                    }, 
-                                    ...imageMessageContent, 
-                                    { "type": "text",
-                                        "text": messages[msgLen]['content']
-                                    }
-                                  ]
-
-    return messages 
-}
 
 export const chat = async (endpointProvider, chatBody, writable) => {
     let body = {...chatBody};
     const options = {...body.options};
     delete body.options;
-
-    const modelId = (options.model && options.model.id) || "gpt-4-1106-Preview";
+    const model = options.model;
+    const modelId = (model && model.id) || "gpt-4-1106-Preview";
 
     let tools = options.tools;
     if(!tools && options.functions){
@@ -90,12 +59,28 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     logger.debug("Calling OpenAI API with modelId: "+modelId);
 
-    const data = {
+    let data = {
        ...body,
+       model: modelId,
         "stream": true,
     };
 
-    data.messages = await includeImageSources(body.imageSources, data.messages, data.model);
+    if (data.max_tokens > model.outputTokenLimit) {
+        data.max_tokens = model.outputTokenLimit
+    }
+
+    // append additional system prompt
+    if (model.systemPrompt) {
+        data.messages[0].content += `\n${model.systemPrompt}`
+    }
+
+    if (!model.supportsSystemPrompts) {
+        data.messages = data.messages.map(m => { 
+            return (m.role === 'system') ? {...m, role: 'user'} : m}
+        );
+    }
+
+    data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
 
     if(tools){
         data.tools = tools;
@@ -109,8 +94,9 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     const config = await endpointProvider(modelId);
 
     const url = config.url;
+    const isOpenAiEndpoint = isOpenAIEndpoint(url);
 
-    const headers = isOpenAIEndpoint(url) ?
+    const headers = isOpenAiEndpoint ?
         {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ' + config.key,
@@ -120,8 +106,18 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    if(isOpenAIEndpoint(url)){
-        data.model = translateModelToOpenAI(body.model);
+    const isO1model = ["o1-mini", "o1-preview"].includes(modelId);
+
+    if (isOpenAiEndpoint && !isO1model) data.model = translateModelToOpenAI(body.model);
+
+    if (isO1model) {
+        data = {max_completion_tokens: model.outputTokenLimit,
+                messages: data.messages
+                }
+        if (isOpenAiEndpoint) {
+            data.stram = true
+            // data.stream_options = {"include_usage": True}
+        }
     }
 
     logger.debug("Calling OpenAI API with url: "+url);
@@ -138,17 +134,47 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 responseType: 'stream'
             })
                 .then(response => {
-                    // Pipe the response stream to the writable stream
-                    response.data.pipe(writableStream);
 
+                    if (isO1model && !isOpenAiEndpoint) { // azure currently does not support streaming 
+
+                        const transformStream = new Transform({
+                            transform(chunk, encoding, callback) {
+                                // console.log("O1 response raw: ", chunk.toString());
+                                // Convert chunk to string, remove newlines, and add 'data: ' prefix
+                                const modifiedData = 'data: ' + chunk.toString().replace(/\n/g, '');
+                                // console.log("modifiedData: ", chunk.toString());
+
+                                this.push(modifiedData);
+                                callback();
+                            }
+                        });
+                        response.data
+                        .pipe(transformStream)
+                        .pipe(writableStream);
+
+                    } else {
+                        response.data.pipe(writableStream);
+                    }
+                    // writableStream.destroy(new Error('Forced stream error'));
+                    
                     // Handle the 'finish' event to resolve the promise
                     writableStream.on('finish', resolve);
 
                     // Handle errors
-                    response.data.on('error', reject);
-                    writableStream.on('error', reject);
+                    response.data.on('error', (err) => {
+                        sendErrorMessage(writableStream);
+                        reject(err);
+                    });
+                    
+                    writableStream.on('error', (err) => {
+                        sendErrorMessage(writableStream);
+                        reject(err);
+                    });
+                    
                 })
                 .catch((e)=>{
+                    sendErrorMessage(writableStream);
+                    
                     if(e.response && e.response.data) {
                         console.log("Error invoking OpenAI API: ",e.response.statusText);
 
@@ -172,4 +198,59 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     }
 
     return streamAxiosResponseToWritable(url, writable);
+}
+
+
+async function includeImageSources(dataSources, messages, model, responseStream) {
+    if (!dataSources || dataSources.length === 0)  return messages;
+    const msgLen = messages.length - 1;
+    // does not support images
+    if (!model.supportsImages) {          
+        messages[msgLen]['content'] += doesNotSupportImagesInstructions(model.name);
+        return messages;
+    }
+
+    sendStateEventToStream(responseStream, {
+        sources: {
+            images: {
+                sources: dataSources.map(ds => {
+                    return {...ds, contentKey: extractKey(ds.id)}
+                })
+            }
+        }
+      });
+    const retrievedImages = [];
+
+    let imageMessageContent = [];
+    
+    for (let i = 0; i < dataSources.length; i++) {
+        const ds = dataSources[i];
+        const encoded_image = await getImageBase64Content(ds);
+        if (encoded_image) {
+            retrievedImages.push({...ds, contentKey: extractKey(ds.id)});
+            imageMessageContent.push( 
+                { "type": "image_url",
+                  "image_url": {"url": `data:${ds.type};base64,${encoded_image}`, "detail": "high"}
+                } 
+            )
+        }
+    }
+    
+    if (retrievedImages.length > 0) {
+        sendStateEventToStream(responseStream, {
+            sources: { images: { sources: retrievedImages} }
+          });
+    }
+
+    // message must be a user message
+    messages[msgLen]['content'] = [{ "type": "text",
+                                     "text": additionalImageInstruction
+                                    }, 
+                                    ...imageMessageContent, 
+                                    { "type": "text",
+                                        "text": messages[msgLen]['content']
+                                    }
+                                  ]
+
+    return messages 
 }

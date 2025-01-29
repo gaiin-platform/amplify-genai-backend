@@ -9,15 +9,17 @@ import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
-import {claudeTransform, mistralTransform} from "./chat/events/bedrock.js";
+import {bedrockConverseTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
+import {getMaxTokens} from "./params.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
 import {getContextMessages} from "./chat/rag/rag.js";
-import {ModelID, Models} from "../models/models.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
+import {createBlockDetector} from "./chat/controllers/blockDetector.js";
+import {localKill} from "../requests/requestState.js";
 
 const logger = getLogger("chatWithData");
 
@@ -187,7 +189,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
     // Query for related information from RAG
     const {messages:ragContextMsgs, sources} = (ragDataSources.length > 0 && !params.options.skipRag) ?
-        await getContextMessages(chatFn, params, chatRequestOrig, ragDataSources) :
+        await getContextMessages(params, chatRequestOrig, ragDataSources) :
         {messages:[], sources:[]};
 
     if(ragDataSources.length > 0 && !params.options.skipRag){
@@ -225,8 +227,9 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     logger.debug(`Chat with data called with request id ${requestId}`);
 
     const account = params.account;
-    const model = Models[params.model.id];
+    const model = params.model;
     const options = params.options || {};
+    const details = {userSetMaxTokenLimit: getMaxTokens(params)};
 
     let srcPrefix = options.source || defaultSource;
 
@@ -236,7 +239,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     let totalTokens = 0;
     const tokenReporting = async (id, tokenCount) => {
         totalTokens += tokenCount;
-        await recordUsage(account, requestId, model, tokenCount, 0, {});
+        await recordUsage(account, requestId, model, tokenCount, 0, details);
         logger.debug(`Recorded request tokens for ${totalTokens}/${id}`);
     }
 
@@ -250,7 +253,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // trim the message history to fit.
     let msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
     const minTokensForContext = (dataSources && dataSources.length > 0) ? 1000 : 0;
-    const maxTokensForMessages = model.tokenLimit - tokenLimitBuffer - minTokensForContext
+    const maxTokensForMessages = model.inputContextWindow - tokenLimitBuffer - minTokensForContext
     if(msgTokens > maxTokensForMessages) {
         chatRequest.messages = fitMessagesInTokenLimit(chatRequest.messages, maxTokensForMessages);
     }
@@ -261,7 +264,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
     logger.debug(`Total tokens in messages: ${msgTokens}`);
 
-    const maxTokens = model.tokenLimit - (msgTokens + tokenLimitBuffer);
+    const maxTokens = model.inputContextWindow - (msgTokens + tokenLimitBuffer);
 
     logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id} with a buffer of ${tokenLimitBuffer}.`)
 
@@ -271,8 +274,13 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     const increment = 100;
 
     // forward bill for 100 tokens, we will account for this at the end
-    await recordUsage(account, requestId, model, 0, increment, {});
+    await recordUsage(account, requestId, model, 0, increment, details);
 
+    // This is a block detector that is used to detect the end of an assistant operation
+    // and automatically ignore the rest of the output. If it isn't set, nothing will
+    // happen, it will just return the input.
+    let responseStreamClosed = false;
+    const blockTerminator = createBlockDetector(options.blockTerminator);
     // This function is used to transform the output of the LLM provider into
     // a format that can be streamed back to the client. It translates from the
     // native streaming format of the LLM provider to the format expected by the
@@ -287,22 +295,29 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         outputTokenCount++;
         if(outputTokenCount % increment === 0){
             logger.debug(`Recording incremental output token count: ${increment}`);
-            recordUsage(account, requestId, model, 0, increment, {});
+            recordUsage(account, requestId, model, 0, increment, details);
         }
 
         const selectedModel = model.id;
         let result;
-        if (selectedModel.includes("gpt")) {
+        let countTokens = true;
+        if (selectedModel.includes("gpt") || selectedModel.includes("o1")) {
             result = openAiTransform(event);  
             
-        } else if (selectedModel.includes("anthropic")) {
-            result = claudeTransform(event);
-
-        } else if (selectedModel.includes("mistral")) { // mistral 7b and mixtral 7x8b
-            result = mistralTransform(event);
+        } else if (model.provider === 'Bedrock') {
+            countTokens = false;
+            result = bedrockConverseTransform(event);
+        }
+ 
+        if(result && result.d){
+            const [blockEnded, remaining] = blockTerminator(result.d);
+            if(blockEnded){
+                result.d = remaining;
+                //localKill(account, requestId);
+            }
         }
 
-        if(!result){
+        if(countTokens && !result){
             outputTokenCount--;
         }
 
@@ -445,11 +460,12 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
     responseStream.end();
 
+
     logger.debug(`There were ${inputTokenCount} tokens in the request. Generated ${outputTokenCount} tokens in output.`)
 
     const billAdjustment = increment - (outputTokenCount % increment);
     if(billAdjustment > 0) {
-        await recordUsage(account, requestId, model, 0, -1 * billAdjustment, {});
+        await recordUsage(account, requestId, model, 0, -1 * billAdjustment, details);
         logger.debug("Remainder usage recorded.");
     }
 

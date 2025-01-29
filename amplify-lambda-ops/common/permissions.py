@@ -12,6 +12,12 @@ def can_get_ops(user, data):
     """
     return True
 
+def can_write(user, data):
+    return True
+
+def can_delete(user, data):
+    return True
+
 
 """
 Every service must define the permissions for each operation
@@ -25,4 +31,13 @@ permissions_by_state_type = {
     "/ops/get": {
         "get": can_get_ops
     },
+    "/ops/get_all": {
+        "get": can_get_ops
+    },
+    "/ops/register" : {
+        "write": can_write
+    },
+    "/ops/delete" : {
+        "delete": can_delete
+    }
 }
