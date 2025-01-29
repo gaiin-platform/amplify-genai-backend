@@ -100,11 +100,21 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
     model_result = get_supported_models()
     # if there was an error or there were models in the table then we can return the value like normal 
     # otherwise we need to run the fill model table
-    if (not model_result['success'] or model_result.get('data', {})):
+    if (not model_result['success'] or models_are_current(model_result.get('data', {})) ):
         return model_result
-    
+    print("Models are not popluated or are outdated")
     load_model_rate_table()
     return get_supported_models()
+
+def models_are_current(model_data):
+    if not model_data: return False
+
+    required_cols_set = set(dynamodb_to_internal_field_map.values())
+    
+    # Check if any of these columns are missing for the first model
+    first_model = next(iter(model_data.values())) if model_data else {}
+    existing_columns = set(first_model.keys()) if first_model else set()
+    return required_cols_set.issubset(existing_columns)
 
 
 def get_supported_models():
