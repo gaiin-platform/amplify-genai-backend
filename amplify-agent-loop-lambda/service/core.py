@@ -66,7 +66,6 @@ def common_handler(operation, func_schema, **optional_params):
                 args["access_token"] = access_token
 
 
-            print(f"Args: {args}")
             print("Invoking operation")
             response = operation(**args)
 
@@ -83,9 +82,6 @@ def route(event, context, current_user, name, data):
     try:
         # get the request path from the event and remove the first component...if there aren't enough components
         # then the path is invalid
-        print(f"Event: {event}")
-        print(f"Data: {data}")
-
         target_path_string = event.get('path', event.get('rawPath', ''))
         print(f"Route: {target_path_string}")
 

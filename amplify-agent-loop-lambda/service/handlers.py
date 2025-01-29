@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 from botocore.exceptions import ClientError
 
-from service.session_files import create_file_tracker
+from service.session_files import create_file_tracker, get_presigned_url_by_id
 
 
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -181,7 +181,6 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
     }
 )
 def handle_event(current_user, access_token, session_id, prompt, metadata=None):
-    print(f"[{session_id}] Handling event")
 
     try:
         work_directory = get_working_directory(session_id)
@@ -197,6 +196,8 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                 description=f"Any files you would like to save/write MUST be saved in {work_directory}. It is the only writable directory."
             )
         ]
+        environment = Environment()
+        action_registry = ActionRegistry()
 
         if 'assistant' in metadata:
             assistant = metadata['assistant']
@@ -207,25 +208,23 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                     name="What to Do",
                     description=assistant['instructions']
                 ))
+            ops = assistant.get("data",{}).get("operations", [])
+            print(f"Assistant operations: {ops}")
+            op_tools = ops_to_tools(ops)
+            for op_tool in op_tools:
+                print(f"Registering tool: {op_tool['tool_name']}: {op_tool['description']}")
+                action_registry.register(
+                    Action(
+                        name=op_tool['tool_name'],
+                        function=op_tool["function"],
+                        description=op_tool["description"],
+                        args=op_tool.get("args",{}),
+                        output=op_tool.get("output", {}),
+                        terminal=op_tool.get("terminal", False)
+                    )
+                )
 
         model = metadata.get('agent_model', os.getenv("AGENT_MODEL"))
-
-        environment = Environment()
-        action_registry = ActionRegistry()
-
-        # op_tools = ops_to_tools(action_context)
-        # for op_tool in op_tools:
-        #     action_registry.register_action(
-        #         Action(
-        #             name=op_tool['tool_name'],
-        #             function=op_tool["function"],
-        #             description=op_tool["description"],
-        #             args=op_tool.get("args",{}),
-        #             output=op_tool.get("output", {}),
-        #             terminal=op_tool.get("terminal", False)
-        #         )
-        #     )
-
 
         llm = create_llm(access_token, metadata.get('model', model))
 
@@ -310,6 +309,52 @@ def get_working_directory(session_id):
     work_directory = os.path.join(work_directory, session_id)
     return work_directory
 
+def build_response(
+        session_id: str,
+        current_user: str,
+        processed_result: List,
+        file_results: Dict = None,
+        session_files: Dict = None
+) -> Dict:
+    """
+    Build a standardized response including files and their version history.
+    """
+    print(f"Building response for session {session_id}")
+    response = {
+        "session": session_id,
+        "handled": True,
+        "result": processed_result
+    }
+
+    if session_files:
+        # Transform version info in session_files to use version_file_id
+        transformed_files = {}
+        for file_id, file_info in session_files.items():
+            file_entry = {
+                "original_name": file_info["original_name"],
+                "size": file_info["size"],
+                "last_modified": file_info["last_modified"]
+            }
+
+            if "versions" in file_info:
+                file_entry["versions"] = [
+                    {
+                        "version_file_id": v.get("s3_name", "").rsplit('.', 1)[0],
+                        "timestamp": v["timestamp"],
+                        "hash": v["hash"],
+                        "size": v["size"]
+                    }
+                    for v in file_info["versions"]
+                ]
+
+            transformed_files[file_id] = file_entry
+
+        response["files"] = transformed_files
+
+    if file_results and file_results["status"] == "success" and file_results["files_processed"] > 0:
+        response["changed_files"] = file_results["changed_files"]
+
+    return response
 
 def generate_file_download_urls(
         current_user: str,
@@ -317,18 +362,7 @@ def generate_file_download_urls(
         files: Dict[str, Dict],
         expiration: int = 3600
 ) -> Dict[str, Dict]:
-    """
-    Generate presigned URLs for downloading files from S3.
-
-    Args:
-        current_user (str): The user ID or name
-        session_id (str): The session identifier
-        files (Dict[str, Dict]): Dictionary of files from handle_event response
-        expiration (int): URL expiration time in seconds (default: 1 hour)
-
-    Returns:
-        Dict[str, Dict]: Dictionary mapping file IDs to their download information
-    """
+    """Generate presigned URLs for downloading files from S3."""
     try:
         s3_client = boto3.client('s3')
         bucket = os.getenv('AGENT_STATE_BUCKET')
@@ -336,15 +370,16 @@ def generate_file_download_urls(
         if not bucket:
             raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
-        # First get the index file to map original names to S3 keys
+        # Get the index file for mappings and version history
         index_key = f"{current_user}/{session_id}/index.json"
         try:
-            index_response = s3_client.get_object(
+            response = s3_client.get_object(
                 Bucket=bucket,
                 Key=index_key
             )
-            index_content = json.loads(index_response['Body'].read().decode('utf-8'))
+            index_content = json.loads(response['Body'].read().decode('utf-8'))
             filename_mappings = index_content.get('mappings', {})
+            version_history = index_content.get('version_history', {})
         except ClientError as e:
             print(f"Error reading index file: {e}")
             return {}
@@ -354,13 +389,13 @@ def generate_file_download_urls(
         # Generate signed URLs for each file
         for file_id, file_details in files.items():
             original_name = file_details['original_name']
+            s3_filename = file_details.get('s3_filename')
 
-            # Look up the S3 key from mappings
-            if original_name not in filename_mappings:
-                print(f"Warning: No mapping found for {original_name}")
+            if not s3_filename:
+                print(f"Warning: No S3 filename found for {original_name}")
                 continue
 
-            s3_key = f"{current_user}/{session_id}/{filename_mappings[original_name]}"
+            s3_key = f"{current_user}/{session_id}/{s3_filename}"
 
             try:
                 url = s3_client.generate_presigned_url(
@@ -380,6 +415,10 @@ def generate_file_download_urls(
                     "expires_in": expiration
                 }
 
+                # Add version history if available
+                if "versions" in file_details:
+                    download_info[file_id]["versions"] = file_details["versions"]
+
             except ClientError as e:
                 print(f"Error generating presigned URL for {original_name}: {e}")
                 continue
@@ -391,49 +430,37 @@ def generate_file_download_urls(
         return {}
 
 
-
-def build_response(
-        session_id: str,
-        current_user: str,
-        processed_result: List,
-        file_results: Dict = None,
-        session_files: Dict = None
-) -> Dict:
-    """
-    Build a standardized response including file download URLs.
-
-    Args:
-        session_id (str): The session identifier
-        current_user (str): The user ID or name
-        processed_result (List): The processed conversation result
-        file_results (Dict, optional): Results from file uploads
-        session_files (Dict, optional): Dictionary of tracked files
-
-    Returns:
-        Dict: Standardized response with file information and download URLs
-    """
-    print(f"Building response for session {session_id}")
-    response = {
-        "session": session_id,
-        "handled": True,
-        "result": processed_result
+@vop(
+    path="/vu-agent/get-file-download-urls",
+    tags=["default"],
+    name="getAgentFileDownloadUrls",
+    description="Get file download URLs for a session.",
+    params={
+        "sessionId": "The session ID.",
+        "files": "The files to get download URLs for.",
+        "version_timestamp": "Optional timestamp to get a specific version",
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "sessionId": {"type": "string"},
+            "files": {
+                "type": "array",
+                "description": "The file IDs to get download URLs for.",
+                "items": {"type": "string"}
+            },
+            "version_timestamp": {
+                "type": "string",
+                "description": "Optional timestamp to get a specific version",
+            }
+        },
+        "required": ["sessionId", "files"],
     }
+)
+def get_file_download_urls(current_user, access_token, session_id, files, version_timestamp=None):
+    urls_by_file = {}
+    for file_id in files:
+        url = get_presigned_url_by_id(current_user, session_id, file_id)
+        urls_by_file[file_id] = url
 
-    if session_files:
-        print("Creating download URLs for session files")
-        print(f"Session files: {session_files}")
-
-        # Generate download URLs for all files
-        download_info = generate_file_download_urls(
-            current_user=current_user,
-            session_id=session_id,
-            files=session_files
-        )
-
-        response["files"] = session_files
-        response["downloads"] = download_info
-
-    if file_results and file_results["status"] == "success" and file_results["files_processed"] > 0:
-        response["changed_files"] = file_results["changed_files"]
-
-    return response
+    return urls_by_file

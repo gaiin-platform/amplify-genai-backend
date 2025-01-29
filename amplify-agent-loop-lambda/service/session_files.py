@@ -161,45 +161,82 @@ class LambdaFileTracker:
     def get_tracked_files(self) -> Dict[str, Dict]:
         """
         Get a list of all currently tracked files with their details.
-        Returns a dictionary mapping file IDs to their details.
+        Now uses S3 filenames as IDs for consistency.
         """
         current_files = self.scan_directory()
-
         print(f"Found {len(current_files)} files in working directory")
 
+        # First get index for mappings and existing files
         tracked_files = {}
+        try:
+            index_key = f"{self.current_user}/{self.session_id}/index.json"
+            try:
+                response = self.s3_client.get_object(
+                    Bucket=self.bucket,
+                    Key=index_key
+                )
+                index_data = json.loads(response['Body'].read().decode('utf-8'))
+                filename_mappings = index_data.get('mappings', {})
+                version_history = index_data.get('version_history', {})
+            except ClientError:
+                filename_mappings = {}
+                version_history = {}
 
-        for filepath, info in current_files.items():
-            file_id = str(uuid.uuid4())  # Generate a unique ID for each file
-            tracked_files[file_id] = {
-                "original_name": filepath,
-                "size": info['size'],
-                "last_modified": datetime.fromtimestamp(info['mtime']).isoformat()
-            }
+            for filepath, info in current_files.items():
+                # Get the S3 filename from mappings if it exists
+                if filepath in filename_mappings:
+                    s3_filename = filename_mappings[filepath]
+                    # Remove extension to get base UUID
+                    file_id = s3_filename.rsplit('.', 1)[0]
+                else:
+                    # Generate new UUID for new files
+                    file_id = str(uuid.uuid4())
+
+                tracked_files[file_id] = {
+                    "original_name": filepath,
+                    "size": info['size'],
+                    "last_modified": datetime.fromtimestamp(info['mtime']).isoformat(),
+                    "s3_filename": filename_mappings.get(filepath)
+                }
+
+                # Add version history if available
+                if filepath in version_history:
+                    tracked_files[file_id]["versions"] = version_history[filepath]
+
+        except Exception as e:
+            print(f"Error getting tracked files: {e}")
 
         return tracked_files
 
-    def get_changed_files(self) -> Tuple[List[str], Dict[str, str]]:
-        """Get list of changed/new files and their S3 mappings."""
+    def get_changed_files(self) -> Tuple[List[str], Dict[str, str], Dict[str, Dict]]:
+        """Get list of changed/new files and their S3 mappings, with version info."""
         current_state = self.scan_directory()
         changed_files = []
         filename_mapping = self.existing_mappings.copy()
+        version_info = {}
 
         # Check for modified or new files
         for filepath, current_info in current_state.items():
             if filepath not in self.initial_state or \
                     current_info['hash'] != self.initial_state[filepath]['hash']:
                 changed_files.append(filepath)
-                filename_mapping[filepath] = str(uuid.uuid4()) + Path(filepath).suffix
+                new_s3_name = str(uuid.uuid4()) + Path(filepath).suffix
+                filename_mapping[filepath] = new_s3_name
+                version_info[filepath] = {
+                    's3_name': new_s3_name,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'hash': current_info['hash'],
+                    'size': current_info['size']
+                }
 
-        return changed_files, filename_mapping
+        return changed_files, filename_mapping, version_info
 
     def upload_changed_files(self) -> Dict:
         """Upload changed files to S3 and return upload information."""
         if not self.bucket:
             raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
-        changed_files, filename_mapping = self.get_changed_files()
+        changed_files, filename_mapping, version_info = self.get_changed_files()
 
         if not changed_files:
             return {
@@ -209,26 +246,51 @@ class LambdaFileTracker:
                 "mappings": self.existing_mappings
             }
 
-        upload_results = {}
-
         try:
-            # Create and upload index file
-            index_content = {
-                "user": self.current_user,
-                "session_id": self.session_id,
-                "mappings": filename_mapping,
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            # Get existing index if it exists
+            try:
+                index_key = f"{self.current_user}/{self.session_id}/index.json"
+                response = self.s3_client.get_object(
+                    Bucket=self.bucket,
+                    Key=index_key
+                )
+                existing_index = json.loads(response['Body'].read().decode('utf-8'))
+                # Ensure version_history exists
+                if 'version_history' not in existing_index:
+                    existing_index['version_history'] = {}
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    existing_index = {
+                        "user": self.current_user,
+                        "session_id": self.session_id,
+                        "mappings": {},
+                        "version_history": {}
+                    }
+                else:
+                    raise
 
-            index_key = f"{self.current_user}/{self.session_id}/index.json"
+            # Update version history while maintaining backward compatibility
+            for filepath, version_data in version_info.items():
+                if filepath not in existing_index['version_history']:
+                    existing_index['version_history'][filepath] = []
+
+                # Add new version
+                existing_index['version_history'][filepath].append(version_data)
+
+            # Update current mappings
+            existing_index['mappings'].update(filename_mapping)
+            existing_index['timestamp'] = datetime.utcnow().isoformat()
+
+            # Upload index file
             self.s3_client.put_object(
                 Bucket=self.bucket,
                 Key=index_key,
-                Body=json.dumps(index_content, indent=2),
+                Body=json.dumps(existing_index, indent=2),
                 ContentType='application/json'
             )
 
             # Upload changed files
+            upload_results = {}
             for original_path in changed_files:
                 safe_name = filename_mapping[original_path]
                 s3_key = f"{self.current_user}/{self.session_id}/{safe_name}"
@@ -236,11 +298,7 @@ class LambdaFileTracker:
 
                 try:
                     with open(local_path, 'rb') as file:
-                        self.s3_client.upload_fileobj(
-                            file,
-                            self.bucket,
-                            s3_key
-                        )
+                        self.s3_client.upload_fileobj(file, self.bucket, s3_key)
                     upload_results[original_path] = {
                         "status": "success",
                         "s3_key": s3_key
@@ -255,7 +313,7 @@ class LambdaFileTracker:
                 "status": "success",
                 "message": f"Processed {len(changed_files)} files",
                 "files_processed": len(changed_files),
-                'changed_files': changed_files,
+                "changed_files": changed_files,
                 "mappings": filename_mapping,
                 "upload_results": upload_results,
                 "index_location": {
@@ -291,3 +349,78 @@ def create_file_tracker(current_user: str, session_id: str, working_dir: str) ->
     tracker = LambdaFileTracker(current_user, session_id, working_dir)
     tracker.start_tracking()
     return tracker
+
+
+def get_file_versions(self, filepath: str) -> Optional[List[Dict]]:
+    """Get version history for a specific file."""
+    try:
+        index_key = f"{self.current_user}/{self.session_id}/index.json"
+        response = self.s3_client.get_object(
+            Bucket=self.bucket,
+            Key=index_key
+        )
+        index_data = json.loads(response['Body'].read().decode('utf-8'))
+        return index_data.get('version_history', {}).get(filepath, [])
+    except Exception as e:
+        print(f"Error retrieving file versions: {e}")
+        return None
+
+def get_presigned_url_by_id(current_user: str, session_id: str, file_id: str, expiration: int = 3600) -> Optional[str]:
+    """
+    Generate a presigned URL for a file version in the agent state bucket.
+
+    Args:
+        current_user (str): The user ID
+        session_id (str): The session ID containing the file
+        file_id (str): The UUID string representing either the current file or a specific version
+    """
+    s3_client = boto3.client('s3')
+    bucket = os.getenv('AGENT_STATE_BUCKET')
+
+    if not bucket:
+        raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+
+    index_key = f"{current_user}/{session_id}/index.json"
+    try:
+        response = s3_client.get_object(
+            Bucket=bucket,
+            Key=index_key
+        )
+        index_content = json.loads(response['Body'].read().decode('utf-8'))
+
+        # First check current mappings
+        filename_mappings = index_content.get('mappings', {})
+        for _, s3_filename in filename_mappings.items():
+            if s3_filename.rsplit('.', 1)[0] == file_id:
+                s3_key = f"{current_user}/{session_id}/{s3_filename}"
+                break
+        else:
+            # If not found in current mappings, check version history
+            version_history = index_content.get('version_history', {})
+            s3_key = None
+            for _, versions in version_history.items():
+                for version in versions:
+                    if version.get('s3_name', '').rsplit('.', 1)[0] == file_id:
+                        s3_key = f"{current_user}/{session_id}/{version['s3_name']}"
+                        break
+                if s3_key:
+                    break
+
+            if not s3_key:
+                print(f"File ID {file_id} not found in session mappings or version history")
+                return None
+
+        # Generate the presigned URL
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': bucket,
+                'Key': s3_key
+            },
+            ExpiresIn=expiration
+        )
+        return url
+
+    except ClientError as e:
+        print(f"Error generating presigned URL: {e}")
+        return None

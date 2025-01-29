@@ -9,15 +9,17 @@ from aiohttp import payload_type
 from agent.game.action import ActionContext
 from agent.tool import register_tool, get_tool_metadata
 
-def ops_to_tools(action_context):
-    apis = get_all_apis(action_context)
-
+def ops_to_tools(apis):
     tools = []
     for api in apis:
         tool = op_to_tool(api)
         tools.append(tool)
 
     return tools
+
+def get_ops_tools(action_context):
+    apis = get_all_apis(action_context)
+    return ops_to_tools(apis)
 
 def op_to_tool(api):
     name = api['name']
@@ -26,8 +28,8 @@ def op_to_tool(api):
     desc = api.get('description', "")
     params = api.get('params', [])
 
-    def api_func_invoke(action_context: ActionContext, payload: dict) -> dict:
-        return call_api(action_context, name, payload)
+    def api_func_invoke(action_context: ActionContext, payload: dict = {}) -> dict:
+        return call_api(action_context=action_context, name=name, payload=payload)
 
     api_func = api_func_invoke
 
@@ -36,10 +38,10 @@ def op_to_tool(api):
         "properties": {
             "payload": {
                 "type": "object",
-                "description": f"The payload should contains: {json.dumps(params)}"
+                "description": f"The payload should contain the following keys: {json.dumps(params)}"
             }
         },
-        "required": ["data"]
+        "required": ["payload"]
     }
 
     tool_metadata = get_tool_metadata(

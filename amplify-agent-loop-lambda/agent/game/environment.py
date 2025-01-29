@@ -33,6 +33,11 @@ class Environment:
 
             action_context.send_event("environment/action/execute", {"action": action, "args": args_copy})
 
+            print(f"##################################")
+            print(f"Calling function: {action.function}")
+            print(f"Args: {args_copy}")
+            print(f"##################################")
+
             result = action.execute(**args_copy)
 
             action_context.send_event("environment/action/result", {"action": action, "result": result})
