@@ -167,14 +167,25 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
     description="Trigger an agent to handle an event.",
     params={
         "sessionId": "The session ID.",
-        "eventType": "The name of the event type.",
-        "eventData": "The data for the event.",
+        "prompt": "The prompt for the agent.",
+        "metadata": "Additional properties.",
     },
     schema={
         "type": "object",
         "properties": {
             "sessionId": {"type": "string"},
-            "prompt": {"type": "string"},
+            "prompt": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string"},
+                        "content": {"type": "string"}
+                    },
+                    "required": ["role", "content"],
+                    "additionalProperties": True
+                }
+            },
             "metadata": {"type": "object"},
         },
         "required": ["prompt", "sessionId"],
@@ -252,7 +263,11 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             "work_directory": work_directory,
         }
 
-        user_input = prompt
+        # Remove any messages from the prompt that aren't user or assistant
+        prompt = [entry for entry in prompt if entry['role'] in ['user', 'assistant']]
+        # Combine all of the content attributes of the prompt entries into one string separated by newlines and
+        # using the template: {role}: {content}
+        user_input = "\n".join([f"{entry['role']}: {entry['content']}" for entry in prompt])
 
         result = agent.run(user_input=user_input, action_context_props=action_context_props)
 
