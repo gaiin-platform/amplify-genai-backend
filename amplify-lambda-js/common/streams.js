@@ -333,3 +333,9 @@ export const findResult = (result) => {
     const resultKey = findResultKey(result);
     return result[resultKey];
 }
+
+
+export const sendErrorMessage = (writable, errorMessage = "Error retrieving response. Please try again.") => {
+    sendDeltaToStream(writable, "answer", {delta: {text: errorMessage}});
+    writable.end();
+}

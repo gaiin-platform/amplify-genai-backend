@@ -1,4 +1,4 @@
-service: amplify-${self:custom.stageVars.DEP_NAME}-ops
+service: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops
 
 frameworkVersion: "3"
 
@@ -49,6 +49,8 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     LAMBDA_OPS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-ops-iam-policy
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
 
 
@@ -65,6 +67,30 @@ functions:
     events:
       - http:
           path: ops/get
+          method: post
+          cors: true
+  
+  get_all_ops:
+    handler: service/core.get_all_ops
+    events:
+      - http:
+          path: ops/get_all
+          method: get
+          cors: true
+
+  register_ops:
+    handler: service/core.write_ops
+    events:
+      - http:
+          path: ops/register
+          method: post
+          cors: true
+
+  delete_op:
+    handler: service/core.delete_op
+    events:
+      - http:
+          path: ops/delete
           method: post
           cors: true
 
@@ -84,6 +110,7 @@ resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"

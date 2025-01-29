@@ -2,10 +2,9 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {newStatus} from "../common/status.js";
-import {getMostAdvancedModelEquivalent} from "../common/params.js"
 import {csvAssistant} from "./csv.js";
-import {ModelID, Models} from "../models/models.js";
 import {getLogger} from "../common/logging.js";
+import {getChatFn, getCheapestModel} from "../common/params.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
@@ -34,20 +33,24 @@ const defaultAssistant = {
         "not be as good as a specialized assistant.",
     handler: async (llm, params, body, ds, responseStream) => {
 
-        const model = (body.options && body.options.model) ?
-            Models[body.options.model.id] : (Models[body.model]);
+                        // already ensures model has been mapped to our backend version in router
+        const model = (body.options && body.options.model) ? body.options.model : params.model;
 
         logger.debug("Using model: ", model);
 
         const {dataSources} = await getDataSourcesByUse(params, body, ds);
 
-        const limit = 0.95 * (model.tokenLimit - (body.max_tokens || 1000));
+        const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
         const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
         const aboveLimit = requiredTokens >= limit;
 
-        logger.debug(`Model: ${model.id}, tokenLimit: ${model.tokenLimit}`)
+        logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
         logger.debug(`RAG Only: ${body.options.ragOnly}, dataSources: ${dataSources.length}`)
         logger.debug(`Required tokens: ${requiredTokens}, limit: ${limit}, aboveLimit: ${aboveLimit}`);
+
+        if(params.blockTerminator) {
+            body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
+        }
 
         if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
@@ -93,7 +96,8 @@ const batchAssistant = {
                 params.account.user,
                 `${params.account.user}/tasks/${date}/chat-${time}-${uuidv4()}.json`,
                 updatedBody,
-                params.options
+                getCheapestModel(params),
+                params.options,
             )
             await sendAssistantTaskToQueue(task);
             sendDeltaToStream(responseStream, "answer","Message queued.");
@@ -208,16 +212,18 @@ Please choose the best assistant to help with the task:
 ${body.messages.slice(-1)[0].content}
 ---------------
 `;
-
-    const model =  getMostAdvancedModelEquivalent(body.options.model);
-    
-
-    const updatedBody = {messages, options:{model}};
+    const model = body.options.advancedModel;
+    const updatedBody = {messages, options:{ model }};
 
     const names = assistants.map((a) => a.name);
 
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model, body, writable, context);
+    }
+    const llmClone = llm.clone(chatFn);
+
     //return await llm.promptForChoice({messages, options:{model}}, names, []);
-    const result = await llm.promptForData(updatedBody, [], prompt,
+    const result = await llmClone.promptForData(updatedBody, [], prompt,
         {bestAssistant:names.join("|")}, null, (r) => {
        return r.bestAssistant && assistants.find((a) => a.name === r.bestAssistant);
     }, 3);
@@ -259,27 +265,24 @@ const isUserDefinedAssistant = (assistantId) => {
 export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
     logger.info(`Choose Assistant for Request `);
 
-    // finding rename and code interpreter calls at the same time causes conflict with + -  code interpreter assistant 
-    const index = assistants.findIndex(assistant => assistant.name === 'Code Interpreter Assistant');
-
-    // if (body.options && body.options.skipCodeInterpreter || body.options.api_accessed) {
-    //     if (index !== -1) assistants.splice(index, 1);
-    // } else {
-    //     if (index === -1) assistants.push(codeInterpreterAssistant);
-    // }
-
-
-
-    const clientSelectedAssistant = (body.options && body.options.assistantId) ?
-        body.options.assistantId : null;
+    const clientSelectedAssistant = body.options?.assistantId ?? null;
 
     let selectedAssistant = null;
     if(clientSelectedAssistant) {
-        logger.info(`Client Selected Assistant`);
+        logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group ast
-        const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : llm.params.account.user;
-        selectedAssistant = await getUserDefinedAssistant(defaultAssistant, ast_owner, clientSelectedAssistant);
-
+        const user = llm.params.account.user;
+        const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : user;
+        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, ast_owner, clientSelectedAssistant);
+        if (!selectedAssistant) {
+            llm.sendStatus(newStatus(
+                {   inProgress: false,
+                    message: "Selected Assistant Not Found",
+                    icon: "assistant",
+                    sticky: true
+                }));
+            llm.forceFlush();
+        }
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
         //codeInterpreterAssistant;
@@ -288,11 +291,12 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         console.log("ARTIFACT MODE DETERMINED")
     }
 
-    const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
-    llm.sendStatus(status);
-    llm.forceFlush();
-
+    
     if(selectedAssistant === null) {
+        const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
+        llm.sendStatus(status);
+        llm.forceFlush();
+
         // Look for any body.messages.data.state.currentAssistant going in reverse order through the messages
         // and choose the first one that is found.
         const currentAssistant = body.messages.map((m) => {
@@ -310,7 +314,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         }
 
         const start = new Date().getTime();
-        const selectedAssistantName = (availableAssistants.length > 1) ?
+        const selectedAssistantName = (availableAssistants.length > 1 ) ?
             await chooseAssistantForRequestWithLLM(llm, body, dataSources,
                 availableAssistants) : availableAssistants[0].name;
         const timeToChoose = new Date().getTime() - start;
@@ -319,6 +323,8 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
         selectedAssistant = assistants.find((a) => a.name === selectedAssistantName);
 
+        status.inProgress = false;
+        llm.sendStatus(status);
     }
 
     const selected = selectedAssistant || defaultAssistant;
@@ -331,9 +337,6 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
     
     llm.sendStateEventToStream(stateInfo);
-
-    status.inProgress = false;
-    llm.sendStatus(status);
 
     llm.sendStatus(newStatus(
         {

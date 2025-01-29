@@ -59,6 +59,23 @@ save_data_disclosure_decision_schema = {
     "required": ["email", "acceptedDataDisclosure"],
 }
 
+upload_disclosure_schema = {
+    "type": "object",
+    "properties": {
+        "fileName": {
+            "type": "string",
+        },
+        "contentType": {
+            "type": "string",
+        },
+        "md5": {
+            "type": "string",
+        },
+    },
+    "required": ["md5", "contentType", "fileName"]
+}
+
+
 
 validators = {
     "/data-disclosure/check": {
@@ -69,6 +86,9 @@ validators = {
     },
     "/data-disclosure/latest": {
         "get_latest_data_disclosure": {} # get
+    },
+    "/data-disclosure/upload" : {
+        "upload": upload_disclosure_schema
     },
 }
 
@@ -303,7 +323,7 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('billing' not in access):
+        if ('data-disclosure' not in access):
             # and 'full_access' not in access
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")

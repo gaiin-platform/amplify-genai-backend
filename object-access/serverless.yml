@@ -71,7 +71,7 @@ provider:
     AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
     AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}  
-    HASH_FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-hash-files
+    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
   iam:
     role:
@@ -101,16 +101,8 @@ functions:
           path: /utilities/get_user_groups
           method: get
 
-  in_cognito_amp_groups:
-    handler: cognito_users.in_cognito_amplify_groups
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
-    events:
-      - http:
-          path: /utilities/in_cognito_amp_groups
-          method: post
 
+  
   update_ojbect_perms:
     runtime: python3.11
     handler: object_access.update_object_permissions
@@ -169,6 +161,29 @@ functions:
           method: post
           cors: true
 
+  create_amplify_asts:
+    handler: groups.create_amplify_assistants
+    timeout: 12
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/assistants/amplify
+          method: post
+          cors: true
+
+
+  replace_group_key:
+    handler: groups.replace_group_key
+    timeout: 12
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: /groups/replace_key
+          method: post
+          cors: true
+
   update_members:
     handler: groups.update_members
     layers:
@@ -212,9 +227,32 @@ functions:
           path: /groups/list
           method: get
           cors: true
+  list_all_groups:
+    handler: groups.list_all_groups_for_admins
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/list_all
+          method: get
+          cors: true
 
-  update_assistants:
-    handler: groups.update_assistants
+  
+  update_groups_by_admins:
+    handler: groups.update_ast_admin_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/update
+          method: post
+          cors: true
+
+
+  update_group_assistants:
+    handler: groups.update_group_assistants
     layers:
       - Ref: PythonRequirementsLambdaLayer
     timeout: 30

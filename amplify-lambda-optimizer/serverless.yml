@@ -50,6 +50,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     LAMBDA_OPTIMIZER_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     OBJECT_ACCESS_API_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
 
 

@@ -1,6 +1,6 @@
 {
 	"info": {
-		"_postman_id": "1abf8b77-22b4-4b24-b1c0-10e5350f4995",
+		"_postman_id": "6598f6ff-3b32-4432-897c-2ceb75c597d6",
 		"name": "Amplify_API_Prod",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
 		"_exporter_id": "33931694"
@@ -564,6 +564,9 @@
 		},
 		{
 			"name": "/files/tags/list",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
 			"request": {
 				"auth": {
 					"type": "bearer",
@@ -575,11 +578,11 @@
 						}
 					]
 				},
-				"method": "POST",
+				"method": "GET",
 				"header": [],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"data\": {}\n}",
+					"raw": "",
 					"options": {
 						"raw": {
 							"language": "json"
@@ -598,6 +601,48 @@
 						"files",
 						"tags",
 						"list"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/available_models",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "amp-sampleApiKey",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://prod-api.vanderbilt.ai/available_models",
+					"protocol": "https",
+					"host": [
+						"prod-api",
+						"vanderbilt",
+						"ai"
+					],
+					"path": [
+						"available_models"
 					]
 				}
 			},

@@ -2,8 +2,6 @@
 services:
   amplify-assistants:
     path: ./amplify-assistants
-    dependsOn:
-      - amplify-lambda
 
   amplify-lambda-js:
     path: ./amplify-lambda-js
@@ -15,6 +13,11 @@ services:
 
   chat-billing:
     path: ./chat-billing
+    dependsOn:
+      - amplify-lambda
+
+  data-disclosure:
+    path: ./data-disclosure
     dependsOn:
       - amplify-lambda
   

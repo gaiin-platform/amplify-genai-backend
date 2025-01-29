@@ -188,13 +188,13 @@ create_admin_group_schema = {
             "description": "The name of the group to be created."
         },
         "members": members_schema,
-        },
         "types": {
             "type": "array",
             "items": {
                 "type": "string"
             }
         },
+    },
     "required": ["group_name", "members"]
 }
 
@@ -256,6 +256,22 @@ create_assistant_schema = {
         },
     },
     "required": ["name", "description", "tags", "instructions", "dataSources"]
+}
+
+create_amplify_assistants_group_schema = {
+    "type": "object",
+    "properties": {
+        "assistants": {
+            "type": "array",
+            "items": create_assistant_schema
+            
+        },
+        "members": {
+            "type": "array",
+            "items": {"type": "string"}
+        }
+    },
+    "required": ["assistants", "members"]
 }
 
 update_ast_schema = {
@@ -331,6 +347,40 @@ update_members_perms_schema = {
     "required": ["group_id", "affected_members"]
 }
 
+update_groups_schema = {
+    "type": "object",
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string"},
+                    "amplifyGroups": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "isPublic": {"type": "boolean"},
+                    "supportConvAnalysis": {"type": "boolean"}
+                },
+                "required": ["group_id", "amplifyGroups", "isPublic", "supportConvAnalysis"],
+            "additionalProperties": False
+            }               
+        }
+    },
+    "required": []
+}
+
+replace_key_schema = {
+    "type": "object",
+    "properties": {
+        "groupId": {
+            "type": "string"
+        }
+    },
+    "required": ["groupId"]
+}
+
 validators = {
     "/utilities/update_object_permissions": {
         "update_object_permissions": update_object_permissions
@@ -374,9 +424,21 @@ validators = {
     "/groups/list" : {
         'list': {}
     },
+    "/groups/list_all" : {
+        'list': {}
+    },
     "/groups/members/list" : {
         'list': {}
     },
+    "/groups/update" : {
+        "update": update_groups_schema
+    },
+    "/groups/replace_key" : {
+        "update" : replace_key_schema
+    },
+    "/groups/assistants/amplify": {
+        "create": create_amplify_assistants_group_schema
+    }
 }
 
 

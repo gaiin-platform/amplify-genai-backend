@@ -70,6 +70,10 @@ export const getFileText = async (key) => {
     }
 }
 
+export const doesNotSupportImagesInstructions = (modelName) => {
+    return `\n\n At the end of your response, please let the user know the model ${modelName} does not support images. Advise them to try another model.`;
+}
+
 export const getImageBase64Content = async (dataSource) => {
     const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
     const key = extractKey(dataSource.id)
@@ -393,10 +397,11 @@ export const resolveDataSources = async (params, body, dataSources) => {
         !extractKey(ds.id).startsWith(params.user + "/")
     );
 
-    if (nonUserSources && nonUserSources.length > 0) {
+    if (nonUserSources && nonUserSources.length > 0  || 
+        (body.imageSources && body.imageSources.length > 0)) {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
-        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: ds.key })) : [];
+        const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }

@@ -1,8 +1,3 @@
-# to run this function and update the model rates table:
-# 1. update the chat-billing/model_rates/model_rate_values.csv file,
-# 2. deploy this lambda, 
-# 3. run: ~ serverless invoke --function updateModelRateTable --stage dev --log
-
 import os
 import csv
 import json
@@ -13,8 +8,7 @@ from decimal import Decimal
 # Initialize a DynamoDB client with Boto3
 dynamodb = boto3.resource("dynamodb")
 
-
-def updateModelRateTable(event, context):
+def load_model_rate_table():
     # Retrieve the environment variable for the table name
     table_name = os.environ["MODEL_RATE_TABLE"]
 
@@ -30,36 +24,27 @@ def updateModelRateTable(event, context):
         reader = csv.DictReader(csvfile)
         for row in reader:
             try:
-                # Convert to Decimal instead of float
-                input_cost = Decimal(row["InputCostPerThousandTokens"])
-                output_cost = (
-                    Decimal(row["OutputCostPerThousandTokens"])
-                    if row["OutputCostPerThousandTokens"]
-                    else None
-                )
+                item = dict(row)
 
-                # Each row in the CSV file corresponds to an item in the table
-                item = {
-                    "ModelID": row["ModelID"],
-                    "ModelName": row["ModelName"],
-                    "InputCostPerThousandTokens": input_cost,
-                    "Provider": row["Provider"],
-                }
-
-                # Only add OutputCostPerThousandTokens if it's present
-                if output_cost is not None:
-                    item["OutputCostPerThousandTokens"] = output_cost
+                # Convert specific columns to Decimal (or whatever type you need)
+                item["InputCostPerThousandTokens"] = Decimal(row["InputCostPerThousandTokens"])
+                item["OutputCostPerThousandTokens"] = Decimal(row["OutputCostPerThousandTokens"])
+                
+                item["InputContextWindow"] = Decimal(row["InputContextWindow"])
+                item["OutputTokenLimit"] = Decimal(row["OutputTokenLimit"])
+                item["ExclusiveGroupAvailability"] = []
+                    
+                 # Convert "TRUE" or "FALSE" in any other columns into booleans.
+                for key, value in list(item.items()):
+                    if value == "TRUE":
+                        item[key] = True
+                    elif value == "FALSE":
+                        item[key] = False
 
                 response = table.put_item(Item=item)
             except ClientError as e:
                 print(e.response["Error"]["Message"])
-                return {
-                    "statusCode": 500,
-                    "body": json.dumps("Error updating model rate table."),
-                }
+                return False
 
     # Return a success response after updating the table with all entries
-    return {
-        "statusCode": 200,
-        "body": json.dumps("Model rate table updated successfully."),
-    }
+    return True

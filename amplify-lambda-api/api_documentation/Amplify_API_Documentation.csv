@@ -1,5 +1,24 @@
+Amplify_API_Documentation
 Path,Method,Summary,Expected Data,Responses,Example Body,Example Response,
 https://prod-api.vanderbilt.ai,,,,,,,
+          /available_models,GET,"View a list of available models, including id, name, descriptions, context window size, output token limit, provider, support of base-64 encoded images as data source input, support of system prompts, and any additional system prompts Amplify appends to the model.",,"200: List of available models and Amplify’s set default, cheapest, and advanced models. Content: application/json    models (list of model objects)    default (object)    cheapest (object)    advanced (object)",,"{
+  ""success"": true,
+  ""data"": {
+    ""models"": [
+      {""id"": ""gpt-4o-mini"",
+        ""name"": ""GPT-4o-mini"",
+        ""description"": ""Consider it for its ability to output longer responses and deliver rapid replies with advanced comprehension. GPT-4o Mini is OpenAI’s most cost-efficient small model. Trained on information available through October 2023."",
+        ""inputContextWindow"": 128000,
+        ""outputTokenLimit"": 16384,
+        ""supportsImages"": true,
+        ""provider"": ""Azure"",
+        “supportsSystemPrompts”:true,
+        “systemPrompt”: “Additional prompt”
+      }],
+    ""default”: <model Object>,
+    ""advanced<model Object>,
+    ""cheapest"": <model Object> }
+}",
           /chat,POST," Offers real-time chat capabilities exclusively through streaming. Interact with a selection of the most advanced AI chat models available, including GPT, Claude, and Mistral.","model (string): Required. Options include gpt-35-turbo, gpt-4o, gpt-4o-mini, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0
 temperature (number)
 max_tokens (integer)
