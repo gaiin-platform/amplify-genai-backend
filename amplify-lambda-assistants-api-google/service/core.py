@@ -1,3 +1,5 @@
+from ecdsa.test_pyecdsa import params
+
 from common.ops import vop
 from common.validate import validated
 from integrations.google.forms import create_form, get_form_details, add_question, update_question, delete_question, \
@@ -117,6 +119,12 @@ def get_sheet_names_handler(event, context, current_user, name, data):
     tags=["default"],
     name="insertRows",
     description="Inserts multiple new rows into a Google Sheet.",
+    params={
+        "spreadsheetId": "The ID of the spreadsheet as a string",
+        "rowsData": "An array of arrays, each representing a row to insert",
+        "sheetName": "Optional: The name of the sheet to insert into",
+        "insertionPoint": "Optional: The row number to start insertion at"
+    },
     parameters={
         "type": "object",
         "properties": {
@@ -458,6 +466,12 @@ def get_cell_formulas_handler(event, context, current_user, name, data):
     tags=["default"],
     name="findReplace",
     description="Finds and replaces text in a Google Sheets spreadsheet.",
+    params={
+        "spreadsheetId": "The ID of the spreadsheet",
+        "find": "The text to find",
+        "replace": "The text to replace with",
+        "sheetId": "Optional: The ID of the sheet to perform find/replace on"
+    },
     parameters={
         "type": "object",
         "properties": {
@@ -603,6 +617,11 @@ def apply_conditional_formatting_handler(event, context, current_user, name, dat
     tags=["default"],
     name="executeQuery",
     description="Executes a SQL-like query on a Google Sheets spreadsheet.",
+    params={
+        "spreadsheetId": "The ID of the spreadsheet",
+        "query": "The SQL-like query to execute e.g., a == 1 and b < 34",
+        "sheetName": "(Optional) The name of the sheet to query"
+    },
     parameters={
         "type": "object",
         "properties": {
@@ -952,7 +971,8 @@ def get_events_between_dates_handler(event, context, current_user, name, data):
         "title": "The title of the event",
         "startTime": "The start time of the event in ISO 8601 format",
         "endTime": "The end time of the event in ISO 8601 format",
-        "description": "The description of the event"
+        "description": "Optional: The description of the event",
+        "attendees": "Optional: List of attendees' email addresses"
     },
     parameters={
         "type": "object",
@@ -969,16 +989,19 @@ def get_events_between_dates_handler(event, context, current_user, name, data):
                 "type": "string",
                 "description": "The end time of the event in ISO 8601 format"
             },
-            'description': {
-                'type': ['string'],
-                'description': 'Optional: The description of the event'
+            "description": {
+                "type": "string",
+                "description": "Optional: The description of the event"
             },
-            'attendees': {
-                'type': ['array'],
-                'description': 'Optional: List of attendees\' email addresses'
-            },
+            "attendees": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "Optional: List of attendees' email addresses"
+            }
         },
-        'required': ['title', 'startTime', 'endTime', 'description']
+        "required": ["title", "startTime", "endTime"]
     }
 )
 @validated("create_event")
@@ -2066,6 +2089,13 @@ def compose_and_send_email_handler(event, context, current_user, name, data):
     tags=["default"],
     name="composeEmailDraft",
     description="Composes an email draft.",
+    params={
+        "to": "Recipient email address(es) as a string, comma-separated for multiple recipients",
+        "subject": "Email subject",
+        "body": "Email body content",
+        "cc": "Optional: CC recipient(s) email address(es)",
+        "bcc": "Optional: BCC recipient(s) email address(es)"
+    },
     parameters={
         "type": "object",
         "properties": {
