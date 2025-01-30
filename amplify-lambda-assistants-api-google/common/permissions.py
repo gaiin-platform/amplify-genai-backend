@@ -297,5 +297,6 @@ permissions_by_state_type = {
 
     "/google/integrations/people/remove-contacts-from-group": {
         "remove_contacts_from_group": lambda for_user, with_data: True
-    }
+    },
+
 }
