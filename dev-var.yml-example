@@ -34,3 +34,6 @@ RAG_ASSISTANT_MODEL_ID: "gpt-35-turbo"
 #
 MIN_ACU: "0.5"
 MAX_ACU: "16"
+
+# Var for Admin interface access
+ADMINS:"" #CSV list of email usernames that need admin access. Can add secondary admins once deployed
