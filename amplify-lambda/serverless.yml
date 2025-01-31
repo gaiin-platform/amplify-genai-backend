@@ -371,7 +371,7 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - ${self:provider.environment.PANDOC_LAYER} 
-      #- Ref: PythonRequirementsLambdaLayer
+      - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
