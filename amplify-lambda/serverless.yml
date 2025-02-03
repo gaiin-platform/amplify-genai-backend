@@ -92,6 +92,7 @@ provider:
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
     #AWS_REGION optional for /chat/service.py 
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    DEP_REGION: ${self:custom.stageVars.DEP_REGION}
 
 
   iam:
