@@ -78,6 +78,7 @@ def build_amplify_api_action(current_user, token, data):
     }
 
     def send_request():
+        #print(f"Sending POST request to {url} with payload: {payload}")
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         response.raise_for_status()
 
@@ -338,7 +339,7 @@ def execute_custom_auto(event, context, current_user, name, data):
     params={
         "jobId": "The job ID to fetch the result / status of."
     },
-    schema={
+    parameters={
         "type": "object",
         "properties": {
             "jobId": {"type": "string"}
