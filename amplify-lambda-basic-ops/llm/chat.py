@@ -354,6 +354,13 @@ def chat_simple(access_token, model, system_instructions, prompt_instructions):
 
     access_token = (access_token if access_token else os.getenv("AMPLIFY_API_KEY"))
 
+    if not access_token:
+        raise ValueError("You must provide an access token to the function as a keyword arg or set the "
+                         "environment variable 'AMPLIFY_API_KEY'.")
+
+    if not model:
+        raise ValueError("You must provide a model to the function as a keyword arg.")
+
     response, meta = chat(
         os.getenv("CHAT_ENDPOINT"),
         access_token,
