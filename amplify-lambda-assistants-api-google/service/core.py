@@ -135,18 +135,21 @@ def get_sheet_names_handler(event, context, current_user, name, data):
             "rowsData": {
                 "type": "array",
                 "items": {
-                    "type": "array"
+                    "type": "array",
+                    "items": {
+                        "type": ["string", "number", "boolean"]
+                    }
                 },
-                "description": "An array of arrays, each representing a row to insert"
+                "description": "An array of arrays, each representing a row to insert, where each cell contains a string, number, or boolean. Make sure and create black entries for empty cells."
             },
             "sheetName": {
                 "type": "string",
-                "description": "The name of the sheet to insert into (leave blank for first sheet)",
+                "description": "The name of the sheet to insert into (leave blank for first sheet)"
             },
             "insertionPoint": {
                 "type": "integer",
                 "description": "The row number to start insertion at",
-                "default": 1  # Start at first row by default
+                "default": 1
             }
         },
         "required": ["spreadsheetId", "rowsData"]
