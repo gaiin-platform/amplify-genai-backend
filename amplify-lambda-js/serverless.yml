@@ -42,7 +42,6 @@ provider:
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
 
     #Combined Vars:
-    RAG_ASSISTANT_MODEL_ID: ${self:custom.stageVars.RAG_ASSISTANT_MODEL_ID}
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
     S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
