@@ -129,6 +129,9 @@ def resolve(data, path):
 
 def prompt_llm(prompt, system_prompt, access_token=None, model="gpt-4o"):
     # Placeholder response for demonstration purposes
+
+    model = model or "gpt-4o"
+
     response = chat_simple(access_token, model, system_prompt, prompt)
 
     return response
