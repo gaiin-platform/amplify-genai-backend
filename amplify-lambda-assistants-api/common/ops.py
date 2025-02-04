@@ -20,7 +20,7 @@ def op(tags=None, path="", name="", description="", params=None, method="POST"):
         return wrapper
     return decorator
 
-def vop(tags=None, path="", name="", description="", params=None, schema=None):
+def vop(tags=None, path="", name="", description="", params=None, parameters=None):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
