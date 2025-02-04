@@ -250,6 +250,7 @@ def create_api_key_for_user(user, api_key) :
             print(f"API key for user {user} created successfully")
             return {
                 'success': True,
+                'data': {'id': id},
                 'message': 'API key created successfully'
             }
         else:
