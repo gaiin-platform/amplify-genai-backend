@@ -12,6 +12,9 @@ import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
+import {newStatus} from "../common/status.js";
+import {sendDeltaToStream, sendResultToStream, sendStateEventToStream} from "../common/streams.js";
+import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -311,7 +314,133 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             let blockTerminator = null;
 
-            if(assistant.data?.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+            if(assistant.data && assistant.data.opsLanguageVersion === "v4") {
+
+                const statusInfo = newStatus(
+                    {
+                        animated: true,
+                        inProgress: true,
+                        sticky: true,
+                        summary: `Thinking...`,
+                        icon: "info",
+                    }
+                );
+
+                const response = invokeAgent(
+                    params.account.accessToken,
+                    params.options.conversationId,
+                    body.messages,
+                    {assistant}
+                );
+                llm.sendStatus(statusInfo);
+                llm.forceFlush();
+                llm.forceFlush();
+
+                //const result = await response;
+                var stopPolling = false;
+                var result = null;
+                await Promise.race([
+                    response.then(r => {
+                        stopPolling = true;
+                        result = r;
+                        return r;
+                    }),
+                    listenForAgentUpdates(params.account.accessToken, params.account.user, params.options.conversationId, (state) => {
+
+                        if(!state) {
+                            return !stopPolling;
+                        }
+
+                        function getThinkingMessage() {
+                            const messages = [
+                                "Thinking...",
+                                "Contemplating...",
+                                "Processing...",
+                                "Analyzing...",
+                                "Computing...",
+                                "Working on it...",
+                                "Calculating...",
+                                "Evaluating..."
+                            ];
+                            return messages[Math.floor(Math.random() * messages.length)];
+                        }
+
+                        console.log("Agent state updated:", state);
+                        let msg = getThinkingMessage();
+                        let details = "";//JSON.stringify(state);
+                        if(state.state){
+                            try {
+                                const tool_call = JSON.parse(state.state);
+                                const tool = tool_call.tool;
+                                if(tool === "terminate"){
+                                    msg = "Hold on..."
+                                }
+                                else if(tool === "exec_code"){
+                                    msg = "Executing code..."
+                                    details = `\`\`\`python\n\n${tool_call.args.code}\n\n\`\`\``;
+                                }
+                                else {
+                                    function formatToolCall(toolCall) {
+                                        const lines = [`Calling: ${toolCall.tool}`, '   with:'];
+                                        Object.entries(toolCall.args).forEach(([key, value]) => {
+                                            lines.push(`      ${key}: ${JSON.stringify(value)}`);
+                                        });
+                                        return lines.join('\n');
+                                    }
+
+                                    msg = "Calling: " + tool_call.tool;
+                                    details = formatToolCall(tool_call);
+                                }
+                            }catch (e){
+                            }
+                        }
+                        else {
+                            msg = `Agent state updated: ${JSON.stringify(state)}`;
+                        }
+                        statusInfo.summary = msg;
+                        statusInfo.message = details
+                        llm.sendStatus(statusInfo);
+                        llm.forceFlush();
+                        return !stopPolling;
+                    })
+                ]);
+
+                llm.sendStateEventToStream({
+                    agentLog: result
+                })
+                llm.forceFlush();
+
+                if (result.success) {
+                    let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
+
+                    if(responseFromAssistant.args && responseFromAssistant.args.message){
+                        responseFromAssistant = responseFromAssistant.args.message;
+                    }
+                    else {
+                        responseFromAssistant = JSON.stringify(responseFromAssistant);
+                    }
+
+                    const summaryRequest = {
+                        ...body,
+                        messages: [
+                            {
+                                role: "user",
+                                content:
+                                    `The user's prompt was: ${body.messages.slice(-1)[0].content}` +
+                                    `\n\nA log of the assistant's reasoning / work:\n---------------------\n${JSON.stringify(result.data.result)}` +
+                                    `\n\n---------------------` +
+                                    `\n\nRespond to the user.`
+                            }]};
+
+                    await llm.prompt(summaryRequest, []);
+
+                }
+
+                return;
+
+            }
+            else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+
                 const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                 const langVersion = opsLanguages[opsLanguageVersion];
                 const instructionsPreProcessor = langVersion.instructionsPreProcessor;
@@ -324,6 +453,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 blockTerminator = langVersion.blockTerminator;
                 extraMessages.push(...langMessages);
                 suffixMessages.push(...(langVersion.suffixMessages || []));
+
             }
 
 
@@ -426,4 +556,5 @@ export const fillInAssistant = (assistant, assistantBase) => {
             }
         }
     };
+
 }
