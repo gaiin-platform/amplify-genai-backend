@@ -212,7 +212,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
 
         if 'assistant' in metadata:
             assistant = metadata['assistant']
-            print(f"Assistant metadata: {json.dumps(metadata['assistant'])}")
+            print(f"Assistant metadata: {metadata['assistant']}")
             if assistant['instructions']:
                 print(f"Adding assistant instructions to goals: {assistant['instructions']}")
                 additional_goals.append(Goal(

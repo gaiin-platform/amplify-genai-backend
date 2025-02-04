@@ -53,6 +53,17 @@ provider:
     AGENT_STATE_BUCKET: vu-amplify-${sls:stage}-agent-state
     # We will need to change this below in the policy when we migrate too
     OPS_LAMBDA_NAME: vu-amplify-se-dev-opExecLambda
+    AGENT_QUEUE_URL: !Ref AgentQueue
+    FILES_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-files
+    USER_TAGS_DYNAMO_TABLE: vu-amplify-${sls:stage}-user-tags
+    EMAIL_SETTINGS_DYNAMO_TABLE: vu-amplify-${sls:stage}-email-settings
+    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVariables.ORGANIZATION_EMAIL_DOMAIN}
+    S3_IMAGE_INPUT_BUCKET_NAME: vu-amplify-${sls:stage}-image-input
+    S3_RAG_INPUT_BUCKET_NAME: vu-amplify-${sls:stage}-rag-input
+    AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: vu-amplify-${sls:stage}-agent-event-templates
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistant-aliases
+    ASSISTANTS_DYNAMODB_TABLE: vu-amplify-assistants-${sls:stage}-assistants
+    DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
 
   iam:
     role:
@@ -77,6 +88,14 @@ functions:
     url:
       cors: true
 
+  agentEventProcessor:
+    handler: service/agent_queue.route_queue_event
+    timeout: 900
+    events:
+      - sqs:
+          arn: !GetAtt AgentQueue.Arn
+          batchSize: 1
+
 resources:
   Resources:
     LambdaAPIIAMPolicy:
@@ -86,6 +105,12 @@ resources:
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+              Resource:
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction
@@ -106,6 +131,10 @@ resources:
               Resource:
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -122,6 +151,48 @@ resources:
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource:
+                - !GetAtt AgentQueue.Arn
+                - !GetAtt AgentDeadLetterQueue.Arn
+
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
+
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:HeadObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}/index/*"
+
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
@@ -155,3 +226,77 @@ resources:
               AllowedOrigins:
                 - '*'
               MaxAge: 3000
+
+    AgentQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-agent-queue
+        VisibilityTimeout: 910
+        MessageRetentionPeriod: 1209600
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AgentDeadLetterQueue.Arn
+          maxReceiveCount: 3
+
+    AgentDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-agent-dlq
+        MessageRetentionPeriod: 1209600
+
+    AgentEmailTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${sls:stage}-email-topic
+        Subscription:
+          - Protocol: sqs
+            Endpoint: !GetAtt AgentQueue.Arn
+
+    AgentEventTemplatesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: tag
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: tag
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+    AgentEmailTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        Topics:
+          - !Ref AgentEmailTopic
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ses.amazonaws.com
+              Action: sns:Publish
+              Resource: !Ref AgentEmailTopic
+
+    # Update SQS policy to allow SNS
+    AgentQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AgentQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt AgentQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AgentEmailTopic
