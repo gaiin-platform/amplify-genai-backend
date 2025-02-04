@@ -526,7 +526,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 };
             
             // for now we will include the ds in the current message
-            if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
+            if (assistant.dataSources && !dataSourceOptions.disableDataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
             await assistantBase.handler(
                 llm,
