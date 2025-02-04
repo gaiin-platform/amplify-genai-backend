@@ -25,6 +25,14 @@ from work.session import create_session
     params={
         "id": "The ID of the datasource to use for the query.",
         "query": "The 'query' or 'task' to use for the query.",
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "query": {"type": "string"}
+        },
+        "required": ["id", "query"]
     }
 )
 @validated(op="rag_query")
@@ -40,6 +48,14 @@ def llm_prompt_datasource_rag(event, context, current_user, name, data):
     params={
         "id": "The ID of the datasource to use for the query.",
         "query": "The 'query' or 'task' to use for the query.",
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "query": {"type": "string"}
+        },
+        "required": ["id", "query"]
     }
 )
 @validated(op="query")
@@ -246,6 +262,14 @@ def qa(input: QAInput) -> QAOutput:
     params={
         "input": "The input to perform the quality assurance on.",
         "qa_guidelines": "The guidelines for quality assurance."
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "input": {"type": "string"},
+            "qa_guidelines": {"type": "string"}
+        },
+        "required": ["input", "qa_guidelines"]
     }
 )
 @validated(op="qa_check")
@@ -292,7 +316,7 @@ def llm_qa_check(event, context, current_user, name, data):
         "template": "The workflow template as JSON in the Amplify Workflow Template Language.",
         "context": "An optional set of context parameters as a JSON dictionary.",
     },
-    schema={
+    parameters={
         "type": "object",
         "properties": {
             "template": {"type": "object"},

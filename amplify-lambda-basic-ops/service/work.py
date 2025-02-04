@@ -17,7 +17,28 @@ from work.util import extract_sections
         "conversation_id": "Optional ID of the conversation this work session belongs to.",
         "tags": "Optional list of tags for the session.",
         "metadata": "Optional dictionary of metadata for the session."
-    }
+    },
+    parameters={
+            "type": "object",
+            "properties": {
+                "conversation_id": {
+                    "type": "string",
+                    "description": "Optional ID of the conversation this work session belongs to."
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                    "type": "string"
+                    },
+                    "description": "Optional list of tags for the session."
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Optional dictionary of metadata for the session."
+                }
+            },
+            "required": []
+        }
 )
 @validated(op="create")
 def create_user_session(event, context, current_user, name, data):
@@ -62,6 +83,24 @@ def create_user_session(event, context, current_user, name, data):
     params={
         "session_id": "ID of the session to add the record to.",
         "record_data": "The JSON data to be stored in the record on a single line with no line breaks."
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "integer",
+                "description": "ID of the session to add the record to."
+            },
+            "record_data": {
+                "type": "object",
+                "description": "The JSON data to be stored in the record."
+            },
+            "attachments": {
+                "type": "object",
+                "description": "A dictionary of attachment pointers to be stored with the record."
+            }
+        },
+        "required": ["session_id", "record_data"]
     }
 )
 @validated(op="add_record")
@@ -117,6 +156,16 @@ def add_user_record(event, context, current_user, name, data):
     description="List all records in a work product session.",
     params={
         "session_id": "ID of the session to list records from."
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "integer",
+                "description": "ID of the session to list records from."
+            }
+        },
+        "required": ["session_id"]
     }
 )
 @validated(op="list_records")
@@ -169,6 +218,20 @@ def list_user_records(event, context, current_user, name, data):
     params={
         "session_id": "ID of the session containing the record.",
         "record_id": "ID of the record to be deleted."
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "integer",
+                "description": "ID of the session containing the record."
+            },
+            "record_id": {
+                "type": "integer",
+                "description": "ID of the record to be deleted."
+            }
+        },
+        "required": ["session_id", "record_id"]
     }
 )
 @validated(op="delete_record")
@@ -213,6 +276,16 @@ def delete_user_record(event, context, current_user, name, data):
     description="Echo a message back to the user as a pause.",
     params={
         "message": "The message to be echoed back with new lines escaped as \\n. This will insert the entire content of that message into the placeholder, but strip out anything prefixed with Thought: or Follow-up:. If you reference the same message twice, its content will be duplicated."
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "The message to be echoed back with new lines escaped as \\n."
+            }
+        },
+        "required": ["message"]
     }
 )
 @validated(op="echo")
@@ -253,6 +326,24 @@ def echo(event, context, current_user, name, data):
         "session_id": "ID of the session containing the records.",
         "template": "Optional single-line string template with placeholders for records as ?>someRecordId. It may include \\n for line breaks. If not provided, all records will be concatenated. The placeholder to insert a record is this:\n?><Insert Record ID>\n\nExamples:\n?>234234\n?>2asw4r2\n\nI will pull in all the records and put them in the content of the record where you put these placeholders. If you also output the content of the record yourself, it will get duplicated.\n\nHere are some examples of valid templates:\n=========\nExample 1:\n## Report on Vanderbilt\n?>a23r23a\n### Vanderbilt Endowment\n?>24rsae\n\nExample 2:\n## Authors and Prompts\n| Author | Prompt |\n-------------------\n| ?>awe22 | ?>a22ff |\n--------------------\n| ?>asf3e | ?>wef4 |\n=========\n\nYou can mix in any markdown and explanation you want, but don't repeat the content. Instead, use placeholders to have the content inserted.",
         "separator": "Optional separator to use when concatenating records if no template is provided. Default is an empty string."
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "integer",
+                "description": "ID of the session containing the records."
+            },
+            "template": {
+                "type": "string",
+                "description": "Optional single-line string template with placeholders for records as ?>someRecordId."
+            },
+            "separator": {
+                "type": "string",
+                "description": "Optional separator to use when concatenating records if no template is provided."
+            }
+        },
+        "required": ["session_id"]
     }
 )
 @validated(op="stitch_records")

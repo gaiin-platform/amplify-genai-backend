@@ -33,9 +33,15 @@ class Step:
         return {}
 
     def exec(self, context: Dict, options={}) -> Dict:
-        self.get_tracer(options)(self.id, "start", {'context': context})
+        try:
+            self.get_tracer(options)(self.id, "start", {'context': context})
+        except Exception as e:
+            print(f"Failed to trace step {self.id}: {e}")
         output = self.run(context, options)
-        self.get_tracer(options)(self.id, "end", {'result': output})
+        try:
+            self.get_tracer(options)(self.id, "end", {'result': output})
+        except Exception as e:
+            print(f"Failed to trace step {self.id}: {e}")
         return output
 
     def __str__(self):
@@ -150,6 +156,74 @@ class Prompt(Step):
         return f"Prompt(id={self.id}, prompt={self.prompt}, system_prompt={self.system_prompt}, output={self.output})"
 
 
+
+class FileSave(Step):
+    def __init__(self, id: str, data: Dict):
+        super().__init__(id, {})
+
+        # Validate required fields
+        if 'path' not in data:
+            raise WorkflowValidationError(f"FileSave step {id} must have 'path' field")
+        if 'content' not in data:
+            raise WorkflowValidationError(f"FileSave step {id} must have 'content' field")
+
+        self.path = data['path']
+        self.content = data['content']
+        self.mode = data.get('mode', 'w')  # Default to text write mode
+        self.encoding = data.get('encoding', 'utf-8')
+        self.mkdir = data.get('mkdir', True)  # Create parent directories by default
+
+        # Validate mode
+        valid_modes = ['w', 'wb', 'a', 'ab']
+        if self.mode not in valid_modes:
+            raise WorkflowValidationError(f"Invalid mode '{self.mode}' for FileSave step {id}. Must be one of: {valid_modes}")
+
+    def inputs(self):
+        # Find template variables in both path and content
+        path_vars, _ = find_template_vars(self.path)
+        content_vars, _ = find_template_vars(self.content)
+        return [get_root_key(path) for path in list(set(path_vars + content_vars))]
+
+    def run(self, context: Dict, options={}) -> Dict:
+        # Resolve path and content using context
+        resolved_path = fill_prompt_template(context, self.path)
+        resolved_content = fill_prompt_template(context, self.content)
+
+        # Create parent directories if needed
+        if self.mkdir:
+            os.makedirs(os.path.dirname(resolved_path), exist_ok=True)
+
+        # Write the file
+        try:
+            if 'b' in self.mode:  # Binary mode
+                with open(resolved_path, self.mode) as f:
+                    f.write(resolved_content)
+            else:  # Text mode
+                with open(resolved_path, self.mode, encoding=self.encoding) as f:
+                    f.write(resolved_content)
+
+            # Record the operation in trace
+            self.get_tracer(options)(
+                self.id,
+                "file_save",
+                {
+                    "path": resolved_path,
+                    "mode": self.mode,
+                    "encoding": self.encoding,
+                    "size": len(resolved_content)
+                }
+            )
+
+            return {
+                "path": resolved_path,
+                "size": len(resolved_content)
+            }
+
+        except Exception as e:
+            raise WorkflowValidationError(f"Failed to save file in step {self.id}: {str(e)}")
+
+    def __str__(self):
+        return f"FileSave(id={self.id}, path={self.path}, mode={self.mode}, encoding={self.encoding})"
 
 
 class Map(Step):
@@ -314,7 +388,7 @@ class Files(Step):
 
         created_files = self.save_files(context, input_data, options)
 
-        return created_files
+        return {"files": created_files}
 
     def save_files(self, context, items: List, options) -> List[Dict]:
         tracer = self.get_tracer(options)
@@ -331,7 +405,16 @@ class Files(Step):
             # Log file creation
             tracer(self.id, "creating_file", {"file_name": file_path})
 
-            content = item[self.content_key] if self.content_key else yaml.dump(item)
+            def get_content(item):
+                if self.content_key:
+                    item = item[self.content_key]
+
+                if not isinstance(item, str):
+                    return yaml.dump(item)
+
+                return item
+
+            content = get_content(item)
 
             # Write the content to the file
             with open(file_path, 'w') as file:
