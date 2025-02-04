@@ -123,6 +123,10 @@ validators = {
     "/ops/get": {
         "get": get_ops_schema
     },
+    "/ops/get_all_tags":
+    {
+        "get": {}
+    },
     "/ops/get_all": {
         "get": {}
     },
@@ -142,6 +146,10 @@ api_validators = {
     "/ops/register" : {
         "write": register_ops_schema
     },
+    "/ops/get_all_tags":
+        {
+            "get": {}
+        },
 }
 
 
@@ -297,6 +305,7 @@ def get_claims(event, context, token):
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 
+    print("No Valid Access Token Found")
     raise Unauthorized("No Valid Access Token Found")
 
 
@@ -314,6 +323,7 @@ def parseToken(event):
                 token = None
 
     if not token:
+        print("No Access Token Found")
         raise Unauthorized("No Access Token Found")
     
     return token
@@ -359,11 +369,11 @@ def api_claims(event, context, token):
             raise PermissionError("API key has expired.")
 
         # Check for access rights
-        access = item.get('accessTypes', [])
-        if ('ops' not in access):
-            # and 'full_access' not in access
-            print("API doesn't have access to api key functionality")
-            raise PermissionError("API key does not have access to api key functionality")
+        # access = item.get('accessTypes', [])
+        # if ('ops' not in access):
+        #     # and 'full_access' not in access
+        #     print("API doesn't have access to api key functionality")
+        #     raise PermissionError("API key does not have access to api key functionality")
         
         # Determine API user
         current_user = determine_api_user(item)
