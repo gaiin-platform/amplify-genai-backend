@@ -37,7 +37,7 @@ provider:
 
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom:stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
 
