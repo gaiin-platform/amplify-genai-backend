@@ -71,7 +71,10 @@ def extract_facts(event, context, current_user, name, data):
         user_input = nested_data["user_input"]
 
         # extract facts from conversation
-        prompt = f"""Analyze the given text and identify key factual information. Extract and list the most important facts, focusing on specific details, names, dates, locations, or any other concrete information that could be relevant for future reference. Avoid opinions or interpretations.
+        prompt = f"""Extract facts from the text, preserving any personal perspectives exactly as stated. Each fact must be:
+- Written exactly as presented (keep "I", "my", "we" if present)
+- Include specific details when present
+- Free of opinions or interpretations
 
 Present the extracted facts in the following format:
 FACT: [Extracted fact]
