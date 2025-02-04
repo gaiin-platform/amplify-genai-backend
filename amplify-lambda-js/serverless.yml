@@ -36,7 +36,6 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
 
   environment:
-    
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom:stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
@@ -175,11 +174,7 @@ resources:
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
               Resource:
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}/index/*"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
-                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
+                - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
