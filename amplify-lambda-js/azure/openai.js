@@ -9,6 +9,7 @@ import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBa
 import { Transform } from "stream";
 import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
 import {extractKey} from "../datasource/datasources.js";
+import {jsonrepair} from "jsonrepair";
 
 const logger = getLogger("openai");
 
@@ -79,8 +80,10 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             return (m.role === 'system') ? {...m, role: 'user'} : m}
         );
     }
-
-    data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
+    if (!options.dataSourceOptions?.disableDataSources) {
+        data.messages = await includeImageSources(body.imageSources, data.messages, model, writable);
+    }
+    
 
     if(tools){
         data.tools = tools;
@@ -139,9 +142,10 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
                         const transformStream = new Transform({
                             transform(chunk, encoding, callback) {
-                                // console.log("O1 response raw: ", chunk.toString());
                                 // Convert chunk to string, remove newlines, and add 'data: ' prefix
-                                const modifiedData = 'data: ' + chunk.toString().replace(/\n/g, '');
+                                const sanitizeData = jsonrepair( chunk.toString().replace(/\n/g, '') );
+
+                                const modifiedData = `data: ${sanitizeData}`;   
                                 // console.log("modifiedData: ", chunk.toString());
 
                                 this.push(modifiedData);
