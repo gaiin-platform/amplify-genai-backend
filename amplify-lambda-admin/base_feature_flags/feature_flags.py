@@ -24,4 +24,6 @@ FEATURE_FLAGS = {
     'highlighter': True,
     'assistantApis': False,
     'mixPanel': False,
-  }
+    'integrations': False,
+    'memory': False
+  },

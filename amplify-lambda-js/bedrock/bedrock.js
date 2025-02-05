@@ -31,9 +31,9 @@ export const chatBedrock = async (chatBody, writable) => {
             withoutSystemMessages.push(msg);
         }
     }
-
+    const imageSources =  !options.dataSourceOptions?.disableDataSources ? body.imageSources : [];
     const combinedMessages = combineMessages(withoutSystemMessages, options.prompt);
-    const sanitizedMessages = await sanitizeMessages(combinedMessages, body.imageSources, currentModel, writable);
+    const sanitizedMessages = await sanitizeMessages(combinedMessages, imageSources, currentModel, writable);
     
     try {
         
