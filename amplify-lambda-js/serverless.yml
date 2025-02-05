@@ -36,6 +36,9 @@ provider:
     "vu:owner": "amplify@vanderbilt.edu"
   environment:
     AZURE_OPENAI_RESOURCE_NAME: openai
+    AGENT_ENDPOINT: ${self:custom.stageVariables.AGENT_ENDPOINT}
+    AGENT_STATE_DYNAMODB_TABLE: vu-amplify-${sls:stage}-agent-state
+    AGENT_STATE_BUCKET: vu-amplify-${sls:stage}-agent-state
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     S3_CHUNKS_BUCKET_NAME: vu-amplify-${sls:stage}-rag-chunks
@@ -172,6 +175,10 @@ resources:
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
               Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:s3:::${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}/*"
