@@ -534,20 +534,21 @@ def list_groups(event, context, current_user, name, data):
             failed_to_list.append(group_name)
             continue
 
+        ast_access = group["members"][current_user]
+        hasAdminInterfaceAccess = ast_access in ['write', 'admin']
+
         #filter old versions
         assistants = get_latest_assistants(ast_result['data'])
         print(f"{group_name} - {len(assistants)}")
         published_assistants = []
         #append groupId and correct permissions if published
         for ast in assistants:
-            ast_access = group["members"][current_user]
-            hasAdminInterfaceAccess = ast_access in ['write', 'admin']
             if (("isPublished" in ast["data"] and ast["data"]["isPublished"]) or hasAdminInterfaceAccess):
                 ast['groupId'] = group["group_id"]
                 ast["data"]["access"]['write'] = hasAdminInterfaceAccess
                 published_assistants.append(ast)
                 
-        if (len(published_assistants) > 0):
+        if (len(published_assistants) > 0 or hasAdminInterfaceAccess):
             group_info.append({
                 'name' : group_name, 
                 'id' : group['group_id'], 
