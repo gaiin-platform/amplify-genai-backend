@@ -155,7 +155,7 @@ def _remove_keys(item):
         "data": "The data to store",
         "rangeKey": "Optional range key for the item"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "itemId", "data"],
         "properties": {
@@ -184,7 +184,7 @@ def handle_put_item(current_user, app_id, entity_type, item_id, data, range_key=
         "itemId": "The unique identifier for the item",
         "rangeKey": "Optional range key for the item"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "itemId"],
         "properties": {
@@ -219,7 +219,7 @@ def handle_get_item(current_user, app_id, entity_type, item_id, range_key=None):
         "rangeEnd": "Optional end of range",
         "limit": "Optional maximum number of items to return (default is 100)"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType"],
         "properties": {
@@ -255,7 +255,7 @@ def handle_query_by_range(current_user, app_id, entity_type, range_start=None, r
         "prefix": "The prefix to search for",
         "limit": "Optional maximum number of items to return (default is 100)"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "prefix"],
         "properties": {
@@ -289,7 +289,7 @@ def handle_query_by_prefix(current_user, app_id, entity_type, prefix, limit=100)
         "entityType": "The type of entity to query",
         "limit": "Optional maximum number of items to return (default is 100)"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType"],
         "properties": {
@@ -322,7 +322,7 @@ def handle_query_by_type(current_user, app_id, entity_type, limit=100):
         "entityType": "The type of entity to retrieve",
         "itemIds": "Array of item IDs and optional range keys to retrieve"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "itemIds"],
         "properties": {
@@ -365,7 +365,7 @@ def handle_batch_get_items(current_user, app_id, entity_type, item_ids):
     params={
         "uuid": "The UUID of the item to retrieve"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["uuid"],
         "properties": {
@@ -398,7 +398,7 @@ def handle_get_by_uuid(current_user, uuid):
         "itemId": "The unique identifier for the item",
         "rangeKey": "Optional range key for the item"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "itemId"],
         "properties": {
@@ -426,7 +426,7 @@ def handle_delete_item(current_user, app_id, entity_type, item_id, range_key=Non
         "entityType": "The type of entity being stored",
         "items": "Array of items to store"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "items"],
         "properties": {
@@ -464,7 +464,7 @@ def handle_batch_put_items(current_user, app_id, entity_type, items):
         "entityType": "The type of entity to delete",
         "itemIds": "Array of item IDs and optional range keys to delete"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["appId", "entityType", "itemIds"],
         "properties": {
@@ -500,7 +500,7 @@ def handle_batch_delete_items(current_user, app_id, entity_type, item_ids):
     params={
         "uuid": "The UUID of the item to delete"
     },
-    schema={
+    parameters={
         "type": "object",
         "required": ["uuid"],
         "properties": {
@@ -537,7 +537,7 @@ def handle_delete_by_uuid(current_user, uuid):
     params={
         "prefix": "Optional prefix to filter app IDs"
     },
-    schema={
+    parameters={
         "type": "object",
         "properties": {
             "prefix": {"type": "string"}

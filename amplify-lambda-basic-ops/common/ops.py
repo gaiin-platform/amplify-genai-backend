@@ -4,7 +4,7 @@ from common import permissions
 from service.routes import route_data
 
 
-def op(tags=None, path="", name="", description="", params=None, method="POST"):
+def op(tags=None, path="", name="", description="", params=None, method="POST", parameters=None):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -22,7 +22,7 @@ def op(tags=None, path="", name="", description="", params=None, method="POST"):
         return wrapper
     return decorator
 
-def vop(tags=None, path="", name="", description="", params=None,  schema=None):
+def vop(tags=None, path="", name="", description="", params=None, parameters=None):
     # This is the actual decorator
     def decorator(func):
         @wraps(func)
@@ -47,7 +47,7 @@ def vop(tags=None, path="", name="", description="", params=None,  schema=None):
             return result
 
         route_data[path] = {
-            'schema': schema,
+            'schema': parameters,
             'tags': tags,
             'name': name,
             'description': description,
