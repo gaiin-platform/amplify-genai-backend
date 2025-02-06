@@ -14,3 +14,18 @@ export const newStatus = (data) => {
         ...data,
     }
 }
+
+
+export function getThinkingMessage() {
+    const messages = [
+        "Thinking...",
+        "Contemplating...",
+        "Processing...",
+        "Analyzing...",
+        "Computing...",
+        "Working on it...",
+        "Calculating...",
+        "Evaluating..."
+    ];
+    return messages[Math.floor(Math.random() * messages.length)];
+}
