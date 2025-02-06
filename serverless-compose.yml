@@ -3,13 +3,35 @@ services:
   amplify-assistants:
     path: ./amplify-assistants
 
+  amplify-lambda:
+    path: ./amplify-lambda
+    dependsOn:
+      - amplify-assistants
+
+  amplify-lambda-admin:
+    path: ./amplify-lambda-admin
+    dependsOn:
+      - amplify-lambda
+
+  amplify-lambda-artifacts:
+    path: ./amplify-lambda-artifacts
+    dependsOn:
+      - amplify-lambda
+
   amplify-lambda-js:
     path: ./amplify-lambda-js
     dependsOn:
+      - amplify-assistants
+    
+  amplify-lambda-ops:
+    path: ./amplify-lambda-ops
+    dependsOn:
       - amplify-lambda
-  
-  amplify-lambda:
-    path: ./amplify-lambda
+
+  amplify-lambda-optimizer:
+    path: ./amplify-lambda-optimizer
+    dependsOn:
+      - amplify-lambda
 
   chat-billing:
     path: ./chat-billing
@@ -31,24 +53,11 @@ services:
     dependsOn:
       - amplify-lambda
   
-  amplify-lambda-optimizer:
-    path: ./amplify-lambda-optimizer
-    dependsOn:
-      - amplify-lambda
 
-  amplify-lambda-api:
-    path: ./amplify-lambda-api
-    dependsOn:
-      - amplify-lambda
-  
-  amplify-lambda-artifacts:
-    path: ./amplify-lambda-artifacts
-    dependsOn:
-      - amplify-lambda
 
-  amplify-lambda-ops:
-    path: ./amplify-lambda-ops
-    dependsOn:
-      - amplify-lambda
+
   
+
+
+
 
