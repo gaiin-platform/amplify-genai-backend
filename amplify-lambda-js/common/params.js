@@ -54,7 +54,7 @@ export const getMaxTokens = (params) => {
 
 export const getChatFn = (model, body, writable, context) => {
 
-    if (model.id.includes("gpt") || model.id.includes("o1") ) {
+    if (isOpenAIModel(model.id)) {
         return chat(getLLMConfig, body, writable, context);
     } else if (model.provider === 'Bedrock') {
         return chatBedrock(body, writable, context);
@@ -62,4 +62,9 @@ export const getChatFn = (model, body, writable, context) => {
         console.log(`Error: Model ${model} does not have a corresponding chatFn`)
         return null;
     }
+}
+
+
+export const isOpenAIModel = (modelId) => {
+    return ["gpt", "o1", "o3"].some(id => modelId.includes(id));
 }
