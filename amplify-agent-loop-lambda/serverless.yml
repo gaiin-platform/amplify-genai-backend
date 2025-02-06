@@ -1,4 +1,4 @@
-service:  vu-amplify-agent-loop
+service:  amplify-${self:custom.stageVars.DEP_NAME}-agent-loop
 
 frameworkVersion: "3"
 
@@ -11,11 +11,12 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets
 
 custom:
   pythonRequirements:
     dockerizePip: non-linux
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
@@ -26,33 +27,35 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
-  logRetentionInDays: 365
+  logRetentionInDays: 365  
   apiGateway:
     restApiId:
-      ${self:custom.stageVariables.REST_API_ID}
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
-      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+
+
   environment:
     AGENT_MODEL: "gpt-4o-mini"
-    SECRETS_NAME: ${self:custom.stageVariables.SECRETS_NAME}
-    SECRETS_ARN_NAME: ${self:custom.stageVariables.SECRETS_ARN_NAME}
+    SECRETS_NAME: ${self:custom.stageVars.SECRETS_NAME}
+    SECRETS_ARN_NAME: ${self:custom.stageVars.SECRETS_ARN_NAME}
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVariables.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-accounts
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
-    CHAT_ENDPOINT: ${self:custom.stageVariables.CHAT_ENDPOINT}
-    OPS_DYNAMODB_TABLE: vu-amplify-lambda-ops-${sls:stage}-ops
-    AGENT_STATE_DYNAMODB_TABLE: vu-amplify-${sls:stage}-agent-state
-    AGENT_STATE_BUCKET: vu-amplify-${sls:stage}-agent-state
+    API_BASE_URL: ${self:custom.stageVars.API_BASE_URL}
+    CHAT_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT} # TODO Pulls from secrets manager 
+    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
+    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
     # We will need to change this below in the policy when we migrate too
-    OPS_LAMBDA_NAME: vu-amplify-se-dev-opExecLambda
+    OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-dev-opExecLambda
 
   iam:
     role:
@@ -89,7 +92,7 @@ resources:
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction
-              Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:vu-amplify-se-dev-opExecLambda
+              Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.stageVars.DEP_NAME}-se-dev-opExecLambda
             - Effect: Allow
               Action:
                 - dynamodb:Query
