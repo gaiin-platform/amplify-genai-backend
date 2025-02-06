@@ -11,6 +11,9 @@ custom:
       config: ${file(../var/${self:provider.stage}-var.yml)} 
   stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
 
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
   stages:
     - dev
     - staging
@@ -92,18 +95,18 @@ functions:
         assistant_task_queue_url:
           Ref: AssistantTaskQueue
 
-    api_g_chat:
-      handler: indexApiG.handler
-      memorySize: 1024
-      timeout: 180
-      environment:
-          assistant_task_queue_url:
-            Ref: AssistantTaskQueue
-      events:
-        - http:
-            path: api_g_chat/chat
-            method: post
-            cors: true
+  api_g_chat:
+    handler: indexApiG.handler
+    memorySize: 1024
+    timeout: 180
+    environment:
+        assistant_task_queue_url:
+          Ref: AssistantTaskQueue
+    events:
+      - http:
+          path: api_g_chat/chat
+          method: post
+          cors: true
 
 
   assistant_queue:

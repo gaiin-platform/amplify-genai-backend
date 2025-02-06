@@ -212,10 +212,6 @@ def validated(op, validate_body=True):
                     if (api_accessed)
                     else get_claims(event, context, token)
                 )
-                # Updated get_email function to incorporate idpPrefix
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
 
                 current_user = claims["username"]
                 print(f"User: {current_user}")
