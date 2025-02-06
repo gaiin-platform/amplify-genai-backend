@@ -20,6 +20,8 @@ custom:
     - staging
     - prod
 
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     
 provider:
   name: aws

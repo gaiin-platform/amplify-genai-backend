@@ -11,7 +11,7 @@ import {defaultSource} from "./sources.js";
 import {transform as openAiTransform} from "./chat/events/openai.js";
 import {bedrockConverseTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
-import {getMaxTokens} from "./params.js";
+import {getMaxTokens, isOpenAIModel} from "./params.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
@@ -301,7 +301,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         const selectedModel = model.id;
         let result;
         let countTokens = true;
-        if (selectedModel.includes("gpt") || selectedModel.includes("o1")) {
+        if (isOpenAIModel(model.id)) {
             result = openAiTransform(event);  
             
         } else if (model.provider === 'Bedrock') {
