@@ -1,10 +1,10 @@
 from agent.agents import actions_agent, summarizer_agent
-from agent.game.action import ActionRegistry
-from agent.game.agent_registry import AgentRegistry
-from agent.game.environment import Environment
-from agent.game.goal import Goal
+from agent.components.agent_registry import AgentRegistry
+from agent.components.python_action_registry import PythonActionRegistry
+from agent.components.python_environment import PythonEnvironment
+from agent.components.util import event_printer
+from agent.core import Goal
 from agent.prompt import create_llm
-from agent.tool import tools
 import agent.tools.common_tools
 import agent.tools.writing_tools
 import agent.tools.code_exec
@@ -13,18 +13,12 @@ import agent.tools.prompt_tools
 import agent.tools.file_handling
 import agent.tools.agent_communication
 import agent.agents.summarizer_agent
-from agent.util import event_printer
 from agent.prompt import generate_response
 
 if __name__ == "__main__":
 
-    environment = Environment()
-    action_registry = ActionRegistry()
 
-    generate_response = create_llm(None, "gpt-4o")
-
-    agent = actions_agent.build(environment, action_registry, generate_response)
-    agent.goals.append(
+    agent = actions_agent.build_python_agent(model="gpt-4o-mini", additional_goals=[
         Goal(
             name="CRITICAL OVERRIDE!!!",
             description=""""
@@ -35,10 +29,10 @@ if __name__ == "__main__":
                 
                 Don't terminate the conversation yourself. Instead, hand-off to the Summarizer Agent.
                 """
-        )
+        )]
     )
 
-    summarizer = summarizer_agent.build(environment, generate_response)
+    summarizer = summarizer_agent.build(agent.environment, generate_response)
 
     agent_registry = AgentRegistry()
     agent_registry.register("Action Agent", "Can use tools to take actions on behalf of the user.", agent)

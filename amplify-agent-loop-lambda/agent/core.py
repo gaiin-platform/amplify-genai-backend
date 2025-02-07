@@ -1,15 +1,186 @@
 import json
 import time
 import traceback
+import uuid
+from dataclasses import dataclass
 from functools import reduce
-from typing import List, Callable
+from typing import List, Callable, Dict, Any
+from agent.prompt import Prompt
 
-from agent.game.action import ActionRegistry, ActionContext
-from agent.game.environment import Environment
-from agent.game.goal import Goal
-from agent.game.languages import AgentLanguage
-from agent.game.memory import Memory
-from agent.prompt import generate_response, Prompt
+
+class Memory:
+    def __init__(self):
+        self.items = []  # Basic conversation histor
+
+    def add_memory(self, memory: dict):
+        """Add memory to working memory"""
+        self.items.append(memory)
+
+    def get_memories(self, limit: int = None) -> List[Dict]:
+        """Get formatted conversation history for prompt"""
+        return self.items[:limit]
+
+    def copy_without_system_memories(self):
+        """Return a copy of the memory without system memories"""
+        filtered_items = [m for m in self.items if m["type"] != "system"]
+        memory = Memory()
+        memory.items = filtered_items
+        return memory
+
+
+@dataclass(frozen=True)
+class Goal:
+    name: str
+    description: str
+
+
+class Action:
+    def __init__(self,
+                 name: str,
+                 function: callable,
+                 description: str,
+                 parameters: Dict,
+                 output: Dict,
+                 side_effects: Dict = {},
+                 terminal: bool = False):
+        self.name = name
+        self.function = function
+        self.description = description
+        self.terminal = terminal
+        self.parameters = parameters
+        self.output = output
+        self.side_effects = side_effects
+
+    def execute(self, **args) -> Any:
+        """Execute the action's function"""
+        return self.function(**args)
+
+    def todict(self):
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "terminal": self.terminal
+        }
+
+
+class ActionRegistry:
+    def __init__(self):
+        self.actions = {}
+
+    def register(self, action: Action):
+        self.actions[action.name] = action
+
+    def get_action(self, name: str) -> [Action,None]:
+        return self.actions.get(name, None)
+
+    def get_actions(self) -> List[Action]:
+        """Get all action descriptions for prompt"""
+        return [action for action in self.actions.values()]
+
+
+class ActionContext:
+    def __init__(self, properties: Dict=None):
+        self.context_id = str(uuid.uuid4())
+        self.properties = properties or {}
+
+    def enable_code_exec_tool_calls(self, action_registry):
+        self.properties["code_exec_context"] = {
+            **{k: v.function for k, v in action_registry.actions.items()}
+        }
+
+    def get(self, key: str, default=None):
+        return self.properties.get(key, default)
+
+    def set(self, key: str, value: Any):
+        self.properties[key] = value
+
+    def get_environment(self):
+        return self.properties.get("environment", None)
+
+    def get_action_registry(self):
+        return self.properties.get("action_registry", None)
+
+    def get_agent_registry(self):
+        return self.properties.get("agent_registry", None)
+
+    def get_memory(self):
+        return self.properties.get("memory", None)
+
+    def send_event(self, event_id: str, event: Dict):
+        hdlr = self.properties.get("event_handler", None)
+        if not isinstance(event, dict):
+            event = {"content": event}
+        if hdlr and callable(hdlr) and event:
+            event["context_id"] = self.context_id
+            hdlr(event_id, event)
+
+    def incremental_event(self, event = None) -> callable:
+        base_props = event or {}
+        # Create a correlation ID for the event with a uuid
+        correlation_id = str(uuid.uuid4())
+
+        def handler(event_id: str, event: Dict) -> str:
+            new_event = event or {}
+            self.send_event(event_id, {**base_props, **new_event, "correlation_id": correlation_id})
+
+        return handler
+
+
+class Environment:
+    def __init__(self):
+        pass
+
+    def execute_action(self, agent, action_context: ActionContext, action: Action, args: dict) -> dict:
+        return {}
+
+
+class AgentLanguage:
+    def __init__(self):
+        pass
+
+    def construct_prompt(self,
+                         actions: List[Action],
+                         environment: Environment,
+                         goals: List[Goal],
+                         memory: Memory) -> Prompt:
+        """
+        Construct the prompt to send to the language model.
+
+        :param actions:
+        :param environment:
+        :param goals:
+        :param memory:
+        :return:
+        """
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def adapt_prompt_after_parsing_error(self,
+                                         prompt: Prompt,
+                                         response: str,
+                                         traceback: str,
+                                         error: Any,
+                                         retries_left: int) -> Prompt:
+        """
+        Adapt the prompt after a parsing error. This method is called when the language model fails to parse the response.
+        You can throw custom errors in the parse_response that will be passed to this as the error parameter so that
+        you can adapt the prompt based on the error.
+
+        :param prompt:
+        :param traceback:
+        :param error:
+        :param retries_left:
+        :return:
+        """
+        return prompt
+
+    def parse_response(self, response: str) -> dict:
+        """
+        Parse the response from the language model into a structured format
+        :param response:
+        :return:
+        """
+        raise NotImplementedError("Subclasses must implement this method")
 
 
 class Capability:

@@ -1,11 +1,4 @@
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Goal:
-    name: str
-    description: str
-
+from agent.core import Goal
 
 CODE_CAN_USE_TOOLS = Goal(
     name="Code Can Call Tools",

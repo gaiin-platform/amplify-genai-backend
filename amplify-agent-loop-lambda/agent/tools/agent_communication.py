@@ -1,5 +1,5 @@
-from agent.game.action import ActionContext
-from agent.tool import register_tool
+from agent.components.tool import register_tool
+from agent.core import ActionContext
 
 
 @register_tool()

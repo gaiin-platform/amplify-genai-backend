@@ -1,4 +1,5 @@
 import inspect
+import traceback
 from typing import get_type_hints, List
 
 tools = {}
@@ -18,6 +19,7 @@ def to_openai_tools(tools_metadata: List[dict]):
         } for t in tools_metadata
     ]
     return openai_tools
+
 
 def get_tool_metadata(func, tool_name=None, description=None, parameters_override=None, terminal=False, tags=None):
     """
@@ -94,8 +96,17 @@ def get_tool_metadata(func, tool_name=None, description=None, parameters_overrid
         "tags": tags or []
     }
 
+import functools
+import inspect
 
-def register_tool(tool_name=None, description=None, parameters_override=None, terminal=False, tags=None):
+def register_tool(tool_name=None,
+                  description=None,
+                  parameters_override=None,
+                  terminal=False,
+                  tags=None,
+                  status=None,
+                  resultStatus=None,
+                  errorStatus=None):
     """
     A decorator to dynamically register a function in the tools dictionary with its parameters, schema, and docstring.
 
@@ -105,14 +116,60 @@ def register_tool(tool_name=None, description=None, parameters_override=None, te
         parameters_override (dict, optional): Override for the argument schema. Defaults to dynamically inferred schema.
         terminal (bool, optional): Whether the tool is terminal. Defaults to False.
         tags (List[str], optional): List of tags to associate with the tool.
+        status (str, optional): If provided, adds `action_context` as a parameter.
 
     Returns:
         function: The wrapped function.
     """
     def decorator(func):
+        # Modify function signature to include action_context if status is provided
+
+        # Get the original function signature
+        sig = inspect.signature(func)
+        parameters = list(sig.parameters.values())
+
+        # Check if 'action_context' is already a parameter
+        if status and "action_context" not in sig.parameters:
+            parameters.append(
+                inspect.Parameter('action_context', inspect.Parameter.KEYWORD_ONLY, default=None)
+            )
+
+        new_sig = sig.replace(parameters=parameters)
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            action_context = kwargs.get('action_context')
+            send_event = action_context.incremental_event() if action_context else None
+            try:
+                pre_call_action(send_event, func.__name__, status, action_context, kwargs)
+            except Exception as e:
+                pass
+
+            try:
+                # Call the original function
+                result = func(*args, **kwargs)
+            except Exception as e:
+                traceback_str = traceback.format_exc()
+                try:
+                    error_call_action(send_event, func.__name__, errorStatus, e, traceback_str, action_context, kwargs)
+                except Exception as e:
+                    pass
+
+            try:
+                # Post-call actions
+                post_call_action(send_event, func.__name__, resultStatus, result, action_context, kwargs)
+            except Exception as e:
+                pass
+
+            return result
+
+        # Apply modified signature to the wrapper
+        wrapper.__signature__ = new_sig
+
+
         # Use the reusable function to extract metadata
         metadata = get_tool_metadata(
-            func=func,
+            func=wrapper,
             tool_name=tool_name,
             description=description,
             parameters_override=parameters_override,
@@ -128,5 +185,33 @@ def register_tool(tool_name=None, description=None, parameters_override=None, te
                 tools_by_tag[tag] = []
             tools_by_tag[tag].append(metadata)
 
-        return func
+        return wrapper
     return decorator
+
+# Placeholder pre/post-call action functions
+def pre_call_action(send_event, function_name, status, action_context, args):
+    if action_context and send_event:
+        # Remove action_context and all of its keys from args
+        logged_args = {k: v for k, v in args.items() if k != 'action_context' and k not in action_context.properties}
+        send_event("tools/"+function_name+"/start", logged_args)
+        if status:
+            status = status.format(logged_args)
+            send_event("agent/status", {"status": status})
+
+def post_call_action(send_event, function_name, resultStatus, result, action_context, args):
+    if action_context and send_event:
+        # Remove action_context and all of its keys from args
+        logged_args = {k: v for k, v in args.items() if k != 'action_context' and k not in action_context.properties}
+        send_event("tools/"+function_name+"/end", {**logged_args, "result": result})
+        if resultStatus:
+            status = resultStatus.format({**logged_args, "result": result})
+            send_event("agent/status", {"status": status})
+
+def error_call_action(send_event, function_name, errorStatus, ex, traceback_str, action_context, args):
+    if action_context and send_event:
+        # Remove action_context and all of its keys from args
+        logged_args = {k: v for k, v in args.items() if k != 'action_context' and k not in action_context.properties}
+        send_event("tools/"+function_name+"/error", {**logged_args, "exception": ex, "traceback": traceback_str})
+        if errorStatus:
+            status = errorStatus.format({**logged_args, "exception": ex, "traceback": traceback_str})
+            send_event("agent/status", {"status": status})

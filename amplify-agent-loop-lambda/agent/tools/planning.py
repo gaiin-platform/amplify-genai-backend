@@ -1,8 +1,7 @@
 import json
 
-from agent.game.action import ActionRegistry
-from agent.game.memory import Memory
-from agent.tool import register_tool
+from agent.components.tool import register_tool
+from agent.core import Memory, ActionRegistry
 from agent.tools.prompt_tools import prompt2, prompt_llm_with_messages
 
 

@@ -1,5 +1,6 @@
 from typing import Dict, List
-from agent.tool import register_tool
+
+from agent.components.tool import register_tool
 
 
 #@register_tool()

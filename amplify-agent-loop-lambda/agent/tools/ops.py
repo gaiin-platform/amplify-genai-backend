@@ -4,10 +4,10 @@ from typing import Optional
 from uuid import uuid4
 
 import boto3
-from aiohttp import payload_type
 
-from agent.game.action import ActionContext
-from agent.tool import register_tool, get_tool_metadata
+from agent.components.tool import get_tool_metadata, register_tool
+from agent.core import ActionContext
+
 
 def ops_to_tools(apis):
     tools = []

@@ -1,8 +1,8 @@
 from typing import Dict, List, Any
 
-from agent.game.action import ActionContext
-from agent.prompt import generate_response, Prompt
-from agent.tool import register_tool
+from agent.components.tool import register_tool
+from agent.core import ActionContext
+from agent.prompt import Prompt
 
 
 @register_tool()

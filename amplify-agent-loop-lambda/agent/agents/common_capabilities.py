@@ -2,12 +2,10 @@ import json
 import time
 from typing import List
 
-from agent.core import Capability
-from agent.game.action import ActionContext
-from agent.game.memory import Memory
+from agent.components.util import resolve_references
+from agent.core import Capability, ActionContext, Memory
 from agent.prompt import Prompt
 from agent.tools.planning import create_plan, determine_progress
-from agent.util import resolve_references
 
 
 def get_results_map(agent, action_context, response):

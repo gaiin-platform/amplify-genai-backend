@@ -1,17 +1,10 @@
-import json
-from pyexpat.errors import messages
-from typing import Dict, List, Any
+from typing import List, Any
 
-import requests
-
-from agent.game.action import ActionContext
+from agent.components.tool import register_tool, get_tool_metadata, to_openai_tools
+from agent.core import ActionContext
 from agent.prompt import Prompt
-from agent.tool import register_tool, to_openai_tools, get_tool_metadata
-import functools
 from inspect import signature, Parameter
-
 import functools
-from inspect import signature, Parameter
 import json
 
 @register_tool()

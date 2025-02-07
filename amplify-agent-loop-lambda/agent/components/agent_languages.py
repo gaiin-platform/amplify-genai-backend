@@ -1,58 +1,8 @@
 import json
 from typing import List, Any
 
+from agent.core import AgentLanguage, Goal, Memory, Environment, Action
 from agent.prompt import Prompt
-from agent.game.action import Action
-from agent.game.environment import Environment
-from agent.game.goal import Goal
-from agent.game.memory import Memory
-
-class AgentLanguage:
-    def __init__(self):
-        pass
-
-    def construct_prompt(self,
-                         actions: List[Action],
-                         environment: Environment,
-                         goals: List[Goal],
-                         memory: Memory) -> Prompt:
-        """
-        Construct the prompt to send to the language model.
-
-        :param actions:
-        :param environment:
-        :param goals:
-        :param memory:
-        :return:
-        """
-        raise NotImplementedError("Subclasses must implement this method")
-
-    def adapt_prompt_after_parsing_error(self,
-                                         prompt: Prompt,
-                                         response: str,
-                                         traceback: str,
-                                         error: Any,
-                                         retries_left: int) -> Prompt:
-        """
-        Adapt the prompt after a parsing error. This method is called when the language model fails to parse the response.
-        You can throw custom errors in the parse_response that will be passed to this as the error parameter so that
-        you can adapt the prompt based on the error.
-
-        :param prompt:
-        :param traceback:
-        :param error:
-        :param retries_left:
-        :return:
-        """
-        return prompt
-
-    def parse_response(self, response: str) -> dict:
-        """
-        Parse the response from the language model into a structured format
-        :param response:
-        :return:
-        """
-        raise NotImplementedError("Subclasses must implement this method")
 
 
 class AgentNaturalLanguage(AgentLanguage):

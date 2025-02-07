@@ -1,9 +1,9 @@
 import traceback
 from typing import List
 
-from agent.game.action import ActionContext
-from agent.tool import register_tool
-from agent.util import resolve_references
+from agent.components.tool import register_tool
+from agent.components.util import resolve_references
+from agent.core import ActionContext
 
 
 @register_tool()

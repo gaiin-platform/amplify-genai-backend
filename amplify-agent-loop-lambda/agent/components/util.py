@@ -9,10 +9,27 @@ def event_printer(event_id: str, event: Dict[str, Any]):
     if correlation_id:
         context_id_prefix = f"{context_id_prefix}/{correlation_id}"
 
-    print(f"{context_id_prefix} Event: {event_id}")
     if event_id == "agent/prompt/action/raw_result":
         print("  Agent Response:")
         print(event["response"])
+    elif event_id == "tools/code_exec/execute/error":
+        print("Code Execution Error:")
+        print(event["error"])
+        print("  Traceback:")
+        print(event["traceback"])
+    elif event_id == "tools/code_exec/execute/end":
+        print("Code Execution Result:")
+        # Truncate result to first 1000 characters
+        result_str = str(event["result"])
+        print(result_str[:1000])
+    elif event_id == "tools/code_exec/execute/start":
+        print("Code Execution Start:")
+        print(event["code"])
+    # check if the event starts with tools/
+    elif event_id.startswith("tools/"):
+        print("Tool Event:")
+        print(event_id)
+        print(event)
 
 
 def resolve_dict_references(args, results):

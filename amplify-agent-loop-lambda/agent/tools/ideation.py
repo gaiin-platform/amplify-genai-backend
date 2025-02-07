@@ -1,8 +1,8 @@
 from typing import List
 
-from agent.game.action import ActionContext
+from agent.components.tool import register_tool
+from agent.core import ActionContext
 from agent.prompt import Prompt
-from agent.tool import register_tool
 from agent.tools.prompt_tools import prompt2
 
 

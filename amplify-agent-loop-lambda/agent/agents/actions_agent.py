@@ -1,12 +1,17 @@
 from agent.agents.common_capabilities import PassResultsCapability, ResponseResultReferencingCapability, \
     TimeAwareCapability, PlanFirstCapability
-from agent.game.action import ActionRegistry
-from agent.game.environment import Environment
-from agent.game.goal import Goal, BE_DIRECT, LARGE_RESULTS, PREFER_WORKFLOWS, USE_RESULT_REFERENCES_IN_RESPONSES, \
+from agent.components.common_goals import BE_DIRECT, LARGE_RESULTS, PREFER_WORKFLOWS, USE_RESULT_REFERENCES_IN_RESPONSES, \
     PASS_RESULT_REFERENCES_TO_TOOLS
-from agent.game.languages import AgentJsonActionLanguage, AgentFunctionCallingActionLanguage
-from agent.core import Agent
+from agent.components.agent_languages import AgentJsonActionLanguage, AgentFunctionCallingActionLanguage
+from agent.components.python_action_registry import PythonActionRegistry
+from agent.components.python_environment import PythonEnvironment
+from agent.core import Agent, Environment, ActionRegistry, Goal
+from agent.prompt import create_llm
 
+
+def build_python_agent(model="gpt-4o-mini", additional_goals=None):
+    generate_response = create_llm(None, model)
+    return build(PythonEnvironment(), PythonActionRegistry(), generate_response, additional_goals)
 
 def build(environment: Environment, action_registry: ActionRegistry, generate_response, additional_goals=None):
     """

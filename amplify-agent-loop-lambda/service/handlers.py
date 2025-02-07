@@ -13,10 +13,11 @@ import agent.tools.http_requests
 import agent.tools.prompt_tools
 
 from agent.agents import actions_agent
-from agent.game.action import ActionRegistry, Action
-from agent.game.agent_registry import AgentRegistry
-from agent.game.environment import Environment
-from agent.game.goal import Goal
+from agent.components.agent_registry import AgentRegistry
+from agent.components.common_goals import Goal
+from agent.components.python_action_registry import PythonActionRegistry
+from agent.components.python_environment import PythonEnvironment
+from agent.core import Action
 from agent.prompt import create_llm
 from agent.tools.ops import ops_to_tools
 from common.ops import vop
@@ -207,8 +208,8 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                 description=f"Any files you would like to save/write MUST be saved in {work_directory}. It is the only writable directory."
             )
         ]
-        environment = Environment()
-        action_registry = ActionRegistry()
+        environment = PythonEnvironment()
+        action_registry = PythonActionRegistry()
 
         if 'assistant' in metadata:
             assistant = metadata['assistant']

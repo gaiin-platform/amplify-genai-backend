@@ -2,7 +2,7 @@ import inspect
 import time
 from typing import Any
 
-from agent.game.action import ActionContext, Action
+from agent.core import ActionContext, Action, Environment
 
 
 def has_named_parameter(func, param_name):
@@ -12,8 +12,9 @@ def has_named_parameter(func, param_name):
     return param_name in sig.parameters
 
 
-class Environment:
+class PythonEnvironment(Environment):
     def __init__(self):
+        super().__init__()
         self.result_history = []
         self.current_iteration = 0
         self.result_limit = 1000  # For truncation
@@ -37,20 +38,8 @@ class Environment:
                 if has_named_parameter(action.function, key) and key not in args_copy:
                     args_copy[key] = value
 
-            action_context.send_event("environment/action/execute", {"action": action, "args": args_copy})
-
-            print(f"##################################")
-            print(f"Calling function: {action.function}")
-            print(f"Args: {args_copy}")
-            print(f"##################################")
-
             result = action.execute(**args_copy)
-
-            action_context.send_event("environment/action/result", {"action": action, "result": result})
-
             formatted_result = self.format_result(result)
-
-            action_context.send_event("environment/action/result_formatted", {"action": action, "result": formatted_result})
 
             self.result_history.append(formatted_result)
             return formatted_result
