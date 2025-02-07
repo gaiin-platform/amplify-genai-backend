@@ -145,6 +145,7 @@ def register_tool(tool_name=None,
             except Exception as e:
                 pass
 
+            result = None
             try:
                 # Call the original function
                 result = func(*args, **kwargs)
@@ -198,13 +199,13 @@ def pre_call_action(send_event, function_name, status, action_context, args):
             status = status.format(logged_args)
             send_event("agent/status", {"status": status})
 
-def post_call_action(send_event, function_name, resultStatus, result, action_context, args):
+def post_call_action(send_event, function_name, result_status, result, action_context, args):
     if action_context and send_event:
         # Remove action_context and all of its keys from args
         logged_args = {k: v for k, v in args.items() if k != 'action_context' and k not in action_context.properties}
         send_event("tools/"+function_name+"/end", {**logged_args, "result": result})
-        if resultStatus:
-            status = resultStatus.format({**logged_args, "result": result})
+        if result_status:
+            status = result_status.format({**logged_args, "result": result})
             send_event("agent/status", {"status": status})
 
 def error_call_action(send_event, function_name, errorStatus, ex, traceback_str, action_context, args):
