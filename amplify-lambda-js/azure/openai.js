@@ -6,10 +6,9 @@ import axios from 'axios';
 import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
-import { Transform } from "stream";
-import {sendErrorMessage, sendStateEventToStream} from "../common/streams.js";
+import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
 import {extractKey} from "../datasource/datasources.js";
-import {jsonrepair} from "jsonrepair";
+import {newStatus, getThinkingMessage} from "../common/status.js";
 
 const logger = getLogger("openai");
 
@@ -109,11 +108,11 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    const isO1model = ["o1-mini", "o1-preview"].includes(modelId);
+    const isOmodel = ["o1-mini", "o1-preview"].includes(modelId) || modelId.includes("o3");
 
-    if (isOpenAiEndpoint && !isO1model) data.model = translateModelToOpenAI(body.model);
+    if (isOpenAiEndpoint && !isOmodel) data.model = translateModelToOpenAI(body.model);
 
-    if (isO1model) {
+    if (isOmodel) {
         data = {max_completion_tokens: model.outputTokenLimit,
                 messages: data.messages
                 }
@@ -121,13 +120,30 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             data.stram = true
             // data.stream_options = {"include_usage": True}
         }
+        if (modelId.includes("o3")) {
+            // Convert messages to O3 format and handle system->developer role
+            data.messages = data.messages.map(msg => ({
+                role: msg.role === 'system' ? 'developer' : msg.role,
+                content: [
+                    {   type: "text",
+                        text: msg.content
+                    }
+                ]
+            }));
+
+            // Extract reasoning effort from model ID
+            const effortMatch = modelId.match(/o3-mini-(low|medium|high)/);
+            if (effortMatch) {
+                data.reasoning_effort = effortMatch[1];
+            }
+        }
     }
 
     logger.debug("Calling OpenAI API with url: "+url);
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
-    function streamAxiosResponseToWritable(url, writableStream) {
+    function streamAxiosResponseToWritable(url, writableStream, statusTimer) {
         return new Promise((resolve, reject) => {
             axios({
                 data,
@@ -138,45 +154,65 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             })
                 .then(response => {
 
-                    if (isO1model && !isOpenAiEndpoint) { // azure currently does not support streaming 
+                    const streamError = (err) => {
+                        if (statusTimer) clearTimeout(statusTimer);
+                        sendErrorMessage(writableStream);
+                        reject(err);
+                    };
 
-                        const transformStream = new Transform({
-                            transform(chunk, encoding, callback) {
-                                // Convert chunk to string, remove newlines, and add 'data: ' prefix
-                                const sanitizeData = jsonrepair( chunk.toString().replace(/\n/g, '') );
+                    if (isOmodel && !isOpenAiEndpoint) { // azure currently does not support streaming 
 
-                                const modifiedData = `data: ${sanitizeData}`;   
-                                // console.log("modifiedData: ", chunk.toString());
-
-                                this.push(modifiedData);
-                                callback();
-                            }
+                        const finalizeSuccess = () => {
+                            clearTimeout(statusTimer);
+                            resolve();
+                        };
+                    
+                        let jsonBuffer = '';
+                        let numOfChunks = 0;
+                        
+                        response.data.on('data', chunk => {
+                          jsonBuffer += chunk.toString();
+                          numOfChunks++;
+                          console.log("O1 chunks recieved: ",numOfChunks)
                         });
-                        response.data
-                        .pipe(transformStream)
-                        .pipe(writableStream);
+                    
+                        response.data.on('end', () => {
+                          // now we have the entire JSON in jsonBuffer
+                          try {
+                            const dataObj = JSON.parse(jsonBuffer);
+                            const modifiedData = `data: ${JSON.stringify(dataObj)}`; 
+                            writableStream.write(modifiedData);
+                            writableStream.end();
+                            finalizeSuccess();
+                          } catch (err) {
+                            // handle JSON parse error
+                            console.log("O1 model error: ", err);
+                            streamError(err);
+                          }
+                        });
+
+                        // Handle errors during stream
+                        response.data.on('error',streamError);
+                        // Also handle if writableStream finishes/errors
+                        writableStream.on('finish', finalizeSuccess);
+                        writableStream.on('error', streamError);
+
+
 
                     } else {
                         response.data.pipe(writableStream);
-                    }
-                    // writableStream.destroy(new Error('Forced stream error'));
-                    
-                    // Handle the 'finish' event to resolve the promise
-                    writableStream.on('finish', resolve);
+                        // Handle the 'finish' event to resolve the promise
+                        writableStream.on('finish', resolve);
 
-                    // Handle errors
-                    response.data.on('error', (err) => {
-                        sendErrorMessage(writableStream);
-                        reject(err);
-                    });
-                    
-                    writableStream.on('error', (err) => {
-                        sendErrorMessage(writableStream);
-                        reject(err);
-                    });
+                        // Handle errors
+                        response.data.on('error', streamError);
+                        writableStream.on('error', streamError);
+                    }
+    
                     
                 })
                 .catch((e)=>{
+                    if (statusTimer) clearTimeout(statusTimer);
                     sendErrorMessage(writableStream);
                     
                     if(e.response && e.response.data) {
@@ -200,8 +236,20 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 });
         });
     }
+    let statusTimer = null;
+    if (isOmodel && !isOpenAiEndpoint) {
+        const statusInterval = 8000;
+        const handleSendStatusMessage = () => {
+            console.log("Sending status message...");
+            sendStatusMessage(writable);
+            statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
+            };
 
-    return streamAxiosResponseToWritable(url, writable);
+            // Start the timer
+        statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
+    }
+
+    return streamAxiosResponseToWritable(url, writable, statusTimer);
 }
 
 
@@ -257,4 +305,32 @@ async function includeImageSources(dataSources, messages, model, responseStream)
                                   ]
 
     return messages 
+}
+
+
+const forceFlush = (responseStream) => {
+    sendStatusEventToStream(responseStream, newStatus(
+        {
+            inProgress: false,
+            message: " ".repeat(100000)
+        }
+    ));
+
+}
+
+const sendStatusMessage = (responseStream) => {
+    const statusInfo = newStatus(
+        {
+            animated: true,
+            inProgress: true,
+            sticky: true,
+            summary: getThinkingMessage(),
+            icon: "info",
+        }
+    );
+
+    sendStatusEventToStream(responseStream, statusInfo);
+
+    forceFlush(responseStream);
+    
 }

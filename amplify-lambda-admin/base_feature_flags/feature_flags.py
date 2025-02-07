@@ -26,4 +26,4 @@ FEATURE_FLAGS = {
     'mixPanel': False,
     'integrations': False,
     'memory': False
-  },
+  }

@@ -12,8 +12,7 @@ import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
-import {newStatus} from "../common/status.js";
-import {sendDeltaToStream, sendResultToStream, sendStateEventToStream} from "../common/streams.js";
+import {newStatus, getThinkingMessage} from "../common/status.js";
 import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
 
 const s3Client = new S3Client();
@@ -349,20 +348,6 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                         if(!state) {
                             return !stopPolling;
-                        }
-
-                        function getThinkingMessage() {
-                            const messages = [
-                                "Thinking...",
-                                "Contemplating...",
-                                "Processing...",
-                                "Analyzing...",
-                                "Computing...",
-                                "Working on it...",
-                                "Calculating...",
-                                "Evaluating..."
-                            ];
-                            return messages[Math.floor(Math.random() * messages.length)];
                         }
 
                         console.log("Agent state updated:", state);
