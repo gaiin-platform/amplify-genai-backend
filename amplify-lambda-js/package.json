@@ -5,7 +5,6 @@
     "serverless-offline": "^13.3.2"
   },
   "dependencies": {
-    "@anthropic-ai/bedrock-sdk": "^0.9.2",
     "@aws-sdk/client-bedrock-runtime": "3.714.0",
     "@aws-sdk/client-dynamodb": "^3.648.0",
     "@aws-sdk/client-s3": "^3.474.0",
