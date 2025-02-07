@@ -3,7 +3,7 @@ FEATURE_FLAGS = {
     'ragEnabled': True,
     'uploadDocuments': True,
     'overrideInvisiblePrompts': False,
-    'market': False,
+    # 'market': False,
     'promptPrefixCreate': False, # ask jules
     'outputTransformerCreate': False, # ask jules
     'followUpCreate': True, # ask jules
@@ -14,7 +14,7 @@ FEATURE_FLAGS = {
     'automation': True,
     'codeInterpreterEnabled': False,
     'dataDisclosure': False,
-    'storeCloudConversations': False,
+    'storeCloudConversations': True,
     'apiKeys': True,
     'assistantAdminInterface': False,
     'createAstAdminGroups': False,
@@ -22,6 +22,5 @@ FEATURE_FLAGS = {
     'artifacts': True,
     'mtdCost': False,
     'highlighter': True,
-    'assistantApis': False,
     'mixPanel': False,
   }
