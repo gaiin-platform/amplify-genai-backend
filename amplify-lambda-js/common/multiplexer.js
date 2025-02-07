@@ -36,7 +36,7 @@ export class StreamMultiplexer {
                     if(data.trim().length === 0) {
                         continue;
                     }
-                    if (data.startsWith('data: {"s":"meta","state"')) {
+                    if (data.startsWith('data: {"s":"meta"')) {
                         logger.debug("Sending meta data...", data);
                         this.outputStream.write(data + '\n\n');
                     } else if (data.startsWith('data:')) {
