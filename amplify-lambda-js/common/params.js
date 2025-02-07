@@ -2,9 +2,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {chat} from "../azure/openai.js";
-import {chatAnthropic} from "../bedrock/anthropic.js";
 import { chatBedrock } from "../bedrock/bedrock.js";
-import {chatMistral} from "../bedrock/mistral.js";
 import {getLLMConfig} from "../common/secrets.js";
 
 export const getRequestId = (params) => {
