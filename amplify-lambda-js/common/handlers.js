@@ -77,7 +77,8 @@ export const extractParams = async (event) => {
             };
         }
 
-        const current_user = idpPrefix ? payload.username.slice( idpPrefix.length + 1 ) : payload.username;
+        const user = payload.username;
+        const current_user = idpPrefix && user.startsWith(idpPrefix) ? user.slice( idpPrefix.length + 1 ) : user;
         console.log("Current user: " + current_user);
 
         let requestBody;
