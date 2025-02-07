@@ -17,17 +17,32 @@ class Capability:
         self.name = name
         self.description = description
 
+    def init(self, agent, action_context: ActionContext) -> dict:
+        pass
+
+    def start_agent_loop(self, agent, action_context: ActionContext) -> bool:
+        return True
+
+    def end_agent_loop(self, agent, action_context: ActionContext):
+        pass
+
     def process_action(self, agent, action_context: ActionContext, action: dict) -> dict:
         return action
 
     def process_response(self, agent, action_context: ActionContext, response: str) -> str:
         return response
 
+    def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response, result, memories: List[dict]) -> List[dict]:
+        return memories
+
     def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:
         return prompt
 
     def should_terminate(self, agent, action_context: ActionContext, response: str) -> bool:
         return False
+
+    def terminate(self, agent, action_context: ActionContext) -> dict:
+        pass
 
 
 class Agent:
@@ -127,6 +142,10 @@ class Agent:
             {"type": "environment", "content": result_summary}
         ]
 
+        new_memories = reduce(lambda nm, c: c.process_new_memories(self, action_context, memory, response, result, nm),
+                              self.capabilities,
+                              new_memories)
+
         for m in new_memories:
             memory.add_memory(m)
 
@@ -196,10 +215,18 @@ class Agent:
         iterations = 0
         start_time = time.time()
 
+        # Call init on all capabilities
+        for capability in self.capabilities:
+            capability.init(self, action_context)
+
         # ========================
         # The Agent Loop
         # ========================
         while True:
+
+            can_start_loop = reduce(lambda a, c: c.start_agent_loop(self, action_context), self.capabilities, False)
+            if not can_start_loop:
+                break
 
             if iterations > self.max_iterations:
                 self.update_memory(action_context, memory, "Agent stopped. Max iterations reached.", {})
@@ -208,6 +235,9 @@ class Agent:
             if time.time() - start_time > self.max_duration_seconds:
                 self.update_memory(action_context, memory, "Agent stopped. Max duration reached.", {})
                 break
+
+            for capability in self.capabilities:
+                capability.start_agent_loop(self, action_context)
 
             # 1. Construct the prompt for the LLM to generate a response
             prompt = self.construct_prompt(action_context, self.goals, memory)
@@ -225,8 +255,17 @@ class Agent:
             self.update_memory(action_context, memory, response, result)
 
             # 5. Decide if the loop should continue of if the agent should terminate
-            if self.should_terminate(action_context, response):
+            terminate_loop = self.should_terminate(action_context, response)
+
+            for capability in self.capabilities:
+                capability.end_agent_loop(self, action_context)
+
+            if terminate_loop:
                 break
+
+
+        for capability in self.capabilities:
+            capability.terminate(self, action_context)
 
         return memory
 

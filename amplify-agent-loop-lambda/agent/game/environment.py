@@ -31,6 +31,12 @@ class Environment:
             if has_named_parameter(action.function, "action_agent"):
                 args_copy["action_agent"] = agent
 
+            # Iterate through the keys in the action_context.properties and add them to
+            # if the action.function has a matching named parameter and the parameter is not already in the args_copy
+            for key, value in action_context.properties.items():
+                if has_named_parameter(action.function, key) and key not in args_copy:
+                    args_copy[key] = value
+
             action_context.send_event("environment/action/execute", {"action": action, "args": args_copy})
 
             print(f"##################################")

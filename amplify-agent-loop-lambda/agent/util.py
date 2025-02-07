@@ -58,3 +58,54 @@ def resolve_string(v, results):
         v = v.replace(f"$#{k}", val)
 
     return v
+
+
+def extract_markdown_block(response, block_type="json"):
+    """
+    Extracts a markdown code block of a specified type from the response.
+
+    Args:
+        response (str): The response containing the markdown block.
+        block_type (str, optional): The type of code block to extract (default is "json").
+
+    Returns:
+        dict or str or None: Parsed JSON if block_type is "json", raw string if another type, or None if not found.
+    """
+    if not isinstance(response, str) or not response.strip():
+        return None  # Return None for non-string or empty input
+
+    start_marker = f"```{block_type}"
+    end_marker = "```"
+
+    try:
+        stripped_response = response.strip()
+        start_index = stripped_response.find(start_marker)
+        end_index = stripped_response.rfind(end_marker)
+
+        if start_index >= end_index:
+            end_index = len(stripped_response)
+
+        if start_index == -1 or end_index == -1 or end_index <= start_index:
+            return None  # No valid markdown block found
+
+        extracted_block = stripped_response[start_index + len(start_marker):end_index].strip()
+
+        if block_type == "json":
+            try:
+                return json.loads(extracted_block)  # Safely parse JSON
+            except json.JSONDecodeError:
+                return None  # Invalid JSON structure
+
+        return extracted_block  # Return raw string if it's not JSON
+
+    except Exception:
+        return None  # Catch all other unexpected errors and return None
+
+
+def add_line_numbers(text: str) -> str:
+    """
+    Adds line numbers to each line of the given text.
+    """
+    lines = text.splitlines()
+    numbered_lines = [f"{i + 1}: {line}" for i, line in enumerate(lines)]
+    return "\n".join(numbered_lines)

@@ -1,9 +1,12 @@
 import json
 import time
+from typing import List
 
 from agent.core import Capability
 from agent.game.action import ActionContext
+from agent.game.memory import Memory
 from agent.prompt import Prompt
+from agent.tools.planning import create_plan, determine_progress
 from agent.util import resolve_references
 
 
@@ -31,6 +34,41 @@ def get_results_map(agent, action_context, response):
 
     return {}
 
+
+class PlanFirstCapability(Capability):
+    def __init__(self, plan_memory_type="user", track_progress=True):
+        super().__init__(
+            name="Plan First Capability",
+            description="The Agent will always create a plan and add it to the memory at the start"
+        )
+        self.plan_memory_type = plan_memory_type
+        self.first_call = True
+        self.track_progress = track_progress
+
+    def init(self, agent, action_context):
+        if self.first_call:
+            self.first_call = False
+            plan = create_plan(action_context=action_context,
+                        memory=action_context.get_memory(),
+                        action_registry=action_context.get_action_registry())
+
+            action_context.get_memory().add_memory({
+                "type": self.plan_memory_type,
+                "content": "YOUR PLAN:\n" + plan
+            })
+
+    def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response, result, memories: List[dict]):
+        if self.track_progress:
+            progress = determine_progress(action_context=action_context,
+                        memory=memory,
+                        action_registry=action_context.get_action_registry())
+
+            return memories + [{
+                "type": self.plan_memory_type,
+                "content": progress
+            }]
+
+        return memories
 
 class ResponseResultReferencingCapability(Capability):
     def __init__(self):

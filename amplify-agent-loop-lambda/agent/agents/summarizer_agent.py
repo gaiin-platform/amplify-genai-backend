@@ -4,9 +4,8 @@ import re
 from agent.agents.common_capabilities import ResponseResultReferencingCapability
 from agent.game.action import ActionRegistry, Action
 from agent.game.environment import Environment
-from agent.game.goal import Goal
 from agent.game.languages import AgentNaturalLanguage
-from agent.core import Agent
+from agent.core import Agent, Goal
 from agent.tools.common_tools import terminate
 
 

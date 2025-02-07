@@ -26,6 +26,14 @@ class Action:
         """Execute the action's function"""
         return self.function(**args)
 
+    def todict(self):
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "terminal": self.terminal
+        }
+
 
 class ActionRegistry:
     def __init__(self, tags: List[str] = None):

@@ -14,6 +14,20 @@ import functools
 from inspect import signature, Parameter
 import json
 
+@register_tool()
+def prompt_llm_with_messages(action_context: ActionContext, prompt: [dict]):
+    """
+    Generate a response to a prompt using the LLM model.
+    The LLM cannot see the conversation history, so make sure to include all necessary context in the prompt.
+    Make sure and include ALL text, data, or other information that the LLM needs
+    directly in the prompt. The LLM can't access any external information or context.
+    """
+    generate_response = action_context.get("llm")
+    response = generate_response(Prompt(messages=[
+        *prompt
+    ]))
+    return response
+
 def prompt_with_retries(generate_response, prompt: Prompt, max_retries: int = 3, functions=None):
     """
     Generate a response to a prompt using the LLM model with retries.
