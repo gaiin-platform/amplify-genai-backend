@@ -9,7 +9,7 @@ import email
 from email import policy
 import boto3
 from botocore.exceptions import ClientError
-from assistant.assistant import update_file_tags, create_file_metadata_entry
+from files.file import update_file_tags, create_file_metadata_entry
 
 organization_email_domain = os.environ['ORGANIZATION_EMAIL_DOMAIN']
 
