@@ -108,6 +108,15 @@ functions:
           method: post
           cors: true
     
+  register_conversation:
+    handler: state/conversation.register_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/register
+          method: put
+          cors: true
 
   upload_conversation:
     handler: state/conversation.upload_conversation
