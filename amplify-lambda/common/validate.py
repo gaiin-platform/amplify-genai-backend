@@ -766,8 +766,8 @@ validators = {
     "/state/accounts/get": {
         "get": {}
     },
-    "/state/conversation/upload": {   
-        "conversation_upload": compressed_conversation_schema
+    "/state/conversation/register" : {
+        "conversation_upload": register_conversation_schema
     },
     "/state/conversation/get/multiple": {   
         "get_multiple_conversations": conversation_ids_schema
@@ -839,6 +839,7 @@ api_validators = {
 def validate_data(name, op, data, api_accessed):
     # print(f"Name: {name} and Op: {op} and Data: {data}")
     validator = api_validators if api_accessed else validators
+
     if name in validator and op in validator[name]:
         schema = validator[name][op]
         try:

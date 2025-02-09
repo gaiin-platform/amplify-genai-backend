@@ -115,7 +115,7 @@ functions:
     events:
       - http:
           path: state/conversation/register
-          method: put
+          method: post
           cors: true
 
   upload_conversation:
