@@ -5,6 +5,24 @@ import re
 from common.validate import validated
 from botocore.exceptions import BotoCoreError, ClientError
 import boto3
+import uuid
+from datetime import datetime,timezone
+from common.ops import op
+
+def upload_to_s3(key, conversation, folder=None):
+    s3 = boto3.client('s3')
+    conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
+
+    try:
+        s3.put_object(Bucket=conversations_bucket,
+                      Key=key,
+                      Body=json.dumps({"conversation":conversation, "folder":folder}))
+        print(f"Successfully uploaded conversation to s3: {key}")
+        return {'success' : True, 'message': "Succesfully uploaded conversation to s3"}
+    except (BotoCoreError, ClientError) as e:
+        print(str(e))
+        return {'success' : False, 'message': "Failed to uploaded conversation to s3", 'error': str(e)}
+
 
 @validated(op="conversation_upload")
 def upload_conversation(event, context, current_user, name, data):
@@ -17,14 +35,75 @@ def upload_conversation(event, context, current_user, name, data):
     conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
 
     conversation_key = f"{current_user}/{conversation_id}" 
-    try:
-        s3.put_object(Bucket=conversations_bucket,
-                      Key=conversation_key,
-                      Body=json.dumps({"conversation":conversation, "folder":folder}))
-        return {'success' : True, 'message': "Succesfully uploaded conversation to s3"}
-    except (BotoCoreError, ClientError) as e:
-        print(str(e))
-        return {'success' : False, 'message': "Failed to uploaded conversation to s3", 'error': str(e)}
+    return upload_to_s3(conversation_key, conversation, folder)
+
+
+@op(
+    path="/state/conversation/register",
+    name="registerConversation",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Register a new conversation with messages and metadata.
+    Example request:
+    {
+        "data": {
+            "name": "My Conversation",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello!",
+                    "data": {}
+                },
+                {
+                    "role": "assistant",
+                    "content": "Hi there!",
+                    "data": {}
+                }
+            ],
+            "tags": ["important", "work"],
+            "date": "2024-03-20",
+            "data": {
+                "customField": "value"
+            }
+        }
+    }
+    """,
+    params={
+        "name": "String. Required. Name of the conversation.",
+        "messages": "Array. Required. List of message objects containing role (system/user/assistant), content, and data.",
+        "tags": "Array. Optional. List of string tags for the conversation.",
+        "date": "String. Optional. Date in YYYY-MM-DD format.",
+        "data": "Object. Optional. Additional metadata for the conversation."
+    }
+)
+@validated(op="conversation_upload")
+def register_conversation(event, context, current_user, name, data):
+    data = data['data']
+
+    prepMessages = data['messages']
+
+    for message in prepMessages:
+        message['id'] = str(uuid.uuid4())
+        message['type'] = 'chat'
+
+    current_utc_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    conversation = {
+        "id": data.get('id', str(uuid.uuid4())),
+        "name": data['name'],
+        "messages": prepMessages,
+        "folderId": "agents",
+        "tags": data.get('tags', []),
+        "data": data.get('data', {}),
+        "date": data.get('date', data.get('date', current_utc_time)),
+        "isLocal": False
+    }
+
+    compressed_conversation = lzw_compress( json.dumps(conversation) )
+
+    conversation_key = f"{current_user}/{conversation['id']}" 
+    return upload_to_s3(conversation_key, compressed_conversation, None)
+
 
 
 @validated("read")
@@ -283,7 +362,8 @@ def lzw_uncompress(compressed_data):
     decompressed_string = ""
     previous_entry = dictionary.get(compressed_data[0])
     if not previous_entry:
-        raise ValueError("Invalid compressed data: First entry not found in dictionary")
+        print(f"Invalid compressed data: First entry not found in dictionary")
+        return ''
 
     decompressed_string += previous_entry
     next_code = 256
@@ -309,3 +389,34 @@ def lzw_uncompress(compressed_data):
         return json.loads(output)
     except json.JSONDecodeError:
         raise ValueError("Failed to parse JSON from decompressed string")
+
+
+def lzw_compress(str_input):
+    if not str_input:
+        return []
+
+    # Initialize the dictionary with single-character mappings
+    dictionary = {chr(i): i for i in range(256)}
+    next_code = 256
+    compressed_output = []
+
+    # Preprocessing to convert Unicode characters to a unique format
+    processed_input = ''.join(
+        [f'U+{ord(char):04x}' if ord(char) > 255 else char for char in str_input]
+    )
+
+    current_pattern = ''
+    for character in processed_input:
+        new_pattern = current_pattern + character
+        if new_pattern in dictionary:
+            current_pattern = new_pattern
+        else:
+            compressed_output.append(dictionary[current_pattern])
+            dictionary[new_pattern] = next_code
+            next_code += 1
+            current_pattern = character
+
+    if current_pattern != '':
+        compressed_output.append(dictionary[current_pattern])
+
+    return compressed_output
