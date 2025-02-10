@@ -4,6 +4,7 @@ import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageB
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 
 const logger = getLogger("bedrock");
+const BLANK_MSG = "Intentionally Left Blank, please ignore";
 
 export const chatBedrock = async (chatBody, writable) => {
 
@@ -12,8 +13,8 @@ export const chatBedrock = async (chatBody, writable) => {
     delete body.options; 
     const currentModel = options.model;
 
-    const systemPrompts = [{"text": options.prompt}];
-    if (currentModel.systemPrompt) {
+    const systemPrompts = [{"text": options.prompt.trim() || BLANK_MSG}];
+    if (currentModel.systemPrompt.trim()) {
         systemPrompts.push({ "text": currentModel.systemPrompt });
     }
 
@@ -21,7 +22,7 @@ export const chatBedrock = async (chatBody, writable) => {
     // options.prompt is a match for the first message in messages 
     for (const msg of body.messages.slice(1)) {
         if (msg.role === "system") {
-            systemPrompts.push({ "text": msg.content });
+            if (msg.content.trim()) systemPrompts.push({ "text": msg.content });
         } else {
             withoutSystemMessages.push(msg);
         }
@@ -130,7 +131,7 @@ async function sanitizeMessages(messages, imageSources, model) {
         ...(messages.map(m => {
             return { "role": m['role'],
                      "content": [
-                        { "text":  m['content'] }
+                        { "text":  m['content'].trim() || BLANK_MSG }
                     ]}
             }))
     ];
