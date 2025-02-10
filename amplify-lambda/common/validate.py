@@ -748,6 +748,9 @@ validators = {
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
     },
+    "/state/conversation/register" : {
+        "conversation_upload": register_conversation_schema
+    },
     "/state/conversation/get/multiple": {   
         "get_multiple_conversations": conversation_ids_schema
     },
@@ -809,7 +812,6 @@ api_validators = {
     "/files/download": {
         "download": key_request_schema
     },
-    # currently only in api validators
     "/state/conversation/register" : {
         "conversation_upload": register_conversation_schema
     },
