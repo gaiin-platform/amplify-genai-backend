@@ -24,7 +24,6 @@ def upload_to_s3(key, conversation, folder=None):
         return {'success' : False, 'message': "Failed to uploaded conversation to s3", 'error': str(e)}
 
 
-
 @validated(op="conversation_upload")
 def upload_conversation(event, context, current_user, name, data):
     data = data['data']
@@ -130,7 +129,7 @@ def get_conversation(event, context, current_user, name, data):
             error["type"] = 'NoSuchKey'
 
         return  error
-    
+
 
 def pick_conversation_attributes(conversation):
     attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal', 'groupType', 'codeInterpreterAssistantId']
@@ -140,11 +139,10 @@ def pick_conversation_attributes(conversation):
 @validated("read")
 def get_all_conversations(event, context, current_user, name, data):
     conversations = get_all_complete_conversations(current_user)
-    if (not conversations):
+    if conversations == None:
         return {'success': False, 'message': "Failed to retrieve conversations from S3"}
     elif (len(conversations) == 0):
         return {'success': True, 'message': "No conversations saved to S3"}
-    
     for item in conversations:
         if 'conversation' in item:
             item['conversation'] = pick_conversation_attributes(item['conversation'])
@@ -210,7 +208,6 @@ def get_all_complete_conversations(current_user):
     except (BotoCoreError, ClientError) as e:
         print(str(e))
         return None
-   
 
 
 @validated("get_multiple_conversations")
@@ -293,7 +290,6 @@ def get_presigned_urls(current_user, conversations, chunk_size=400):
     return presigned_urls
 
 
-
 @validated("delete")
 def delete_conversation(event, context, current_user, name, data):
     query_param =  get_conversation_query_param(event.get('queryStringParameters', {}))
@@ -313,7 +309,6 @@ def delete_conversation(event, context, current_user, name, data):
     except (BotoCoreError, ClientError) as e:
         print(str(e))
         return {'success': False, 'message': "Failed to delete conversation from S3", 'error': str(e)}
-
 
 
 @validated("delete_multiple_conversations")
@@ -341,7 +336,6 @@ def delete_multiple_conversations(event, context, current_user, name, data):
         return {'success': False, 'message': "Failed to delete all conversations from S3", 'error': str(e)}
 
 
-
 def get_conversation_query_param(query_params):
     print("Query params: ", query_params)
     conversation_id = query_params.get('conversationId', '')
@@ -351,7 +345,7 @@ def get_conversation_query_param(query_params):
             'success':  True,
             'query_value': conversation_id
             }            
-    
+
 def is_valid_uuidv4(uuid):
     # Regular expression for validating a UUID version 4
     regex = r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
