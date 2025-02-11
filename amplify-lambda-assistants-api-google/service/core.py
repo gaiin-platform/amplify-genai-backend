@@ -1,5 +1,3 @@
-from ecdsa.test_pyecdsa import params
-
 from common.ops import vop
 from common.validate import validated
 from integrations.google.forms import create_form, get_form_details, add_question, update_question, delete_question, \
@@ -148,8 +146,7 @@ def get_sheet_names_handler(event, context, current_user, name, data):
             },
             "insertionPoint": {
                 "type": "integer",
-                "description": "The row number to start insertion at",
-                "default": 1
+                "description": "The row number to start insertion at, default is 1"
             }
         },
         "required": ["spreadsheetId", "rowsData"]
@@ -492,8 +489,7 @@ def get_cell_formulas_handler(event, context, current_user, name, data):
             },
             "sheetId": {
                 "type": "integer",
-                "description": "The ID of the sheet to perform find/replace on",
-                "default": 0  # Default to first sheet
+                "description": "The ID of the sheet to perform find/replace on. Default is 0"
             }
         },
         "required": ["spreadsheetId", "find", "replace"]
@@ -1135,7 +1131,10 @@ def get_events_for_date_handler(event, context, current_user, name, data):
         "startDate": "The start date in ISO 8601 format",
         "endDate": "The end date in ISO 8601 format",
         "duration": "The minimum duration of free time slots in minutes",
-        'userTimeZone': "Optional. The time zone of the user (default: 'America/Chicago')"
+        'userTimeZone': "Optional. The time zone of the user (default: 'America/Chicago')",
+        'includeWeekends': "Optional. Whether to include weekends (default: false)",
+        'allowedTimeWindows': "Optional. List of time windows in format ['HH:MM-HH:MM']",
+        'excludeDates': "Optional. List of dates to exclude in ISO 8601 format"
     },
     parameters={
         "type": "object",
@@ -1153,9 +1152,30 @@ def get_events_for_date_handler(event, context, current_user, name, data):
                 "description": "The minimum duration of free time slots in minutes"
             },
             'userTimeZone': {
-                'type': ['string'],
+                'type': "string",
                 'description': 'Optional. The time zone of the user (default: \'America/Chicago\')',
                 "default": "America/Chicago"
+            },
+            'includeWeekends': {
+                'type': "boolean",
+                'description': 'Optional. Whether to include weekends',
+                "default": False
+            },
+            'allowedTimeWindows': {
+                'type': "array",
+                'items': {
+                    'type': "string",
+                    'pattern': "^([0-1][0-9]|2[0-3]):[0-5][0-9]-([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+                },
+                'description': 'Optional. List of time windows in format ["HH:MM-HH:MM"]'
+            },
+            'excludeDates': {
+                'type': "array",
+                'items': {
+                    'type': "string",
+                    'format': "date"
+                },
+                'description': 'Optional. List of dates to exclude in ISO 8601 format'
             }
         },
         'required': ['startDate', 'endDate', 'duration']
@@ -1163,7 +1183,16 @@ def get_events_for_date_handler(event, context, current_user, name, data):
 )
 @validated("get_free_time_slots")
 def get_free_time_slots_handler(event, context, current_user, name, data):
-    return common_handler(get_free_time_slots, 'startDate', 'endDate', 'duration', userTimeZone="America/Chicago")(event, context, current_user, name, data)
+    return common_handler(
+        get_free_time_slots,
+        'startDate',
+        'endDate',
+        'duration',
+        userTimeZone="America/Chicago",
+        includeWeekends=False,
+        allowedTimeWindows=None,
+        excludeDates=None
+    )(event, context, current_user, name, data)
 
 @vop(
     path="/google/integrations/calendar/check-event-conflicts",
@@ -2177,8 +2206,7 @@ def get_messages_from_date_handler(event, context, current_user, name, data):
         "properties": {
             "n": {
                 "type": "integer",
-                "description": "Number of messages to retrieve",
-                "default": 25
+                "description": "Number of messages to retrieve. Default is 25"
             },
             "label": {
                 "type": "string",
