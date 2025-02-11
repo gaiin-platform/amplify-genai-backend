@@ -44,32 +44,27 @@ provider:
     DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
     DEFAULT_ACCOUNT: "default"
     DEFAULT_LLM_QUERY_MODEL: "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    OBJECT_ACCESS_API_ENDPOINT: ${self:custom.stageVars.OBJECT_ACCESS_PERMISSIONS_ENDPOINT}
+    OBJECT_ACCESS_API_ENDPOINT: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects"
     USER_SESSIONS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-sessions
     USER_RECORDS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-records
     ATTACHMENT_STORAGE_S3_BUCKET_NAME: ${self:service}-${sls:stage}-work-record-attachments
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-accounts
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     DYNAMO_DYNAMIC_CODE_TABLE: ${self:service}-${sls:stage}-dynamic-code
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-cost-calculations
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     DYNAMIC_CODE_BUCKET: ${self:service}-${sls:stage}-dynamic-code
     LAMBDA_BASIC_OPS_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    JOB_STATUS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-job-status
-    JOB_RESULTS_BUCKET: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-job-results
+    JOB_STATUS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-job-status
+    JOB_RESULTS_BUCKET: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-job-results
     WORKFLOW_LAMBDA_NAME: ${self:service}-${self:provider.stage}-llm_workflow_runner
     USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-storage
 
-  apiGateway:
-    restApiId:
-      ${self:custom.stageVars.REST_API_ID}
-    restApiRootResourceId:
-      ${self:custom.stageVars.REST_API_ROOT_RESOURCE_ID}
 
   iam:
     role:
       managedPolicies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole      
-        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_BASIC_OPS_POLICY_NAME}
+        - !Ref LambdaBasicOpsIAMPolicy
 
 functions:
 
