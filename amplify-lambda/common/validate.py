@@ -573,6 +573,54 @@ save_settings_schema = {
     "required": ["settings"]
 }
 
+register_conversation_schema = {
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+        "name": {
+            "type": "string"
+        },
+        "messages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": ["system", "user", "assistant"] 
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "type": ["object", "null"],
+                        "additionalProperties": True
+                    },
+                },
+                "required": ["role", "content", "data"]
+            }
+        },
+        "tags": {
+            "type": ["array", "null"],
+            "items": {
+                "type": "string"
+            }
+        },
+        "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "data": {
+            "type": ["object", "null"],
+            "additionalProperties": True
+        },
+    },
+    "required": ["name", "messages"]
+}
+
+
 
 compressed_conversation_schema = {
     "type": "object",
@@ -700,6 +748,9 @@ validators = {
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
     },
+    "/state/conversation/register" : {
+        "conversation_upload": register_conversation_schema
+    },
     "/state/conversation/get/multiple": {   
         "get_multiple_conversations": conversation_ids_schema
     },
@@ -760,6 +811,9 @@ api_validators = {
     },
     "/files/download": {
         "download": key_request_schema
+    },
+    "/state/conversation/register" : {
+        "conversation_upload": register_conversation_schema
     },
 }
 
