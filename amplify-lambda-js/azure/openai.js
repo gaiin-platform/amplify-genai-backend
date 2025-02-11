@@ -23,6 +23,9 @@ export const translateModelToOpenAI = (modelId) => {
     else if(modelId === "gpt-35-turbo"){
         return "gpt-3.5-turbo";
     }
+    else if(modelId.startsWith("o3-mini")){
+        return "o3-mini";
+    }
     else {
         return modelId;
     }
@@ -110,7 +113,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     const isOmodel = ["o1-mini", "o1-preview"].includes(modelId) || modelId.includes("o3");
 
-    if (isOpenAiEndpoint && !isOmodel) data.model = translateModelToOpenAI(body.model);
 
     if (isOmodel) {
         data = {max_completion_tokens: model.outputTokenLimit,
@@ -138,6 +140,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             }
         }
     }
+    
+    if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
 
     logger.debug("Calling OpenAI API with url: "+url);
 
@@ -160,7 +164,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         reject(err);
                     };
 
-                    if (isOmodel && !isOpenAiEndpoint) { // azure currently does not support streaming 
+                    if (isOmodel && !isOpenAiEndpoint && false) { // azure currently does not support streaming 
 
                         const finalizeSuccess = () => {
                             clearTimeout(statusTimer);
@@ -237,7 +241,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         });
     }
     let statusTimer = null;
-    if (isOmodel && !isOpenAiEndpoint) {
+    if (isOmodel && !isOpenAiEndpoint && false) {
         const statusInterval = 8000;
         const handleSendStatusMessage = () => {
             console.log("Sending status message...");
