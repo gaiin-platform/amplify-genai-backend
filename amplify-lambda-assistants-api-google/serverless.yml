@@ -1,4 +1,4 @@
-service:  vu-amplify-google
+service:  amplify-${self:custom.stageVars.DEP_NAME}-google
 
 frameworkVersion: "3"
 
@@ -11,11 +11,11 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
-
+  - serverless-cloudformation-changesets
 custom:
   pythonRequirements:
     dockerizePip: non-linux
-  stageVariables: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
@@ -26,23 +26,25 @@ provider:
   name: aws
   runtime: python3.11
   stage: ${opt:stage, 'dev'}
-  region: us-east-1
+  region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
-  logRetentionInDays: 365
+  logRetentionInDays: 365  
   apiGateway:
     restApiId:
-      ${self:custom.stageVariables.REST_API_ID}
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
-      ${self:custom.stageVariables.REST_API_ROOT_RESOURCE_ID}    
+      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+
+
   environment:
     INTEGRATION_STAGE: ${self:provider.stage}
-    OAUTH_AUDIENCE: ${self:custom.stageVariables.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVariables.OAUTH_ISSUER_BASE_URL}
-    API_KEYS_DYNAMODB_TABLE: vu-amplify-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: vu-amplify-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: vu-amplify-${sls:stage}-cost-calculations
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: ${self:custom.stageVariables.API_BASE_URL}
+    API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
 
 
   iam:
