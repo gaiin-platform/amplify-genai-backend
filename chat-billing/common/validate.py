@@ -115,6 +115,9 @@ update_models_schema = {
                             "outputTokenCost": {
                             "type": "number"
                         },
+                         "cachedTokenCost": {
+                            "type": "number"
+                        },
                         "exclusiveGroupAvailability": {
                             "type": "array",
                             "items": {
@@ -124,7 +127,7 @@ update_models_schema = {
                     },
                     "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
-                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost",
+                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost",
                                     "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],
                     "additionalProperties": False
                 }
