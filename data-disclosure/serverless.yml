@@ -145,6 +145,7 @@ resources:
               Action:
                 - "s3:PutObject"
                 - "s3:GetObject"
+                - "s3:HeadObject"
                 - "s3:PutBucketNotification"
               Resource: 
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"  
@@ -207,11 +208,9 @@ resources:
             - AllowedOrigins: ['*']
               AllowedMethods: ['GET', 'PUT']
               AllowedHeaders: ['*']
-              MaxAge: 3000     
+              MaxAge: 3000
         BucketEncryption:
           ServerSideEncryptionConfiguration:
             - ServerSideEncryptionByDefault:
-                SSEAlgorithm: AES256   
-
-    # Remove the DataDisclosureStorageNotification resource completely
+                SSEAlgorithm: AES256
                 
