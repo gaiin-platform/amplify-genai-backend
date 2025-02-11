@@ -258,6 +258,9 @@ update_admin_config_schema = {
                                              "outputTokenCost": {
                                                 "type": "number"
                                             },
+                                             "cachedTokenCost": {
+                                                "type": "number"
+                                            },
                                             "exclusiveGroupAvailability": {
                                                 "type": "array",
                                                 "items": {
@@ -268,7 +271,7 @@ update_admin_config_schema = {
                                         "required": ["id","name", "provider", "description", "isAvailable", 
                                                      "supportsImages","supportsSystemPrompts", "systemPrompt",
                                                      "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
-                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "exclusiveGroupAvailability"],
+                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }
                                 },
