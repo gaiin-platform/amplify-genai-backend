@@ -620,8 +620,6 @@ register_conversation_schema = {
     "required": ["name", "messages"]
 }
 
-
-
 compressed_conversation_schema = {
     "type": "object",
     "properties": {
@@ -820,6 +818,7 @@ api_validators = {
 def validate_data(name, op, data, api_accessed):
     # print(f"Name: {name} and Op: {op} and Data: {data}")
     validator = api_validators if api_accessed else validators
+
     if name in validator and op in validator[name]:
         schema = validator[name][op]
         try:
