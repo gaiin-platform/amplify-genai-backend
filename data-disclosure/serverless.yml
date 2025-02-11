@@ -62,7 +62,7 @@ provider:
 
 functions:
   # determine if a user exists as an "accepted" record in the DataDisclosureAcceptanceTable
-  check_data_disclosure_decision:
+  check_dd_decision:
     handler: data_disclosure.check_data_disclosure_decision
     memorySize: 512
     timeout: 30
@@ -73,7 +73,7 @@ functions:
           cors: true
 
   # save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
-  save_data_disclosure_decision:
+  save_dd_decision:
     handler: data_disclosure.save_data_disclosure_decision
     timeout: 30
     events:
@@ -83,7 +83,7 @@ functions:
           cors: true
 
   # get the most recent data disclosure from DataDisclosureVersionsTable
-  get_latest_data_disclosure:
+  get_latest_dd:
     handler: data_disclosure.get_latest_data_disclosure
     timeout: 30
     events:
@@ -93,7 +93,7 @@ functions:
           cors: true
 
 
-  upload_data_disclosure:
+  upload_dd:
     handler: data_disclosure.get_presigned_data_disclosure
     timeout: 10
     events:
@@ -107,7 +107,7 @@ functions:
     handler: data_disclosure.convert_uploaded_data_disclosure
     events:
       - s3:
-          bucket: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
+          bucket: !Ref DataDisclosureStorage
           event: s3:ObjectCreated:*
           existing: true
 
@@ -194,15 +194,6 @@ resources:
       DependsOn: DataDisclosureIAMPolicy
       Properties:
         BucketName: ${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}
-        NotificationConfiguration:
-          LambdaConfigurations:
-            - Event: 's3:ObjectCreated:Put'
-              Filter:
-                S3Key:
-                  Rules:
-                    - Name: suffix
-                      Value: '.pdf'
-              Function: !GetAtt ConvertDataDisclosureLambdaFunction.Arn
         CorsConfiguration:
           CorsRules:
             - AllowedOrigins: ['*']
