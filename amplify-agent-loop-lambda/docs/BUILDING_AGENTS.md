@@ -16,12 +16,11 @@ Let's start by creating a tool that our agent can use:
 ```python
 from agent.components.tool import register_tool
 
-@register_tool(
-    tool_name="greet_user",
-    description="Greet a user by name",
-    tags=["greeting"]
-)
+@register_tool(tags=["greeting"])
 def greet_user(name: str) -> str:
+    """
+    Provides a greeting to the user.
+    """
     return f"Hello, {name}!"
 ```
 
