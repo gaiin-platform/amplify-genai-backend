@@ -5,7 +5,7 @@ import requests
 from agent.components.tool import register_tool
 
 
-@register_tool()
+@register_tool(tags=["http_requests"])
 def send_http_request(url: str, headers:Dict, method: str = "GET", body: str = None) -> Dict:
     """
     Make an HTTP request to the provided URL with the given headers, method, and body.
@@ -26,7 +26,7 @@ def send_http_request(url: str, headers:Dict, method: str = "GET", body: str = N
         "body": response.text
     }
 
-@register_tool()
+@register_tool(tags=["web_browser"])
 def get_web_page_text(url: str) -> str:
     """
     Get the text content of a web page at the provided URL.

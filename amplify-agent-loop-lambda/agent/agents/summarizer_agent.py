@@ -1,7 +1,4 @@
-import json
-import re
-
-from agent.agents.common_capabilities import ResponseResultReferencingCapability
+from agent.capabilities.common_capabilities import ResponseResultReferencingCapability
 from agent.components.agent_languages import AgentNaturalLanguage
 from agent.core import Agent, Goal, ActionRegistry, Action, Environment
 from agent.tools.common_tools import terminate

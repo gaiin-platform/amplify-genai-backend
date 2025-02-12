@@ -74,7 +74,7 @@ def parse_multiline_edit_operations(edit_output: str) -> List[Dict[str, Union[st
     except Exception as e:
         return []
 
-@register_tool(tags=["structured-editing"])
+@register_tool(tags=["structured_editing"])
 def edit_content(action_context, instructions:str, content: str) -> str:
     line_edits, reasoning = propose_multiline_edits(action_context, instructions, content)
     edits = parse_multiline_edit_operations(line_edits)

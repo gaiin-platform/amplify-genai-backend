@@ -54,7 +54,7 @@ def prepare_exec_globals(code_string, context_dict):
     return exec_globals
 
 
-@register_tool()
+@register_tool(tags=["code_exec"])
 def exec_code(action_context: ActionContext, code: str):
     """
     Executes the provided Python code and returns the value of the 'result' variable if defined.

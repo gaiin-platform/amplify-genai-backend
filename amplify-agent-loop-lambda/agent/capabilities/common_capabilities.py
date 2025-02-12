@@ -1,12 +1,13 @@
 import json
 import time
 from typing import List
+from zoneinfo import ZoneInfo
 
 from agent.components.util import resolve_references
-from agent.core import Capability, ActionContext, Memory
+from agent.core import Capability, ActionContext, Memory, Action
 from agent.prompt import Prompt
 from agent.tools.planning import create_plan, determine_progress
-
+from datetime import datetime
 
 def get_results_map(agent, action_context, response):
     environment = action_context.get_environment()
@@ -33,8 +34,23 @@ def get_results_map(agent, action_context, response):
     return {}
 
 
+class CurrentUserAwareCapability(Capability):
+    def __init__(self):
+        super().__init__(
+            name="Current User Awareness",
+            description="Allows the agent to be aware of the current user"
+        )
+
+    def init(self, agent, action_context: ActionContext) -> dict:
+        memory = action_context.get_memory()
+        current_user = action_context.get("current_user", "UNKNOWN")
+        memory.add_memory({
+            "type": "system",
+            "content": f"THE CURRENT USER IS: {current_user}. Make sure and consider this when responding."
+        })
+
 class PlanFirstCapability(Capability):
-    def __init__(self, plan_memory_type="user", track_progress=True):
+    def __init__(self, plan_memory_type="system", track_progress=False):
         super().__init__(
             name="Plan First Capability",
             description="The Agent will always create a plan and add it to the memory at the start"
@@ -47,12 +63,12 @@ class PlanFirstCapability(Capability):
         if self.first_call:
             self.first_call = False
             plan = create_plan(action_context=action_context,
-                        memory=action_context.get_memory(),
+                        _memory=action_context.get_memory(),
                         action_registry=action_context.get_action_registry())
 
             action_context.get_memory().add_memory({
                 "type": self.plan_memory_type,
-                "content": "YOUR PLAN:\n" + plan
+                "content": "You must follow these instructions carefully to complete the task:\n" + plan
             })
 
     def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response, result, memories: List[dict]):
@@ -87,14 +103,35 @@ class TimeAwareCapability(Capability):
         )
 
     def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:
-        iso_time = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-
-        prompt.messages = [{
-            "role": "system",
-            "content": f"The current time is {iso_time}. Please consider the day/time, if relevant, when responding."
-        }] + prompt.messages
-
         return prompt
+
+    def init(self, agent, action_context: ActionContext) -> dict:
+        # Define timezone
+        time_zone_name = action_context.get("time_zone", "America/Chicago")
+        chicago_tz = ZoneInfo(time_zone_name)
+
+        # Get current time in the specified timezone
+        now_chicago = datetime.now(chicago_tz)
+
+        # Format the date
+        iso_time = now_chicago.strftime("%Y-%m-%dT%H:%M:%S%z")  # ISO format with timezone offset
+        formatted_date = now_chicago.strftime("%H:%M %A, %B %d, %Y")  # Desired format
+
+        print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
+        print(f"Formatted Date: {formatted_date}")  # Example: 01:11 Friday, February 9, 2025
+
+        print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
+        print(f"Formatted Date: {formatted_date}")  # Example: 01:11 Friday, February 9, 2025
+
+        memory = action_context.get_memory()
+
+        memory.add_memory({
+            "type": "system",
+            "content": f"Right now, it is {formatted_date} (ISO: {iso_time}). "
+                       f"You are in the {time_zone_name} timezone. "
+                       f"Please consider the day/time, if relevant, when responding."
+        })
+
 
 class PassResultsCapability(Capability):
     def __init__(self):
@@ -103,6 +140,7 @@ class PassResultsCapability(Capability):
             description="Allows the agent to pass past results to actions by reference"
         )
 
-    def process_action(self, agent, action_context: ActionContext, action: dict) -> dict:
-        action["args"] = resolve_references(action["args"], get_results_map(agent, action_context, action))
+    def process_action(self, agent, action_context: ActionContext, action_def: Action, action: dict) -> dict:
+        if "args" in action:
+            action["args"] = resolve_references(action["args"], get_results_map(agent, action_context, action))
         return action

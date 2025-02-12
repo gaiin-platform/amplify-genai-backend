@@ -208,8 +208,32 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                 description=f"Any files you would like to save/write MUST be saved in {work_directory}. It is the only writable directory."
             )
         ]
+
+        # Determine which Python built-in operations to include
+        all_built_in_operations = []
+        if metadata:
+            built_in_operations = metadata.get('builtInOperations', [])
+            assistant_built_in_operations = metadata.get('assistant', {}).get('data',{}).get('builtInOperations', [])
+            all_built_in_operations = built_in_operations + assistant_built_in_operations
+
+        tags = []
+        tool_names = []
+        if '*' in all_built_in_operations:
+            tags, tool_names = None, None
+        else:
+            for operation in all_built_in_operations:
+                if operation.startswith('tag:'):
+                    tags.append(operation.replace('tag:', ''))
+                else:
+                    tool_names.append(operation)
+
+        print(f"Builtin operations: {all_built_in_operations}")
+        print(f"Tags: {tags}")
+        print(f"Tool names: {tool_names}")
+
         environment = PythonEnvironment()
-        action_registry = PythonActionRegistry()
+        action_registry = PythonActionRegistry(tags=tags, tool_names=tool_names)
+        action_registry.register_terminate_tool() # We always include terminate
 
         if 'assistant' in metadata:
             assistant = metadata['assistant']
@@ -217,14 +241,15 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             if assistant['instructions']:
                 print(f"Adding assistant instructions to goals: {assistant['instructions']}")
                 additional_goals.append(Goal(
-                    name="What to Do",
+                    name="Instructions:",
                     description=assistant['instructions']
                 ))
             ops = assistant.get("data",{}).get("operations", [])
             print(f"Assistant operations: {ops}")
             op_tools = ops_to_tools(ops)
+
             for op_tool in op_tools:
-                print(f"Registering tool: {op_tool['tool_name']}: {op_tool['description']}")
+                print(f"Registering op tool in action registry: {op_tool['tool_name']}: {op_tool['description']}")
                 print(f"Parameters: {op_tool.get('parameters', {})}")
                 action_registry.register(
                     Action(
@@ -237,15 +262,27 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                     )
                 )
 
-        model = metadata.get('agent_model', os.getenv("AGENT_MODEL"))
+        print("Registered actions in action registry:")
+        for tool_name, action in action_registry.actions.items():
+            print(f"Registered action: {tool_name}")
 
-        llm = create_llm(access_token, metadata.get('model', model))
+        model = metadata.get('model', os.getenv("AGENT_MODEL"))
+        print(f"Using model: {model}")
 
-        agent = actions_agent.build(
-            environment=environment,
-            action_registry=action_registry,
-            generate_response=llm,
-            additional_goals=additional_goals)
+        llm = create_llm(access_token, model)
+
+        if additional_goals:
+            agent = actions_agent.build_clean(
+                environment=environment,
+                action_registry=action_registry,
+                generate_response=llm,
+                additional_goals=additional_goals)
+        else:
+            agent = actions_agent.build(
+                environment=environment,
+                action_registry=action_registry,
+                generate_response=llm,
+                additional_goals=additional_goals)
 
         agent_registry = AgentRegistry()
         agent_registry.register("Action Agent", "Can use tools to take actions on behalf of the user.", agent)

@@ -6,7 +6,7 @@ from agent.components.util import resolve_references
 from agent.core import ActionContext
 
 
-@register_tool()
+@register_tool(tags=["workflow"])
 def execute_workflow(agent, action_context: ActionContext, workflow: List[dict]) -> dict:
     """
     Execute a workflow of actions.

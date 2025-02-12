@@ -8,6 +8,10 @@ from typing import List, Callable, Dict, Any
 from agent.prompt import Prompt
 
 
+class UnknownActionError(Exception):
+    pass
+
+
 class Memory:
     def __init__(self):
         self.items = []  # Basic conversation histor
@@ -42,7 +46,8 @@ class Action:
                  parameters: Dict,
                  output: Dict,
                  side_effects: Dict = {},
-                 terminal: bool = False):
+                 terminal: bool = False,
+                 metadata: Dict = None):
         self.name = name
         self.function = function
         self.description = description
@@ -50,6 +55,7 @@ class Action:
         self.parameters = parameters
         self.output = output
         self.side_effects = side_effects
+        self.metadata = metadata or {}
 
     def execute(self, **args) -> Any:
         """Execute the action's function"""
@@ -197,11 +203,15 @@ class Capability:
     def end_agent_loop(self, agent, action_context: ActionContext):
         pass
 
-    def process_action(self, agent, action_context: ActionContext, action: dict) -> dict:
+    def process_action(self, agent, action_context: ActionContext, action_def: Action, action: dict) -> dict:
         return action
 
     def process_response(self, agent, action_context: ActionContext, response: str) -> str:
         return response
+
+    # process_result(self, action_context, response, action_def, action, r)
+    def process_result(self, agent, action_context: ActionContext, response: str,  action_def: Action, action: dict, result: any) -> any:
+        return result
 
     def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response, result, memories: List[dict]) -> List[dict]:
         return memories
@@ -255,7 +265,12 @@ class Agent:
 
     def get_action(self, response):
         action = self.agent_language.parse_response(response)
-        action_def = self.actions.actions[action["tool"]]
+        action_name = action["tool"]
+        action_def = self.actions.get_action(action_name)
+
+        if not action_def:
+            raise UnknownActionError(f"The specified tool '{action_name}' does not exist. Try something else.")
+
         return action_def, action
 
     def handle_agent_response(self, action_context: ActionContext, response: str) -> dict:
@@ -264,9 +279,12 @@ class Agent:
 
         action_context.send_event("agent/execute_action", {"action": action, "action_def": action_def})
 
-        action = reduce(lambda a, c: c.process_action(self, action_context, a), self.capabilities, action)
+        action = reduce(lambda a, c: c.process_action(self, action_context, action_def, a), self.capabilities, action)
 
         result = self.environment.execute_action(self, action_context, action_def, action["args"])
+
+        result = reduce(lambda r, c: c.process_result(self, action_context, response, action_def, action, r), self.capabilities, result)
+
         return result
 
     def should_terminate(self, action_context: ActionContext, response: str) -> bool:
@@ -348,6 +366,7 @@ class Agent:
 
                 if action_def and action:
                     return response
+
             except Exception as e:
                 traceback_str = traceback.format_exc()
                 send_event("agent/prompt/action/error",
@@ -406,9 +425,6 @@ class Agent:
             if time.time() - start_time > self.max_duration_seconds:
                 self.update_memory(action_context, memory, "Agent stopped. Max duration reached.", {})
                 break
-
-            for capability in self.capabilities:
-                capability.start_agent_loop(self, action_context)
 
             # 1. Construct the prompt for the LLM to generate a response
             prompt = self.construct_prompt(action_context, self.goals, memory)

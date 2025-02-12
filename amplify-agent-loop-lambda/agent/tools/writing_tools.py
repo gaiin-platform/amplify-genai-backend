@@ -5,7 +5,7 @@ from agent.core import ActionContext
 from agent.prompt import Prompt
 
 
-@register_tool()
+@register_tool(tags=["writing"])
 def write_long_content(action_context: ActionContext, outline: List[Dict[str, Any]]) -> str:
     """
     Turn the outline into long-form written content. The LLM will be prompted

@@ -27,10 +27,16 @@ def event_printer(event_id: str, event: Dict[str, Any]):
         print(event["code"])
     # check if the event starts with tools/
     elif event_id.startswith("tools/"):
-        print("Tool Event:")
-        print(event_id)
-        print(event)
-
+        if event_id.endswith("/start"):
+            print("Tool Event:")
+            print(json.dumps(event, indent=2))
+        if event_id.endswith("/end"):
+            print("Result:")
+            print(json.dumps(event['result'], indent=2))
+        if event_id.endswith("/error"):
+            print("Error!!!!!:")
+            print(event['exception'])
+            print(event['traceback'])
 
 def resolve_dict_references(args, results):
     return {k: v for k, v in [(k, resolve_references(v, results)) for k, v in args.items()]}

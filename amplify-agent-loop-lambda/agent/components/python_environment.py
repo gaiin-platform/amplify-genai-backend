@@ -35,23 +35,25 @@ class PythonEnvironment(Environment):
             # Iterate through the keys in the action_context.properties and add them to
             # if the action.function has a matching named parameter and the parameter is not already in the args_copy
             for key, value in action_context.properties.items():
-                if has_named_parameter(action.function, key) and key not in args_copy:
-                    args_copy[key] = value
+                if has_named_parameter(action.function, "_" + key) and key not in args_copy:
+                    args_copy["_"+key] = value
 
             result = action.execute(**args_copy)
-            formatted_result = self.format_result(result)
+            formatted_result = self.format_result(action, result)
 
             self.result_history.append(formatted_result)
             return formatted_result
         except Exception as e:
             return {
+                "tool": action.name,
                 "tool_executed": False,
                 "error": str(e)
             }
 
-    def format_result(self, result: Any) -> dict:
+    def format_result(self, action, result: Any) -> dict:
         """Format and add metadata to result"""
         result_dict = {
+            "tool": action.name,
             "tool_executed": True,
             "result": result,
             "id": f"$#{self.current_iteration}",

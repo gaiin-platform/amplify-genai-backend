@@ -55,7 +55,7 @@ def get_tool_metadata(func, tool_name=None, description=None, parameters_overrid
         }
         for param_name, param in signature.parameters.items():
 
-            if param_name in ["action_context", "action_agent"]:
+            if param_name in ["action_context", "action_agent"] or param_name.startswith("_"):
                 continue  # Skip these parameters
 
             def get_json_type(param_type):
