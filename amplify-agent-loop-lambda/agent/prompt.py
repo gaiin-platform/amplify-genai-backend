@@ -28,6 +28,7 @@ def generate_response(model, prompt: Prompt) -> str:
     try:
 
         if not tools:
+            print("Prompting without tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -35,6 +36,7 @@ def generate_response(model, prompt: Prompt) -> str:
             )
             result = response.choices[0].message.content
         else:
+            print("Prompting with tools.")
             response = completion(
                 model=model,
                 messages=messages,

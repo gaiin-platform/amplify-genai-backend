@@ -279,4 +279,5 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                     "args": {"message": response}
                 }
             else:
+                print(f"Agent language failed to parse response: {response}")
                 raise ValueError(f"The agent did not respond with a valid tool invocation: {str(e)}")

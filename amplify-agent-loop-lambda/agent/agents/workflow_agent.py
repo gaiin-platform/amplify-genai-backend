@@ -115,23 +115,6 @@ def load_workflow(file_path):
         steps = json.loads(content)
         return Workflow.from_steps(steps, "workflow")
 
-@register_tool(tags=["workflow"])
-def get_availability(start_date: str, end_date: str):
-    """
-    Return the availability of the user.
-
-    :param start_date:
-    :param end_date:
-    :return:
-    """
-    return "2/14 and 2/18 from 2-3pm or 2/23 at 11am"
-
-@register_tool(tags=["workflow"])
-def draft_email(to: str, message: str):
-    return f"Done: Email drafted to {to} with message: {message}"
-
-def create_calendar_invite(title: str, start_date_time: str, end_date_time: str):
-    return f"Done: Calendar invite created."
 
 @register_tool(tags=["workflow"])
 def think(action_context, _memory: Memory, what_to_think_about: str):

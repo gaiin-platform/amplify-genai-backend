@@ -12,12 +12,13 @@ import agent.tools.code_exec
 import agent.tools.http_requests
 import agent.tools.prompt_tools
 
-from agent.agents import actions_agent
+from agent.agents import actions_agent, workflow_agent
+from agent.capabilities.workflow_model import Workflow
 from agent.components.agent_registry import AgentRegistry
 from agent.components.common_goals import Goal
 from agent.components.python_action_registry import PythonActionRegistry
 from agent.components.python_environment import PythonEnvironment
-from agent.core import Action
+from agent.core import Action, UnknownActionError, ActionRegistry
 from agent.prompt import create_llm
 from agent.tools.ops import ops_to_tools
 from common.ops import vop
@@ -26,6 +27,8 @@ from typing import List, Dict, Any
 from botocore.exceptions import ClientError
 
 from service.session_files import create_file_tracker, get_presigned_url_by_id
+from workflow.workflow_template_registry import list_workflow_templates, get_workflow_template, \
+    register_workflow_template
 
 
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -209,12 +212,28 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             )
         ]
 
+        workflow = None
+
         # Determine which Python built-in operations to include
         all_built_in_operations = []
         if metadata:
             built_in_operations = metadata.get('builtInOperations', [])
             assistant_built_in_operations = metadata.get('assistant', {}).get('data',{}).get('builtInOperations', [])
             all_built_in_operations = built_in_operations + assistant_built_in_operations
+
+            if 'workflow' in metadata:
+                print(f"Workflow metadata: {metadata['workflow']}")
+                templateId = metadata.get("workflow",{}).get("templateId", None)
+                if templateId:
+                    print(f"Loading workflow template: {templateId}")
+                    workflow_definition = get_workflow_template(current_user, templateId)
+                    if workflow_definition:
+                        try:
+                            steps = workflow_definition['template']['steps']
+                            workflow = Workflow.from_steps(steps, "")
+
+                        except Exception as e:
+                            print(f"Error loading workflow: {e}")
 
         tags = []
         tool_names = []
@@ -262,27 +281,52 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                     )
                 )
 
+
         print("Registered actions in action registry:")
         for tool_name, action in action_registry.actions.items():
             print(f"Registered action: {tool_name}")
+
+        if workflow:
+            workflow_tools_registry = PythonActionRegistry(tags=["workflow"])
+
+            for action in workflow_tools_registry.get_actions():
+                print(f"Adding workflow action: {action.name}")
+                action_registry.register(action)
+
+            print(f"Validating workflow action bindings...")
+            for i, step in enumerate(workflow.steps):
+                action = action_registry.get_action(step.tool)
+                if not action:
+                    raise UnknownActionError(f"Invalid Workflow. Action not found: Step {i+1}, Action: {step.tool}")
 
         model = metadata.get('model', os.getenv("AGENT_MODEL"))
         print(f"Using model: {model}")
 
         llm = create_llm(access_token, model)
 
-        if additional_goals:
+        if additional_goals and not workflow:
+            print(f"Building action agent with additional goals: {additional_goals}")
             agent = actions_agent.build_clean(
                 environment=environment,
                 action_registry=action_registry,
                 generate_response=llm,
                 additional_goals=additional_goals)
-        else:
+        elif not workflow:
+            print(f"Building action agent with no additional goals.")
             agent = actions_agent.build(
                 environment=environment,
                 action_registry=action_registry,
                 generate_response=llm,
                 additional_goals=additional_goals)
+        else:
+            print(f"Building workflow agent with workflow: {workflow}")
+            agent = workflow_agent.build_clean(
+                environment=environment,
+                action_registry=action_registry,
+                generate_response=llm,
+                workflow=workflow,
+                additional_goals=additional_goals)
+
 
         agent_registry = AgentRegistry()
         agent_registry.register("Action Agent", "Can use tools to take actions on behalf of the user.", agent)
@@ -353,6 +397,15 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
             file_results=file_results,
             session_files=session_files
         )
+    except UnknownActionError as ae:
+        # print a stack trace for the exception
+        traceback.print_exc()
+        print(f"Error handling event: {ae}")
+        return {
+            "handled": False,
+            "error": f"An unknown action is referenced in the workflow. Check that the agent has that action defined."
+                     f" {str(ae)}"
+        }
 
     except Exception as e:
         # print a stack trace for the exception
@@ -528,3 +581,84 @@ def get_file_download_urls(current_user, access_token, session_id, files, versio
         urls_by_file[file_id] = url
 
     return urls_by_file
+
+@vop(
+    path="/vu-agent/register-workflow-template",
+    tags=["workflows"],
+    name="registerWorkflowTemplate",
+    description="Register a new workflow template.",
+    params={
+        "template": "The workflow template definition",
+        "name": "Name of the template",
+        "description": "Description of the template",
+        "inputSchema": "Schema defining the template inputs",
+        "outputSchema": "Schema defining the template outputs"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "template": {"type": "object"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"}
+        },
+        "required": ["template", "name", "description", "inputSchema", "outputSchema"]
+    }
+)
+def register_workflow_template_handler(current_user, access_token, template, name, description, input_schema, output_schema):
+    try:
+        template_id = register_workflow_template(  # Use template_id as per earlier changes
+            current_user=current_user,
+            template=template,
+            name=name,
+            description=description,
+            input_schema=input_schema,
+            output_schema=output_schema
+        )
+        return {"templateId": template_id}  # Use camel case in response
+    except Exception as e:
+        raise RuntimeError(f"Failed to register workflow template: {str(e)}")
+
+@vop(
+    path="/vu-agent/get-workflow-template",
+    tags=["workflows"],
+    name="getWorkflowTemplate",
+    description="Get a workflow template by ID.",
+    params={
+        "templateId": "ID of the template to retrieve"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "templateId": {"type": "string"}
+        },
+        "required": ["templateId"]
+    }
+)
+def get_workflow_template_handler(current_user, access_token, template_id):
+    try:
+        template = get_workflow_template(current_user, template_id)
+        if template is None:
+            raise ValueError("Template not found")
+        return template  # No need for conversion; already uses templateId
+    except Exception as e:
+        raise RuntimeError(f"Failed to get workflow template: {str(e)}")
+
+@vop(
+    path="/vu-agent/list-workflow-templates",
+    tags=["workflows"],
+    name="listWorkflowTemplates",
+    description="List all workflow templates for the current user.",
+    schema={
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+)
+def list_workflow_templates_handler(current_user, access_token):
+    try:
+        templates = list_workflow_templates(current_user)
+        return {"templates": templates}  # No need for conversion; already uses templateId
+    except Exception as e:
+        raise RuntimeError(f"Failed to list workflow templates: {str(e)}")
