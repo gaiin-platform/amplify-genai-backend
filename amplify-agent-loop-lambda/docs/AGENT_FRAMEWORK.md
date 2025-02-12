@@ -233,6 +233,194 @@ This framework provides a flexible, extensible system for building agents that c
 
 The modular design allows for easy addition of new tools, capabilities, and environment modifications while maintaining a consistent execution pattern.
 
+
+# Essential Tools: Common Tools Package
+
+## Overview
+The `agent.common_tools` package provides essential tools that every agent needs, particularly the `terminate` tool that properly ends agent execution.
+
+## Importing Common Tools
+Always include this import in your agent setup:
+
+```python
+import agent.common_tools  # This registers the terminate tool
+```
+
+## The Terminate Tool
+The `terminate` tool is crucial for proper agent execution:
+
+```python
+@register_tool(terminal=True)
+def terminate(message: str, result_references: List = None):
+    """
+    Terminate the conversation and return final results.
+    """
+    return {
+        "message": message,
+        "results": result_references
+    }
+```
+
+### Usage by Agent
+```python
+# Agent using terminate
+response = {
+    "tool": "terminate",
+    "args": {
+        "message": "Task completed! Here are the results.",
+        "result_references": ["$#0", "$#1"]  # References to previous tool results
+    }
+}
+```
+
+### Why It's Important
+1. **Clean Termination**: Signals task completion
+2. **Result Collection**: Gathers important outputs
+3. **Reference System**: Can include previous tool results
+4. **Clear Communication**: Provides final message to user
+
+## Best Practices
+- Always import `agent.common_tools`
+- Use `terminate` to end agent execution
+- Include relevant result references
+- Provide clear completion messages
+
+The `terminate` tool ensures proper task completion and result reporting, making it an essential part of any agent implementation.
+
+# Understanding Agent Memory and Output
+
+## Basic Usage
+When you run an agent, it maintains a conversation history in its memory:
+
+```python
+# Create a session
+memory = agent.run(
+    user_input="Please greet John",
+    action_context_props={
+        "current_user": "user123",
+        "session_id": "abc123",
+        "access_token": "token123"
+    }
+)
+```
+
+## Memory Structure
+The memory contains a list of interactions in chronological order:
+
+```python
+memory.items = [
+    # User's initial request
+    {
+        "role": "user",
+        "content": "Get a list of files in the current directory..."
+    },
+    
+    # System's planning message
+    {
+        "role": "system",
+        "content": "You must follow these instructions carefully...\n1. List files..."
+    },
+    
+    # Assistant's tool selection
+    {
+        "role": "assistant",
+        "content": {
+            "tool": "exec_code",
+            "args": {
+                "code": "import os\ntry:\n    files = os.listdir('.')..."
+            }
+        }
+    },
+    
+    # Environment's response (tool execution result)
+    {
+        "role": "environment",
+        "content": {
+            "tool_executed": true,
+            "result": ["file1.txt", "file2.txt"],
+            "id": "$#0",
+            "timestamp": "2025-02-12T14:50:49+0000"
+        }
+    }
+]
+```
+
+## Memory Roles
+
+1. **user**: Original requests
+   ```python
+   {"role": "user", "content": "Please help me..."}
+   ```
+
+2. **system**: Planning and instruction messages
+   ```python
+   {"role": "system", "content": "Step 1: First, we will..."}
+   ```
+
+3. **assistant**: Tool selections and actions
+   ```python
+   {
+       "role": "assistant",
+       "content": {
+           "tool": "greet_user",
+           "args": {"name": "John"}
+       }
+   }
+   ```
+
+4. **environment**: Tool execution results
+   ```python
+   {
+       "role": "environment",
+       "content": {
+           "tool_executed": true,
+           "result": "Hello, John!",
+           "id": "$#0",
+           "timestamp": "2024-01-20T10:00:00Z"
+       }
+   }
+   ```
+
+## Key Features
+
+1. **Conversation Tracking**
+   - Complete history of interactions
+   - Tool executions and results
+   - System planning messages
+   - Timestamps on actions
+
+2. **Tool Execution Records**
+   - Tool name and arguments
+   - Execution success/failure
+   - Result data
+   - Unique execution IDs
+
+3. **Error Handling**
+   ```python
+   {
+       "role": "environment",
+       "content": {
+           "tool_executed": false,
+           "error": "Failed to execute tool",
+           "id": "$#1"
+       }
+   }
+   ```
+
+4. **Reference System**
+   - Each tool execution gets a unique ID (`$#0`, `$#1`, etc.)
+   - Results can be referenced in later tool calls
+   - Timestamps for execution tracking
+
+This memory system provides:
+- Complete audit trail
+- Tool execution history
+- Error tracking
+- Result references
+- Conversation context
+
+The memory can be saved, restored, and used to resume sessions or analyze agent behavior.
+
 # Agent Languages: Communicating with LLMs
 
 ## Overview

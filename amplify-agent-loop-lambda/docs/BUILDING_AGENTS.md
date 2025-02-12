@@ -15,6 +15,7 @@ Let's start by creating a tool that our agent can use:
 
 ```python
 from agent.components.tool import register_tool
+import agent.common_tools  # CRITICAL: This registers the terminate tool!! Always register this!
 
 @register_tool(
     tool_name="greet_user",
@@ -40,6 +41,7 @@ from agent.core import Goal
 from agent.components.python_environment import PythonEnvironment
 from agent.components.python_action_registry import PythonActionRegistry
 from agent.agents.actions_agent import build_clean
+import agent.common_tools  # This registers the terminate tool
 
 # Create our goals
 goals = [
@@ -85,6 +87,91 @@ memory = agent.run(
 # 3. Call it with name="John"
 # 4. Return the result
 ```
+
+# Understanding Agent Memory Output
+
+When you run this code, the memory will contain a sequence of interactions:
+
+```python
+memory.items = [
+    # 1. User's original request
+    {
+        "role": "user",
+        "content": "Please greet John"
+    },
+    
+    # 2. System's messages (if any capabilities add this)
+    {
+        "role": "system",
+        "content": "I will use the greet_user tool to greet John..."
+    },
+    
+    # 3. Assistant's tool selection
+    {
+        "role": "assistant",
+        "content": {
+            "tool": "greet_user",
+            "args": {
+                "name": "John"
+            }
+        }
+    },
+    
+    # 4. Environment's response (tool execution result)
+    {
+        "role": "environment",
+        "content": {
+            "tool_executed": true,
+            "result": "Hello, John!",
+            "id": "$#0",  # Reference ID for this result
+            "timestamp": "2024-01-20T10:00:00Z"
+        }
+    },
+    
+    # 5. Assistant's termination with result
+    {
+        "role": "assistant",
+        "content": {
+            "tool": "terminate",
+            "args": {
+                "message": "I've greeted John for you!",
+                "result_references": ["$#0"]  # References the greeting result
+            }
+        }
+    },
+    
+    # 6. Environment's final response
+    {
+        "role": "environment",
+        "content": {
+            "tool_executed": true,
+            "result": {
+                "message": "I've greeted John for you!",
+                "results": ["Hello, John!"]  # The referenced result
+            },
+            "id": "$#1",
+            "timestamp": "2024-01-20T10:00:01Z"
+        }
+    }
+]
+```
+
+## Memory Components Explained
+
+1. **User Input** (`role: "user"`): The original request
+2. **System Planning** (`role: "system"`): Added by planning capabilities
+3. **Tool Execution** (`role: "assistant"`): The agent's chosen action
+4. **Tool Result** (`role: "environment"`): Result of the tool execution
+5. **Termination** (`role: "assistant"`): Final terminate tool call
+6. **Final Result** (`role: "environment"`): The complete response
+
+Key features:
+- Each tool result gets a unique ID (`$#0`, `$#1`)
+- Timestamps track execution time
+- `result_references` link to previous results
+- Final termination includes relevant results
+
+This structured memory provides a complete record of the interaction, from initial request to final response.
 
 ## Adding Tool Status Updates
 
