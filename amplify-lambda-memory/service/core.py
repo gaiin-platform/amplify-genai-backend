@@ -12,6 +12,322 @@ dynamodb = boto3.resource("dynamodb")
 memory_table = dynamodb.Table(os.environ["MEMORY_DYNAMO_TABLE"])
 projects_table = dynamodb.Table(os.environ["PROJECTS_DYNAMO_TABLE"])
 
+# store this as JSON in s3
+TAXONOMY_STRUCTURE = {
+    "Identity": ["Role", "Department", "Area_of_Study", "Preferences"],
+    "Projects": [
+        "Name",
+        "Type",
+        "Status",
+        "Timeline",
+        "Requirements",
+        "Resources",
+        "Collaborators",
+    ],
+    "Academic_Content": [
+        "Research",
+        "Teaching_Materials",
+        "Publications",
+        "Presentations",
+        "Data_Analysis",
+        "Code",
+        "Visual_Assets",
+    ],
+    "Relationships": ["Collaborators", "Advisors_Advisees", "Teams", "Committees"],
+    "Time_Sensitive": ["Deadlines", "Meetings", "Events", "Academic_Calendar"],
+    "Resources": ["Tools", "Datasets", "References", "Documentation", "Templates"],
+    "Knowledge": [
+        "Subject_Matter",
+        "Methods",
+        "Procedures",
+        "Best_Practices",
+        "Institutional_Policies",
+    ],
+}
+
+
+# helper function for extract facts
+def get_current_taxonomy_state(current_user):
+    """Retrieve all memories and organize them by taxonomy"""
+    response = memory_table.query(
+        IndexName="UserIndex", KeyConditionExpression=Key("user").eq(current_user)
+    )
+
+    taxonomy_state = {
+        category: {subcategory: [] for subcategory in subcategories}
+        for category, subcategories in TAXONOMY_STRUCTURE.items()
+    }
+
+    for item in response.get("Items", []):
+        if "taxonomy_path" in item:
+            category, subcategory = item["taxonomy_path"].split("/")
+            if category in taxonomy_state and subcategory in taxonomy_state[category]:
+                taxonomy_state[category][subcategory].append(item["content"])
+
+    return taxonomy_state
+
+
+# helper function for extract facts
+def format_taxonomy_state(taxonomy_state):
+    """Format the taxonomy state into a string for the prompt"""
+    formatted = "Current Knowledge Base:\n\n"
+    for category, subcategories in taxonomy_state.items():
+        formatted += f"{category}/\n"
+        for subcategory, memories in subcategories.items():
+            formatted += f"  {subcategory}/\n"
+            for memory in memories:
+                formatted += f"    - {memory}\n"
+    return formatted
+
+
+def validate_taxonomy_path(taxonomy_path, taxonomy_structure):
+    """
+    Validate that a taxonomy path exists in the taxonomy structure
+
+    Args:
+        taxonomy_path (str): Path in format "Category/Subcategory"
+        taxonomy_structure (dict): The taxonomy structure dictionary
+
+    Returns:
+        bool: True if valid, False if invalid
+    """
+    try:
+        category, subcategory = taxonomy_path.split("/")
+        return (
+            category in taxonomy_structure
+            and subcategory in taxonomy_structure[category]
+        )
+    except:
+        return False
+
+
+def save_memory_with_taxonomy(
+    memory_table,
+    user,
+    content,
+    taxonomy_path,
+    memory_type="user",
+    memory_type_id=None,
+    conversation_id=None,
+):
+    """
+    Save a memory with its taxonomy classification
+
+    Args:
+        memory_table: DynamoDB table object
+        user (str): Current user identifier
+        content (str): The memory content
+        taxonomy_path (str): Path in format "Category/Subcategory"
+        memory_type (str): Type of memory (user, assistant, or project)
+        memory_type_id (str): ID of the assistant or project if applicable
+        conversation_id (str): ID of the conversation this memory came from
+
+    Returns:
+        dict: The saved item
+    """
+    current_time = datetime.now()
+    timestamp = current_time.isoformat()
+
+    item_to_save = {
+        "id": str(uuid.uuid4()),
+        "memory_type": memory_type,
+        "memory_type_id": memory_type_id,
+        "content": content,
+        "taxonomy_path": taxonomy_path,
+        "user": user,
+        "timestamp": timestamp,
+        "conversation_id": conversation_id,
+    }
+
+    memory_table.put_item(Item=item_to_save)
+    return item_to_save
+
+
+@validated("save_memory_batch")
+def save_memory_batch(event, context, current_user, name, data):
+    """
+    Save multiple memories with their taxonomy classifications
+
+    Expected data format:
+    {
+        "memories": [
+            {
+                "content": "memory content",
+                "taxonomy_path": "Category/Subcategory",
+                "memory_type": "user",
+                "memory_type_id": null,
+                "conversation_id": "conversation-uuid"
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        nested_data = data["data"]
+        memories = nested_data["memories"]
+
+        saved_items = []
+        failed_items = []
+
+        for memory in memories:
+            try:
+                if not validate_taxonomy_path(
+                    memory["taxonomy_path"], TAXONOMY_STRUCTURE
+                ):
+                    failed_items.append(
+                        {"content": memory["content"], "error": "Invalid taxonomy path"}
+                    )
+                    continue
+
+                item = save_memory_with_taxonomy(
+                    memory_table=memory_table,
+                    user=current_user,
+                    content=memory["content"],
+                    taxonomy_path=memory["taxonomy_path"],
+                    memory_type=memory.get("memory_type", "user"),
+                    memory_type_id=memory.get("memory_type_id"),
+                    conversation_id=memory.get("conversation_id"),
+                )
+                saved_items.append(item)
+
+            except Exception as e:
+                failed_items.append({"content": memory["content"], "error": str(e)})
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"saved": saved_items, "failed": failed_items}),
+        }
+
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+@validated("read_memory_by_taxonomy")
+def read_memory_by_taxonomy(event, context, current_user, name, data):
+    """
+    Read memories filtered by taxonomy path
+
+    Expected data format:
+    {
+        "category": "Category",  // optional
+        "subcategory": "Subcategory",  // optional
+        "memory_type": "user",  // optional
+        "memory_type_id": "id",  // optional
+        "conversation_id": "conversation-uuid"  // optional
+    }
+    """
+    try:
+        nested_data = data["data"]
+        category = nested_data.get("category")
+        subcategory = nested_data.get("subcategory")
+        memory_type = nested_data.get("memory_type")
+        memory_type_id = nested_data.get("memory_type_id")
+        conversation_id = nested_data.get("conversation_id")
+
+        # Query by user first
+        response = memory_table.query(
+            IndexName="UserIndex", KeyConditionExpression=Key("user").eq(current_user)
+        )
+
+        items = response.get("Items", [])
+
+        # Apply filters
+        filtered_items = []
+        for item in items:
+            if "taxonomy_path" not in item:
+                continue
+
+            item_category, item_subcategory = item["taxonomy_path"].split("/")
+
+            # Filter by category if specified
+            if category and item_category != category:
+                continue
+
+            # Filter by subcategory if specified
+            if subcategory and item_subcategory != subcategory:
+                continue
+
+            # Filter by memory type if specified
+            if memory_type and item.get("memory_type") != memory_type:
+                continue
+
+            # Filter by memory type ID if specified
+            if memory_type_id and item.get("memory_type_id") != memory_type_id:
+                continue
+
+            # Filter by conversation ID if specified
+            if conversation_id and item.get("conversation_id") != conversation_id:
+                continue
+
+            filtered_items.append(item)
+
+        return {"statusCode": 200, "body": json.dumps({"memories": filtered_items})}
+
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+@validated("update_memory_taxonomy")
+def update_memory_taxonomy(event, context, current_user, name, data):
+    """
+    Update the taxonomy classification of an existing memory
+
+    Expected data format:
+    {
+        "memory_id": "id",
+        "new_taxonomy_path": "Category/Subcategory"
+    }
+    """
+    try:
+        nested_data = data["data"]
+        memory_id = nested_data["memory_id"]
+        new_taxonomy_path = nested_data["new_taxonomy_path"]
+
+        # Validate new taxonomy path
+        if not validate_taxonomy_path(new_taxonomy_path, TAXONOMY_STRUCTURE):
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "Invalid taxonomy path"}),
+            }
+
+        # Verify memory exists and belongs to user
+        memory = memory_table.get_item(Key={"id": memory_id}).get("Item")
+
+        if not memory:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Memory not found"}),
+            }
+
+        if memory["user"] != current_user:
+            return {
+                "statusCode": 403,
+                "body": json.dumps({"error": "Unauthorized to update this memory"}),
+            }
+
+        # Update taxonomy path
+        response = memory_table.update_item(
+            Key={"id": memory_id},
+            UpdateExpression="SET taxonomy_path = :path",
+            ExpressionAttributeValues={":path": new_taxonomy_path},
+            ReturnValues="ALL_NEW",
+        )
+
+        updated_item = response.get("Attributes", {})
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "message": "Taxonomy path updated successfully",
+                    "memory": updated_item,
+                }
+            ),
+        }
+
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
 
 # helper function to call LLM to extract facts/memories from user's prompt
 def prompt_llm(prompt, access_token):
@@ -60,6 +376,7 @@ def prompt_llm(prompt, access_token):
         return None
 
 
+# TODO: give the model an out! if the fact does not fit into the taxonomy well, it needs to have the ability to place it outside the taxonomy
 @validated("extract_facts")
 def extract_facts(event, context, current_user, name, data):
     try:
@@ -70,111 +387,68 @@ def extract_facts(event, context, current_user, name, data):
         # Extract user's input in the conversation from payload
         user_input = nested_data["user_input"]
 
+        taxonomy_state = get_current_taxonomy_state(current_user)
+        formatted_taxonomy = format_taxonomy_state(taxonomy_state)
+
         # extract facts from conversation
-        prompt = f"""Extract facts from the text, preserving any personal perspectives exactly as stated. Each fact must be:
+        #         prompt = f"""Extract facts from the text, preserving any personal perspectives exactly as stated. Each fact must be:
+        # - Written exactly as presented (keep "I", "my", "we" if present)
+        # - Include specific details when present
+        # - Free of opinions or interpretations
+
+        # Present the extracted facts in the following format:
+        # FACT: [Extracted fact]
+        # FACT: [Extracted fact]
+        # FACT: [Extracted fact]
+
+        # Here is the text to extract facts from:
+        # {user_input}"""
+        # extract facts into taxonomy structure
+
+        # generate path from root to node
+        # first look where it goes, then look at facts at and below that lead
+
+        prompt = f"""Given the following taxonomy structure and current state of knowledge, analyze the new text and extract novel facts that don't duplicate existing information. For each fact, determine its appropriate place in the taxonomy. Preserve any personal perspectives exactly as stated. Each fact must be:
 - Written exactly as presented (keep "I", "my", "we" if present)
 - Include specific details when present
 - Free of opinions or interpretations
 
-Present the extracted facts in the following format:
-FACT: [Extracted fact]
-FACT: [Extracted fact]
-FACT: [Extracted fact]
+Taxonomy Structure:
+{json.dumps(TAXONOMY_STRUCTURE, indent=2)}
 
-Here is the text to extract facts from:
+{formatted_taxonomy}
+
+For each extracted fact, provide both the fact and its classification in the following format:
+FACT: [Extracted fact]
+TAXONOMY: [Category]/[Subcategory]
+REASONING: [Brief explanation of why this fact belongs in this category]
+
+Only extract facts that add new information not already present in the current knowledge base.
+
+Text to analyze:
 {user_input}"""
 
         # print("Prompt passed:", prompt)
         response = prompt_llm(prompt, access_token)
 
-        extracted_facts = []
+        facts = []
+        current_fact = {}
+
         for line in response.split("\n"):
+            line = line.strip()
             if line.startswith("FACT:"):
-                extracted_facts.append(line[5:].strip())
+                if current_fact:
+                    facts.append(current_fact)
+                current_fact = {"content": line[5:].strip()}
+            elif line.startswith("TAXONOMY:"):
+                current_fact["taxonomy_path"] = line[9:].strip()
+            elif line.startswith("REASONING:"):
+                current_fact["reasoning"] = line[10:].strip()
 
-        return {"statusCode": 200, "body": json.dumps({"facts": extracted_facts})}
-    except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        if current_fact:
+            facts.append(current_fact)
 
-
-# TODO: add pagination to enable reading large number of memories
-@validated("read_memory")
-def read_memory(event, context, current_user, name, data):
-    try:
-        nested_data = data["data"]
-        assistant_id = nested_data.get("assistant_id")
-        project_id = nested_data.get("project_id")  # Add this line
-
-        # Use the GSI to query records for the current user
-        response = memory_table.query(
-            IndexName="UserIndex", KeyConditionExpression=Key("user").eq(current_user)
-        )
-
-        items = response.get("Items", [])
-
-        # Filter based on memory types and IDs
-        filtered_items = []
-        for item in items:
-            memory_type = item.get("memory_type")
-            if (
-                memory_type == "user"
-                or (
-                    memory_type == "assistant"
-                    and assistant_id
-                    and item.get("memory_type_id") == assistant_id
-                )
-                or (
-                    memory_type == "project"
-                    and project_id
-                    and item.get("memory_type_id") == project_id
-                )
-                or (
-                    memory_type == "project" and not project_id
-                )  # Include all project memories if no specific project_id
-            ):
-                filtered_items.append(item)
-
-        return {"statusCode": 200, "body": json.dumps({"memories": filtered_items})}
-    except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
-
-@validated("save_memory")
-def save_memory(event, context, current_user, name, data):
-    try:
-        nested_data = data["data"]
-
-        memory_item = nested_data["MemoryItem"]
-        memory_type = nested_data["MemoryType"]
-        memory_type_id = nested_data["MemoryTypeID"]
-
-        valid_types = ["user", "assistant", "project"]
-        if memory_type not in valid_types:
-            return {
-                "statusCode": 400,
-                "body": json.dumps({"error": "Invalid memory type"}),
-            }
-
-        current_time = datetime.now()
-        timestamp = current_time.isoformat()
-
-        item_to_save = {
-            "id": str(uuid.uuid4()),
-            "memory_type": memory_type,
-            "memory_type_id": memory_type_id,
-            "content": memory_item,
-            "user": current_user,
-            "timestamp": timestamp,
-        }
-
-        response = memory_table.put_item(Item=item_to_save)
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps(
-                {"message": "Memory saved successfully", "id": item_to_save["id"]}
-            ),
-        }
+        return {"statusCode": 200, "body": json.dumps({"facts": facts})}
     except Exception as e:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
@@ -247,146 +521,6 @@ def remove_memory(event, context, current_user, name, data):
         return {
             "statusCode": 200,
             "body": json.dumps({"message": "Memory removed successfully"}),
-        }
-    except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
-
-@validated("create_project")
-def create_project(event, context, current_user, name, data):
-    try:
-        nested_data = data["data"]
-
-        project_name = nested_data["ProjectName"]
-
-        # Generate unique project ID
-        project_id = str(uuid.uuid4())
-
-        current_time = datetime.now()
-        timestamp = current_time.isoformat()
-
-        project_item = {
-            "id": project_id,
-            "project": project_name,
-            "user": current_user,
-            "timestamp": timestamp,
-        }
-
-        response = projects_table.put_item(Item=project_item)
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps(
-                {
-                    "message": "Project created successfully",
-                    "id": project_id,
-                    "project": project_name,
-                }
-            ),
-        }
-    except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
-
-@validated("get_projects")
-def get_projects(event, context, current_user, name, data):
-    try:
-        nested_data = data["data"]
-        email = nested_data["Email"]
-
-        response = projects_table.query(
-            IndexName="UserIndex", KeyConditionExpression=Key("user").eq(email)
-        )
-
-        projects = response.get("Items", [])
-        print("Projects:", projects)
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps({"projects": projects}),
-        }
-    except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
-
-@validated("remove_project")
-def remove_project(event, context, current_user, name, data):
-    try:
-        nested_data = data["data"]
-
-        project_id = nested_data["ProjectID"]
-
-        # First verify the user owns this project
-        project = projects_table.get_item(Key={"id": project_id}).get("Item")
-
-        if not project:
-            return {
-                "statusCode": 404,
-                "body": json.dumps({"error": "Project not found"}),
-            }
-
-        if project["user"] != current_user:
-            return {
-                "statusCode": 403,
-                "body": json.dumps({"error": "Unauthorized to remove this project"}),
-            }
-
-        # Delete the project
-        response = projects_table.delete_item(Key={"id": project_id})
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps(
-                {"message": "Project removed successfully", "id": project_id}
-            ),
-        }
-    except Exception as e:
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
-
-
-@validated("edit_project")
-def edit_project(event, context, current_user, name, data):
-    try:
-        nested_data = data["data"]
-        project_id = nested_data["ProjectID"]
-        new_name = nested_data["ProjectName"]
-
-        # First verify the project exists and belongs to the user
-        project = projects_table.get_item(Key={"id": project_id}).get("Item")
-
-        if not project:
-            return {
-                "statusCode": 404,
-                "body": json.dumps({"error": "Project not found"}),
-            }
-
-        if project["user"] != current_user:
-            return {
-                "statusCode": 403,
-                "body": json.dumps({"error": "Unauthorized to edit this project"}),
-            }
-
-        current_time = datetime.now()
-        timestamp = current_time.isoformat()
-
-        response = projects_table.update_item(
-            Key={"id": project_id},
-            UpdateExpression="SET #proj = :project_name, #ts = :timestamp",
-            ExpressionAttributeValues={
-                ":project_name": new_name,
-                ":timestamp": timestamp,
-            },
-            ExpressionAttributeNames={"#proj": "project", "#ts": "timestamp"},
-            ReturnValues="ALL_NEW",
-        )
-
-        updated_item = response.get("Attributes", {})
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps(
-                {"message": "Project updated successfully", "project": updated_item}
-            ),
         }
     except Exception as e:
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
