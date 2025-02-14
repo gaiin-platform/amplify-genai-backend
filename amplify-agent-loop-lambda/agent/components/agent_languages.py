@@ -13,12 +13,14 @@ def to_json_memory_messages_format(items):
         if not content:
             content = json.dumps(item, indent=4)
 
+        if item["type"] == "prompt":
+            continue
         if item["type"] == "assistant":
             mapped_items.append({"role": "assistant", "content": content})
         elif item["type"] == "system":
             mapped_items.append({"role": "system", "content": content})
         elif item["type"] == "environment":
-            mapped_items.append({"role": "assistant", "content": content})
+            mapped_items.append({"role": "user", "content": content})
         else:
             mapped_items.append({"role": "user", "content": content})
     return mapped_items

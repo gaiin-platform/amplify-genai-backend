@@ -428,6 +428,11 @@ class Agent:
 
             # 1. Construct the prompt for the LLM to generate a response
             prompt = self.construct_prompt(action_context, self.goals, memory)
+            memory.add_memory({"type": "prompt", "content": {
+                "messages": prompt.messages,
+                "tools": prompt.tools,
+                "metadata": prompt.metadata
+            }})
 
             # 2. Prompt the agent for its next action
             response = self.prompt_llm_for_action(action_context, prompt)

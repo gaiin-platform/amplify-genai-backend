@@ -8,7 +8,7 @@ from events.event_templates import remove_event_template, get_event_template, li
 
 @vop(
     path="/vu-agent/add-event-template",
-    tags=["events"],
+    tags=["events","default"],
     name="addEventTemplate",
     description="Add or update an event template.",
     params={
@@ -53,7 +53,7 @@ def handle_add_event_template(current_user, access_token, tag, prompt, assistant
 
 @vop(
     path="/vu-agent/remove-event-template",
-    tags=["events"],
+    tags=["events","default"],
     name="removeEventTemplate",
     description="Remove an event template.",
     params={
@@ -81,7 +81,7 @@ def handle_remove_event_template(current_user, access_token, tag):
 
 @vop(
     path="/vu-agent/get-event-template",
-    tags=["events"],
+    tags=["events","default"],
     name="getEventTemplate",
     description="Retrieve an event template.",
     params={
@@ -109,7 +109,7 @@ def handle_get_event_template(current_user, access_token, tag):
 
 @vop(
     path="/vu-agent/list-event-templates",
-    tags=["events"],
+    tags=["events","default"],
     name="listEventTemplatesForUser",
     description="List all event templates for the current user.",
     params={},
@@ -132,7 +132,7 @@ def handle_list_event_templates_for_user(current_user, access_token):
 
 @vop(
     path="/vu-agent/add-allowed-sender",
-    tags=["email"],
+    tags=["email","default"],
     name="addAllowedSender",
     description="Add an allowed sender for a tag.",
     params={
@@ -162,7 +162,7 @@ def handle_add_allowed_sender(current_user, access_token, tag, sender):
 
 @vop(
     path="/vu-agent/remove-allowed-sender",
-    tags=["email"],
+    tags=["email","default"],
     name="removeAllowedSender",
     description="Remove an allowed sender for a tag.",
     params={

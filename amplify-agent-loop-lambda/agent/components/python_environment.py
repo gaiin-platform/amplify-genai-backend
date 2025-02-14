@@ -39,7 +39,12 @@ class PythonEnvironment(Environment):
                     args_copy["_"+key] = value
 
             result = action.execute(**args_copy)
-            formatted_result = self.format_result(action, result)
+            metadata = None
+
+            if isinstance(result, dict):
+                metadata = result.get("__meta__", None)
+
+            formatted_result = self.format_result(action, result, metadata)
 
             self.result_history.append(formatted_result)
             return formatted_result
@@ -50,7 +55,7 @@ class PythonEnvironment(Environment):
                 "error": str(e)
             }
 
-    def format_result(self, action, result: Any) -> dict:
+    def format_result(self, action, result: Any, metadata: Any) -> dict:
         """Format and add metadata to result"""
         result_dict = {
             "tool": action.name,
@@ -59,6 +64,9 @@ class PythonEnvironment(Environment):
             "id": f"$#{self.current_iteration}",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z")
         }
+
+        if metadata:
+            result_dict["metadata"] = metadata
 
         self.current_iteration += 1
         return result_dict

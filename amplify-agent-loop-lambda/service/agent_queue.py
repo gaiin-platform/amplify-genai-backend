@@ -1,6 +1,8 @@
 import json
 
+from agent.core import Memory
 from events.event_handler import MessageHandler
+from service.conversations import register_agent_conversation
 from service.handlers import handle_event
 
 
@@ -32,6 +34,22 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         # print(f"Agent input event: {agent_input_event}")
                         response = process_and_invoke_agent(agent_input_event)
                         print("Agent response:", response)
+
+                        if response.get("success"):
+                            result = response.get("data",{}).get("result")
+                            if not result:
+                                print(f"Agent response missing")
+                                memory = Memory()
+                                memory.add_memory({"type":"environment", "content":"Failed to run the agent."})
+
+
+                            print(f"Registering agent conversation")
+                            register_agent_conversation(
+                                access_token=agent_input_event.get("metadata", {}).get("accessToken"),
+                                input=agent_input_event,
+                                memory=result)
+
+
                     else:
                         print(f"Ignoring event per handler instructions (e.g., return None)")
 
