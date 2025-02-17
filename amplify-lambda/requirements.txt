@@ -11,12 +11,12 @@ attrs==24.3.0
     #   jsonschema
     #   referencing
 beautifulsoup4==4.12.3
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 boto3==1.35.94
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 botocore==1.35.94
     # via
-    #   -r requirements.in
+    #   -r amplify-lambda/requirements.in
     #   boto3
     #   s3transfer
 certifi==2024.12.14
@@ -24,13 +24,13 @@ certifi==2024.12.14
 cffi==1.17.1
     # via cryptography
 chardet==5.2.0
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 charset-normalizer==3.4.1
     # via requests
 click==8.1.8
     # via nltk
-cryptography==44.0.0
-    # via -r requirements.in
+cryptography==44.0.1
+    # via -r amplify-lambda/requirements.in
 ecdsa==0.19.0
     # via python-jose
 et-xmlfile==2.0.0
@@ -44,7 +44,7 @@ jmespath==1.0.1
 joblib==1.4.2
     # via nltk
 jsonschema==4.23.0
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 jsonschema-specifications==2024.10.1
     # via jsonschema
 lxml==5.3.0
@@ -52,12 +52,12 @@ lxml==5.3.0
     #   python-docx
     #   python-pptx
 nltk==3.8.1
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 openpyxl==3.1.5
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 pillow==11.1.0
     # via
-    #   -r requirements.in
+    #   -r amplify-lambda/requirements.in
     #   python-pptx
 pyasn1==0.6.1
     # via
@@ -66,23 +66,23 @@ pyasn1==0.6.1
 pycparser==2.22
     # via cffi
 pydantic==2.10.4
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 pydantic-core==2.27.2
     # via pydantic
 pypdfium2==4.30.1
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 python-dateutil==2.9.0.post0
     # via botocore
 python-docx==1.1.2
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 python-dotenv==1.0.1
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 python-jose==3.3.0
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 python-pptx==1.0.2
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 pyyaml==6.0.2
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 referencing==0.35.1
     # via
     #   jsonschema
@@ -93,7 +93,7 @@ regex==2024.11.6
     #   tiktoken
 requests==2.32.3
     # via
-    #   -r requirements.in
+    #   -r amplify-lambda/requirements.in
     #   tiktoken
 rpds-py==0.22.3
     # via
@@ -110,7 +110,7 @@ six==1.17.0
 soupsieve==2.6
     # via beautifulsoup4
 tiktoken==0.8.0
-    # via -r requirements.in
+    # via -r amplify-lambda/requirements.in
 tqdm==4.67.1
     # via nltk
 typing-extensions==4.12.2
