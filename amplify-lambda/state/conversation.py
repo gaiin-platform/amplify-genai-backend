@@ -39,7 +39,7 @@ def upload_conversation(event, context, current_user, name, data):
     path="/state/conversation/register",
     name="registerConversation",
     method="POST",
-    tags=["apiDocumentation"],
+    tags=["default"],
     description="""Register a new conversation with messages and metadata.
     Example request:
     {
