@@ -12,6 +12,11 @@ services:
     path: ./amplify-lambda-admin
     dependsOn:
       - amplify-lambda
+  
+  amplify-lambda-api:
+    path: ./amplify-lambda-api
+    dependsOn:
+      - amplify-lambda
 
   amplify-lambda-artifacts:
     path: ./amplify-lambda-artifacts
