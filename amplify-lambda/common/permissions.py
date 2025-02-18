@@ -88,7 +88,7 @@ permissions_by_state_type = {
   "/state/conversation/upload": {
     "conversation_upload": can_upload
   },
-  "/state/conversation/register" : {
+    "/state/conversation/register" : {
     "conversation_upload": can_upload
   },
   "/state/conversation/get/multiple": {

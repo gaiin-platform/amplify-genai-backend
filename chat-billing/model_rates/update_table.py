@@ -8,7 +8,7 @@ from decimal import Decimal
 # Initialize a DynamoDB client with Boto3
 dynamodb = boto3.resource("dynamodb")
 
-def load_model_rate_table():
+def load_model_rate_table(model_data):
     # Retrieve the environment variable for the table name
     table_name = os.environ["MODEL_RATE_TABLE"]
 
@@ -24,27 +24,66 @@ def load_model_rate_table():
         reader = csv.DictReader(csvfile)
         for row in reader:
             try:
-                item = dict(row)
+                csv_item = parse_csv_row(row)
+                model_id = csv_item["ModelID"]
 
-                # Convert specific columns to Decimal (or whatever type you need)
-                item["InputCostPerThousandTokens"] = Decimal(row["InputCostPerThousandTokens"])
-                item["OutputCostPerThousandTokens"] = Decimal(row["OutputCostPerThousandTokens"])
-                
-                item["InputContextWindow"] = Decimal(row["InputContextWindow"])
-                item["OutputTokenLimit"] = Decimal(row["OutputTokenLimit"])
-                item["ExclusiveGroupAvailability"] = []
-                    
-                 # Convert "TRUE" or "FALSE" in any other columns into booleans.
-                for key, value in list(item.items()):
-                    if value == "TRUE":
-                        item[key] = True
-                    elif value == "FALSE":
-                        item[key] = False
+                existing_item = model_data.get(model_id, {})
+                if (check_old_data_by_col(existing_item.keys())):
+                    print(f"ModelID {model_id} is outdated, deleting and adding new row")
+                    response = table.put_item(Item=csv_item)
+                else:
+                    print(f"ModelID {model_id} is up to date, updating existing row")
+                    updated_item = dict(existing_item) 
+                    for key, value in csv_item.items():
+                        if key not in existing_item:
+                            # Only add the column if it doesn't exist in the existing item
+                            updated_item[key] = value
 
-                response = table.put_item(Item=item)
+                    table.put_item(Item=updated_item)
+
             except ClientError as e:
                 print(e.response["Error"]["Message"])
                 return False
 
     # Return a success response after updating the table with all entries
     return True
+
+
+old_cols = ["ModelID", "InputCostPerThousandTokens", "ModelName", "OutputCostPerThousandTokens", "Provider"]
+
+def check_old_data_by_col(model_cols):
+    return not model_cols or sorted(model_cols) == sorted(old_cols)
+
+def parse_csv_row(row_dict):
+    """
+    Converts the raw CSV row (string-based) into a typed dict 
+    (Decimal for numbers, bool for 'TRUE'/'FALSE', etc.)
+    """
+    item = {}
+    for k, v in row_dict.items():
+        if v is None:
+            item[k] = None
+            continue
+
+        v_str = v.strip()
+
+        # Convert "TRUE"/"FALSE" to booleans
+        if v_str.upper() == "TRUE":
+            item[k] = True
+        elif v_str.upper() == "FALSE":
+            item[k] = False
+        else:
+            # Convert known numeric columns to Decimal
+            if k in {
+                "InputCostPerThousandTokens", 
+                "OutputCostPerThousandTokens", 
+                "CachedCostPerThousandTokens", 
+                "InputContextWindow", 
+                "OutputTokenLimit"
+            }:
+                item[k] = Decimal(v_str)
+            else:
+                item[k] = v_str
+    item["ExclusiveGroupAvailability"] = []
+
+    return item

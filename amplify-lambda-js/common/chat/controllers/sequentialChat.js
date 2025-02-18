@@ -1,7 +1,6 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { countChatTokens } from "../../../azure/tokens.js";
 import { StreamMultiplexer } from "../../multiplexer.js";
 import { sendSourceMetadata } from "./meta.js";
 import { PassThrough, Writable } from 'stream';
@@ -14,8 +13,7 @@ import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassist
 import {trace} from "../../trace.js";
 
 const logger = getLogger("sequentialChat");
-
-export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer, tokenReporting }) => {
+export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer}) => {
 
     // The multiplexer is used to multiplex the streaming responses from the LLM provider
     // back to the client. This is necessary because we are going to run multiple requests (potentially)
@@ -72,11 +70,6 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             messages: messages
         }
 
-        const tokenCount = countChatTokens(messages);
-
-        await tokenReporting(
-            context.id, tokenCount
-        )
 
         if (contexts.length > 1) {
             status.message = `Sending prompt ${index + 1} of ${contexts.length}`;

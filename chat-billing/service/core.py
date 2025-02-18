@@ -7,6 +7,7 @@ from common.amplifyGroups import verify_user_in_amp_group
 from common.auth_admin import verify_user_as_admin
 from common.ops import op
 dynamodb = boto3.resource('dynamodb')
+COST_FIELDS = ['OutputCostPerThousandTokens', 'InputCostPerThousandTokens', 'CachedCostPerThousandTokens']
 
 @op(
     path="/available_models",
@@ -98,12 +99,20 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
     if (not verify_user_as_admin(data["access_token"], 'Get Supported Models')):
         return {'success': False , 'error': 'Unable to authenticate user as admin'}
     model_result = get_supported_models()
+    current_model_data = model_result.get('data', {})
     # if there was an error or there were models in the table then we can return the value like normal 
     # otherwise we need to run the fill model table
-    if (not model_result['success'] or models_are_current(model_result.get('data', {})) ):
+    if (not model_result['success'] or models_are_current(current_model_data)):
         return model_result
+    
     print("Models are not popluated or are outdated")
-    load_model_rate_table()
+    if (current_model_data):
+        current_model_data = { model["id"]: adjust_data_to_decimal(
+                                            model_transform_internal_to_db(model) )
+                             for model in model_result.get("data", {}).values()
+                             }
+        
+    load_model_rate_table(current_model_data)
     return get_supported_models()
 
 def models_are_current(model_data):
@@ -136,17 +145,21 @@ def get_supported_models():
     supported_models_config = {}
     for model in models_data:
         model_id = model.get('ModelID')
-        # Convert Decimal fields to floats before creating your transformed model
-        if 'OutputCostPerThousandTokens' in model and isinstance(model['OutputCostPerThousandTokens'], Decimal):
-            model['OutputCostPerThousandTokens'] = float(model['OutputCostPerThousandTokens'])
 
-        if 'InputCostPerThousandTokens' in model and isinstance(model['InputCostPerThousandTokens'], Decimal):
-            model['InputCostPerThousandTokens'] = float(model['InputCostPerThousandTokens'])
+        # Convert Decimal fields to floats before creating your transformed model
+        for field in COST_FIELDS:
+            if field in model and isinstance(model[field], Decimal):
+                model[field] = float(model[field])
 
         supported_models_config[model_id] = model_transform_db_to_internal(model)
 
     return {"success": True, "data": supported_models_config}
 
+def adjust_data_to_decimal(model):
+    for field in COST_FIELDS:
+        if field in model and isinstance(model[field], float):
+            model[field] = Decimal(str(model[field]))
+    return model
 
 @validated(op='update')
 def update_supported_models(event, context, current_user, name, data):
@@ -193,20 +206,15 @@ def update_supported_models(event, context, current_user, name, data):
                 batch.delete_item(Key={'ModelID': model_id})
 
             for model_id in models_to_add:
-                updated_model = new_models_dict[model_id]
-                updated_model['OutputCostPerThousandTokens'] = Decimal(str(updated_model['OutputCostPerThousandTokens']))
-                updated_model['InputCostPerThousandTokens'] = Decimal(str(updated_model['InputCostPerThousandTokens']))
+                updated_model = adjust_data_to_decimal( new_models_dict[model_id] )
                 batch.put_item(Item=updated_model)
-
 
             for model_id in models_to_update:
                 # if Data has changed, update the model
                 if not models_are_equal(existing_models_dict[model_id],
                                         new_models_dict[model_id]):
                     print("updating model: ", model_id)
-                    updated_model = new_models_dict[model_id]
-                    updated_model['OutputCostPerThousandTokens'] = Decimal(str(updated_model['OutputCostPerThousandTokens']))
-                    updated_model['InputCostPerThousandTokens'] = Decimal(str(updated_model['InputCostPerThousandTokens']))
+                    updated_model = adjust_data_to_decimal( new_models_dict[model_id] )
                     batch.put_item(Item=updated_model)
     except Exception as e:
         print(f"Error batch writing models: {str(e)}")
@@ -224,6 +232,7 @@ dynamodb_to_internal_field_map = {
     'OutputTokenLimit': 'outputTokenLimit',
     'OutputCostPerThousandTokens': 'outputTokenCost',
     'InputCostPerThousandTokens': 'inputTokenCost',
+    'CachedCostPerThousandTokens': 'cachedTokenCost',
     'Description': 'description',
     'ExclusiveGroupAvailability': 'exclusiveGroupAvailability',
     'SupportsImages': 'supportsImages',
@@ -238,28 +247,35 @@ dynamodb_to_internal_field_map = {
     'AdditionalSystemPrompt': 'systemPrompt',
 }
 
+
 def model_transform_db_to_internal(model):
-    return {
-        internal_key: model.get(dynamodb_key)
-        for dynamodb_key, internal_key in dynamodb_to_internal_field_map.items()
-    }
+    transformed = {}
+    for dynamodb_key, internal_key in dynamodb_to_internal_field_map.items():
+        # Only include this key if it's actually present in the DynamoDB item
+        if dynamodb_key in model:
+            transformed[internal_key] = model[dynamodb_key]
+    return transformed
 
 
 
 def model_transform_internal_to_db(model):
-    # Reverse mapping from internal field names to DynamoDB field names
+    # Reverse mapping
     internal_to_dynamodb_field_map = {v: k for k, v in dynamodb_to_internal_field_map.items()}
-    return {
-        dynamodb_key: model.get(internal_key)
-        for internal_key, dynamodb_key in internal_to_dynamodb_field_map.items()
-    }
+
+    transformed = {}
+    for internal_key, dynamodb_key in internal_to_dynamodb_field_map.items():
+        # Only include if it's actually present in `model`
+        if internal_key in model:
+            transformed[dynamodb_key] = model[internal_key]
+    return transformed
+
 
 
 def models_are_equal(existing_model, new_model):
     keys_to_compare = set(existing_model.keys()) | set(new_model.keys())
 
     # Float keys to compare with tolerance
-    float_keys = {'OutputCostPerThousandTokens', 'InputCostPerThousandTokens'}
+    float_keys = set(COST_FIELDS)
     tolerance = 1e-6  # Adjust the tolerance as needed
 
     for key in keys_to_compare:

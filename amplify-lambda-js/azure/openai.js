@@ -64,8 +64,9 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     let data = {
        ...body,
-       model: modelId,
-        "stream": true,
+       "model": modelId,
+       "stream": true,
+       "stream_options": {"include_usage": true}
     };
 
     if (data.max_tokens > model.outputTokenLimit) {
@@ -111,17 +112,14 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    const isOmodel = ["o1-mini", "o1-preview"].includes(modelId) || modelId.includes("o3");
+    const isOmodel = modelId.includes("o1") || modelId.includes("o3");
 
 
     if (isOmodel) {
         data = {max_completion_tokens: model.outputTokenLimit,
                 messages: data.messages
                 }
-        if (isOpenAiEndpoint) {
-            data.stram = true
-            // data.stream_options = {"include_usage": True}
-        }
+
         if (modelId.includes("o3")) {
             // Convert messages to O3 format and handle system->developer role
             data.messages = data.messages.map(msg => ({
@@ -164,7 +162,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         reject(err);
                     };
 
-                    if (isOmodel && !isOpenAiEndpoint && false) { // azure currently does not support streaming 
+                    if (isOmodel && !isOpenAiEndpoint) { // azure currently does not support streaming 
 
                         const finalizeSuccess = () => {
                             clearTimeout(statusTimer);
@@ -241,7 +239,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         });
     }
     let statusTimer = null;
-    if (isOmodel && !isOpenAiEndpoint && false) {
+    if (isOmodel && !isOpenAiEndpoint) {
         const statusInterval = 8000;
         const handleSendStatusMessage = () => {
             console.log("Sending status message...");
