@@ -40,122 +40,195 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-report_generator_schema = {
+create_api_keys_schema = {
     "type": "object",
     "properties": {
-        "emails": {
-            "type": "array",
-            "items": {"type": "string", "format": "email"},
-            "description": "These are the emails you will collect usage data for.",
+        "owner": {
+            "type": "string",
+            "description": "The owner of the API key"
         },
-    },
-    "required": ["emails"],
-}
-
-update_models_schema = {
-    "type": "object",
-    "properties": {
-        "models": {
-            "type": "object",
-            "patternProperties": {
-                "^.*$": {
-                    "type": "object",
-                    "properties": {
-                        "id": {
-                            "type": "string"
-                        },
-                        "name": {
-                            "type": "string"
-                        },
-                        "provider": {
-                            "type": "string"
-                        },
-                        "description": {
-                            "type": "string"
-                        },
-                            "isAvailable": {
-                            "type": "boolean"
-                        },
-                        "isBuiltIn": {
-                            "type": "boolean"
-                        },
-                            "isDefault": {
-                            "type": "boolean"
-                        },
-                            "systemPrompt": {
-                            "type": "string"
-                        },
-                            "supportsSystemPrompts": {
-                            "type": "boolean"
-                        },
-                            "supportsImages": {
-                            "type": "boolean"
-                        },
-                            "defaultCheapestModel": {
-                            "type": "boolean"
-                        },
-                            "defaultAdvancedModel": {
-                            "type": "boolean"
-                        },
-                            "defaultEmbeddingsModel": {
-                            "type": "boolean"
-                        },
-                            "defaultQAModel": {
-                            "type": "boolean"
-                        },
-                            "inputContextWindow": {
-                            "type": "number"
-                        },
-                            "outputTokenLimit": {
-                            "type": "number"
-                        },
-                        "inputTokenCost": {
-                            "type": "number"
-                        },
-                            "outputTokenCost": {
-                            "type": "number"
-                        },
-                         "cachedTokenCost": {
-                            "type": "number"
-                        },
-                        "exclusiveGroupAvailability": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            }
-                        }
+        "account": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "A unique identifier for the account."
                     },
-                    "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
-                                    "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
-                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost",
-                                    "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],
-                    "additionalProperties": False
-                }
-            },
-            "required": []
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the account."
+                    },
+                    "isDefault": {
+                        "type": "boolean",
+                        "description": "Indicates if this is the default account."
+                    }
+                },
+                "required": ["id", "name"]
         },
+        "delegate": {
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "Optional delegate responsible for the API key"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+           
+        },
+        "appName": {
+            "type": "string",
+            "description": "The name of the application using the API key"
+        },
+        "appDescription": {
+            "type": "string",
+            "description": "A description of the application using the API key"
+        },
+        "rateLimit": {
+            "type": "object",
+            "properties": {
+                "rate": { "type": ["number", "null"] },
+                "period": { "type": "string" } 
+            },
+            "description": "Cost restriction using the API key"
+        },
+        "expirationDate": {
+            "type":  ["string", "null"],
+            "description": "The expiration date of the API key"
+        },
+        "accessTypes": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Types of access permitted by this API key"
+        },
+        "systemUse": {
+            "type": "boolean",
+            "description": "For system use"
+        }
     },
-    "required": ["models"],
+    "required": ["owner", "appName", "account", "accessTypes", "rateLimit"]
 }
-
-
-validators = {
-    "/billing": {"report_generator": report_generator_schema},
-    "/available_models": {
-        "read": {}
-    },
-    "/supported_models/update": {
-        "update": update_models_schema
-    },
-    "/supported_models/get": {
-        "read": {}
+update_key_schema = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "apiKeyId": {
+                "type": "string",
+                "description": "API key id string"
+            },
+            "updates": {
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "A unique identifier for the account."
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "The name of the account."
+                            },
+                            "isDefault": {
+                                "type": "boolean",
+                                "description": "Indicates if this is the default account."
+                            }
+                        },
+                        "required": ["id", "name"]
+                    },
+                    "rateLimit": {
+                        "type": "object",
+                        "properties": {
+                            "rate": { "type": ["number", "null"] },
+                            "period": { "type": "string" }
+                        },
+                        "description": "Cost restriction using the API key"
+                    },
+                    "expirationDate": {
+                        "type": ["string", "null"],
+                        "description": "The expiration date of the API key"
+                    },
+                    "accessTypes": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Types of access permitted by this API key"
+                    }
+                },
+                "required": []
+            }
+        },
+        "required": ["apiKeyId", "updates"]
     }
 }
 
-api_validators = {
-    "/available_models": {
+deactivate_api_key_schema = {
+     "type": "object",
+    "properties": {
+        "apiKeyId": {
+            "type": "string",
+            "description": "The API key id string"
+        },
+    },
+    "required": ["apiKeyId"]
+}
+
+
+upload_api_doc_schema = {
+     "type": "object",
+    "properties": {
+        "filename": {
+            "type": "string",
+        },
+        "content_md5": {
+            "type": "string",
+        },
+    },
+    "required": ["filename", "content_md5"]
+}
+
+
+"""
+Every service must define the permissions for each operation here. 
+The permission is related to a request path and to a specific operation.
+"""
+validators = {
+    "/apiKeys/key/deactivate": {
+        "deactivate": deactivate_api_key_schema
+    }, 
+    "/apiKeys/keys/create": {
+        "create": create_api_keys_schema
+    },
+    "/apiKeys/keys/get": {
         "read": {}
     },
+    "/apiKeys/key/get": {
+        "read": {}
+    },
+    "/apiKeys/get_keys_ast": {
+        "read": {}
+    },
+    "/apiKeys/keys/update" : {
+        "update": update_key_schema
+    },
+    "/apiKeys/get_system_ids": {
+        "read": {}
+    },
+    "/apiKeys/api_documentation/get": {
+        "read": {}
+    },
+    "/apiKeys/api_documentation/upload": {
+        "upload": upload_api_doc_schema
+    },
+    "/apiKeys/api_documentation/get_templates" : {
+        "read": {}
+    },
+}
+
+api_validators = {
+
 }
 
 
@@ -202,48 +275,39 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
     return [name, data]
 
 
-
 def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
                 token = parseToken(event)
-                api_accessed = token[:4] == "amp-"
+                api_accessed = token[:4] == 'amp-'
 
-                claims = (
-                    api_claims(event, context, token)
-                    if (api_accessed)
-                    else get_claims(event, context, token)
-                )
+                claims = api_claims(event, context, token) if (api_accessed) else get_claims(event, context, token)
 
-                current_user = claims["username"]
+                current_user = claims['username']
                 print(f"User: {current_user}")
                 if current_user is None:
                     raise Unauthorized("User not found.")
 
-                [name, data] = parse_and_validate(
-                    current_user, event, op, api_accessed, validate_body
-                )
-
-                data["access_token"] = token
-                data["account"] = claims["account"]
-                data["allowed_access"] = claims["allowed_access"]
-                data["api_accessed"] = api_accessed
-
-                # additional validator change from other lambdas
-                data["is_group_sys_user"] = claims.get("is_group_sys_user", False)
-                ###
+                [name, data] = parse_and_validate(current_user, event, op, api_accessed, validate_body)
+                
+                data['access_token'] = token
+                data['account'] = claims['account']
+                data['api_accessed'] = api_accessed
+                data['allowed_access'] = claims['allowed_access']
 
                 result = f(event, context, current_user, name, data)
 
                 return {
                     "statusCode": 200,
-                    "body": json.dumps(result, cls=CombinedEncoder),
+                    "body": json.dumps(result, cls=CombinedEncoder)
                 }
             except HTTPException as e:
                 return {
                     "statusCode": e.status_code,
-                    "body": json.dumps({"error": f"Error: {e.status_code} - {e}"}),
+                    "body": json.dumps({
+                        "error": f"Error: {e.status_code} - {e}"
+                    })
                 }
 
         return wrapper
@@ -281,25 +345,10 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        idp_prefix: str = os.getenv('IDP_PREFIX') or ''
-        idp_prefix = idp_prefix.lower()
-        print(f"IDP_PREFIX from env: {idp_prefix}")
-        print(f"Original username: {payload['username']}")
-
-        def get_email(text: str):
-            print(f"Input text: {text}")
-            print(f"Checking if text starts with: {idp_prefix + '_'}")
-
-            if len(idp_prefix) > 0 and text.startswith(idp_prefix + '_'):
-                result = text.split(idp_prefix + '_', 1)[1]
-                print(f"Text matched pattern, returning: {result}")
-                return result
-            
-            print(f"Text did not match pattern, returning original: {text}")
-            return text
+        get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
 
         user = get_email(payload['username'])
-        print(f"Final user value: {user}")
+
         # grab deafault account from accounts table 
         dynamodb = boto3.resource('dynamodb')
         accounts_table_name = os.getenv('ACCOUNTS_DYNAMO_TABLE')
@@ -398,9 +447,8 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('chat' not in access and 
-            "full_access" not in access and
-            "admin" not in access):
+        if ('api_key' not in access ):
+            # and 'full_access' not in access
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")
         
@@ -446,10 +494,12 @@ def determine_api_user(data):
     
 
 
+
+
 def is_rate_limited(current_user, rate_limit): 
     print(rate_limit)
     if rate_limit['period'] == 'Unlimited': return False
-
+    
     cost_calc_table = os.getenv('COST_CALCULATIONS_DYNAMO_TABLE')
     if not cost_calc_table:
         raise ValueError("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.")

@@ -1,15 +1,13 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {countChatTokens} from "../../../azure/tokens.js";
 import {StreamMultiplexer} from "../../multiplexer.js";
 import { PassThrough, Writable } from 'stream';
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./meta.js";
 import {getLogger} from "../../logging.js";
 
 const logger = getLogger("parallelChat");
-
-export const handleChat = async ({chatFn, chatRequest, contexts, responseStream, eventTransformer, tokenReporting}) => {
+export const handleChat = async ({chatFn, chatRequest, contexts, responseStream, eventTransformer}) => {
 
     const multiplexer = new StreamMultiplexer(responseStream);
 
@@ -39,11 +37,6 @@ ${context.context}
             messages: messages
         }
 
-        const tokenCount = countChatTokens(messages);
-
-        tokenReporting(
-            context.id, tokenCount
-        )
 
         logger.debug("Creating stream wrapper");
         const streamReceiver = new PassThrough();

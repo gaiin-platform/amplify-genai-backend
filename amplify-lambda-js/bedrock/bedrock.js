@@ -7,7 +7,6 @@ import {extractKey} from "../datasource/datasources.js";
 
 
 const logger = getLogger("bedrock");
-
 const BLANK_MSG = "Intentionally Left Blank, please ignore";
 
 export const chatBedrock = async (chatBody, writable) => {
@@ -16,7 +15,7 @@ export const chatBedrock = async (chatBody, writable) => {
     const options = {...body.options}; 
     delete body.options; 
     const currentModel = options.model;
-                                                             //very rare edge case
+
     const systemPrompts = [{"text": options.prompt.trim() || BLANK_MSG}];
     if (currentModel.systemPrompt.trim()) {
         systemPrompts.push({ "text": currentModel.systemPrompt });
@@ -141,11 +140,11 @@ async function sanitizeMessages(messages, imageSources, model, responseStream) {
 
     let updatedMessages = [
         ...(messages.map(m => {
-                    return { "role": m['role'],
-                            "content": [
-                                { "text":  m['content'].trim() || BLANK_MSG }
-                            ]}
-                    }))
+            return { "role": m['role'],
+                     "content": [
+                        { "text":  m['content'].trim() || BLANK_MSG }
+                    ]}
+            }))
     ];
 
     if (model.supportsImages && containsImages) {
