@@ -188,13 +188,13 @@ create_admin_group_schema = {
             "description": "The name of the group to be created."
         },
         "members": members_schema,
-        },
         "types": {
             "type": "array",
             "items": {
                 "type": "string"
             }
         },
+    },
     "required": ["group_name", "members"]
 }
 
@@ -256,6 +256,22 @@ create_assistant_schema = {
         },
     },
     "required": ["name", "description", "tags", "instructions", "dataSources"]
+}
+
+create_amplify_assistants_group_schema = {
+    "type": "object",
+    "properties": {
+        "assistants": {
+            "type": "array",
+            "items": create_assistant_schema
+            
+        },
+        "members": {
+            "type": "array",
+            "items": {"type": "string"}
+        }
+    },
+    "required": ["assistants", "members"]
 }
 
 update_ast_schema = {
@@ -331,6 +347,40 @@ update_members_perms_schema = {
     "required": ["group_id", "affected_members"]
 }
 
+update_groups_schema = {
+    "type": "object",
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string"},
+                    "amplifyGroups": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "isPublic": {"type": "boolean"},
+                    "supportConvAnalysis": {"type": "boolean"}
+                },
+                "required": ["group_id", "amplifyGroups", "isPublic", "supportConvAnalysis"],
+            "additionalProperties": False
+            }               
+        }
+    },
+    "required": []
+}
+
+replace_key_schema = {
+    "type": "object",
+    "properties": {
+        "groupId": {
+            "type": "string"
+        }
+    },
+    "required": ["groupId"]
+}
+
 validators = {
     "/utilities/update_object_permissions": {
         "update_object_permissions": update_object_permissions
@@ -374,9 +424,21 @@ validators = {
     "/groups/list" : {
         'list': {}
     },
+    "/groups/list_all" : {
+        'list': {}
+    },
     "/groups/members/list" : {
         'list': {}
     },
+    "/groups/update" : {
+        "update": update_groups_schema
+    },
+    "/groups/replace_key" : {
+        "update" : replace_key_schema
+    },
+    "/groups/assistants/amplify": {
+        "create": create_amplify_assistants_group_schema
+    }
 }
 
 
@@ -453,10 +515,6 @@ def validated(op, validate_body=True):  # Note the added argument
                     if (api_accessed)
                     else get_claims(event, context, token)
                 )
-                # Updated get_email function to incorporate idpPrefix
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
 
                 current_user = claims["username"]
                 print(f"User: {current_user}")
@@ -523,12 +581,25 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        idp_prefix = os.getenv('IDP_PREFIX')
-        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+        idp_prefix: str = os.getenv('IDP_PREFIX') or ''
+        idp_prefix = idp_prefix.lower()
+        print(f"IDP_PREFIX from env: {idp_prefix}")
+        print(f"Original username: {payload['username']}")
+
+        def get_email(text: str):
+            print(f"Input text: {text}")
+            print(f"Checking if text starts with: {idp_prefix + '_'}")
+
+            if len(idp_prefix) > 0 and text.startswith(idp_prefix + '_'):
+                result = text.split(idp_prefix + '_', 1)[1]
+                print(f"Text matched pattern, returning: {result}")
+                return result
+            
+            print(f"Text did not match pattern, returning original: {text}")
+            return text
 
         user = get_email(payload['username'])
-        
-        payload['full_username'] = payload['username']
+        print(f"Final user value: {user}")
 
         # grab deafault account from accounts table 
         dynamodb = boto3.resource('dynamodb')

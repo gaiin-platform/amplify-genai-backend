@@ -46,6 +46,74 @@ Every service must define a schema each operation here. The schema is applied to
 body. You do NOT need to include the top-level "data" key in the schema.
 """
 
+get_ops_schema = {
+    "type": "object",
+    "properties": {
+        "tag": {"type": "string"}
+    },
+    "required": []
+}
+
+register_ops_schema = {
+    "type": "object",
+    "properties": {
+        "ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "method": {"type": "string"},
+                    "url": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "type": {"type": "string"},
+                    "params": {
+                        "type" : "array", 
+                        "items" : {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["name", "description"],
+                            "additionalProperties": False
+                        },
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["id", "method", "url", "name", "description", "params"],
+                "additionalProperties": True
+            },
+        }
+    },
+    "required": ["ops"]
+}
+
+delete_op_schema = {
+    "type": "object",
+    "properties": {
+        "op": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "url": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["id", "url", "name", "tags"],
+            "additionalProperties": False
+        }
+    },
+    "required": ["op"],
+    "additionalProperties": False
+}
 
 """
 Every service must define the permissions for each operation here. 
@@ -53,8 +121,21 @@ The permission is related to a request path and to a specific operation.
 """
 validators = {
     "/ops/get": {
+        "get": get_ops_schema
+    },
+    "/ops/get_all_tags":
+    {
         "get": {}
     },
+    "/ops/get_all": {
+        "get": {}
+    },
+    "/ops/register" : {
+        "write": register_ops_schema
+    },
+    "/ops/delete" : {
+        "delete": delete_op_schema
+    }
 }
 
 
@@ -62,6 +143,13 @@ api_validators = {
      "/ops/get": {
         "get": {}
     },
+    "/ops/register" : {
+        "write": register_ops_schema
+    },
+    "/ops/get_all_tags":
+        {
+            "get": {}
+        },
 }
 
 
@@ -121,10 +209,6 @@ def validated(op, validate_body=True):
                     if (api_accessed)
                     else get_claims(event, context, token)
                 )
-                # Updated get_email function to incorporate idpPrefix
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
 
                 current_user = claims["username"]
                 print(f"User: {current_user}")
@@ -191,10 +275,25 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        idp_prefix = os.getenv('IDP_PREFIX')
-        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-        
+        idp_prefix: str = os.getenv('IDP_PREFIX') or ''
+        idp_prefix = idp_prefix.lower()
+        print(f"IDP_PREFIX from env: {idp_prefix}")
+        print(f"Original username: {payload['username']}")
+
+        def get_email(text: str):
+            print(f"Input text: {text}")
+            print(f"Checking if text starts with: {idp_prefix + '_'}")
+
+            if len(idp_prefix) > 0 and text.startswith(idp_prefix + '_'):
+                result = text.split(idp_prefix + '_', 1)[1]
+                print(f"Text matched pattern, returning: {result}")
+                return result
+            
+            print(f"Text did not match pattern, returning original: {text}")
+            return text
+
         user = get_email(payload['username'])
+        print(f"Final user value: {user}")
 
         # grab deafault account from accounts table 
         dynamodb = boto3.resource('dynamodb')
@@ -231,6 +330,7 @@ def get_claims(event, context, token):
     else:
         print("No RSA Key Found, likely an invalid OAUTH_ISSUER_BASE_URL")
 
+    print("No Valid Access Token Found")
     raise Unauthorized("No Valid Access Token Found")
 
 
@@ -248,6 +348,7 @@ def parseToken(event):
                 token = None
 
     if not token:
+        print("No Access Token Found")
         raise Unauthorized("No Access Token Found")
     
     return token
@@ -294,10 +395,10 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('ops' not in access):
-            # and 'full_access' not in access
-            print("API doesn't have access to api key functionality")
-            raise PermissionError("API key does not have access to api key functionality")
+        # if ('ops' not in access):
+        #     # and 'full_access' not in access
+        #     print("API doesn't have access to api key functionality")
+        #     raise PermissionError("API key does not have access to api key functionality")
         
         # Determine API user
         current_user = determine_api_user(item)

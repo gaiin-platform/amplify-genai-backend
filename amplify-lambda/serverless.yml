@@ -10,7 +10,7 @@ package:
 plugins:
   - serverless-offline
   - serverless-python-requirements
-  - serverless-prune-plugin 
+  - serverless-prune-plugin
   - serverless-domain-manager
   - serverless-cloudformation-changesets  
 
@@ -18,7 +18,11 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
-    slim: true
+
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 5
 
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
@@ -28,11 +32,6 @@ custom:
     - dev
     - staging
     - prod
-
-  prune:
-    automatic: true
-    includeLayers: true
-    number: 5
 
   customDomain:
     domainName: ${self:custom.stageVars.CUSTOM_API_DOMAIN}
@@ -63,10 +62,10 @@ provider:
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
+    GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
-    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  # replace 'my-s3-bucket' with your actual bucket name
-    S3_BASE_PROMPTS_BUCKET_NAME: ${self:service}-${sls:stage}-base-prompts
+    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
     S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
@@ -85,12 +84,17 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
     MAX_CHUNKS: 1000
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: ${self:service}/${sls:stage}/s3/metadata/encryption
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-      
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+    #AWS_REGION optional for /chat/service.py 
+    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    DEP_REGION: ${self:custom.stageVars.DEP_REGION}
+
+
   iam:
     role:
       managedPolicies:
@@ -110,6 +114,15 @@ functions:
           method: post
           cors: true
     
+  register_conversation:
+    handler: state/conversation.register_conversation
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/register
+          method: post
+          cors: true
 
   upload_conversation:
     handler: state/conversation.upload_conversation
@@ -158,7 +171,7 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: state/conversation/get_multiple
+          path: state/conversation/get/multiple
           method: post
           cors: true
 
@@ -169,10 +182,20 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - http:
-          path: state/conversation/get_all
+          path: state/conversation/get/all
           method: get
           cors: true
 
+  get_empty_conversation:
+    handler: state/conversation.get_empty_conversations
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/conversation/get/empty
+          method: get
+          cors: true
 
   upload_file:
     handler: files/file.get_presigned_url
@@ -204,7 +227,7 @@ functions:
     events:
       - http:
           path: files/tags/list
-          method: post
+          method: get
           cors: true
 
   create_tags_user:
@@ -268,16 +291,6 @@ functions:
           path: state
           method: post
           cors: true
-
-  user_base_prompts:
-    handler: state/share.get_base_prompts
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 30
-    events:
-      - http:
-          path: state/base-prompts/get
-          method: post
 
   user_share_with_users:
     handler: state/share.share_with_users
@@ -368,12 +381,22 @@ functions:
     handler: converters/docconverter.handler
     layers:
       - ${self:provider.environment.PANDOC_LAYER} 
-      #- Ref: PythonRequirementsLambdaLayer
+      - Ref: PythonRequirementsLambdaLayer
     memorySize: 1024
     timeout: 180
     events:
       - s3:
           bucket: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
+    
+  handlePptxUpload:
+    handler: powerpoints/core.handle_pptx_upload
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
           event: s3:ObjectCreated:*
           existing: true
 
@@ -474,7 +497,12 @@ resources:
                 - ssm:DescribeParameters
                 - ssm:PutParameter
               Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}*
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: 
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:*                
             - Effect: Allow
               Action:
                 - s3:ListBucket
@@ -497,9 +525,9 @@ resources:
                 - s3:PutObject
                 - s3:PutObjectHold
                 - s3:DeleteObject
-                - s3:HeadObject
                 - s3:ListBucket
                 - s3:CreateBucket
+                - s3:PutBucketNotification
                 - sqs:SendMessage
                 - sqs:DeleteMessage
                 - sqs:ReceiveMessage
@@ -510,7 +538,9 @@ resources:
                 - rds-data:BeginTransaction
                 - rds-data:CommitTransaction
                 - rds-data:RollbackTransaction
+                - secretsmanager:GetSecretValue
               Resource:
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -534,8 +564,12 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"               
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
@@ -543,8 +577,6 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
@@ -940,34 +972,30 @@ resources:
 
     ConversionOutputBucket:
          Type: AWS::S3::Bucket
+         DependsOn: LambdaIAMPolicy
          Properties:
           BucketName: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
           CorsConfiguration:
             CorsRules:
               - AllowedOrigins: ['*']
-                AllowedMethods: ['GET']
+                AllowedMethods: ['GET', 'PUT', 'POST']
                 AllowedHeaders: ['*']
                 MaxAge: 3000
           LoggingConfiguration:
             DestinationBucketName: 
               Ref: AccessLogsBucket
-            LogFilePrefix: S3AccessLogs/      
-
-    BasePromptsBucket:
-         Type: AWS::S3::Bucket
-         Properties:
-          BucketName: ${self:provider.environment.S3_BASE_PROMPTS_BUCKET_NAME}
-          CorsConfiguration:
-            CorsRules:
-             - AllowedOrigins: ['*']
-               AllowedMethods: ['GET']
-               AllowedHeaders: ['*']
-               MaxAge: 3000
-          LoggingConfiguration:
-            DestinationBucketName: 
-              Ref: AccessLogsBucket
-            LogFilePrefix: S3AccessLogs/      
-
+            LogFilePrefix: S3AccessLogs/ 
+          NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: 's3:ObjectCreated:Put'
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: prefix
+                        Value: 'templates/'
+                      - Name: suffix
+                        Value: '.pptx' 
+                Function: !GetAtt HandlePptxUploadLambdaFunction.Arn
 
     RagInputBucket:
         Type: AWS::S3::Bucket
@@ -1122,12 +1150,6 @@ resources:
           Name: 
             Fn::Sub: "${sls:stage}-RestApiRootResourceId"
 
-      BasePromptsBucketOutput:
-        Description: "The S3 bucket name for base prompts"
-        Value: !Ref BasePromptsBucket
-        Export:
-          Name: 
-            Fn::Sub: "${sls:stage}-BasePromptsBucket"
 
       ConverstionTemplatesBucketOutput:
         Description: "The S3 bucket name for ppt conversion templates"

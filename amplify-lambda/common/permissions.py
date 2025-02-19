@@ -49,9 +49,6 @@ permissions_by_state_type = {
   "/state/share/load": {
     "load": can_read_share
   },
-  "/state/base-prompts/get": {
-    "get": can_read_share
-  },
   "/datasource/metadata/set": {
     "set": can_upload
   },
@@ -91,14 +88,20 @@ permissions_by_state_type = {
   "/state/conversation/upload": {
     "conversation_upload": can_upload
   },
-  "/state/conversation/get_multiple": {
+    "/state/conversation/register" : {
+    "conversation_upload": can_upload
+  },
+  "/state/conversation/get/multiple": {
     "get_multiple_conversations": can_read
   },
   "/state/conversation/get": {
     "read": can_read
   },
-  "/state/conversation/get_all": {
+  "/state/conversation/get/all": {
     "read": can_read
+  },
+  "/state/conversation/get/empty": {
+        "read" : can_read
   },
   "/state/conversation/delete": {
     "delete": can_delete_item
@@ -111,8 +114,8 @@ permissions_by_state_type = {
   },
    "/state/settings/save": {
         "save": can_upload
-    },
+  },
     "/state/settings/get": {
         "get": can_read
-    },
+  },
 }

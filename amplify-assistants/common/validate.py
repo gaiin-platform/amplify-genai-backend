@@ -471,9 +471,6 @@ def validated(op, validate_body=True):
                     if (api_accessed)
                     else get_claims(event, context, token)
                 )
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
 
                 current_user = claims["username"]
                 print(f"User: {current_user}")
@@ -520,7 +517,7 @@ def get_claims(event, context, token):
     jwks = requests.get(jwks_url).json()
 
     header = jwt.get_unverified_header(token)
-    print (token)
+    # print (token)
     rsa_key = {}
     for key in jwks["keys"]:
         if key["kid"] == header["kid"]:
@@ -542,10 +539,25 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url,
         )
 
-        idp_prefix = os.getenv('IDP_PREFIX')
-        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+        idp_prefix: str = os.getenv('IDP_PREFIX') or ''
+        idp_prefix = idp_prefix.lower()
+        print(f"IDP_PREFIX from env: {idp_prefix}")
+        print(f"Original username: {payload['username']}")
+
+        def get_email(text: str):
+            print(f"Input text: {text}")
+            print(f"Checking if text starts with: {idp_prefix + '_'}")
+
+            if len(idp_prefix) > 0 and text.startswith(idp_prefix + '_'):
+                result = text.split(idp_prefix + '_', 1)[1]
+                print(f"Text matched pattern, returning: {result}")
+                return result
+            
+            print(f"Text did not match pattern, returning original: {text}")
+            return text
 
         user = get_email(payload['username'])
+        print(f"Final user value: {user}")
 
         # grab deafault account from accounts table
         dynamodb = boto3.resource("dynamodb")

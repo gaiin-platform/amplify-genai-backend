@@ -52,9 +52,9 @@ export class LLM {
         console.log("Create LLM Instance")
     }
 
-    clone() {
+    clone(newChatFn=this.chatFn) {
         const llm = new LLM(
-            this.chatFn,
+            newChatFn,
             this.params,
             this.responseStream);
         llm.passThrough = this.passThrough;
@@ -98,6 +98,10 @@ export class LLM {
      * @returns {{}}
      */
     prefixesToData(inputString, prefixes) {
+        if (!inputString) {
+            console.log("Prefixes to Data is Empty");
+            return {};
+        }
         const lines = inputString.split('\n');
         const result = {};
 
