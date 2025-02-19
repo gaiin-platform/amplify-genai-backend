@@ -2,7 +2,6 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {chat} from "../azure/openai.js";
-import {Models} from "../models/models.js";
 import {executeWorkflow} from "../workflow/workflow.js";
 import {ConsoleWritableStream} from "./consoleWriteableStream.js";
 import {getLLMConfig} from "../common/secrets.js";
@@ -31,7 +30,7 @@ async function main() {
         }
     };
 
-    const model = Models[modelId];
+    const model = {id: modelId}; // most likely missing data attributes since eliminating Models 
     if (!model) {
         console.log("Invalid model: " + modelId);
         return;

@@ -1,3 +1,4 @@
+import base64
 from enum import Enum
 import json
 import math
@@ -6,6 +7,7 @@ import time
 from functools import reduce
 from io import BytesIO
 import boto3
+import botocore
 from botocore.exceptions import ClientError, NoCredentialsError
 from common.secrets import get_secret_value
 from common.credentials import get_endpoint
@@ -29,9 +31,8 @@ def get(dictionary, *keys):
 
 
 def get_openai_client():
-    openai_api_key = get_secret_value("OPENAI_API_KEY")
     if openai_provider == "openai":
-        openai_api_key = openai_api_key
+        openai_api_key = get_secret_value("OPENAI_API_KEY")
         client = OpenAI(
             api_key=openai_api_key
         )
@@ -52,39 +53,64 @@ client = get_openai_client()
 def file_keys_to_file_ids(file_keys):
     if (len(file_keys) == 0): return []
 
-    bucket_name = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
+    files_bucket_name = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
+    images_bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME']
 
     updated_keys = []
     for file_key in file_keys:
         file_key_user = file_key.split('//')[1] if ('//' in file_key) else file_key
         if '@' not in file_key_user or len(file_key_user) <= 6:
-            return []
+            print(f"Skipping {file_key}: doesn't look valid.")
+            continue
         updated_keys.append(file_key_user)
         
     file_ids = []
     for file_key in updated_keys:
-        print("Downloading file: {}/{} to transfer to OpenAI".format(bucket_name, file_key))
-        # Use a BytesIO buffer to download the file directly into memory
-        file_stream = BytesIO()
-        s3.download_fileobj(bucket_name, file_key, file_stream)
-        file_stream.seek(0)  # Move to the beginning of the file-like object
+        file_stream = None
 
-        print("Uploading file to OpenAI: {}".format(file_key))
+        # if in files bucket 
+        try:
+            s3.head_object(Bucket=files_bucket_name, Key=file_key_user)
+            print(f"[FOUND] Key '{file_key_user}' is in the files bucket.")
+            print("Downloading file: {}/{} to transfer to OpenAI".format(files_bucket_name, file_key))
+            # Use a BytesIO buffer to download the file directly into memory
+            file_stream = BytesIO()
+            s3.download_fileobj(files_bucket_name, file_key, file_stream)
+            file_stream.seek(0)  # Move to the beginning of the file-like object
 
-        # Create the file on OpenAI using the downloaded data
-        response = client.files.create(
-            file=file_stream,
-            purpose="assistants"
-        )
+        except botocore.exceptions.ClientError as e:
+            print(f"[NOT FOUND] Key '{file_key_user}' not in files bucket. Checking images bucket.")
 
-        print("Response: {}".format(response))
-        # Here you might want to collect the file IDs into a list
-        file_id = response.id
-        if file_id:
-            file_ids.append(file_id)
+        # check if in image bucket
+        if (not file_stream):
+            try:
+                s3.head_object(Bucket=images_bucket_name, Key=file_key_user)
+                print(f"[FOUND] Key '{file_key_user}' is in the images bucket.")
+            
+                print(f"[DOWNLOAD] Fetching base64 image from: {images_bucket_name}/{file_key_user}")
+                s3_obj = s3.get_object(Bucket=images_bucket_name, Key=file_key_user)
+                base64_data = s3_obj['Body'].read().decode('utf-8') 
+                file_bytes = base64.b64decode(base64_data)
+                file_stream = BytesIO(file_bytes)
 
-        # Important: Close the BytesIO object when done
-        file_stream.close()
+            except botocore.exceptions.ClientError as e:
+                print(f"[ERROR] Could not confirm existence in both files and images bucket for key '{file_key_user}': {e}")
+                continue
+        # safely check
+        if file_stream:
+            print("Uploading file to OpenAI: {}".format(file_key))
+            # Create the file on OpenAI using the downloaded data
+            response = client.files.create(
+                file=file_stream,
+                purpose="assistants"
+            )
+
+            print("Response: {}".format(response))
+            file_id = response.id
+            if file_id:
+                file_ids.append(file_id)
+
+            file_stream.close()
 
     return file_ids
 
@@ -300,12 +326,11 @@ def get_last_known_thread_id(messages, info):
     print("Retrieving last known thread and missing messages")
     # traverse backward to see if and when there is some codeiterpreter message data attached to the messages passed in 
     for index in range(len(messages) - 1, -1, -1):
-        if ('codeInterpreterMessageData' in messages[index] and messages[index]['codeInterpreterMessageData'] is not None
-            and 'threadId' in messages[index]['codeInterpreterMessageData']):
-            print("Message with code interpreter message data: ", messages[index]['codeInterpreterMessageData'])
-            # theres no way the very last message in the list can have codeInterpreterMessageData according to existing logic
+        if (messages[index].get('data', {}).get('state', {}).get('codeInterpreter', {}).get('threadId') is not None):
+            print("Message with code interpreter message data: ", messages[index]['data']['state']['codeInterpreter'])
+            # theres no way the very last message in the list can have codeInterpreter MessageData according to existing logic
             # the list will always contain the new user prompt, so will always at the bare minimum get messages[-1] if code interpreter has been used at some point
-            thread_key = messages[index]['codeInterpreterMessageData']['threadId']
+            thread_key = messages[index]['data']['state']['codeInterpreter']['threadId']
             thread_info = get_thread(thread_key, info['current_user'])
             if (thread_info['success']):
                 info['thread_key'] = thread_key
@@ -330,7 +355,6 @@ def create_new_thread_for_chat(messages, info):
         print("Creating OpenAI thread...")
         thread_id = client.beta.threads.create().id 
 
-        print("Recording thread usage")
         info['thread_id'] = thread_id
         info['thread_key'] = thread_key
         op_details = {'type': "CREATE_THREAD", 'timestamp': timestamp}

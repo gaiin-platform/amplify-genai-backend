@@ -6,25 +6,23 @@
 #
 annotated-types==0.7.0
     # via pydantic
-attrs==24.2.0
+attrs==24.3.0
     # via
     #   jsonschema
     #   referencing
-boto3==1.35.28
+boto3==1.35.94
     # via -r requirements.in
-botocore==1.35.28
+botocore==1.35.94
     # via
     #   -r requirements.in
     #   boto3
     #   s3transfer
-certifi==2024.8.30
+certifi==2024.12.14
     # via requests
-charset-normalizer==3.3.2
+charset-normalizer==3.4.1
     # via requests
 ecdsa==0.19.0
     # via python-jose
-idna==3.10
-    #
 idna==3.10
     # via requests
 jmespath==1.0.1
@@ -35,15 +33,15 @@ jose==1.0.0
     # via -r requirements.in
 jsonschema==4.23.0
     # via -r requirements.in
-jsonschema-specifications==2023.12.1
+jsonschema-specifications==2024.10.1
     # via jsonschema
 pyasn1==0.6.1
     # via
     #   python-jose
     #   rsa
-pydantic==2.9.2
+pydantic==2.10.4
     # via -r requirements.in
-pydantic-core==2.23.4
+pydantic-core==2.27.2
     # via pydantic
 python-dateutil==2.9.0.post0
     # via botocore
@@ -57,15 +55,15 @@ referencing==0.35.1
     #   jsonschema-specifications
 requests==2.32.3
     # via -r requirements.in
-rpds-py==0.20.0
+rpds-py==0.22.3
     # via
     #   jsonschema
     #   referencing
 rsa==4.9
     # via python-jose
-s3transfer==0.10.2
+s3transfer==0.10.4
     # via boto3
-six==1.16.0
+six==1.17.0
     # via
     #   ecdsa
     #   python-dateutil
@@ -73,7 +71,7 @@ typing-extensions==4.12.2
     # via
     #   pydantic
     #   pydantic-core
-urllib3==2.2.3
+urllib3==2.3.0
     # via
     #   botocore
-    #   requests    
+    #   requests

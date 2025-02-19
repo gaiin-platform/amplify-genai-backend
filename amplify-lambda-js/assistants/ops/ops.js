@@ -7,7 +7,17 @@ const opFormats = {
     "default": `
 Operations:
 {{#each __assistantOps}}
-{{id}}{{#each params}}, "{{description}}"{{/each}} -- {{description}}
+{{{id}}}: {{{description}}}
+{{#each params}}\n  {{{name}}}:{{{description}}}{{/each}}
+{{/each}}
+`,
+    "urlFormat": `
+Operations:
+{{#each __assistantOps}}
+{{{url}}}: {{{description}}}
+{{#each params}}
+  {{{name}}}: {{{description}}}
+{{/each}}
 {{/each}}
 `
 }

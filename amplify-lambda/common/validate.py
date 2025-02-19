@@ -1,4 +1,3 @@
-import string
 from common.permissions import get_permission_checker
 import json
 from jsonschema import validate
@@ -42,114 +41,88 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 chat_input_schema = {
-  "type": "object",
-  "required": [
-    "model",
-    "temperature",
-    "max_tokens",
-    "messages"
-  ],
-  "properties": {
-    "model": {
-      "type": "string",
-      "enum": [
-        "gpt-35-turbo",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4-1106-Preview",
-        "anthropic.claude-3-haiku-20240307-v1:0",
-        "anthropic.claude-3-5-sonnet-20240620-v1:0",
-        "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        "us.anthropic.claude-3-opus-20240229-v1:0",
-        "anthropic.claude-3-opus-20240229-v1:0",
-        "mistral.mistral-7b-instruct-v0:2",
-        "mistral.mixtral-8x7b-instruct-v0:1",
-        "mistral.mistral-large-2402-v1:0"
-      ]
-    },
-    "temperature": {
-      "type": "number"
-    },
-    "max_tokens": {
-      "type": "integer"
-    },
-    "dataSources": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "messages": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "role",
-          "content"
-        ],
-        "properties": {
-          "role": {
-            "type": "string",
-            "enum": [
-              "system",
-              "assistant",
-              "user"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "prompt"
-            ]
-          }
+    "type": "object",
+    "properties": {
+        "temperature": {
+        "type": "number"
+        },
+        "model": { 
+        "type": "string"
+        },
+        "max_tokens": {
+        "type": "integer"
+        },
+        "dataSources": {
+        "type": "array",
+        "items": {
+            "type": "object"
         }
-      }
-    },
-    "options": {
-      "type": "object",
-      "properties": {
-        "dataSourceOptions": {
-          "type": "object"
         },
-        "ragOnly": {
-          "type": "boolean"
-        },
-        "skipRag": {
-          "type": "boolean"
-        },
-        "assistantId": {
-          "type": "string"
-        },
-        "model": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "enum": [
-                "gpt-35-turbo",
-                "gpt-4o",
-                "gpt-4-1106-Preview",
-                "anthropic.claude-3-haiku-20240307-v1:0",
-                "anthropic.claude-3-5-sonnet-20240620-v1:0",
-                "anthropic.claude-3-opus-20240229-v1:0",
-                "mistral.mistral-7b-instruct-v0:2",
-                "mistral.mixtral-8x7b-instruct-v0:1",
-                "mistral.mistral-large-2402-v1:0"
-              ]
+        "messages": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": [
+            "role",
+            "content"
+            ],
+            "properties": {
+            "role": {
+                "type": "string",
+                "enum": [
+                "system",
+                "assistant",
+                "user"
+                ]
+            },
+            "content": {
+                "type": "string"
+            },
+            "type": {
+                "type": "string",
+                "enum": [
+                "prompt"
+                ]
             }
-          }
-        },
-        "prompt": {
-          "type": "string"
+            }
         }
-      }
-    }
-  }
+        },
+        "options": {
+        "type": "object",
+        "properties": {
+            "dataSourceOptions": {
+            "type": "object"
+            },
+            "ragOnly": {
+            "type": "boolean"
+            },
+            "skipRag": {
+            "type": "boolean"
+            },
+            "assistantId": {
+            "type": "string"
+            },
+            "model": {
+            "type": "object",
+                "required": ["id"],
+                "properties": {
+                    "id": {
+                    "type": "string"
+                    }
+                }
+            },
+            "prompt": {
+            "type": "string"
+            }
+        },
+         "required": [ "model" ],
+        }
+    },
+    "required": [ "temperature", "max_tokens", "messages", "options" ],
 }
+
+
+
 
 export_schema = {
     "type": "object",
@@ -387,13 +360,6 @@ create_tags_schema = {
     "additionalProperties": False
 }
 
-user_list_tags_schema = {
-    "type": "object",
-    "properties": {
-    },
-    "additionalProperties": False
-}
-
 user_delete_tag_schema = {
     "type": "object",
     "properties": {
@@ -588,25 +554,71 @@ save_settings_schema = {
                     "type": "string",
                     "enum": ["light", "dark"]
                 },
-                "modelOptions": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "boolean"
-                    }
-                },
                 "featureOptions": {
                     "type": "object",
                     "additionalProperties": {
                         "type": "boolean"
                     }
+                },
+                "hiddenModelIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                    }
                 }
             },
-            "required": ["theme", "modelOptions", "featureOptions"]
+            "required": ["theme", "featureOptions", "hiddenModelIds"]
         }
     },
     "required": ["settings"]
 }
 
+register_conversation_schema = {
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+        "name": {
+            "type": "string"
+        },
+        "messages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": ["system", "user", "assistant"] 
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "type": ["object", "null"],
+                        "additionalProperties": True
+                    },
+                },
+                "required": ["role", "content", "data"]
+            }
+        },
+        "tags": {
+            "type": ["array", "null"],
+            "items": {
+                "type": "string"
+            }
+        },
+        "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "data": {
+            "type": ["object", "null"],
+            "additionalProperties": True
+        },
+    },
+    "required": ["name", "messages"]
+}
 
 compressed_conversation_schema = {
     "type": "object",
@@ -692,9 +704,6 @@ validators = {
         "append": share_schema,
         "read": {}
     },
-    "/state/base-prompts/get": {
-        "get": {}
-    },
     "/state/share/load": {
         "load": share_load_schema
     },
@@ -717,7 +726,7 @@ validators = {
         "create": create_tags_schema
     },
     "/files/tags/list": {
-        "list": user_list_tags_schema
+        "list": {}
     },
     "/files/query": {
         "query": file_query_schema
@@ -737,13 +746,19 @@ validators = {
     "/state/conversation/upload": {   
         "conversation_upload": compressed_conversation_schema
     },
-    "/state/conversation/get_multiple": {   
+    "/state/conversation/register" : {
+        "conversation_upload": register_conversation_schema
+    },
+    "/state/conversation/get/multiple": {   
         "get_multiple_conversations": conversation_ids_schema
     },
     "/state/conversation/get": {
         "read" : {}
     },
-    "/state/conversation/get_all": {
+    "/state/conversation/get/all": {
+        "read" : {}
+    },
+    "/state/conversation/get/empty": {
         "read" : {}
     },
     "/state/conversation/delete_multiple": {   
@@ -784,7 +799,7 @@ api_validators = {
         "create": create_tags_schema
     },
     "/files/tags/list": {
-        "list": user_list_tags_schema
+        "list": {}
     },
     "/files/query": {
         "query": file_query_schema
@@ -795,11 +810,15 @@ api_validators = {
     "/files/download": {
         "download": key_request_schema
     },
+    "/state/conversation/register" : {
+        "conversation_upload": register_conversation_schema
+    },
 }
 
 def validate_data(name, op, data, api_accessed):
     # print(f"Name: {name} and Op: {op} and Data: {data}")
     validator = api_validators if api_accessed else validators
+
     if name in validator and op in validator[name]:
         schema = validator[name][op]
         try:
@@ -857,10 +876,7 @@ def validated(op, validate_body=True):
 
                 claims = api_claims(event, context, token) if (api_accessed) else get_claims(event, context, token)
 
-
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
+                current_user = claims["username"]
 
                 print(f"User: {current_user}")
                 if current_user is None:
@@ -921,12 +937,26 @@ def get_claims(event, context, token):
             audience=oauth_audience,
             issuer=oauth_issuer_base_url
         )
-
-        idp_prefix = os.getenv('IDP_PREFIX')
         
-        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+        idp_prefix: str = os.getenv('IDP_PREFIX') or ''
+        idp_prefix = idp_prefix.lower()
+        print(f"IDP_PREFIX from env: {idp_prefix}")
+        print(f"Original username: {payload['username']}")
+
+        def get_email(text: str):
+            print(f"Input text: {text}")
+            print(f"Checking if text starts with: {idp_prefix + '_'}")
+
+            if len(idp_prefix) > 0 and text.startswith(idp_prefix + '_'):
+                result = text.split(idp_prefix + '_', 1)[1]
+                print(f"Text matched pattern, returning: {result}")
+                return result
+            
+            print(f"Text did not match pattern, returning original: {text}")
+            return text
 
         user = get_email(payload['username'])
+        print(f"Final user value: {user}")
 
         # grab deafault account from accounts table 
         dynamodb = boto3.resource('dynamodb')

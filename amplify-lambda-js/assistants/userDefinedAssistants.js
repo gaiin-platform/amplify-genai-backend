@@ -3,7 +3,6 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import {ModelID, Models} from "../models/models.js";
 import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
@@ -12,6 +11,9 @@ import {getOps} from "./ops/ops.js";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
+import {opsLanguages} from "./opsLanguages.js";
+import {newStatus, getThinkingMessage} from "../common/status.js";
+import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -96,9 +98,44 @@ const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
 }
 
 
-export const getUserDefinedAssistant = async (assistantBase, user, assistantPublicId) => {
+export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId) => {
+    if (!ast_owner) return null;
 
-    const assistantAlias = await getAssistantByAlias(user, assistantPublicId);
+    // verify the user has access to the group since this is a group assistant
+    if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
+        console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
+
+        try {
+            const params = {
+                TableName: process.env.GROUPS_DYNAMO_TABLE,
+                Key: {
+                    group_id: { S: ast_owner }
+                }
+            };
+        
+            const response = await dynamodbClient.send(new GetItemCommand(params));
+            
+            if (response.Item) {
+                const item = unmarshall(response.Item);
+                // Check if the group is public or if the user is in the members
+                if (!(item.isPublic || 
+                    (item.members && Object.keys(item.members).includes(current_user)) || 
+                    (item.systemUsers && item.systemUsers.includes(current_user)))) {
+                    console.error( `User is not a member of groupId: ${ast_owner}`);
+                    return null;
+                }
+            } else {
+                console.error(`No group entry found for groupId: ${ast_owner}`);
+                return null;
+            }
+        
+        } catch (error) {
+            console.error(`An error occurred while processing groupId ${ast_owner}:`, error);
+            return null;
+        }
+    }
+
+    const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
     if (assistantAlias) {
         const assistant = await getAssistantByAssistantDatabaseId(
@@ -153,7 +190,23 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 dataSourceOptions.dataSourceOptions = assistant.data.dataSourceOptions;
             }
 
+            const suffixMessages = [];
             const extraMessages = [];
+
+            if(params && params.options){
+                if(params.options.timeZone) {
+                    extraMessages.push({
+                        role: "user",
+                        content: "Helpful info, don't repeat: The user is in the " + params.options.timeZone + " time zone."
+                    });
+                }
+                if(params.options.time){
+                    extraMessages.push({
+                        role: "user",
+                        content: "Helpful info, don't repeat: The current time for the user is " + params.options.time
+                    });
+                }
+            }
 
             if(assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
@@ -258,102 +311,136 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
-            if (assistant.data && assistant.data.apiOptions) {
-                if (assistant.data.apiCapabilities) {
-                    // console.log("Api Capabilities", assistant.data.apiCapabilities);
-                    let assistantApis = '';
-                    for (let i = 0; i < assistant.data.apiCapabilities.length; i++) {
-                        assistantApis += '---------------\n';
-                        const capability = assistant.data.apiCapabilities[i];
+            let blockTerminator = null;
 
-                        assistantApis += `Description: ${capability.Description}\n`;
-                        assistantApis += `URL: ${capability.URL}\n`;
-                        assistantApis += `RequestType: ${capability.RequestType}\n`;
+            if(assistant.data && assistant.data.opsLanguageVersion === "v4") {
 
-                        assistantApis += 'Auth:\n';
-                        for (const [key, value] of Object.entries(capability.Auth)) {
-                            assistantApis += `  ${key}: ${value}\n`;
-                        }
-
-                        assistantApis += 'Body:\n';
-                        for (const [key, value] of Object.entries(capability.Body)) {
-                            assistantApis += `  ${key}: ${value}\n`;
-                        }
-
-                        assistantApis += 'Headers:\n';
-                        for (const [key, value] of Object.entries(capability.Headers)) {
-                            assistantApis += `  ${key}: ${value}\n`;
-                        }
-
-                        assistantApis += 'Parameters:\n';
-                        for (const [key, value] of Object.entries(capability.Parameters)) {
-                            assistantApis += `  ${key}: ${value}\n`;
-                        }
-                        assistantApis += '---------------\n';
+                const statusInfo = newStatus(
+                    {
+                        animated: true,
+                        inProgress: true,
+                        sticky: true,
+                        summary: `Thinking...`,
+                        icon: "info",
                     }
-                    // console.log("Assistant APIs:", assistantApis);
-                    const customAutoBlockTemplate = `\`\`\`customAuto
-{
-    "RequestType": "HTTP_METHOD",
-    "URL": "https://api.example.com/v1/endpoint",
-    "Parameters": {
-        "key1": "value1",
-        "key2": "value2"
-    },
-    "Body": {
-        "property1": "value1",
-        "property2": "value2"
-    },
-    "Headers": {
-        "Custom-Header": "value"
-    },
-    "Auth": {
-        "type": "bearer",
-        "token": "your_auth_token"
-    }
-}
-\`\`\``;
-                    // console.log("Custom Auto Block:", customAutoBlockTemplate);
-                    const msgtest = `You have access to the following APIs (assume any empty field is not relevant):
-${assistantApis}
-If the user prompts you in a way that is relevant to one of the APIs you have access to, create a customAuto block within your answer as described here:
-1. RequestType: The HTTP method (GET, POST, PUT, DELETE, etc.)
-2. URL: The complete endpoint URL, including API version if applicable
-3. Parameters: Query parameters, if applicable (as a nested object)
-4. Body: Request body, if applicable (as a nested object for POST/PUT requests)
-5. Headers: Any custom headers required (as a nested object)
-6. Auth: Authentication details if required (as a nested object)
-Format your response as follows:
-${customAutoBlockTemplate}
-Use empty objects {} for Parameters, Body, Headers, or Auth if not applicable.
-I will take the customAuto block you created, execute it, and provide it back to you.
-Incorporate the response of the customAuto block in your response to the user.
-If the response is an error, inform the user and ask if they want to try again. If they say yes, analyze the error to determine what's wrong with the API request, update it, and create an updated customAuto block.
-If the response is successful, inform the user with the relevant information.`;
-                    console.log(msgtest);
-                    extraMessages.push({
-                        role: "user",
-                        content: `
-                        You have access to the following APIs (assume any empty field is not relevant):
-                        ${assistantApis}
-                        If the user prompts you in a way that is relevant to one of the APIs you have access to, create a customAuto block within your answer as described here:
-                        1. RequestType: The HTTP method (GET, POST, PUT, DELETE, etc.)
-                        2. URL: The complete endpoint URL, including API version if applicable
-                        3. Parameters: Query parameters, if applicable (as a nested object)
-                        4. Body: Request body, if applicable (as a nested object for POST/PUT requests)
-                        5. Headers: Any custom headers required (as a nested object)
-                        6. Auth: Authentication details if required (as a nested object)
-                        Format your response as follows:
-                        ${customAutoBlockTemplate}
-                        Use empty objects {} for Parameters, Body, Headers, or Auth if not applicable.
-                        I will take the customAuto block you created, execute it, and provide it back to you.
-                        Incorporate the response of the customAuto block in your response to the user.
-                        If the response is an error, inform the user and ask if they want to try again. If they say yes, analyze the error to determine what's wrong with the API request, update it, and create an updated customAuto block.
-                        If the response is successful, inform the user with the relevant information.
-                        `});
+                );
+
+                const response = invokeAgent(
+                    params.account.accessToken,
+                    params.options.conversationId,
+                    body.messages,
+                    {assistant}
+                );
+                llm.sendStatus(statusInfo);
+                llm.forceFlush();
+                llm.forceFlush();
+
+                //const result = await response;
+                var stopPolling = false;
+                var result = null;
+                await Promise.race([
+                    response.then(r => {
+                        stopPolling = true;
+                        result = r;
+                        return r;
+                    }),
+                    listenForAgentUpdates(params.account.accessToken, params.account.user, params.options.conversationId, (state) => {
+
+                        if(!state) {
+                            return !stopPolling;
+                        }
+
+                        console.log("Agent state updated:", state);
+                        let msg = getThinkingMessage();
+                        let details = "";//JSON.stringify(state);
+                        if(state.state){
+                            try {
+                                const tool_call = JSON.parse(state.state);
+                                const tool = tool_call.tool;
+                                if(tool === "terminate"){
+                                    msg = "Hold on..."
+                                }
+                                else if(tool === "exec_code"){
+                                    msg = "Executing code..."
+                                    details = `\`\`\`python\n\n${tool_call.args.code}\n\n\`\`\``;
+                                }
+                                else {
+                                    function formatToolCall(toolCall) {
+                                        const lines = [`Calling: ${toolCall.tool}`, '   with:'];
+                                        Object.entries(toolCall.args).forEach(([key, value]) => {
+                                            lines.push(`      ${key}: ${JSON.stringify(value)}`);
+                                        });
+                                        return lines.join('\n');
+                                    }
+
+                                    msg = "Calling: " + tool_call.tool;
+                                    details = formatToolCall(tool_call);
+                                }
+                            }catch (e){
+                            }
+                        }
+                        else {
+                            msg = `Agent state updated: ${JSON.stringify(state)}`;
+                        }
+                        statusInfo.summary = msg;
+                        statusInfo.message = details
+                        llm.sendStatus(statusInfo);
+                        llm.forceFlush();
+                        return !stopPolling;
+                    })
+                ]);
+
+                llm.sendStateEventToStream({
+                    agentLog: result
+                })
+                llm.forceFlush();
+
+                if (result.success) {
+                    let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
+
+                    if(responseFromAssistant.args && responseFromAssistant.args.message){
+                        responseFromAssistant = responseFromAssistant.args.message;
+                    }
+                    else {
+                        responseFromAssistant = JSON.stringify(responseFromAssistant);
+                    }
+
+                    const summaryRequest = {
+                        ...body,
+                        messages: [
+                            {
+                                role: "user",
+                                content:
+                                    `The user's prompt was: ${body.messages.slice(-1)[0].content}` +
+                                    `\n\nA log of the assistant's reasoning / work:\n---------------------\n${JSON.stringify(result.data.result)}` +
+                                    `\n\n---------------------` +
+                                    `\n\nRespond to the user.`
+                            }]};
+
+                    await llm.prompt(summaryRequest, []);
+
                 }
+
+                return;
+
             }
-           
+            else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+
+                const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
+                const langVersion = opsLanguages[opsLanguageVersion];
+                const instructionsPreProcessor = langVersion.instructionsPreProcessor;
+
+                if (instructionsPreProcessor) {
+                    assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                }
+
+                const langMessages = langVersion.messages;
+                blockTerminator = langVersion.blockTerminator;
+                extraMessages.push(...langMessages);
+                suffixMessages.push(...(langVersion.suffixMessages || []));
+
+            }
+
 
             const messagesWithoutSystem = body.messages.filter(
                 (message) => message.role !== "system"
@@ -368,6 +455,10 @@ If the response is successful, inform the user with the relevant information.`;
                 }
             }
 
+            if (assistant.data && assistant.data.supportConvAnalysis) {
+                body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
+            }
+
             const instructions = await fillInTemplate(
                 llm,
                 params,
@@ -376,6 +467,7 @@ If the response is successful, inform the user with the relevant information.`;
                 assistant.instructions,
                 {
                     assistant: assistant,
+                    operations: assistant.data?.operations || []
                 }
             );
 
@@ -408,7 +500,8 @@ If the response is successful, inform the user with the relevant information.`;
                             content: instructions,
                         },
                         ...extraMessages,
-                        body.messages.slice(-1)[0]
+                        body.messages.slice(-1)[0],
+                        ...suffixMessages
                     ],
                     options: {
                         ...body.options,
@@ -418,11 +511,11 @@ If the response is successful, inform the user with the relevant information.`;
                 };
             
             // for now we will include the ds in the current message
-            if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
+            if (assistant.dataSources && !dataSourceOptions.disableDataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
             await assistantBase.handler(
                 llm,
-                params,
+                {...params, blockTerminator: blockTerminator || params.blockTerminator},
                 updatedBody,
                 ds,
                 responseStream);
@@ -448,4 +541,5 @@ If the response is successful, inform the user with the relevant information.`;
             }
         }
     };
+
 }

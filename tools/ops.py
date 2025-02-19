@@ -1,3 +1,4 @@
+import json
 import os
 import ast
 from typing import List
@@ -22,7 +23,7 @@ serializer = TypeSerializer()
 IGNORED_DIRECTORIES = {"node_modules", "venv", "__pycache__"}
 
 
-def op(tags=None, path="", name="", description="", params=None, method="POST"):
+def op(tags=None, path="", name="", description="", params=None, method="POST", parameters=None):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -55,6 +56,7 @@ class OperationModel(BaseModel):
     params: List[ParamModel]
     type: str
     url: str
+    parameters: Optional[dict] = None
 
     @field_validator('method')
     def validate_method(cls, v):
@@ -62,6 +64,35 @@ class OperationModel(BaseModel):
         if v.upper() not in allowed_methods:
             raise ValueError(f"Method must be one of {allowed_methods}")
         return v.upper()
+
+def extract_dict_from_ast(node):
+    """Helper function to extract dictionary from AST nodes"""
+    if isinstance(node, ast.Dict):
+        keys = []
+        values = []
+        for k, v in zip(node.keys, node.values):
+            if isinstance(k, ast.Constant):
+                key = k.value
+            elif isinstance(k, ast.Str):  # for older Python versions
+                key = k.s
+            else:
+                continue
+
+            if isinstance(v, ast.Dict):
+                value = extract_dict_from_ast(v)
+            elif isinstance(v, ast.List):
+                value = [x.value if isinstance(x, ast.Constant) else x.s for x in v.elts]
+            elif isinstance(v, ast.Constant):
+                value = v.value
+            elif isinstance(v, ast.Str):  # for older Python versions
+                value = v.s
+            else:
+                continue
+
+            keys.append(key)
+            values.append(value)
+        return dict(zip(keys, values))
+    return {}
 
 def find_python_files(directory: str) -> List[str]:
     python_files = []
@@ -99,28 +130,45 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
 
         # Look for function definitions and their decorators
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                for decorator in node.decorator_list:
-                    if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
-                        op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
-                        if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and 'params' in op_kwargs:
-                            params_dict = extract_dict(op_kwargs['params'])
-                            params = [ParamModel(description=desc, name=name) for name, desc in params_dict.items()]
+            try:
+                if isinstance(node, ast.FunctionDef):
+                    for decorator in node.decorator_list:
+                        if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
+                            op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
+                            if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and ('params' in op_kwargs or 'parameters' in op_kwargs):
+                                params_dict = extract_dict(op_kwargs['params'])
 
-                            operation = OperationModel(
-                                description=op_kwargs['description'].s,
-                                id=op_kwargs['name'].s,
-                                includeAccessToken=True,  # Assuming ops will include access token
-                                method=op_kwargs['method'].s if 'method' in op_kwargs else "POST",  # Default method
-                                name=op_kwargs['name'].s,
-                                params=params,
-                                type="custom",  # Assuming custom type
-                                url=op_kwargs['path'].s,
-                                tags=extract_tags(op_kwargs)
-                            )
-                            ops_found.append(operation)
+
+                                params = [ParamModel(description=desc, name=name) for name, desc in params_dict.items()] if 'params' in op_kwargs else []
+                                parameters = extract_dict_from_ast(op_kwargs.get('parameters', ast.Dict(keys=[], values=[])))
+                                try:
+                                    operation = OperationModel(
+                                        description=op_kwargs['description'].s,
+                                        id=op_kwargs['name'].s,
+                                        includeAccessToken=True,  # Assuming ops will include access token
+                                        method=op_kwargs['method'].s if 'method' in op_kwargs else "POST",  # Default method
+                                        name=op_kwargs['name'].s,
+                                        params=params,
+                                        type="custom",  # Assuming custom type
+                                        url=op_kwargs['path'].s,
+                                        tags=extract_tags(op_kwargs),
+                                        parameters=parameters
+                                    )
+                                    ops_found.append(operation)
+                                except ValidationError as ve:
+                                    print(f"\nValidation error in {file_path}:")
+                                    for error in ve.errors():
+                                        print(f"Parsing: "+ op_kwargs['name'].s)
+                                        print(f"Field: {' -> '.join(str(x) for x in error['loc'])}")
+                                        print(f"Error: {error['msg']}")
+                                        print(f"Type: {error['type']}\n")
+            except Exception as e:
+                print(f"Error processing function {node.name} in {file_path}: {e}")
+
+
         return ops_found
     except Exception as e:
+        print(f"Error processing {file_path}:")
         print(e)
         print(f"Skipping {file_path} due to unparseable AST")
         return []
@@ -213,6 +261,8 @@ def write_ops(current_user: str = 'system', tags: List[str] = None, ops: List[Op
 
                     for index, existing_op in enumerate(existing_ops):
                         if existing_op['id'] == op_dict['id']:
+                            print(f"Updating {op_dict['id']} for user {current_user} and tag {tag}")
+                            print(f"Operation: {json.dumps(op_dict, indent=2)}")
                             existing_ops[index] = op_dict
                             op_exists = True
                             break
@@ -230,7 +280,7 @@ def write_ops(current_user: str = 'system', tags: List[str] = None, ops: List[Op
                             ':ops': existing_ops,
                         }
                     )
-                    print(f"Updated item in table {table_name} for user {current_user} and tag {tag}")
+                    print(f"Published operation with id {op.id} to table {table_name} for user {current_user} and tag {tag}: {op_dict}")
             else:
                 # If no entry exists, create a new one
                 item = {
@@ -240,7 +290,7 @@ def write_ops(current_user: str = 'system', tags: List[str] = None, ops: List[Op
                     'ops': [op_dict]
                 }
                 table.put_item(Item=item)
-                print(f"Put item into table {table_name} for user {current_user} and tag {tag}: {item}")
+                print(f"Published operation with id {op.id} to table {table_name} for user {current_user} and tag {tag}: {op_dict}")
 
     return {
         "success": True,

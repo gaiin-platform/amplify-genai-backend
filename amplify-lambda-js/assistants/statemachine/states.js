@@ -1,9 +1,6 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {getDefaultLLM} from "../../common/llm.js"; //unused
-import {ModelID, Models} from "../../models/models.js";
-import {ConsoleWritableStream} from "../../local/consoleWriteableStream.js";
 import {newStatus} from "../../common/status.js";
 import {
     sendDeltaToStream,
@@ -11,11 +8,12 @@ import {
     sendStatusEventToStream,
     StatusOutputStream
 } from "../../common/streams.js";
+import {getChatFn, getCheapestModel} from "../../common/params.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
-import {getContextMessages, getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
+import {getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
-import {getCheapestModelEquivalent, getUser, getModel, getMostAdvancedModelEquivalent} from "../../common/params.js";
+import {getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
 
 const formatStateNamesAsEnum = (transitions) => {
@@ -446,14 +444,19 @@ export const ragAction = (config = {
             const messages = filledInQuery ?
                 [{role: "user", content: filledInQuery}] :
                 context.history;
+            
+            const model = getCheapestModel(llm.params);
+            const chatFn = async (body, writable, context) => {
+                return await getChatFn(model, body, writable, context);
+            }
 
-            const ragLLM = llm.clone();
+            const ragLLM = llm.clone(chatFn);
             ragLLM.params = {
                 ...llm.params,
                 messages,
                 options: {
                     ...llm.defaultBody,
-                    model:  getCheapestModelEquivalent(getModel(llm.params)), //Models[process.env.RAG_ASSISTANT_MODEL_ID],
+                    model:  model, 
                     skipRag: true
                 }
             };
@@ -719,19 +722,6 @@ const configureLLM = (config, llm) => {
 
     if (config.options !== undefined) {
         llm.params.options = {...llm.params.options, ...config.options};
-    }
-
-    if (config.isEntertainment) { 
-        // use the cheaper model!
-        llm.params.options.model = getCheapestModelEquivalent(llm.params.model);
-        // remove any custom instruction prompts since it is messing up the output 
-        llm.params.options.prompt = "Provide a enjoyable, friendly, make me smile response. Only view the history but, do not address it. Only respond to the prompt that involves entertainment and nothing else.";
-        
-    }
-
-    if (config.isReviewingCIResponse)  {
-        llm.params.options.model = getMostAdvancedModelEquivalent(llm.params.model);
-        llm.params.options.prompt = "Please strictly adhere to the response formats provided and avoid adding any personal commentary or evaluative statements. Focus solely on verifying the criteria listed and directly stating whether the response should be updated or is unchanged";
     }
 }
 

@@ -176,62 +176,59 @@ deactivate_api_key_schema = {
 }
 
 
+upload_api_doc_schema = {
+     "type": "object",
+    "properties": {
+        "filename": {
+            "type": "string",
+        },
+        "content_md5": {
+            "type": "string",
+        },
+    },
+    "required": ["filename", "content_md5"]
+}
+
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/apiKeys/deactivate_key": {
+    "/apiKeys/key/deactivate": {
         "deactivate": deactivate_api_key_schema
     }, 
-    "/apiKeys/create_keys": {
+    "/apiKeys/keys/create": {
         "create": create_api_keys_schema
     },
-    "/apiKeys/get_keys": {
+    "/apiKeys/keys/get": {
         "read": {}
     },
-    "/apiKeys/get_key": {
+    "/apiKeys/key/get": {
         "read": {}
     },
     "/apiKeys/get_keys_ast": {
         "read": {}
     },
-    "/apiKeys/update_keys" : {
+    "/apiKeys/keys/update" : {
         "update": update_key_schema
     },
     "/apiKeys/get_system_ids": {
         "read": {}
     },
-    "/apiKeys/api_documentation": {
+    "/apiKeys/api_documentation/get": {
         "read": {}
-    }
+    },
+    "/apiKeys/api_documentation/upload": {
+        "upload": upload_api_doc_schema
+    },
+    "/apiKeys/api_documentation/get_templates" : {
+        "read": {}
+    },
 }
 
 api_validators = {
-    "/apiKeys/deactivate_key": {
-        "deactivate": deactivate_api_key_schema
-    }, 
-    "/apiKeys/create_keys": {
-        "create": create_api_keys_schema
-    },
-    "/apiKeys/get_keys": {
-        "read": {}
-    },
-    "/apiKeys/get_key": {
-        "read": {}
-    },
-    "/apiKeys/get_keys_ast": {
-        "read": {}
-    },
-    "/apiKeys/update_keys" : {
-        "update": update_key_schema
-    },
-    "/apiKeys/get_system_ids": {
-        "read": {}
-    },
-    "/apiKeys/api_documentation": {
-        "read": {}
-    }
+
 }
 
 
@@ -277,21 +274,17 @@ def parse_and_validate(current_user, event, op, api_accessed, validate_body=True
 
     return [name, data]
 
+
 def validated(op, validate_body=True):
     def decorator(f):
         def wrapper(event, context):
             try:
-
                 token = parseToken(event)
                 api_accessed = token[:4] == 'amp-'
 
                 claims = api_claims(event, context, token) if (api_accessed) else get_claims(event, context, token)
 
-
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
-
+                current_user = claims['username']
                 print(f"User: {current_user}")
                 if current_user is None:
                     raise Unauthorized("User not found.")
@@ -352,9 +345,8 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        idp_prefix = os.getenv('IDP_PREFIX')
-        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-        
+        get_email = lambda text: text.split('_', 1)[1] if '_' in text else None
+
         user = get_email(payload['username'])
 
         # grab deafault account from accounts table 

@@ -14,7 +14,7 @@ const dynamoTableName = process.env.CHAT_USAGE_DYNAMO_TABLE;
 const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 const modelRateDynamoTable = process.env.MODEL_RATE_TABLE;
 
-export const recordUsage = async (account, requestId, model, inputTokens, outputTokens, details) => {
+export const recordUsage = async (account, requestId, model, inputTokens, outputTokens, cachedTokens, details) => {
 
     if (!dynamoTableName) {
         logger.error("CHAT_USAGE_DYNAMO_TABLE table is not provided in the environment variables.");
@@ -76,12 +76,12 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const modelRate = modelRateResponse.Items[0];
         const inputCostPerThousandTokens = parseFloat(modelRate.InputCostPerThousandTokens.N);
         const outputCostPerThousandTokens = parseFloat(modelRate.OutputCostPerThousandTokens.N);
+        const cachedCostPerThousandTokens = parseFloat(modelRate.CachedCostPerThousandTokens.N);
 
         const inputCost = (inputTokens / 1000) * inputCostPerThousandTokens;
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
-        const totalCost = inputCost + outputCost;
-
-        // TODO: need to save account.accountId, account.accessToken and account.user
+        const cachedCost = (cachedTokens / 1000) * cachedCostPerThousandTokens;
+        const totalCost = inputCost + outputCost + cachedCost;
 
         // adds the totalCost to the dailyCost field
         // gets the current hour (0-23), add the totalCost to the hourlyCost field (saves it to the correct index in hourlyCost's 24 index list)

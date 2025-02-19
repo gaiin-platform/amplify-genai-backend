@@ -52,13 +52,110 @@ report_generator_schema = {
     "required": ["emails"],
 }
 
+update_models_schema = {
+    "type": "object",
+    "properties": {
+        "models": {
+            "type": "object",
+            "patternProperties": {
+                "^.*$": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "provider": {
+                            "type": "string"
+                        },
+                        "description": {
+                            "type": "string"
+                        },
+                            "isAvailable": {
+                            "type": "boolean"
+                        },
+                        "isBuiltIn": {
+                            "type": "boolean"
+                        },
+                            "isDefault": {
+                            "type": "boolean"
+                        },
+                            "systemPrompt": {
+                            "type": "string"
+                        },
+                            "supportsSystemPrompts": {
+                            "type": "boolean"
+                        },
+                            "supportsImages": {
+                            "type": "boolean"
+                        },
+                            "defaultCheapestModel": {
+                            "type": "boolean"
+                        },
+                            "defaultAdvancedModel": {
+                            "type": "boolean"
+                        },
+                            "defaultEmbeddingsModel": {
+                            "type": "boolean"
+                        },
+                            "defaultQAModel": {
+                            "type": "boolean"
+                        },
+                            "inputContextWindow": {
+                            "type": "number"
+                        },
+                            "outputTokenLimit": {
+                            "type": "number"
+                        },
+                        "inputTokenCost": {
+                            "type": "number"
+                        },
+                            "outputTokenCost": {
+                            "type": "number"
+                        },
+                         "cachedTokenCost": {
+                            "type": "number"
+                        },
+                        "exclusiveGroupAvailability": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
+                                    "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
+                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost",
+                                    "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],
+                    "additionalProperties": False
+                }
+            },
+            "required": []
+        },
+    },
+    "required": ["models"],
+}
+
 
 validators = {
     "/billing": {"report_generator": report_generator_schema},
+    "/available_models": {
+        "read": {}
+    },
+    "/supported_models/update": {
+        "update": update_models_schema
+    },
+    "/supported_models/get": {
+        "read": {}
+    }
 }
 
 api_validators = {
-    "/billing": {"report_generator": report_generator_schema},
+    "/available_models": {
+        "read": {}
+    },
 }
 
 
@@ -118,10 +215,6 @@ def validated(op, validate_body=True):
                     if (api_accessed)
                     else get_claims(event, context, token)
                 )
-                # Updated get_email function to incorporate idpPrefix
-                idp_prefix = os.getenv('IDP_PREFIX')
-                get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
-                current_user = get_email(claims['username'])
 
                 current_user = claims["username"]
                 print(f"User: {current_user}")
@@ -188,11 +281,25 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url
         )
 
-        idp_prefix = os.getenv('IDP_PREFIX')
-        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
+        idp_prefix: str = os.getenv('IDP_PREFIX') or ''
+        idp_prefix = idp_prefix.lower()
+        print(f"IDP_PREFIX from env: {idp_prefix}")
+        print(f"Original username: {payload['username']}")
+
+        def get_email(text: str):
+            print(f"Input text: {text}")
+            print(f"Checking if text starts with: {idp_prefix + '_'}")
+
+            if len(idp_prefix) > 0 and text.startswith(idp_prefix + '_'):
+                result = text.split(idp_prefix + '_', 1)[1]
+                print(f"Text matched pattern, returning: {result}")
+                return result
+            
+            print(f"Text did not match pattern, returning original: {text}")
+            return text
 
         user = get_email(payload['username'])
-
+        print(f"Final user value: {user}")
         # grab deafault account from accounts table 
         dynamodb = boto3.resource('dynamodb')
         accounts_table_name = os.getenv('ACCOUNTS_DYNAMO_TABLE')
@@ -291,8 +398,9 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('billing' not in access):
-            # and 'full_access' not in access
+        if ('chat' not in access and 
+            "full_access" not in access and
+            "admin" not in access):
             print("API doesn't have access to api key functionality")
             raise PermissionError("API key does not have access to api key functionality")
         

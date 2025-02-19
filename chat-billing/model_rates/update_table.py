@@ -1,8 +1,3 @@
-# to run this function and update the model rates table:
-# 1. update the chat-billing/model_rates/model_rate_values.csv file,
-# 2. deploy this lambda, 
-# 3. run: ~ serverless invoke --function updateModelRateTable --stage dev --log
-
 import os
 import csv
 import json
@@ -13,8 +8,7 @@ from decimal import Decimal
 # Initialize a DynamoDB client with Boto3
 dynamodb = boto3.resource("dynamodb")
 
-
-def updateModelRateTable(event, context):
+def load_model_rate_table(model_data):
     # Retrieve the environment variable for the table name
     table_name = os.environ["MODEL_RATE_TABLE"]
 
@@ -30,36 +24,66 @@ def updateModelRateTable(event, context):
         reader = csv.DictReader(csvfile)
         for row in reader:
             try:
-                # Convert to Decimal instead of float
-                input_cost = Decimal(row["InputCostPerThousandTokens"])
-                output_cost = (
-                    Decimal(row["OutputCostPerThousandTokens"])
-                    if row["OutputCostPerThousandTokens"]
-                    else None
-                )
+                csv_item = parse_csv_row(row)
+                model_id = csv_item["ModelID"]
 
-                # Each row in the CSV file corresponds to an item in the table
-                item = {
-                    "ModelID": row["ModelID"],
-                    "ModelName": row["ModelName"],
-                    "InputCostPerThousandTokens": input_cost,
-                    "Provider": row["Provider"],
-                }
+                existing_item = model_data.get(model_id, {})
+                if (check_old_data_by_col(existing_item.keys())):
+                    print(f"ModelID {model_id} is outdated, deleting and adding new row")
+                    response = table.put_item(Item=csv_item)
+                else:
+                    print(f"ModelID {model_id} is up to date, updating existing row")
+                    updated_item = dict(existing_item) 
+                    for key, value in csv_item.items():
+                        if key not in existing_item:
+                            # Only add the column if it doesn't exist in the existing item
+                            updated_item[key] = value
 
-                # Only add OutputCostPerThousandTokens if it's present
-                if output_cost is not None:
-                    item["OutputCostPerThousandTokens"] = output_cost
+                    table.put_item(Item=updated_item)
 
-                response = table.put_item(Item=item)
             except ClientError as e:
                 print(e.response["Error"]["Message"])
-                return {
-                    "statusCode": 500,
-                    "body": json.dumps("Error updating model rate table."),
-                }
+                return False
 
     # Return a success response after updating the table with all entries
-    return {
-        "statusCode": 200,
-        "body": json.dumps("Model rate table updated successfully."),
-    }
+    return True
+
+
+old_cols = ["ModelID", "InputCostPerThousandTokens", "ModelName", "OutputCostPerThousandTokens", "Provider"]
+
+def check_old_data_by_col(model_cols):
+    return not model_cols or sorted(model_cols) == sorted(old_cols)
+
+def parse_csv_row(row_dict):
+    """
+    Converts the raw CSV row (string-based) into a typed dict 
+    (Decimal for numbers, bool for 'TRUE'/'FALSE', etc.)
+    """
+    item = {}
+    for k, v in row_dict.items():
+        if v is None:
+            item[k] = None
+            continue
+
+        v_str = v.strip()
+
+        # Convert "TRUE"/"FALSE" to booleans
+        if v_str.upper() == "TRUE":
+            item[k] = True
+        elif v_str.upper() == "FALSE":
+            item[k] = False
+        else:
+            # Convert known numeric columns to Decimal
+            if k in {
+                "InputCostPerThousandTokens", 
+                "OutputCostPerThousandTokens", 
+                "CachedCostPerThousandTokens", 
+                "InputContextWindow", 
+                "OutputTokenLimit"
+            }:
+                item[k] = Decimal(v_str)
+            else:
+                item[k] = v_str
+    item["ExclusiveGroupAvailability"] = []
+
+    return item

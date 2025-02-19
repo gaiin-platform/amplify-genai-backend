@@ -48,11 +48,8 @@ def get_presigned_download_url(event, context, current_user, name, data):
     files_table = dynamodb.Table(files_table_name)
 
     print(f"Getting presigned download URL for {key} for user {current_user}")
-
-    # Since groups can have documents that belongs to other and the group itself only has permission we need to check this instead of if they are owner
-    # In case of wordpress plugin we will always be a system user so we will never be the owner
-    # 
-
+    print(f"GroupId attached to data source: {group_id}")
+ 
     # Retrieve the item from DynamoDB to check ownership
     try:
         response = files_table.get_item(Key={'id': key})
@@ -65,20 +62,81 @@ def get_presigned_download_url(event, context, current_user, name, data):
         # User doesn't match or item doesn't exist
         print(f"File not found for user {current_user}: {response}")
         return {'success': False, 'message': 'File not found'}
+    print("Item found: ", response['Item'])
+    if response['Item']['createdBy'] == group_id:
+        # ensure the user/system user has access to the group by either
+        # 1. group is public 
+        # 2. user is a member of the group 
+        try:
+            print("Checking if user is a member of the group")
+            group_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
+            member_response = group_table.get_item(Key={'group_id': group_id})
 
-    if response['Item']['createdBy'] != current_user and response['Item']['createdBy'] != group_id:
+            # Check if the item was found
+            if 'Item' in member_response:
+                item = member_response['Item']
+                # Check if the group is public or if the user is in the members
+                if not (item.get('isPublic', False) or current_user in item.get('members', {}).keys() or current_user in item.get('systemUsers', [])):
+                    return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
+            else:
+                return {'success': False, 'message': f"No group entry found for groupId: {group_id}"}
+
+        except Exception as e:
+            print(f"An error occurred while processing groupId {group_id}: {e}")
+            return {'success': False, 'message': f"An error occurred while processing groupId: {group_id}"}
+    elif response['Item']['createdBy'] != current_user:
         translated_ds = None
-        if (group_id):# check group_id has perms 
-            try:# need global 
-                translated_ds = translate_user_data_sources_to_hash_data_sources({"key" : key, 'type': response['Item']['type']})
-            except:
-                print("Translation for unauthorized user using group id failed")
-        if (not (translated_ds and can_access_objects(access_token, translated_ds))):
-            # User doesn't match or item doesn't exist
-            print(f"User doesn't match for file for {current_user}: {response['Item']}")
-            print(f"groupId attached? {group_id}")
-            return {'success': False, 'message': 'User does not have access'}
+        try:# need global 
+            translated_ds = translate_user_data_sources_to_hash_data_sources([{"id" : key, 'type': response['Item']['type']}])
+        except:
+            print("Datasource translation failed")
 
+        if (not translated_ds or len(translated_ds) == 0):
+            print("Translation for data source failed: ", translated_ds)
+            return {'success': False, 'message': 'Internal Server Error: Translation for data source failed'}
+        
+        # Since groups can have documents that belongs to others and the group itself only has permission to we need to check the table 
+        if (group_id):# checks can access of the group_id 
+            object_table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
+            
+            object_id = translated_ds[0]['id']
+            try:
+                print("Checking Object Access for groupId permission to the datasource")
+                # Check if any permissions already exist for the object_id
+                query_response = object_table.get_item(
+                    Key={
+                        'object_id': object_id,
+                        'principal_id': group_id
+                    }
+                )
+                item = query_response.get('Item')
+
+                if not item:
+                    print("Groupd Id does not have access")
+                    return {'success': False, 'message': 'GroupId does not have access to the data source'} 
+
+                
+                permission_level = item.get('permission_level')
+                policy = item.get('policy')
+                # sufficient privilege for read access
+                sufficient_privilege = permission_level in ['owner', 'write', 'read'] or policy == 'public'
+                if not sufficient_privilege:
+                    print("Groupd Id has insufficient privilege")
+                    return {'success': False, 'message': 'GroupId does not have sufficient privilege to access the data source'} 
+                
+                print("Groupd Id has sufficient privilege to download datasource")
+            except ClientError as e:
+                print(f"Error accessing DynamoDB for can_access_objects: {e.response['Error']['Message']}")
+                return {'success': False, 'message': f'Error performing can_access on ds with groupid {group_id}'} 
+
+            can_access = True
+            if (not can_access):
+                return {'success': False, 'message': 'GroupId does not have access to the data source'} 
+            
+        elif (not can_access_objects(access_token, translated_ds)): # checks can access on the user 
+            print(f"User {current_user} does not have acces to download: {response['Item']}")
+            return {'success': False, 'message': 'User does not have access to the data source'}
+    
     download_filename = response['Item']['name']
     is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES
     response_headers = {
@@ -186,20 +244,7 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
     return key
 
 
-@op(
-    path="/files/upload",
-    name="getUploadUrl",
-    tags=["files"],
-    description="Get a url to upload a file to.",
-    params={
-        "name": "The name of the file to upload.",
-        "type": "The mime type of the file to upload as a string.",
-        "tags": "The tags associated with the file as a list of strings.",
-        "data": "The data associated with the file or an empty dictionary.",
-        "knowledgeBase": "The knowledge base associated with the file. You can put 'default' if you don't have a "
-                         "specific knowledge base. "
-    }
-)
+
 
 def create_and_store_fernet_key():
     # Read the parameter name from environment variable
@@ -215,7 +260,7 @@ def create_and_store_fernet_key():
     # Initialize the SSM client
     ssm_client = boto3.client('ssm')
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    ssm_parameter_name=f"{parameter_name}_{timestamp}"
+    ssm_parameter_name= parameter_name
     # Store the key in the SSM Parameter Store
     try:
         response = ssm_client.put_parameter(
@@ -298,13 +343,69 @@ def encrypt_account_data(data):
             'success': False,
             'error': f"Error {str(e)}"
         }
+    
+
+@op(
+    path="/files/upload",
+    name="uploadFile",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Initiate a file upload to the Amplify platform, enabling interaction via prompts and assistants.
+
+    Example request:
+    {
+        "data": {
+            "type": "application/fileExtension",
+            "name": "fileName.pdf",
+            "knowledgeBase": "default",
+            "tags": [],
+            "data": {}
+        }
+    }
+
+    Example response:
+    {
+        "success": true,
+        "uploadUrl": "<uploadUrl>",
+        "statusUrl": "<statusUrl>",
+        "contentUrl": "<contentUrl>",
+        "metadataUrl": "<metadataUrl>",
+        "key": "yourEmail@vanderbilt.edu/date/293088.json"
+    }
+
+    The user can use the presigned url 'uploadUrl' to upload their file to Amplify.
+    """,
+    params={
+        "type": "String. Required. MIME type of the file to be uploaded. Example: 'application/pdf'.",
+        "name": "String. Required. Name of the file to be uploaded.",
+        "knowledgeBase": "String. Required. Knowledge base the file should be associated with. Default: 'default'.",
+        "tags": "Array of strings. Tags to associate with the file. Example: ['tag1', 'tag2'].",
+        "data": "Object. Additional metadata associated with the file upload."
+    }
+)
+
+@op(
+    path="/files/upload",
+    name="getUploadUrl",
+    tags=["files"],
+    description="Get a url to upload a file to.",
+    params={
+        "name": "The name of the file to upload.",
+        "type": "The mime type of the file to upload as a string.",
+        "tags": "The tags associated with the file as a list of strings.",
+        "data": "The data associated with the file or an empty dictionary.",
+        "knowledgeBase": "The knowledge base associated with the file. You can put 'default' if you don't have a "
+                         "specific knowledge base. "
+    }
+)
 @validated(op="upload")
 def get_presigned_url(event, context, current_user, name, data):
+
     access = data['allowed_access']
     if ('file_upload' not in access and 'full_access' not in access):
         print("User does not have access to the file_upload functionality")
         return {'success': False, 'error': 'User does not have access to the file_upload functionality'}
-    
+    ####
     # we need the perms to be under the groupId if applicable
     groupId = data['data'].get('groupId', None) 
     if (groupId): 
@@ -418,6 +519,24 @@ def get_presigned_url(event, context, current_user, name, data):
     params={
     }
 )
+
+@op(
+    path="/files/tags/list",
+    name="listFileTags",
+    method="GET",
+    tags=["apiDocumentation"],
+    description="""Retrieve a list of all tags associated with files, conversations, and assistants on the Amplify platform.
+
+    Example response:
+    {
+        "success": true,
+        "data": {
+            "tags": ["NewTag", "Important", "Archived"]
+        }
+    }
+    """,
+    params={}
+)
 @validated(op="list")
 def list_tags_for_user(event, context, current_user, name, data):
     dynamodb = boto3.resource('dynamodb')
@@ -450,6 +569,23 @@ def list_tags_for_user(event, context, current_user, name, data):
         }
 
 
+@op(
+    path="/files/tags/delete",
+    name="deleteFileTag",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Delete a specific tag from the Amplify platform.
+    Example request:
+    {
+        "data": {
+            "tag": "NewTag"
+        }
+    }
+    """,
+    params={
+        "tag": "String. Required. The tag to be deleted. Example: 'NewTag'."
+    }
+)
 @op(
     path="/files/tags/delete",
     name="deleteTagForUser",
@@ -501,7 +637,24 @@ def delete_tag_from_user(event, context, current_user, name, data):
                 'message': e.response['Error']['Message']
             }
 
+@op(
+    path="/files/tags/create",
+    name="createFileTags",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Create new tags to associate with files, conversations, and assistants.
 
+    Example request:
+    {
+        "data": {
+            "tags": ["NewTag"]
+        }
+    }
+    """,
+    params={
+        "tags": "Array of strings. Required. List of tags to create. Example: ['NewTag', 'Important']."
+    }
+)
 @op(
     path="/files/tags/create",
     name="createTagsForUser",
@@ -565,7 +718,26 @@ def add_tags_to_user(current_user, tags_to_add):
                 'message': e.response['Error']['Message']
             }
 
+@op(
+    path="/files/set_tags",
+    name="associateFileTags",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Associate one or more tags with a specific files only.
 
+    Example request:
+    {
+        "data": {
+            "id": "yourEmail@vanderbilt.edu/date/23094023573924890-208.json",
+            "tags": ["NewTag", "Important"]
+        }
+    }
+    """,
+    params={
+        "id": "String. Required. Unique identifier of the file. Example: 'yourEmail@vanderbilt.edu/date/23094023573924890-208.json'.",
+        "tags": "Array of strings. Required. List of tags to associate. Example: ['NewTag', 'Important']."
+    }
+)
 @op(
     path="/files/tags/set_tags",
     name="setTagsForFile",
@@ -623,6 +795,37 @@ def update_file_tags(current_user, item_id, tags):
         print(f"Unable to update tags: {e.response['Error']['Message']}")
         return False, "Unable to update tags"
 
+
+@op(
+    path="/files/query",
+    name="queryUploadedFiles",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Retrieve a list of uploaded files stored on the Amplify. A user can retrieve details about their files include id, types, size, and more.
+
+    Example request:
+    {
+        "data": {
+            "pageSize": 10,
+            "sortIndex": "",
+            "forwardScan": false
+        }
+    }
+    """,
+    params={
+        "startDate": "String (date-time). Optional. Start date for querying files. Default: '2021-01-01T00:00:00Z'.",
+        "pageSize": "Integer. Optional. Number of results to return. Default: 10.",
+        "pageKey": "Object. Optional. Includes 'id', 'createdAt', and 'type' for pagination purposes.",
+        "namePrefix": "String. Optional. Prefix for filtering file names.",
+        "createdAtPrefix": "String. Optional. Prefix for filtering creation date.",
+        "typePrefix": "String. Optional. Prefix for filtering file types.",
+        "types": "Array of strings. Optional. List of file types to filter by. Default: [].",
+        "tags": "Array of strings. Optional. List of tags to filter files by. Default: [].",
+        "pageIndex": "Integer. Optional. Page index for pagination. Default: 0.",
+        "forwardScan": "Boolean. Optional. Set to 'true' for forward scanning. Default: false.",
+        "sortIndex": "String. Optional. Attribute to sort results by. Default: 'createdAt'."
+    }
+)
 
 @op(
     path="/files/query",

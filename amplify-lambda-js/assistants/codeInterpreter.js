@@ -4,6 +4,10 @@
 
 import {sendDeltaToStream} from "../common/streams.js";
 import {newStatus} from "../common/status.js";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("Code-Interpreter");
+
 
 const description =  `This assistants  executes Python in a secure sandbox, handling diverse data to craft files and visual graphs.
 It tackles complex code and math challenges through iterative problem-solving, refining failed attempts into successful executions.
@@ -17,7 +21,7 @@ const additionalPrompt = `You have access to a sandboxed environment for writing
                             3. Show us the input data and output of your code in Markdown
                             Always display code blocks in markdown. comment the code with explanations of what the code is doing for any complex sections of code. 
                             Do not include download links or mock download links! Instead tell me some information about the files you have produced and refer to them by their corresponding file name. For any created files, draw connections between the users prompt and how it relates to your generated files. Always attach and send back generated files.
-                            
+                            Do not generate or attach files with IDENTICAL content, regardless of their extensions. Ensure each file is unique in content before attaching to your response.
                             DO NOT FORGET TO INLCUDE YOUR GENERATE FILES IN YOUR RESPONSE !IMPORTANT` 
 
 
@@ -62,27 +66,20 @@ async function fetchRequest(token, data, url) {
             }
             return await response.json();
     } catch (error) {
-        console.error('Error invoking Code interpreter Lambda: ', error);
+        logger.error(`Error invoking Code interpreter Lambda: ${error}`);
         return null;
     }
 }
 
-const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 10000) => {
+const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 12000) => {
     return new Promise((resolve, reject) => {
         let timer;
 
-        const sendStatusMessage = () => {
-            llm.sendStatus(newStatus(
-                {
-                    inProgress: true,
-                    message: "Code interpreter needs a few more moments...",
-                    icon: "assistant",
-                    sticky: true
-                }));
-            timer = setTimeout(sendStatusMessage, timeout);
+        const handleSendStatusMessage = () => {
+            sendStatusMessage(llm, "Code interpreter needs a few more moments...");
+            timer = setTimeout(handleSendStatusMessage, timeout);
         };
-
-        timer = setTimeout(sendStatusMessage, timeout);
+        timer = setTimeout(handleSendStatusMessage, timeout);
 
         fetchRequest(token, chat_data, endpoint)
             .then(response => {
@@ -95,6 +92,30 @@ const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 10000) => {
             });
     });
 };
+
+const sendStatusMessage = (llm, message, inProgress=true, summary='', ) => {
+    llm.sendStatus(newStatus(
+        {
+            inProgress: inProgress,
+            message: message,
+            summary: summary,
+            icon: "assistant",
+            sticky: true
+        }));
+    llm.forceFlush();
+}
+
+const handleUserErrorMessage = (llm, responseErrorMessage) => {
+    if (responseErrorMessage) {
+        sendStatusMessage(llm, String(responseErrorMessage), false, "Code interpreter response failed. View Error:");
+        logger.debug(`Code interpreter Response was unsuccessful:  ${responseErrorMessage}`);
+        const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
+        llm.sendStateEventToStream({ codeInterpreter: { error: error } });
+    } else {
+        llm.sendStateEventToStream({ codeInterpreter: { error: "Unknown Error - Internal Server Error" } });
+    }
+    sendStatusMessage(llm, "Amplify Assistant is responding...");
+}
 
 export const codeInterpreterAssistant = async (assistantBase) => {
     return {
@@ -135,22 +156,16 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     dataSources: [], // unless we make this userdefined assistant compatible then the assistant wont have any data sources. any ds in messages will be added to the openai thread 
                 }
     
-                const responseData = await fetchRequest(token, createData, process.env.ASSISTANTS_API_BASE_URL + '/assistant/create/codeinterpreter'); 
-                
-                if (responseData && responseData && responseData.success) {
+                const responseData = await fetchRequest(token, createData, process.env.API_BASE_URL + '/assistant/create/codeinterpreter'); 
+              
+                if (responseData && responseData.success && responseData.data) {
                     assistantId = responseData.data.assistantId
                     //we need to ensure we send the assistant_id back to be saved in the conversation
                     sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterAssistantId=${assistantId}`);
-                    llm.sendStatus(newStatus(
-                        {
-                            inProgress: false,
-                            message: "Code interpreter is making progress on your request...",
-                            icon: "assistant",
-                            sticky: true
-                        }));
-                    llm.forceFlush();
+                    sendStatusMessage(llm, "Code interpreter is making progress on your request...");
+                    logger.debug("Code Interpreter Assistant Created...");
                 } else {
-                    console.log(`Error with creating an assistant: ${responseData}`)
+                    handleUserErrorMessage(llm, String(responseData && responseData.error));
                 }
 
             }
@@ -163,44 +178,41 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     accountId: account.accountId || 'general_account',
                     requestId: options.requestId
                 }
-    
 
-                    const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.ASSISTANTS_CHAT_CODE_INTERPRETER_ENDPOINT);
-                    
-                    llm.sendStatus(newStatus(
-                        {
-                            inProgress: false,
-                            message: "Finalizing code interpreter results...",
-                            icon: "assistant",
-                            sticky: true
-                        }));
-                    llm.forceFlush();
-                    
-                    // logger.debug(responseData);
+                    const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
                     // check for successfull response
                     if (responseData && responseData.success && responseData.data) {
-                        const response = responseData.data.data.textContent;
-                        // console.log(response);
-                        codeInterpreterResponse = response;
-                        responseData.data.data.textContent = '';
-                        sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterResponseData=${JSON.stringify(responseData)}`);
-                    } 
+                        sendStatusMessage(llm, "Finalizing code interpreter results...");
+                        const { textContent, ...messageData } = responseData.data.data;
+                        codeInterpreterResponse = textContent;
+                        llm.sendStateEventToStream({ codeInterpreter: messageData });
+                    } else {
+                        handleUserErrorMessage(llm, String(responseData && responseData.error));
+                    }
 
             } 
             let updatedMessages = messages.slice(0, -1);
             let dataSourceOptions = {disableDataSources: false};
             if (codeInterpreterResponse) {
                 dataSourceOptions.disableDataSources = true;
+                ds = [];
+                if (!body?.options?.model?.supportsImages) {
+                    updatedMessages.map(m => {
+                    if (m.data && m.data.dataSources) {
+                        m.data.dataSources = []
+                    }
+                    });
+                    body.imageSources = [];
+                }
                 updatedMessages.push({
                     role: 'user',
                     content: reviewPrompt(userPrompt, codeInterpreterResponse),
                 });
-                // console.log(updatedMessages.at(-1)['content']);
             } else {
-                console.log("Code interpreter was unavailable...");
+                logger.debug("Code interpreter was unavailable...");
                 updatedMessages.push({
                     role: 'user',
-                    content: `User Prompt:\n${userPrompt}\n\n The user expected to reach code interpreter however, I did not here from them. If you can answer the query, please do so. 
+                    content: `User Prompt:\n${userPrompt}\n\n The user expected to reach code interpreter however, we did not recieve a code interpreter response. If you can answer the query, please do so. 
                               If you are asked to do something you can not do (ex. generate files) then tell the user that Code Interpreter was not available at this time and to try again. Also, if you can answer any of the query you are effectively able to do`
                 });
             }
@@ -216,7 +228,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     maxTokens: 4000
                 }
             };
-        
+            // unless we support with user defined assistants, we dont need this for now
             // for now we will include the ds in the current message
             // if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
