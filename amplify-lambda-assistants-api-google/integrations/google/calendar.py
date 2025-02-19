@@ -181,54 +181,145 @@ def normalize_date(date_string):
     raise ValueError(f"Could not parse date {date_string}. Please use %Y-%m-%dT%H:%M:%SZ format.")
 
 
-def get_free_time_slots(current_user, start_date, end_date, duration, user_time_zone='America/Chicago'):
+def get_free_time_slots(current_user, start_date, end_date, duration,
+                        user_time_zone='America/Chicago', include_weekends=False,
+                        allowed_time_windows=["08:00-17:00"], exclude_dates=None):
     if user_time_zone is None:
         user_time_zone = 'America/Chicago'
 
+    allowed_time_windows = allowed_time_windows or ["08:00-17:00"]
+
     service = get_calendar_service(current_user)
     events = get_events_between_dates(current_user, start_date, end_date)
-
-    print(f"User time zone: {user_time_zone}")
-
-    free_slots_by_date = {}
     usertz = ZoneInfo(user_time_zone)
 
-    def parse_datetime(date_str):
-        dt = datetime.fromisoformat(date_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=usertz)
-        return dt.astimezone(usertz)
-
     # Parse start and end times
-    current_time = parse_datetime(start_date)
-    end_time = parse_datetime(end_date)
+    current_date = parse_datetime(start_date, usertz).date()
+    end_date = parse_datetime(end_date, usertz).date()
 
-    # Sort events by start time
-    sorted_events = sorted(events, key=lambda x: parse_datetime(x['start']))
+    # Convert allowed_time_windows to time objects
+    time_windows = []
+    for window in allowed_time_windows:
+        start_str, end_str = window.split('-')
+        start_time = datetime.strptime(start_str.strip(), '%H:%M').time()
+        end_time = datetime.strptime(end_str.strip(), '%H:%M').time()
+        time_windows.append((start_time, end_time))
 
-    # Process events
-    for event in sorted_events:
-        event_start = parse_datetime(event['start'])
+    # Convert exclude_dates to datetime objects in user timezone
+    excluded_dates = set()
+    if exclude_dates:
+        for date_str in exclude_dates:
+            dt = datetime.fromisoformat(date_str).date()
+            excluded_dates.add(dt)
 
-        # Check if there's enough time before the event
-        if (event_start - current_time).total_seconds() >= duration * 60:
-            add_time_slot(free_slots_by_date, current_time, event_start, usertz)
+    free_slots_by_date = {}
+    sorted_events = sorted(events, key=lambda x: parse_datetime(x['start'], usertz))
 
-        # Move current time to end of event
-        event_end = parse_datetime(event['end'])
-        current_time = max(current_time, event_end)
+    while current_date <= end_date:
+        # Skip if it's a weekend and weekends aren't included
+        if not include_weekends and current_date.weekday() >= 5:
+            current_date += timedelta(days=1)
+            continue
 
-    # Add final slot if there's time remaining
-    if (end_time - current_time).total_seconds() >= duration * 60:
-        add_time_slot(free_slots_by_date, current_time, end_time, usertz)
+        # Skip if date is in excluded dates
+        if current_date in excluded_dates:
+            current_date += timedelta(days=1)
+            continue
 
-    # Format results
-    result = [
+        # Get events for current date
+        days_events = [
+            event for event in sorted_events
+            if parse_datetime(event['start'], usertz).date() <= current_date
+               and parse_datetime(event['end'], usertz).date() >= current_date
+        ]
+
+        # Process each time window for the current date
+        for window_start, window_end in time_windows:
+            window_start_dt = datetime.combine(current_date, window_start, tzinfo=usertz)
+            window_end_dt = datetime.combine(current_date, window_end, tzinfo=usertz)
+
+            current_time = window_start_dt
+
+            # Find any events that overlap with this window
+            for event in days_events:
+                event_start = parse_datetime(event['start'], usertz)
+                event_end = parse_datetime(event['end'], usertz)
+
+                # Adjust event times to window boundaries if they extend beyond
+                if event_start.date() < current_date:
+                    event_start = window_start_dt
+                if event_end.date() > current_date:
+                    event_end = window_end_dt
+
+                # If event starts after window end or ends before window start, skip
+                if event_start >= window_end_dt or event_end <= window_start_dt:
+                    continue
+
+                # Add free slot before event if there's enough time
+                if event_start > current_time and (event_start - current_time).total_seconds() >= duration * 60:
+                    add_time_slot(free_slots_by_date, current_time, event_start, usertz)
+
+                current_time = max(current_time, event_end)
+
+            # Add remaining time in window if there's enough
+            if current_time < window_end_dt and (window_end_dt - current_time).total_seconds() >= duration * 60:
+                add_time_slot(free_slots_by_date, current_time, window_end_dt, usertz)
+
+        current_date += timedelta(days=1)
+
+    return [
         {"date": date, "times": times}
         for date, times in sorted(free_slots_by_date.items())
     ]
 
-    return result
+# def get_free_time_slots(current_user, start_date, end_date, duration, user_time_zone='America/Chicago'):
+#     if user_time_zone is None:
+#         user_time_zone = 'America/Chicago'
+#
+#     service = get_calendar_service(current_user)
+#     events = get_events_between_dates(current_user, start_date, end_date)
+#
+#     print(f"User time zone: {user_time_zone}")
+#
+#     free_slots_by_date = {}
+#     usertz = ZoneInfo(user_time_zone)
+#
+#     def parse_datetime(date_str):
+#         dt = datetime.fromisoformat(date_str)
+#         if dt.tzinfo is None:
+#             dt = dt.replace(tzinfo=usertz)
+#         return dt.astimezone(usertz)
+#
+#     # Parse start and end times
+#     current_time = parse_datetime(start_date)
+#     end_time = parse_datetime(end_date)
+#
+#     # Sort events by start time
+#     sorted_events = sorted(events, key=lambda x: parse_datetime(x['start']))
+#
+#     # Process events
+#     for event in sorted_events:
+#         event_start = parse_datetime(event['start'])
+#
+#         # Check if there's enough time before the event
+#         if (event_start - current_time).total_seconds() >= duration * 60:
+#             add_time_slot(free_slots_by_date, current_time, event_start, usertz)
+#
+#         # Move current time to end of event
+#         event_end = parse_datetime(event['end'])
+#         current_time = max(current_time, event_end)
+#
+#     # Add final slot if there's time remaining
+#     if (end_time - current_time).total_seconds() >= duration * 60:
+#         add_time_slot(free_slots_by_date, current_time, end_time, usertz)
+#
+#     # Format results
+#     result = [
+#         {"date": date, "times": times}
+#         for date, times in sorted(free_slots_by_date.items())
+#     ]
+#
+#     return result
 
 def add_time_slot(slots_dict, start_time, end_time, timezone):
     date_str = start_time.strftime("%m/%d/%y")
