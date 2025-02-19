@@ -138,6 +138,47 @@ def store_secrets_in_dict(input_dict):
   return updated_dict
 
 
+def delete_secrets_in_dict(input_dict):
+  """
+  Deletes secrets from AWS Parameter Store or AWS Secrets Manager that were stored using `store_secrets_in_dict`.
+
+  Parameters:
+      input_dict (dict): The dictionary containing stored secret parameter names.
+
+  Returns:
+      dict: A result dictionary indicating which secrets were successfully deleted or failed.
+  """
+  ssm_client = boto3.client('ssm')
+  secrets_manager_client = boto3.client('secretsmanager')
+
+  deletion_results = {"deleted": [], "failed": []}
+
+  for key, secret_name in input_dict.items():
+    if key.startswith("s_"):
+      try:
+        # Attempt to delete from AWS Parameter Store (SSM)
+        full_parameter_name = f"{DEFAULT_PREFIX}/{secret_name}"
+        ssm_client.delete_parameter(Name=full_parameter_name)
+        print(f"Deleted secret parameter: {full_parameter_name}")
+        deletion_results["deleted"].append(full_parameter_name)
+
+      except ClientError as e:
+        print(f"Failed to delete parameter from SSM: {full_parameter_name} - {e}")
+        deletion_results["failed"].append(full_parameter_name)
+
+      try:
+        # Attempt to delete from AWS Secrets Manager
+        secrets_manager_client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+        print(f"Deleted secret from Secrets Manager: {secret_name}")
+        deletion_results["deleted"].append(secret_name)
+
+      except ClientError as e:
+        print(f"Failed to delete secret from Secrets Manager: {secret_name} - {e}")
+        deletion_results["failed"].append(secret_name)
+
+  return deletion_results
+
+
 def get_secret(secret_name):
   client = boto3.client('secretsmanager', region_name='us-east-1')
 

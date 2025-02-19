@@ -1,15 +1,192 @@
 import json
 import time
 import traceback
+import uuid
+from dataclasses import dataclass
 from functools import reduce
-from typing import List, Callable
+from typing import List, Callable, Dict, Any
+from agent.prompt import Prompt
 
-from agent.game.action import ActionRegistry, ActionContext
-from agent.game.environment import Environment
-from agent.game.goal import Goal
-from agent.game.languages import AgentLanguage
-from agent.game.memory import Memory
-from agent.prompt import generate_response, Prompt
+
+class UnknownActionError(Exception):
+    pass
+
+
+class Memory:
+    def __init__(self):
+        self.items = []  # Basic conversation histor
+
+    def add_memory(self, memory: dict):
+        """Add memory to working memory"""
+        self.items.append(memory)
+
+    def get_memories(self, limit: int = None) -> List[Dict]:
+        """Get formatted conversation history for prompt"""
+        return self.items[:limit]
+
+    def copy_without_system_memories(self):
+        """Return a copy of the memory without system memories"""
+        filtered_items = [m for m in self.items if m["type"] != "system"]
+        memory = Memory()
+        memory.items = filtered_items
+        return memory
+
+
+@dataclass(frozen=True)
+class Goal:
+    name: str
+    description: str
+
+
+class Action:
+    def __init__(self,
+                 name: str,
+                 function: callable,
+                 description: str,
+                 parameters: Dict,
+                 output: Dict,
+                 side_effects: Dict = {},
+                 terminal: bool = False,
+                 metadata: Dict = None):
+        self.name = name
+        self.function = function
+        self.description = description
+        self.terminal = terminal
+        self.parameters = parameters
+        self.output = output
+        self.side_effects = side_effects
+        self.metadata = metadata or {}
+
+    def execute(self, **args) -> Any:
+        """Execute the action's function"""
+        return self.function(**args)
+
+    def todict(self):
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+            "terminal": self.terminal
+        }
+
+
+class ActionRegistry:
+    def __init__(self):
+        self.actions = {}
+
+    def register(self, action: Action):
+        self.actions[action.name] = action
+
+    def get_action(self, name: str) -> [Action,None]:
+        return self.actions.get(name, None)
+
+    def get_actions(self) -> List[Action]:
+        """Get all action descriptions for prompt"""
+        return [action for action in self.actions.values()]
+
+
+class ActionContext:
+    def __init__(self, properties: Dict=None):
+        self.context_id = str(uuid.uuid4())
+        self.properties = properties or {}
+
+    def enable_code_exec_tool_calls(self, action_registry):
+        self.properties["code_exec_context"] = {
+            **{k: v.function for k, v in action_registry.actions.items()}
+        }
+
+    def get(self, key: str, default=None):
+        return self.properties.get(key, default)
+
+    def set(self, key: str, value: Any):
+        self.properties[key] = value
+
+    def get_environment(self):
+        return self.properties.get("environment", None)
+
+    def get_action_registry(self):
+        return self.properties.get("action_registry", None)
+
+    def get_agent_registry(self):
+        return self.properties.get("agent_registry", None)
+
+    def get_memory(self):
+        return self.properties.get("memory", None)
+
+    def send_event(self, event_id: str, event: Dict):
+        hdlr = self.properties.get("event_handler", None)
+        if not isinstance(event, dict):
+            event = {"content": event}
+        if hdlr and callable(hdlr) and event:
+            event["context_id"] = self.context_id
+            hdlr(event_id, event)
+
+    def incremental_event(self, event = None) -> callable:
+        base_props = event or {}
+        # Create a correlation ID for the event with a uuid
+        correlation_id = str(uuid.uuid4())
+
+        def handler(event_id: str, event: Dict) -> str:
+            new_event = event or {}
+            self.send_event(event_id, {**base_props, **new_event, "correlation_id": correlation_id})
+
+        return handler
+
+
+class Environment:
+    def __init__(self):
+        pass
+
+    def execute_action(self, agent, action_context: ActionContext, action: Action, args: dict) -> dict:
+        return {}
+
+
+class AgentLanguage:
+    def __init__(self):
+        pass
+
+    def construct_prompt(self,
+                         actions: List[Action],
+                         environment: Environment,
+                         goals: List[Goal],
+                         memory: Memory) -> Prompt:
+        """
+        Construct the prompt to send to the language model.
+
+        :param actions:
+        :param environment:
+        :param goals:
+        :param memory:
+        :return:
+        """
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def adapt_prompt_after_parsing_error(self,
+                                         prompt: Prompt,
+                                         response: str,
+                                         traceback: str,
+                                         error: Any,
+                                         retries_left: int) -> Prompt:
+        """
+        Adapt the prompt after a parsing error. This method is called when the language model fails to parse the response.
+        You can throw custom errors in the parse_response that will be passed to this as the error parameter so that
+        you can adapt the prompt based on the error.
+
+        :param prompt:
+        :param traceback:
+        :param error:
+        :param retries_left:
+        :return:
+        """
+        return prompt
+
+    def parse_response(self, response: str) -> dict:
+        """
+        Parse the response from the language model into a structured format
+        :param response:
+        :return:
+        """
+        raise NotImplementedError("Subclasses must implement this method")
 
 
 class Capability:
@@ -17,17 +194,36 @@ class Capability:
         self.name = name
         self.description = description
 
-    def process_action(self, agent, action_context: ActionContext, action: dict) -> dict:
+    def init(self, agent, action_context: ActionContext) -> dict:
+        pass
+
+    def start_agent_loop(self, agent, action_context: ActionContext) -> bool:
+        return True
+
+    def end_agent_loop(self, agent, action_context: ActionContext):
+        pass
+
+    def process_action(self, agent, action_context: ActionContext, action_def: Action, action: dict) -> dict:
         return action
 
     def process_response(self, agent, action_context: ActionContext, response: str) -> str:
         return response
+
+    # process_result(self, action_context, response, action_def, action, r)
+    def process_result(self, agent, action_context: ActionContext, response: str,  action_def: Action, action: dict, result: any) -> any:
+        return result
+
+    def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response, result, memories: List[dict]) -> List[dict]:
+        return memories
 
     def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:
         return prompt
 
     def should_terminate(self, agent, action_context: ActionContext, response: str) -> bool:
         return False
+
+    def terminate(self, agent, action_context: ActionContext) -> dict:
+        pass
 
 
 class Agent:
@@ -69,7 +265,12 @@ class Agent:
 
     def get_action(self, response):
         action = self.agent_language.parse_response(response)
-        action_def = self.actions.actions[action["tool"]]
+        action_name = action["tool"]
+        action_def = self.actions.get_action(action_name)
+
+        if not action_def:
+            raise UnknownActionError(f"The specified tool '{action_name}' does not exist. Try something else.")
+
         return action_def, action
 
     def handle_agent_response(self, action_context: ActionContext, response: str) -> dict:
@@ -78,9 +279,12 @@ class Agent:
 
         action_context.send_event("agent/execute_action", {"action": action, "action_def": action_def})
 
-        action = reduce(lambda a, c: c.process_action(self, action_context, a), self.capabilities, action)
+        action = reduce(lambda a, c: c.process_action(self, action_context, action_def, a), self.capabilities, action)
 
         result = self.environment.execute_action(self, action_context, action_def, action["args"])
+
+        result = reduce(lambda r, c: c.process_result(self, action_context, response, action_def, action, r), self.capabilities, result)
+
         return result
 
     def should_terminate(self, action_context: ActionContext, response: str) -> bool:
@@ -127,6 +331,10 @@ class Agent:
             {"type": "environment", "content": result_summary}
         ]
 
+        new_memories = reduce(lambda nm, c: c.process_new_memories(self, action_context, memory, response, result, nm),
+                              self.capabilities,
+                              new_memories)
+
         for m in new_memories:
             memory.add_memory(m)
 
@@ -158,6 +366,7 @@ class Agent:
 
                 if action_def and action:
                     return response
+
             except Exception as e:
                 traceback_str = traceback.format_exc()
                 send_event("agent/prompt/action/error",
@@ -196,10 +405,18 @@ class Agent:
         iterations = 0
         start_time = time.time()
 
+        # Call init on all capabilities
+        for capability in self.capabilities:
+            capability.init(self, action_context)
+
         # ========================
         # The Agent Loop
         # ========================
         while True:
+
+            can_start_loop = reduce(lambda a, c: c.start_agent_loop(self, action_context), self.capabilities, False)
+            if not can_start_loop:
+                break
 
             if iterations > self.max_iterations:
                 self.update_memory(action_context, memory, "Agent stopped. Max iterations reached.", {})
@@ -211,6 +428,11 @@ class Agent:
 
             # 1. Construct the prompt for the LLM to generate a response
             prompt = self.construct_prompt(action_context, self.goals, memory)
+            memory.add_memory({"type": "prompt", "content": {
+                "messages": prompt.messages,
+                "tools": prompt.tools,
+                "metadata": prompt.metadata
+            }})
 
             # 2. Prompt the agent for its next action
             response = self.prompt_llm_for_action(action_context, prompt)
@@ -225,8 +447,17 @@ class Agent:
             self.update_memory(action_context, memory, response, result)
 
             # 5. Decide if the loop should continue of if the agent should terminate
-            if self.should_terminate(action_context, response):
+            terminate_loop = self.should_terminate(action_context, response)
+
+            for capability in self.capabilities:
+                capability.end_agent_loop(self, action_context)
+
+            if terminate_loop:
                 break
+
+
+        for capability in self.capabilities:
+            capability.terminate(self, action_context)
 
         return memory
 

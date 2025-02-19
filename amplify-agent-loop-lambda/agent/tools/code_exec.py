@@ -4,61 +4,57 @@ import ast
 import traceback
 from typing import Dict
 
-from agent.game.action import ActionContext
-from agent.tool import register_tool
-
+from agent.components.tool import register_tool
+from agent.core import ActionContext
+import ast
+import importlib
+import sys
 
 def get_imports_from_code(code_string):
-    """Parse Python code and return a list of required imports."""
-    required_imports = set()
-
-    additional = """
-from typing import Dict, Any
-import requests
-import os
-import json
-    """
-
-    code_string = additional + code_string
+    """Extract modules and specific imports from Python code."""
+    required_imports = {}
 
     try:
         tree = ast.parse(code_string)
-
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    required_imports.add(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module
-                for alias in node.names:
-                    required_imports.add(alias.name)
-                    if module:  # handle 'from x import y'
-                        required_imports.add(module)
-
+                    required_imports.setdefault(alias.name, []).append(None)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                required_imports.setdefault(node.module, []).extend([alias.name for alias in node.names])
     except SyntaxError:
         print("Failed to parse code")
-        return []
+        return {}
 
-    return list(required_imports)
+    return required_imports
 
 def prepare_exec_globals(code_string, context_dict):
+    """Prepare an execution environment that mimics running the script normally."""
     imports = get_imports_from_code(code_string)
-    exec_globals = globals().copy()
+    exec_globals = {
+        "__name__": "__main__",  # Mimics running as a script
+        "__file__": "<executed_code>",  # Simulates a script name
+        "__builtins__": __builtins__,  # Ensures built-in functions are available
+    }
 
-    # Add all required imports
-    for imp in imports:
+    # Import modules and handle 'from x import y'
+    for module, names in imports.items():
         try:
-            # Try to import the module or object
-            module = __import__(imp) if '.' not in imp else __import__(imp.split('.')[0])
-            exec_globals[imp] = module
-        except ImportError as e:
-            print(f"Warning: Could not import {imp}: {e}")
+            mod = importlib.import_module(module)
+            exec_globals[module] = mod  # Store full module
 
-    exec_globals.update(context_dict)
+            # Add specific imports from 'from module import name'
+            for name in names:
+                if name:
+                    exec_globals[name] = getattr(mod, name, None)  # Store attribute directly
+        except ImportError as e:
+            print(f"Warning: Could not import {module}: {e}")
+
+    exec_globals.update(context_dict)  # Merge additional execution context
     return exec_globals
 
 
-@register_tool()
+@register_tool(tags=["code_exec"])
 def exec_code(action_context: ActionContext, code: str):
     """
     Executes the provided Python code and returns the value of the 'result' variable if defined.

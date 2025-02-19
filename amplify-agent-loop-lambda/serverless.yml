@@ -53,7 +53,21 @@ provider:
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
     AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
     # We will need to change this below in the policy when we migrate too
-    OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+    OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-opExecLambda
+    AGENT_QUEUE_URL: !Ref AgentQueue
+    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
+    USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
+    EMAIL_SETTINGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-email-settings
+    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVariables.ORGANIZATION_EMAIL_DOMAIN}
+    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
+    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
+    AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
+    ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
+    DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
+    WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
+    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
+
 
   iam:
     role:
@@ -78,6 +92,14 @@ functions:
     url:
       cors: true
 
+  agentEventProcessor:
+    handler: service/agent_queue.route_queue_event
+    timeout: 900
+    events:
+      - sqs:
+          arn: !GetAtt AgentQueue.Arn
+          batchSize: 1
+
 resources:
   Resources:
     LambdaAPIIAMPolicy:
@@ -87,6 +109,12 @@ resources:
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+              Resource:
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction
@@ -107,6 +135,10 @@ resources:
               Resource:
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
@@ -122,7 +154,7 @@ resources:
                 - secretsmanager:GetSecretValue
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
-
+                - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
@@ -152,6 +184,117 @@ resources:
                 - '*'
               AllowedMethods:
                 - GET
+                - HEAD
+              AllowedOrigins:
+                - '*'
+              MaxAge: 3000
+
+    AgentQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-agent-queue
+        VisibilityTimeout: 910
+        MessageRetentionPeriod: 1209600
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt AgentDeadLetterQueue.Arn
+          maxReceiveCount: 3
+
+    AgentDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-agent-dlq
+        MessageRetentionPeriod: 1209600
+
+    AgentEmailTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${sls:stage}-email-topic
+        Subscription:
+          - Protocol: sqs
+            Endpoint: !GetAtt AgentQueue.Arn
+
+    AgentEventTemplatesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: tag
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: tag
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+    AgentEmailTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        Topics:
+          - !Ref AgentEmailTopic
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ses.amazonaws.com
+              Action: sns:Publish
+              Resource: !Ref AgentEmailTopic
+
+    # Update SQS policy to allow SNS
+    AgentQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AgentQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sns.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt AgentQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AgentEmailTopic
+
+    # Add these resources
+    WorkflowTemplatesDynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: templateId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: templateId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+    WorkflowTemplatesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
                 - HEAD
               AllowedOrigins:
                 - '*'

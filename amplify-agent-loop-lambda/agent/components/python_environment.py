@@ -2,7 +2,7 @@ import inspect
 import time
 from typing import Any
 
-from agent.game.action import ActionContext, Action
+from agent.core import ActionContext, Action, Environment
 
 
 def has_named_parameter(func, param_name):
@@ -12,8 +12,9 @@ def has_named_parameter(func, param_name):
     return param_name in sig.parameters
 
 
-class Environment:
+class PythonEnvironment(Environment):
     def __init__(self):
+        super().__init__()
         self.result_history = []
         self.current_iteration = 0
         self.result_limit = 1000  # For truncation
@@ -31,37 +32,41 @@ class Environment:
             if has_named_parameter(action.function, "action_agent"):
                 args_copy["action_agent"] = agent
 
-            action_context.send_event("environment/action/execute", {"action": action, "args": args_copy})
-
-            print(f"##################################")
-            print(f"Calling function: {action.function}")
-            print(f"Args: {args_copy}")
-            print(f"##################################")
+            # Iterate through the keys in the action_context.properties and add them to
+            # if the action.function has a matching named parameter and the parameter is not already in the args_copy
+            for key, value in action_context.properties.items():
+                if has_named_parameter(action.function, "_" + key) and key not in args_copy:
+                    args_copy["_"+key] = value
 
             result = action.execute(**args_copy)
+            metadata = None
 
-            action_context.send_event("environment/action/result", {"action": action, "result": result})
+            if isinstance(result, dict):
+                metadata = result.get("__meta__", None)
 
-            formatted_result = self.format_result(result)
-
-            action_context.send_event("environment/action/result_formatted", {"action": action, "result": formatted_result})
+            formatted_result = self.format_result(action, result, metadata)
 
             self.result_history.append(formatted_result)
             return formatted_result
         except Exception as e:
             return {
+                "tool": action.name,
                 "tool_executed": False,
                 "error": str(e)
             }
 
-    def format_result(self, result: Any) -> dict:
+    def format_result(self, action, result: Any, metadata: Any) -> dict:
         """Format and add metadata to result"""
         result_dict = {
+            "tool": action.name,
             "tool_executed": True,
             "result": result,
             "id": f"$#{self.current_iteration}",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z")
         }
+
+        if metadata:
+            result_dict["metadata"] = metadata
 
         self.current_iteration += 1
         return result_dict

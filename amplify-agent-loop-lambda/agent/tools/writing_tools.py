@@ -1,11 +1,11 @@
 from typing import Dict, List, Any
 
-from agent.game.action import ActionContext
-from agent.prompt import generate_response, Prompt
-from agent.tool import register_tool
+from agent.components.tool import register_tool
+from agent.core import ActionContext
+from agent.prompt import Prompt
 
 
-@register_tool()
+@register_tool(tags=["writing"])
 def write_long_content(action_context: ActionContext, outline: List[Dict[str, Any]]) -> str:
     """
     Turn the outline into long-form written content. The LLM will be prompted

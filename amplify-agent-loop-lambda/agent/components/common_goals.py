@@ -1,22 +1,15 @@
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Goal:
-    name: str
-    description: str
-
+from agent.core import Goal
 
 CODE_CAN_USE_TOOLS = Goal(
     name="Code Can Call Tools",
     description="""
-You can also access the tools you are provided directly in code you write. Let's assume you have tools called "prompt_llm"
-and "get_web_page_text".
+You can also access the tools you are provided directly in code you write. Let's assume you have tools called "do_a"
+and "do_b".
 {
-    "stepName": "writeJokeAboutWebPage",
+    "stepName": "doXYZ",
     "tool": "exec_code",
     "args": {
-        "code": "page_content = get_web_page_text('https://vanderbilt.edu')\nresult = prompt_llm('Please provide a joke about:'+page_content)",
+        "code": "page_content = do_a('https://vanderbilt.edu')\nresult = do_b('Please provide a joke about:'+page_content)",
     }
 }
 
@@ -105,6 +98,21 @@ LARGE_RESULTS = Goal(
     description="""
 Some results may be too big to show you in their entirety. If you don't need to see the entire result, 
 just make sure it was created. It will be shown to the user even if you can't see it completely. 
+"""
+)
+
+STOP_WHEN_STUCK = Goal(
+    name="Large results",
+    description="""
+Do your best to solve problems. However, if there is absolutely no path forward, then tell the user that you
+are stuck and stop.
+"""
+)
+
+BAIL_OUT_ON_MANY_ERRORS = Goal(
+    name="Large results",
+    description="""
+If the same action causes an error more than two times, either stop or trying something else.
 """
 )
 

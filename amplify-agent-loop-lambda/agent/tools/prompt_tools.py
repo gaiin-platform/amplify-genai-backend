@@ -1,18 +1,25 @@
-import json
-from pyexpat.errors import messages
-from typing import Dict, List, Any
+from typing import List, Any
 
-import requests
-
-from agent.game.action import ActionContext
+from agent.components.tool import register_tool, get_tool_metadata, to_openai_tools
+from agent.core import ActionContext
 from agent.prompt import Prompt
-from agent.tool import register_tool, to_openai_tools, get_tool_metadata
-import functools
 from inspect import signature, Parameter
-
 import functools
-from inspect import signature, Parameter
 import json
+
+@register_tool(tags=["prompts"])
+def prompt_llm_with_messages(action_context: ActionContext, prompt: [dict]):
+    """
+    Generate a response to a prompt using the LLM model.
+    The LLM cannot see the conversation history, so make sure to include all necessary context in the prompt.
+    Make sure and include ALL text, data, or other information that the LLM needs
+    directly in the prompt. The LLM can't access any external information or context.
+    """
+    generate_response = action_context.get("llm")
+    response = generate_response(Prompt(messages=[
+        *prompt
+    ]))
+    return response
 
 def prompt_with_retries(generate_response, prompt: Prompt, max_retries: int = 3, functions=None):
     """
@@ -224,7 +231,7 @@ def qa_check(action_context: ActionContext, qa_criteria: str, thing_to_check: An
         return False
 
 
-@register_tool()
+@register_tool(tags=["prompts"])
 def prompt_llm(action_context: ActionContext, prompt: str):
     """
     Generate a response to a prompt using the LLM model.
@@ -239,7 +246,7 @@ def prompt_llm(action_context: ActionContext, prompt: str):
     return response
 
 
-@register_tool()
+@register_tool(tags=["prompts"])
 def prompt_llm_with_info(action_context: ActionContext, prompt: str, result_references: List[str] = None):
     """
     Generate a response to a prompt using the LLM model.
@@ -257,7 +264,7 @@ def prompt_llm_with_info(action_context: ActionContext, prompt: str, result_refe
     return response
 
 
-@register_tool()
+@register_tool(tags=["prompts"])
 def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str):
     """
     Have the LLM generate JSON in response to a prompt. Always use this tool when you need structured data out of the LLM.
@@ -290,7 +297,7 @@ def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str
 
 
 
-@register_tool()
+@register_tool(tags=["prompts"])
 def prompt_expert(action_context: ActionContext, description_of_expert: str, prompt: str):
     """
     Generate a response to a prompt using the LLM model, acting as the provided expert.

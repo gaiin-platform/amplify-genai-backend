@@ -4,10 +4,37 @@ from typing import Optional
 from uuid import uuid4
 
 import boto3
-from aiohttp import payload_type
 
-from agent.game.action import ActionContext
-from agent.tool import register_tool, get_tool_metadata
+from agent.components.tool import get_tool_metadata, register_tool
+from agent.core import ActionContext, Action, ActionRegistry
+
+
+def register_op_actions(action_registry:ActionRegistry, access_token:str, current_user:str):
+    apis = get_all_apis(action_context=ActionContext({
+        "access_token": access_token,
+        "current_user": current_user,
+    }))
+
+    api_tools = ops_to_actions(apis)
+    for action in api_tools:
+        action_registry.register(action)
+
+
+def ops_to_actions(apis):
+    tools = ops_to_tools(apis)
+    actions = []
+    for tool in tools:
+        actions.append(
+            Action(
+                name=tool['tool_name'],
+                function=tool['function'],
+                description=tool['description'],
+                parameters=tool['parameters'],
+                output=tool.get('output', {}),
+                terminal=tool['terminal']
+            ))
+
+    return actions
 
 def ops_to_tools(apis):
     tools = []
@@ -73,7 +100,6 @@ def call_api(action_context: ActionContext, name: str, payload: dict) -> dict:
         **params
     )
 
-
 def execute_api_call(
         name: str,
         payload: dict,
@@ -90,6 +116,7 @@ def execute_api_call(
     lambda_function_name = os.environ.get('OPS_LAMBDA_NAME')
 
     if not lambda_function_name:
+        print("OPS_LAMBDA_NAME environment variable is not set")
         raise ValueError("OPS_LAMBDA_NAME environment variable is not set")
 
     print(f"Invoking Lambda function: {lambda_function_name}")

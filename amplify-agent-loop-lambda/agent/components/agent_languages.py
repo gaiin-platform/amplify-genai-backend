@@ -1,58 +1,29 @@
 import json
 from typing import List, Any
 
+from agent.core import AgentLanguage, Goal, Memory, Environment, Action, UnknownActionError
 from agent.prompt import Prompt
-from agent.game.action import Action
-from agent.game.environment import Environment
-from agent.game.goal import Goal
-from agent.game.memory import Memory
 
-class AgentLanguage:
-    def __init__(self):
-        pass
 
-    def construct_prompt(self,
-                         actions: List[Action],
-                         environment: Environment,
-                         goals: List[Goal],
-                         memory: Memory) -> Prompt:
-        """
-        Construct the prompt to send to the language model.
+def to_json_memory_messages_format(items):
+    mapped_items = []
+    for item in items:
 
-        :param actions:
-        :param environment:
-        :param goals:
-        :param memory:
-        :return:
-        """
-        raise NotImplementedError("Subclasses must implement this method")
+        content = item.get("content", None)
+        if not content:
+            content = json.dumps(item, indent=4)
 
-    def adapt_prompt_after_parsing_error(self,
-                                         prompt: Prompt,
-                                         response: str,
-                                         traceback: str,
-                                         error: Any,
-                                         retries_left: int) -> Prompt:
-        """
-        Adapt the prompt after a parsing error. This method is called when the language model fails to parse the response.
-        You can throw custom errors in the parse_response that will be passed to this as the error parameter so that
-        you can adapt the prompt based on the error.
-
-        :param prompt:
-        :param traceback:
-        :param error:
-        :param retries_left:
-        :return:
-        """
-        return prompt
-
-    def parse_response(self, response: str) -> dict:
-        """
-        Parse the response from the language model into a structured format
-        :param response:
-        :return:
-        """
-        raise NotImplementedError("Subclasses must implement this method")
+        if item["type"] == "prompt":
+            continue
+        if item["type"] == "assistant":
+            mapped_items.append({"role": "assistant", "content": content})
+        elif item["type"] == "system":
+            mapped_items.append({"role": "system", "content": content})
+        elif item["type"] == "environment":
+            mapped_items.append({"role": "user", "content": content})
+        else:
+            mapped_items.append({"role": "user", "content": content})
+    return mapped_items
 
 
 class AgentNaturalLanguage(AgentLanguage):
@@ -73,19 +44,7 @@ class AgentNaturalLanguage(AgentLanguage):
         # Map all assistant messages to a role:assistant messages
         # Map all user messages to a role:user messages
         items = memory.get_memories()
-        mapped_items = []
-        for item in items:
-
-            content = item.get("content", None)
-            if not content:
-                content = json.dumps(item, indent=4)
-
-            if item["type"] == "assistant":
-                mapped_items.append({"role": "assistant", "content": content})
-            elif item["type"] == "environment":
-                mapped_items.append({"role": "assistant", "content": content})
-            else:
-                mapped_items.append({"role": "user", "content": content})
+        mapped_items = to_json_memory_messages_format(items)
 
         return mapped_items
 
@@ -127,10 +86,10 @@ class AgentJsonActionLanguage(AgentLanguage):
 <Stop and think step by step. Insert a rich description of your step by step thoughts here.>
 
 ```action
-{{
+{
     "tool": "tool_name",
-    "args": {{...fill in any required arguments here...}}
-}}
+    "args": {...fill in any required arguments here...}
+}
 ```"""
 
     def __init__(self):
@@ -151,19 +110,7 @@ class AgentJsonActionLanguage(AgentLanguage):
         # Map all assistant messages to a role:assistant messages
         # Map all user messages to a role:user messages
         items = memory.get_memories()
-        mapped_items = []
-        for item in items:
-
-            content = item.get("content", None)
-            if not content:
-                content = json.dumps(item, indent=4)
-
-            if item["type"] == "assistant":
-                mapped_items.append({"role": "assistant", "content": content})
-            elif item["type"] == "environment":
-                mapped_items.append({"role": "assistant", "content": content})
-            else:
-                mapped_items.append({"role": "user", "content": content})
+        mapped_items = to_json_memory_messages_format(items)
 
         return mapped_items
 
@@ -210,12 +157,18 @@ You must ALWAYS respond in this format:
                          error: Any,
                          retries_left: int) -> Prompt:
 
+
+        if isinstance(error, UnknownActionError):
+            feedback = f"Your last output contained an unknown action. {error}."
+        else:
+            feedback = f"Your last output did not contain a valid ```action block that could be parsed. \n"
+            f"Please fix your prior response. \n"
+            f"Make sure that it has the correct format: \n"
+            f"{AgentJsonActionLanguage.action_format}"
+
         new_messages = prompt.messages + [
             {"role": "assistant", "content": f"{response}"},
-            {"role": "user", "content": f"Your last output did not contain a valid ```action block that could be parsed. \n"
-                                        f"Please fix your prior response. \n"
-                                        f"Make sure that it has the correct format: \n"
-                                        f"{AgentJsonActionLanguage.action_format}"}
+            {"role": "user", "content": feedback}
         ]
 
         return Prompt(messages=new_messages, tools=[])
@@ -241,8 +194,9 @@ You must ALWAYS respond in this format:
 
 class AgentFunctionCallingActionLanguage(AgentLanguage):
 
-    def __init__(self):
+    def __init__(self, allow_non_tool_output=False):
         super().__init__()
+        self.allow_non_tool_output = allow_non_tool_output
 
     def format_goals(self, goals: List[Goal]) -> List:
         # Map all goals to a single string that concatenates their description
@@ -259,19 +213,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
         # Map all assistant messages to a role:assistant messages
         # Map all user messages to a role:user messages
         items = memory.get_memories()
-        mapped_items = []
-        for item in items:
-
-            content = item.get("content", None)
-            if not content:
-                content = json.dumps(item, indent=4)
-
-            if item["type"] == "assistant":
-                mapped_items.append({"role": "assistant", "content": content})
-            elif item["type"] == "environment":
-                mapped_items.append({"role": "assistant", "content": content})
-            else:
-                mapped_items.append({"role": "user", "content": content})
+        mapped_items = to_json_memory_messages_format(items)
 
         return mapped_items
 
@@ -313,7 +255,14 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                                          error: Any,
                                          retries_left: int) -> Prompt:
 
-        return prompt
+        new_messages = prompt.messages + [
+            {"role": "assistant", "content": f"{response}"},
+            {"role": "system", "content": "CRITICAL!!! You must ALWAYS choose a tool to use. "},
+            {"role": "user", "content": "You did not call a valid tool. "
+                                        "Please choose an available tool and output a tool call."}
+        ]
+
+        return Prompt(messages=new_messages, tools=prompt.tools)
 
     def parse_response(self, response: str) -> dict:
         """Parse LLM response into structured format by extracting the ```json block"""
@@ -322,10 +271,15 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
             return json.loads(response)
 
         except Exception as e:
-            # if the agent dumps out a string, it is almost always because it just wants to tell
-            # the user something. In this case, we will just return the string as the message
-            # to terminate.
-            return {
-                "tool": "terminate",
-                "args": {"message": response}
-            }
+
+            if self.allow_non_tool_output:
+                # if the agent dumps out a string, it is almost always because it just wants to tell
+                # the user something. In this case, we will just return the string as the message
+                # to terminate.
+                return {
+                    "tool": "terminate",
+                    "args": {"message": response}
+                }
+            else:
+                print(f"Agent language failed to parse response: {response}")
+                raise ValueError(f"The agent did not respond with a valid tool invocation: {str(e)}")
