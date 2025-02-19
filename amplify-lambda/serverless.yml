@@ -394,7 +394,11 @@ functions:
     handler: powerpoints/core.handle_pptx_upload
     layers:
       - Ref: PythonRequirementsLambdaLayer
-
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
 
   queue_document_for_rag:
     handler: rag/core.queue_document_for_rag
@@ -981,17 +985,7 @@ resources:
             DestinationBucketName: 
               Ref: AccessLogsBucket
             LogFilePrefix: S3AccessLogs/ 
-          NotificationConfiguration:
-            LambdaConfigurations:
-              - Event: 's3:ObjectCreated:Put'
-                Filter:
-                  S3Key:
-                    Rules:
-                      - Name: prefix
-                        Value: 'templates/'
-                      - Name: suffix
-                        Value: '.pptx' 
-                Function: !GetAtt HandlePptxUploadLambdaFunction.Arn
+
 
     RagInputBucket:
         Type: AWS::S3::Bucket
