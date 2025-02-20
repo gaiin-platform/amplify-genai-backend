@@ -2,7 +2,7 @@ from decimal import Decimal
 import os
 import boto3
 from common.validate import validated
-from model_rates.update_table import load_model_rate_table
+from model_rates.update_table import load_model_rate_table, get_csv_model_ids
 from common.amplifyGroups import verify_user_in_amp_group
 from common.auth_admin import verify_user_as_admin
 from common.ops import op
@@ -115,14 +115,21 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
     load_model_rate_table(current_model_data)
     return get_supported_models()
 
-def models_are_current(model_data):
+def models_are_current(models_data):
+    if not models_data: return False
+
+    csv_model_ids = get_csv_model_ids()
+    models_data_ids = {model.get("id") for model in models_data.values() if model.get("id") is not None}
+
+    # Verify that all CSV model IDs are present in the models_data 
+    return csv_model_ids.issubset(models_data_ids)
+
+
+def is_model_current(model_data):
     if not model_data: return False
 
     required_cols_set = set(dynamodb_to_internal_field_map.values())
-    
-    # Check if any of these columns are missing for the first model
-    first_model = next(iter(model_data.values())) if model_data else {}
-    existing_columns = set(first_model.keys()) if first_model else set()
+    existing_columns = set(model_data.keys()) if model_data else set()
     return required_cols_set.issubset(existing_columns)
 
 
@@ -150,8 +157,13 @@ def get_supported_models():
         for field in COST_FIELDS:
             if field in model and isinstance(model[field], Decimal):
                 model[field] = float(model[field])
-
-        supported_models_config[model_id] = model_transform_db_to_internal(model)
+            
+        transformed_model = model_transform_db_to_internal(model)
+        # filter out outdated models
+        if (is_model_current(transformed_model)):
+            supported_models_config[model_id] = transformed_model
+        else:
+            print("Skipping outdated model: ", model_id)
 
     return {"success": True, "data": supported_models_config}
 
