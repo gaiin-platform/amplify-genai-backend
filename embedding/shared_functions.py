@@ -23,6 +23,9 @@ logger.setLevel(logging.INFO)
 
 endpoints_arn = os.environ['LLM_ENDPOINTS_SECRETS_NAME_ARN']
 api_version    = os.environ['API_VERSION']
+hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+region = os.environ['REGION']
+
 
 class PROVIDERS(Enum):
     AZURE = 'Azure'
@@ -42,14 +45,6 @@ if (model_result['success']):
     embedding_provider = data['embedding']['provider']
     qa_model_name = data['qa']['model_id']
     qa_provider = data['qa']['provider']
-
-
-hash_files_dynamo_table = os.environ['HASH_FILES_DYNAMO_TABLE']
-region = os.environ['REGION']
-openai_provider = os.environ['OPENAI_PROVIDER']
-embedding_provider = os.environ['EMBEDDING_PROVIDER'] or os.environ['OPENAI_PROVIDER']
-
-
 
 
 # Get embedding token count from tiktoken
@@ -90,6 +85,8 @@ def generate_embeddings(content):
         return generate_azure_embeddings(content)
     if embedding_provider == PROVIDERS.OPENAI.value:
         return generate_openai_embeddings(content)
+    logger.error(f"Invalid embedding provider: {embedding_provider}")
+    return {"success": False, "error": f"Invalid embedding provider: {embedding_provider}"}
 
 def generate_bedrock_embeddings(content):
     try:
@@ -127,9 +124,7 @@ def generate_azure_embeddings(content):
         token_count = num_tokens_from_text(content, embedding_model_name)
     except Exception as e:
         logger.error(f"An error occurred with Azure OpenAI: {e}", exc_info=True)
-        raise
-
-    logger.info(f"Embedding: {embedding}")
+        return {"success": False, "error": f"An error occurred with Azure OpenAI: {str(e)}"}
     return {"success": True, "data": embedding, "token_count": token_count}
 
 def generate_openai_embeddings(content):
@@ -146,7 +141,7 @@ def generate_openai_embeddings(content):
         token_count = num_tokens_from_text(content, embedding_model_name)
     except Exception as e:
         logger.error(f"An error occurred with OpenAI: {e}", exc_info=True)
-        raise
+        return {"success": False, "error": f"An error occurred with OpenAI: {str(e)}"}
 
     logger.info(f"Embedding: {embedding}")
     return {"success": True, "data": embedding, "token_count": token_count}        
