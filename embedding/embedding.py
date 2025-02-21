@@ -327,17 +327,17 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                         raise Exception(f"Text preprocessing failed: {response_clean_text['error']}")
                     clean_text = response_clean_text["data"]
 
-                    response_vector_embedding = generate_embeddings(clean_text, embedding_provider)
+                    response_vector_embedding = generate_embeddings(clean_text)
                     if not response_vector_embedding["success"]:
                         raise Exception(f"Vector embedding generation failed: {response_vector_embedding['error']}")
                     vector_embedding = response_vector_embedding["data"]
 
-                    response_qa_summary = generate_questions(clean_text, embedding_provider)
+                    response_qa_summary = generate_questions(clean_text)
                     if not response_qa_summary["success"]:
                         raise Exception(f"QA summary generation failed: {response_qa_summary['error']}")
                     qa_summary = response_qa_summary["data"]
 
-                    response_qa_embedding = generate_embeddings(content=qa_summary, embedding_provider=embedding_provider)
+                    response_qa_embedding = generate_embeddings(content=qa_summary)
                     if not response_qa_embedding["success"]:
                         raise Exception(f"QA embedding generation failed: {response_qa_embedding['error']}")
                     qa_vector_embedding = response_qa_embedding["data"]
