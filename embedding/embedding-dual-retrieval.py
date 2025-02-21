@@ -273,7 +273,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
 
     src_ids = accessible_src_ids + group_accessible_src_ids
 
-    response_embeddings = generate_embeddings(content, embedding_provider)
+    response_embeddings = generate_embeddings(content)
 
     if response_embeddings["success"]:
         embeddings = response_embeddings["data"]
