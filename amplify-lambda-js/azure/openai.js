@@ -148,6 +148,9 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
     function streamAxiosResponseToWritable(url, writableStream) {
+
+        let partialResponse = '';
+
         return new Promise((resolve, reject) => {
             axios({
                 data,
@@ -164,11 +167,22 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             transform(chunk, encoding, callback) {
                                 // console.log("O1 response raw: ", chunk.toString());
                                 // Convert chunk to string, remove newlines, and add 'data: ' prefix
-                                const modifiedData = 'data: ' + chunk.toString().replace(/\n/g, '');
-                                // console.log("modifiedData: ", chunk.toString());
 
-                                this.push(modifiedData);
-                                callback();
+                                try {
+                                    const chunkStr = partialResponse + chunk.toString();
+                                    const parsed = JSON.parse(chunkStr);
+
+                                    partialResponse = '';
+
+                                    const modifiedData = 'data: ' + chunkStr.replace(/\n/g, '');
+                                    // console.log("modifiedData: ", chunk.toString());
+
+                                    this.push(modifiedData);
+                                    callback();
+                                }catch (e) {
+                                    partialResponse += chunk.toString();
+                                    callback();
+                                }
                             }
                         });
                         response.data
