@@ -136,7 +136,7 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
                         if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
                             op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
                             if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and ('params' in op_kwargs or 'parameters' in op_kwargs):
-                                params_dict = extract_dict(op_kwargs['params'])
+                                params_dict = extract_dict( op_kwargs.get('params', ast.Dict(keys=[], values=[])) )
 
 
                                 params = [ParamModel(description=desc, name=name) for name, desc in params_dict.items()] if 'params' in op_kwargs else []
