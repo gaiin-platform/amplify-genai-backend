@@ -28,13 +28,7 @@ permissions_by_state_type = {
     "/integrations/oauth/start-auth": {
         "start_oauth": lambda for_user, with_data: True
     },
-    "/integrations/google/sheets/get-rows": {
-        "get_rows": lambda for_user, with_data: True
-    },
     "/integrations/oauth/user/list": {
-        "list_integrations": lambda for_user, with_data: True
-    },
-    "/integrations/oauth/list": {
         "list_integrations": lambda for_user, with_data: True
     },
     "/integrations/oauth/user/delete": {
@@ -46,4 +40,13 @@ permissions_by_state_type = {
     "/assistant-api/set-job-result": {
         "set_result": lambda for_user, with_data: True
     },
+    "/integrations/list_supported": {
+        "list_integrations": lambda for_user, with_data: True
+    },
+    "/integrations/oauth/register_secret": {
+        "register_secret": lambda for_user, with_data: True
+    },
+     "/integrations/oauth/refresh_token": {
+        "refresh_token": lambda for_user, with_data: True
+     }
 }

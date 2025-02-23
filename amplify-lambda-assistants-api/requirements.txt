@@ -132,3 +132,5 @@ urllib3==2.3.0
     # via
     #   botocore
     #   requests
+msal==1.26.0
+cryptography>=36.0.0,<46.0.0 #as per the dependencies requirements

@@ -64,24 +64,8 @@ validators = {
         "start_oauth": {
         }
     },
-    "/integrations/google/sheets/get-rows": {
-        "get_rows": {
-            "type": "object",
-            "properties": {
-                "sheetId": {"type": "string"},
-                "cellRange": {"type": "string"},
-            },
-            "required": ["sheetId", "cellRange"],
-        }
-    },
     "/integrations/oauth/user/list": {
-        "list_integrations": {
-            "type": "object",
-            "properties": {
-                "integrations": {"type": "array"},
-            },
-            "required": ["integrations"],
-        }
+        "list_integrations": {}
     },
     "/integrations/oauth/user/delete": {
         "delete_integration": {
@@ -118,15 +102,36 @@ validators = {
             "additionalProperties": True
         }
     },
+    "/integrations/list_supported": {
+        "list_integrations": {}
+    },
+    "/integrations/oauth/register_secret": {
+        "register_secret": {
+            "type": "object",
+            "properties": {
+                "client_id": {"type": "string"},
+                "client_secret": {"type": "string"},
+                "integration": {"type": "string"},
+                "tenant_id": {"type": "string"}
+            },
+            "required": ["client_id", "client_secret", "integration"],
+            "additionalProperties": False
+        }
+    },
+    "/integrations/oauth/refresh_token": {
+        "refresh_token": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string"}
+            },
+            "required": ["integration"],
+            "additionalProperties": False
+        }
+    }
 }
-
 api_validators = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": execute_custom_auto_schema
-    },
-    "/integrations/oauth/start-auth" : {
-        "start_oauth": {
-        }
     },
     "/integrations/google/sheets/get-rows": {
         "get_rows": {
@@ -156,9 +161,7 @@ api_validators = {
             "required": ["integration"],
         }
     },
-    "/integrations/oauth/list": {
-        "list_integrations":{}
-    },
+
     "/assistant-api/get-job-result":{
         "get_result": {
             "type": "object",
@@ -181,6 +184,19 @@ api_validators = {
             "additionalProperties": True
         }
     },
+    "/integrations/list_supported": {
+        "list_integrations": {}
+    },
+    "/integrations/oauth/refresh_token": {
+        "refresh_token": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string"}
+            },
+            "required": ["integration"],
+            "additionalProperties": False
+        }
+    }
 }
 
 
@@ -408,12 +424,12 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get("accessTypes", [])
-        if ("assistants-api" not in access):
-            # and "full_access" not in access
-            print("API doesn't have access to assistants api")
-            raise PermissionError(
-                "API key does not have access to assistants api functionality"
-            )
+        # if ("assistants-api" not in access):
+        #     # and "full_access" not in access
+        #     print("API doesn't have access to assistants api")
+        #     raise PermissionError(
+        #         "API key does not have access to assistants api functionality"
+        #     )
 
         # Determine API user
         current_user = determine_api_user(item)
