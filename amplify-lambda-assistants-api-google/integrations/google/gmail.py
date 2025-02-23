@@ -9,13 +9,13 @@ from email.mime.multipart import MIMEMultipart
 
 integration_name = "google_gmail"
 
-def get_gmail_service(current_user):
-    user_credentials = get_user_credentials(current_user, integration_name)
+def get_gmail_service(current_user, access_token):
+    user_credentials = get_user_credentials(current_user, integration_name, access_token)
     credentials = Credentials.from_authorized_user_info(user_credentials)
     return build('gmail', 'v1', credentials=credentials)
 
-def compose_and_send_email(current_user, to, subject, body, cc=None, bcc=None, schedule_time=None):
-    service = get_gmail_service(current_user)
+def compose_and_send_email(current_user, to, subject, body, cc=None, bcc=None, schedule_time=None, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     message = MIMEMultipart()
     message['to'] = to
     message['subject'] = subject
@@ -33,8 +33,8 @@ def compose_and_send_email(current_user, to, subject, body, cc=None, bcc=None, s
     message = service.users().messages().send(userId='me', body=body).execute()
     return json.dumps({"message_id": message['id']})
 
-def compose_email_draft(current_user, to, subject, body, cc=None, bcc=None):
-    service = get_gmail_service(current_user)
+def compose_email_draft(current_user, to, subject, body, cc=None, bcc=None, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     message = MIMEMultipart()
     message['to'] = to
     message['subject'] = subject
@@ -48,8 +48,8 @@ def compose_email_draft(current_user, to, subject, body, cc=None, bcc=None):
     draft = service.users().drafts().create(userId='me', body={'message': {'raw': raw_message}}).execute()
     return json.dumps({"draft_id": draft['id']})
 
-def get_messages_from_date(current_user, n, start_date, label=None, fields=None):
-    service = get_gmail_service(current_user)
+def get_messages_from_date(current_user, n, start_date, label=None, fields=None, access_token = None):
+    service = get_gmail_service(current_user, access_token)
 
     if isinstance(start_date, str):
         start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -62,13 +62,13 @@ def get_messages_from_date(current_user, n, start_date, label=None, fields=None)
 
     messages_result = service.users().messages().list(userId='me', q=query, maxResults=n).execute()
     message_ids = [msg['id'] for msg in messages_result.get('messages', [])]
-
-    detailed_messages = get_messages_details(current_user, message_ids, fields)
+    
+    detailed_messages = get_messages_details(service, message_ids, fields)
 
     return json.dumps(detailed_messages)
 
-def get_recent_messages(current_user, n=25, label=None, fields=None):
-    service = get_gmail_service(current_user)
+def get_recent_messages(current_user, n=25, label=None, fields=None, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     query = ''
     if label:
         query += f'label:{label}'
@@ -76,21 +76,21 @@ def get_recent_messages(current_user, n=25, label=None, fields=None):
     messages_result = service.users().messages().list(userId='me', q=query, maxResults=n).execute()
     message_ids = [msg['id'] for msg in messages_result.get('messages', [])]
 
-    detailed_messages = get_messages_details(current_user, message_ids, fields)
+    detailed_messages = get_messages_details(service, message_ids, fields)
 
     return json.dumps(detailed_messages)
 
-def search_messages(current_user, query, fields=None):
-    service = get_gmail_service(current_user)
+def search_messages(current_user, query, fields=None, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     messages_result = service.users().messages().list(userId='me', q=query).execute()
     message_ids = [msg['id'] for msg in messages_result.get('messages', [])]
 
-    detailed_messages = get_messages_details(current_user, message_ids, fields)
+    detailed_messages = get_messages_details(service, message_ids, fields)
 
     return json.dumps(detailed_messages)
 
-def get_attachment_links(current_user, message_id):
-    service = get_gmail_service(current_user)
+def get_attachment_links(current_user, message_id, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     message = service.users().messages().get(userId='me', id=message_id).execute()
     attachments = []
     if 'payload' in message and 'parts' in message['payload']:
@@ -102,14 +102,14 @@ def get_attachment_links(current_user, message_id):
                 })
     return json.dumps(attachments)
 
-def get_attachment_content(current_user, message_id, attachment_id):
-    service = get_gmail_service(current_user)
+def get_attachment_content(current_user, message_id, attachment_id, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     attachment = service.users().messages().attachments().get(userId='me', messageId=message_id, id=attachment_id).execute()
     file_data = base64.urlsafe_b64decode(attachment['data'].encode('UTF-8'))
     return file_data
 
-def create_filter(current_user, criteria, action):
-    service = get_gmail_service(current_user)
+def create_filter(current_user, criteria, action, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     filter_object = {
         'criteria': criteria,
         'action': action
@@ -117,14 +117,14 @@ def create_filter(current_user, criteria, action):
     result = service.users().settings().filters().create(userId='me', body=filter_object).execute()
     return json.dumps({"filter_id": result['id']})
 
-def create_label(current_user, name):
-    service = get_gmail_service(current_user)
+def create_label(current_user, name, access_token = None):
+    service = get_gmail_service(current_user, access_token)
     label = {'name': name}
     result = service.users().labels().create(userId='me', body=label).execute()
     return json.dumps({"label_id": result['id']})
 
-def create_auto_filter_label_rule(current_user, criteria, label_name):
-    service = get_gmail_service(current_user)
+def create_auto_filter_label_rule(current_user, criteria, label_name, access_token = None):
+    service = get_gmail_service(current_user, access_token)
 
     # First, create or get the label
     try:
@@ -146,12 +146,21 @@ def create_auto_filter_label_rule(current_user, criteria, label_name):
     return json.dumps({"filter_id": result['id'], "label_id": label['id']})
 
 
-def get_messages_details(current_user, message_ids, fields=None):
+
+def get_message_details(current_user, message_id, fields=None, access_token = None):
+    service = get_gmail_service(current_user, access_token)
+    detailed_messages = get_messages_details(service, [message_id], fields)
+
+    return json.dumps(detailed_messages)
+
+
+def get_messages_details(service, message_ids, fields=None):
     default_fields = ['id', 'sender', 'subject', 'labels', 'date']
     if fields is None:
         fields = default_fields
-
-    service = get_gmail_service(current_user)
+    elif isinstance(fields, str):
+        fields = [f.strip() for f in fields.split(',') if f.strip()]
+    
     results = []
 
     for message_id in message_ids:
@@ -170,9 +179,12 @@ def get_messages_details(current_user, message_ids, fields=None):
             elif field == 'sizeEstimate':
                 result['sizeEstimate'] = msg['sizeEstimate']
             elif field == 'raw':
-                result['raw'] = msg['raw']
+                # far too large to return msg['raw']
+                result['raw'] = ''
             elif field == 'payload':
-                result['payload'] = msg['payload']
+                # far too large to return
+                # result['payload'] = msg['payload']
+                result['payload'] = msg['payload'].get("body",{}).get('data', '')
             elif field == 'mimeType':
                 result['mimeType'] = msg['payload']['mimeType']
             elif field == 'attachments':

@@ -7,12 +7,12 @@ def op(tags=None, path="", name="", description="", params=None, method="POST", 
     def decorator(func):
         def wrapper(*args, **kwargs):
             # You can do something with tags, name, description, and params here
-            print(f"Path: {path}")
-            print(f"Tags: {tags}")
-            print(f"Name: {name}")
-            print(f"Method: {method}")
-            print(f"Description: {description}")
-            print(f"Params: {params}")
+            # print(f"Path: {path}")
+            # print(f"Tags: {tags}")
+            # print(f"Name: {name}")
+            # print(f"Method: {method}")
+            # print(f"Description: {description}")
+            # print(f"Params: {params}")
 
             # Call the actual function
             result = func(*args, **kwargs)
@@ -25,11 +25,11 @@ def vop(tags=None, path="", name="", description="", params=None, parameters=Non
     def decorator(func):
         def wrapper(*args, **kwargs):
             # You can do something with tags, name, description, and params here
-            print(f"Path: {path}")
-            print(f"Tags: {tags}")
-            print(f"Name: {name}")
-            print(f"Description: {description}")
-            print(f"Params: {params}")
+            # print(f"Path: {path}")
+            # print(f"Tags: {tags}")
+            # print(f"Name: {name}")
+            # print(f"Description: {description}")
+            # print(f"Params: {params}")
 
             if not permissions.permissions_by_state_type.get(path, None):
 

@@ -6,8 +6,8 @@ from google.oauth2.credentials import Credentials
 
 integration_name = "google_drive"
 
-def get_drive_service(current_user):
-    user_credentials = get_user_credentials(current_user, integration_name)
+def get_drive_service(current_user, access_token):
+    user_credentials = get_user_credentials(current_user, integration_name, access_token)
     credentials = Credentials.from_authorized_user_info(user_credentials)
     return build('drive', 'v3', credentials=credentials)
 
@@ -22,8 +22,8 @@ def convert_dictionaries(input_list):
 
 
 
-def get_file_metadata(current_user, file_id):
-    service = get_drive_service(current_user)
+def get_file_metadata(current_user, file_id, access_token = None):
+    service = get_drive_service(current_user, access_token)
     metadata = service.files().get(fileId=file_id, fields='id,name,mimeType,createdTime,modifiedTime,size').execute()
 
     result = [
@@ -37,8 +37,8 @@ def get_file_metadata(current_user, file_id):
 
     return result
 
-def get_file_content(current_user, file_id):
-    service = get_drive_service(current_user)
+def get_file_content(current_user, file_id, access_token = None):
+    service = get_drive_service(current_user, access_token)
     request = service.files().get_media(fileId=file_id)
     file = BytesIO()
     downloader = MediaIoBaseDownload(file, request)
@@ -47,20 +47,20 @@ def get_file_content(current_user, file_id):
         status, done = downloader.next_chunk()
     return file.getvalue().decode('utf-8')
 
-def create_file(current_user, file_name, content, mime_type='text/plain'):
-    service = get_drive_service(current_user)
+def create_file(current_user, file_name, content, mime_type='text/plain', access_token = None):
+    service = get_drive_service(current_user, access_token)
     file_metadata = {'name': file_name}
     media = MediaIoBaseUpload(BytesIO(content.encode()), mimetype=mime_type)
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     return file.get('id')
 
-def get_download_link(current_user, file_id):
-    service = get_drive_service(current_user)
+def get_download_link(current_user, file_id, access_token = None):
+    service = get_drive_service(current_user, access_token)
     file = service.files().get(fileId=file_id, fields='webContentLink').execute()
     return file.get('webContentLink')
 
-def create_shared_link(current_user, file_id, permission='view'):
-    service = get_drive_service(current_user)
+def create_shared_link(current_user, file_id, permission='view', access_token = None):
+    service = get_drive_service(current_user, access_token)
     if permission not in ['view', 'edit']:
         raise ValueError("Permission must be 'view' or 'edit'")
 
@@ -75,8 +75,8 @@ def create_shared_link(current_user, file_id, permission='view'):
 
     return link
 
-def share_file(current_user, file_id, emails, role='reader'):
-    service = get_drive_service(current_user)
+def share_file(current_user, file_id, emails, role='reader', access_token = None):
+    service = get_drive_service(current_user, access_token)
     if role not in ['reader', 'commenter', 'writer']:
         raise ValueError("Role must be 'reader', 'commenter', or 'writer'")
 
@@ -92,8 +92,8 @@ def share_file(current_user, file_id, emails, role='reader'):
     batch.execute()
     return f"File shared with {len(emails)} email(s)"
 
-def convert_file(current_user, file_id, target_mime_type):
-    service = get_drive_service(current_user)
+def convert_file(current_user, file_id, target_mime_type, access_token = None):
+    service = get_drive_service(current_user, access_token)
 
     # Get the current file's metadata
     file = service.files().get(fileId=file_id, fields='name').execute()
@@ -106,7 +106,7 @@ def convert_file(current_user, file_id, target_mime_type):
     converted_file = service.files().copy(fileId=file_id, body=body).execute()
 
     # Get the download link for the converted file
-    download_link = get_download_link(current_user, converted_file['id'])
+    download_link = get_download_link(current_user, converted_file['id'], access_token)
 
     return {
         'id': converted_file['id'],
@@ -115,8 +115,8 @@ def convert_file(current_user, file_id, target_mime_type):
         'downloadLink': download_link
     }
 
-def move_item(current_user, item_id, destination_folder_id):
-    service = get_drive_service(current_user)
+def move_item(current_user, item_id, destination_folder_id, access_token = None):
+    service = get_drive_service(current_user, access_token)
     file = service.files().get(fileId=item_id, fields='parents').execute()
     previous_parents = ",".join(file.get('parents', []))
     file = service.files().update(
@@ -127,24 +127,24 @@ def move_item(current_user, item_id, destination_folder_id):
     ).execute()
     return file
 
-def copy_item(current_user, item_id, new_name=None):
-    service = get_drive_service(current_user)
+def copy_item(current_user, item_id, new_name=None, access_token = None):
+    service = get_drive_service(current_user, access_token)
     body = {'name': new_name} if new_name else {}
     copied_file = service.files().copy(fileId=item_id, body=body).execute()
     return convert_dictionaries([copied_file])[0]
 
-def rename_item(current_user, item_id, new_name):
-    service = get_drive_service(current_user)
+def rename_item(current_user, item_id, new_name, access_token = None):
+    service = get_drive_service(current_user, access_token)
     file = service.files().update(fileId=item_id, body={'name': new_name}).execute()
     return convert_dictionaries([file])[0]
 
-def get_file_revisions(current_user, file_id):
-    service = get_drive_service(current_user)
+def get_file_revisions(current_user, file_id, access_token = None):
+    service = get_drive_service(current_user, access_token)
     revisions = service.revisions().list(fileId=file_id).execute()
     return revisions.get('revisions', [])
 
-def create_folder(current_user, folder_name, parent_id=None):
-    service = get_drive_service(current_user)
+def create_folder(current_user, folder_name, parent_id=None, access_token = None):
+    service = get_drive_service(current_user, access_token)
     file_metadata = {
         'name': folder_name,
         'mimeType': 'application/vnd.google-apps.folder'
@@ -154,41 +154,41 @@ def create_folder(current_user, folder_name, parent_id=None):
     folder = service.files().create(body=file_metadata, fields='id').execute()
     return folder
 
-def delete_item_permanently(current_user, item_id):
-    service = get_drive_service(current_user)
+def delete_item_permanently(current_user, item_id, access_token = None):
+    service = get_drive_service(current_user, access_token)
     service.files().delete(fileId=item_id).execute()
     return {"success": True, "message": f"Item with ID {item_id} has been permanently deleted."}
 
-def list_files(current_user, folder_id=None):
+def list_files(current_user, folder_id=None, access_token = None):
     if folder_id is None:
-        root_folder_ids = get_root_folder_ids(current_user)
+        root_folder_ids = get_root_folder_ids(current_user, access_token)
         return convert_dictionaries(root_folder_ids)
 
-    service = get_drive_service(current_user)
+    service = get_drive_service(current_user, access_token)
     query = f"'{folder_id}' in parents" if folder_id else None
     results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
     return convert_dictionaries(results.get('files', []))
 
-def search_files(current_user, query):
-    service = get_drive_service(current_user)
+def search_files(current_user, query, access_token = None):
+    service = get_drive_service(current_user, access_token)
     formatted_query = f"name contains '{query}'"
     results = service.files().list(q=formatted_query, fields="files(id, name, mimeType)").execute()
     return convert_dictionaries(results.get('files', []))
 
-def list_folders(current_user, parent_folder_id=None):
+def list_folders(current_user, parent_folder_id=None, access_token = None):
     if parent_folder_id is None:
-        root_folder_ids = get_root_folder_ids(current_user)
+        root_folder_ids = get_root_folder_ids(current_user, access_token)
         return convert_dictionaries(root_folder_ids)
 
-    service = get_drive_service(current_user)
+    service = get_drive_service(current_user, access_token)
     query = "mimeType='application/vnd.google-apps.folder'"
     if parent_folder_id:
         query += f" and '{parent_folder_id}' in parents"
     results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
     return convert_dictionaries(results.get('files', []))
 
-def get_root_folder_ids(current_user):
-    service = get_drive_service(current_user)
+def get_root_folder_ids(current_user, access_token = None):
+    service = get_drive_service(current_user, access_token)
     results = service.files().list(q="'root' in parents and mimeType='application/vnd.google-apps.folder'",
                                    fields="files(id, name, mimeType)").execute()
     root_folders = results.get('files', [])

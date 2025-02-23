@@ -45,61 +45,69 @@ class NotFound(HTTPException):
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
 """
-validators = {
-    "/google/integrations/sheets/get-rows": {
-        "get_rows": {
+
+
+# Added a new combined route schema which accepts one of the previous payloads.
+route_data_schema = {
+    "type": "object",
+    "anyOf": [
+       # sheets/get-rows (operation: get_rows)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
                 "cellRange": {"type": "string"},
             },
             "required": ["spreadsheetId", "cellRange"],
-        }
-    },
-    "/google/integrations/sheets/get-info": {
-        "get_google_sheets_info": {
+            "additionalProperties": False
+        },
+       # sheets/get-info (operation: get_google_sheets_info)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
             },
             "required": ["spreadsheetId"],
-        }
-    },
-    "/google/integrations/sheets/get-sheet-names": {
-        "get_sheet_names": {
+            "additionalProperties": False
+        },
+       # sheets/get-sheet-names (operation: get_sheet_names)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
             },
             "required": ["spreadsheetId"],
-        }
-    },
-    "/google/integrations/sheets/insert-rows": {
-        "insert_rows": {
+            "additionalProperties": False
+        },
+       # sheets/insert-rows (operation: insert_rows)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
-                "rowsData": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                "rowsData": {
+                    "type": "array",
+                    "items": {"type": "array", "items": {"type": "string"}},
+                },
                 "sheetName": {"type": "string"},
-                "insertionPoint": {"type": "integer"}
+                "insertionPoint": {"type": "integer"},
             },
-            "required": ["spreadsheetId", "rowsData"]
-        }
-    },
-    "/google/integrations/sheets/delete-rows": {
-        "delete_rows": {
+            "required": ["spreadsheetId", "rowsData"],
+            "additionalProperties": False
+        },
+       # sheets/delete-rows (operation: delete_rows)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
                 "sheetName": {"type": "string"},
                 "startRow": {"type": "integer", "minimum": 1},
-                "endRow": {"type": "integer", "minimum": 1}
+                "endRow": {"type": "integer", "minimum": 1},
             },
-            "required": ["spreadsheetId", "startRow", "endRow"]
-        }
-    },
-    "/google/integrations/sheets/update-rows": {
-        "update_rows": {
+            "required": ["spreadsheetId", "startRow", "endRow"],
+            "additionalProperties": False
+        },
+       # sheets/update-rows (operation: update_rows)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
@@ -109,56 +117,55 @@ validators = {
                         "type": "array",
                         "items": {"type": ["string", "number"]},
                         "minItems": 2
-                    }
+                    },
                 },
-                "sheetName": {"type": "string"}
+                "sheetName": {"type": "string"},
             },
-            "required": ["spreadsheetId", "rowsData"]
-        }
-    },
-    "/google/integrations/sheets/create-spreadsheet": {
-        "create_spreadsheet": {
+            "required": ["spreadsheetId", "rowsData"],
+            "additionalProperties": False
+        },
+       # sheets/create-spreadsheet (operation: create_spreadsheet)
+        {
             "type": "object",
             "properties": {
-                "title": {"type": "string"}
+                "title": {"type": "string"},
             },
-            "required": ["title"]
-        }
-    },
-    "/google/integrations/sheets/duplicate-sheet": {
-        "duplicate_sheet": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "newSheetName": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "sheetId", "newSheetName"]
-        }
-    },
-    "/google/integrations/sheets/rename-sheet": {
-        "rename_sheet": {
+            "required": ["title"],
+            "additionalProperties": False
+        },
+       # sheets/duplicate-sheet (operation: duplicate_sheet)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
                 "sheetId": {"type": "integer"},
-                "newName": {"type": "string"}
+                "newSheetName": {"type": "string"},
             },
-            "required": ["spreadsheetId", "sheetId", "newName"]
-        }
-    },
-    "/google/integrations/sheets/clear-range": {
-        "clear_range": {
+            "required": ["spreadsheetId", "sheetId", "newSheetName"],
+        },
+       # sheets/rename-sheet (operation: rename_sheet)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
-                "rangeName": {"type": "string"}
+                "sheetId": {"type": "integer"},
+                "newName": {"type": "string"},
             },
-            "required": ["spreadsheetId", "rangeName"]
-        }
-    },
-    "/google/integrations/sheets/apply-formatting": {
-        "apply_formatting": {
+            "required": ["spreadsheetId", "sheetId", "newName"],
+            "additionalProperties": False
+        },
+       # sheets/clear-range (operation: clear_range)
+        {
+            "type": "object",
+            "properties": {
+                "spreadsheetId": {"type": "string"},
+                "rangeName": {"type": "string"},
+            },
+            "required": ["spreadsheetId", "rangeName"],
+            "additionalProperties": False
+        },
+       # sheets/apply-formatting (operation: apply_formatting)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
@@ -167,46 +174,46 @@ validators = {
                 "endRow": {"type": "integer", "minimum": 1},
                 "startCol": {"type": "integer", "minimum": 1},
                 "endCol": {"type": "integer", "minimum": 1},
-                "formatJson": {"type": "object"}
+                "formatJson": {"type": "object"},
             },
-            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "formatJson"]
-        }
-    },
-    "/google/integrations/sheets/add-chart": {
-        "add_chart": {
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "formatJson"],
+            "additionalProperties": False
+        },
+       # sheets/add-chart (operation: add_chart)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
                 "sheetId": {"type": "integer"},
-                "chartSpec": {"type": "object"}
+                "chartSpec": {"type": "object"},
             },
-            "required": ["spreadsheetId", "sheetId", "chartSpec"]
-        }
-    },
-    "/google/integrations/sheets/get-cell-formulas": {
-        "get_cell_formulas": {
+            "required": ["spreadsheetId", "sheetId", "chartSpec"],
+            "additionalProperties": False
+        },
+       # sheets/get-cell-formulas (operation: get_cell_formulas)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
-                "rangeName": {"type": "string"}
+                "rangeName": {"type": "string"},
             },
-            "required": ["spreadsheetId", "rangeName"]
-        }
-    },
-    "/google/integrations/sheets/find-replace": {
-        "find_replace": {
+            "required": ["spreadsheetId", "rangeName"],
+            "additionalProperties": False
+        },
+       # sheets/find-replace (operation: find_replace)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
                 "find": {"type": "string"},
                 "replace": {"type": "string"},
-                "sheetId": {"type": "integer"}
+                "sheetId": {"type": "integer"},
             },
-            "required": ["spreadsheetId", "find", "replace"]
-        }
-    },
-    "/google/integrations/sheets/sort-range": {
-        "sort_range": {
+            "required": ["spreadsheetId", "find", "replace"],
+            "additionalProperties": False
+        },
+       # sheets/sort-range (operation: sort_range)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
@@ -215,13 +222,13 @@ validators = {
                 "endRow": {"type": "integer", "minimum": 1},
                 "startCol": {"type": "integer", "minimum": 1},
                 "endCol": {"type": "integer", "minimum": 1},
-                "sortOrder": {"type": "array", "items": {"type": "object"}}
+                "sortOrder": {"type": "array", "items": {"type": "object"}},
             },
-            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "sortOrder"]
-        }
-    },
-    "/google/integrations/sheets/apply-conditional-formatting": {
-        "apply_conditional_formatting": {
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "sortOrder"],
+            "additionalProperties": False
+        },
+       # sheets/apply-conditional-formatting (operation: apply_conditional_formatting)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
@@ -231,64 +238,64 @@ validators = {
                 "startCol": {"type": "integer", "minimum": 1},
                 "endCol": {"type": "integer", "minimum": 1},
                 "condition": {"type": "object"},
-                "format": {"type": "object"}
+                "format": {"type": "object"},
             },
-            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "condition", "format"]
-        }
-    },
-    "/google/integrations/sheets/execute-query": {
-        "execute_query": {
+            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "condition", "format"],
+            "additionalProperties": False
+        },
+       # sheets/execute-query (operation: execute_query)
+        {
             "type": "object",
             "properties": {
                 "spreadsheetId": {"type": "string"},
                 "sheetName": {"type": "string"},
-                "query": {"type": "string"}
+                "query": {"type": "string"},
             },
-            "required": ["spreadsheetId", "query"]
-        }
-    },
-    "/google/integrations/docs/create-document": {
-        "create_new_document": {
+            "required": ["spreadsheetId", "query"],
+            "additionalProperties": False
+        },
+       # docs/create-document (operation: create_new_document)
+        {
             "type": "object",
             "properties": {
-                "title": {"type": "string"}
+                "title": {"type": "string"},
             },
-            "required": ["title"]
-        }
-    },
-    "/google/integrations/docs/get-contents": {
-        "get_document_contents": {
+            "required": ["title"],
+            "additionalProperties": False
+        },
+       # docs/get-contents (operation: get_document_contents)
+        {
             "type": "object",
             "properties": {
-                "documentId": {"type": "string"}
+                "documentId": {"type": "string"},
             },
-            "required": ["documentId"]
-        }
-    },
-    "/google/integrations/docs/insert-text": {
-        "insert_text": {
+            "required": ["documentId"],
+            "additionalProperties": False
+        },
+       # docs/insert-text (operation: insert_text)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
                 "text": {"type": "string"},
-                "index": {"type": "integer", "minimum": 1}
+                "index": {"type": "integer", "minimum": 1},
             },
-            "required": ["documentId", "text", "index"]
-        }
-    },
-    "/google/integrations/docs/replace-text": {
-        "replace_text": {
+            "required": ["documentId", "text", "index"],
+            "additionalProperties": False
+        },
+       # docs/replace-text (operation: replace_text)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
                 "oldText": {"type": "string"},
-                "newText": {"type": "string"}
+                "newText": {"type": "string"},
             },
-            "required": ["documentId", "oldText", "newText"]
-        }
-    },
-    "/google/integrations/docs/create-outline": {
-        "create_document_outline": {
+            "required": ["documentId", "oldText", "newText"],
+            "additionalProperties": False
+        },
+       # docs/create-outline (operation: create_document_outline)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
@@ -298,194 +305,194 @@ validators = {
                         "type": "object",
                         "properties": {
                             "start": {"type": "integer", "minimum": 1},
-                            "end": {"type": "integer", "minimum": 1}
+                            "end": {"type": "integer", "minimum": 1},
                         },
-                        "required": ["start", "end"]
-                    }
-                }
+                        "required": ["start", "end"],
+                    },
+                },
             },
-            "required": ["documentId", "outlineItems"]
-        }
-    },
-    "/google/integrations/docs/export-document": {
-        "export_document": {
+            "required": ["documentId", "outlineItems"],
+            "additionalProperties": False
+        },
+       # docs/export-document (operation: export_document)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
-                "mimeType": {"type": "string"}
+                "mimeType": {"type": "string"},
             },
-            "required": ["documentId", "mimeType"]
-        }
-    },
-    "/google/integrations/docs/share-document": {
-        "share_document": {
+            "required": ["documentId", "mimeType"],
+            "additionalProperties": False
+        },
+       # docs/share-document (operation: share_document)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
                 "email": {"type": "string", "format": "email"},
-                "role": {"type": "string", "enum": ["writer", "reader", "commenter"]}
+                "role": {"type": "string", "enum": ["writer", "reader", "commenter"]},
             },
-            "required": ["documentId", "email", "role"]
-        }
-    },
-    "/google/integrations/docs/find-text-indices": {
-        "find_text_indices": {
+            "required": ["documentId", "email", "role"],
+            "additionalProperties": False
+        },
+       # docs/find-text-indices (operation: find_text_indices)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
-                "searchText": {"type": "string"}
+                "searchText": {"type": "string"},
             },
-            "required": ["documentId", "searchText"]
-        }
-    },
-    "/google/integrations/docs/append-text": {
-        "append_text": {
+            "required": ["documentId", "searchText"],
+            "additionalProperties": False
+        },
+       # docs/append-text (operation: append_text)
+        {
             "type": "object",
             "properties": {
                 "documentId": {"type": "string"},
-                "text": {"type": "string"}
+                "text": {"type": "string"},
             },
-            "required": ["documentId", "text"]
-        }
-    },
-    "/google/integrations/calendar/create-event": {
-        "create_event": {
+            "required": ["documentId", "text"],
+            "additionalProperties": False
+        },
+       # calendar/create-event (operation: create_event)
+        {
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
                 "startTime": {"type": "string", "format": "date-time"},
                 "endTime": {"type": "string", "format": "date-time"},
-                "description": {"type": "string"}
+                "description": {"type": "string"},
             },
-            "required": ["title", "startTime", "endTime", "description"]
-        }
-    },
-    "/google/integrations/calendar/update-event": {
-        "update_event": {
+            "required": ["title", "startTime", "endTime", "description"],
+            "additionalProperties": False
+        },
+       # calendar/update-event (operation: update_event)
+        {
             "type": "object",
             "properties": {
                 "eventId": {"type": "string"},
-                "updatedFields": {"type": "object"}
+                "updatedFields": {"type": "object"},
             },
-            "required": ["eventId", "updatedFields"]
-        }
-    },
-    "/google/integrations/calendar/delete-event": {
-        "delete_event": {
+            "required": ["eventId", "updatedFields"],
+            "additionalProperties": False
+        },
+       # calendar/delete-event (operation: delete_event)
+        {
             "type": "object",
             "properties": {
-                "eventId": {"type": "string"}
+                "eventId": {"type": "string"},
             },
-            "required": ["eventId"]
-        }
-    },
-    "/google/integrations/calendar/get-event-details": {
-        "get_event_details": {
+            "required": ["eventId"],
+            "additionalProperties": False
+        },
+       # calendar/get-event-details (operation: get_event_details)
+        {
             "type": "object",
             "properties": {
-                "eventId": {"type": "string"}
+                "eventId": {"type": "string"},
             },
-            "required": ["eventId"]
-        }
-    },
-    "/google/integrations/calendar/get-events-between-dates": {
-        "get_events_between_dates": {
+            "required": ["eventId"],
+            "additionalProperties": False
+        },
+       # calendar/get-events-between-dates (operation: get_events_between_dates)
+        {
             "type": "object",
             "properties": {
                 "startDate": {"type": "string", "format": "date-time"},
                 "endDate": {"type": "string", "format": "date-time"},
                 "includeDescription": {"type": "boolean"},
                 "includeAttendees": {"type": "boolean"},
-                "includeLocation": {"type": "boolean"}
+                "includeLocation": {"type": "boolean"},
             },
-            "required": ["startDate", "endDate"]
-        }
-    },
-    "/google/integrations/calendar/get-events-for-date": {
-        "get_events_for_date": {
+            "required": ["startDate", "endDate"],
+            "additionalProperties": False
+        },
+       # calendar/get-events-for-date (operation: get_events_for_date)
+        {
             "type": "object",
             "properties": {
                 "date": {"type": "string", "format": "date"},
                 "includeDescription": {"type": "boolean"},
                 "includeAttendees": {"type": "boolean"},
-                "includeLocation": {"type": "boolean"}
+                "includeLocation": {"type": "boolean"},
             },
-            "required": ["date"]
-        }
-    },
-    "/google/integrations/calendar/get-upcoming-events": {
-        "get_upcoming_events": {
+            "required": ["date"],
+            "additionalProperties": False
+        },
+       # calendar/get-upcoming-events (operation: get_upcoming_events)
+        {
             "type": "object",
             "properties": {
                 "endDate": {"type": "string", "format": "date-time"},
                 "includeDescription": {"type": "boolean"},
                 "includeAttendees": {"type": "boolean"},
-                "includeLocation": {"type": "boolean"}
+                "includeLocation": {"type": "boolean"},
             },
-            "required": ["endDate"]
-        }
-    },
-    "/google/integrations/calendar/get-free-time-slots": {
-        "get_free_time_slots": {
+            "required": ["endDate"],
+            "additionalProperties": False
+        },
+       # calendar/get-free-time-slots (operation: get_free_time_slots)
+        {
             "type": "object",
             "properties": {
                 "startDate": {"type": "string", "format": "date-time"},
                 "endDate": {"type": "string", "format": "date-time"},
                 "duration": {"type": "integer", "minimum": 1},
-                "userTimeZone": {"type": "string"}
+                "userTimeZone": {"type": "string"},
             },
-            "required": ["startDate", "endDate", "duration"]
-        }
-    },
-    "/google/integrations/calendar/check-event-conflicts": {
-        "check_event_conflicts": {
+            "required": ["startDate", "endDate", "duration"],
+            "additionalProperties": False
+        },
+       # calendar/check-event-conflicts (operation: check_event_conflicts)
+        {
             "type": "object",
             "properties": {
                 "proposedStartTime": {"type": "string", "format": "date-time"},
                 "proposedEndTime": {"type": "string", "format": "date-time"},
-                "returnConflictingEvents": {"type": "boolean"}
+                "returnConflictingEvents": {"type": "boolean"},
             },
-            "required": ["proposedStartTime", "proposedEndTime"]
-        }
-    },
-    "/google/integrations/drive/list-files": {
-        "list_files": {
+            "required": ["proposedStartTime", "proposedEndTime"],
+            "additionalProperties": False
+        },
+       # drive/list-files (operation: list_files)
+        {
             "type": "object",
             "properties": {
                 "folderId": {"type": "string"},
             },
             "required": [],
-        }
-    },
-    "/google/integrations/drive/search-files": {
-        "search_files": {
+            "additionalProperties": False
+        },
+       # drive/search-files (operation: search_files)
+        {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
             },
             "required": ["query"],
-        }
-    },
-    "/google/integrations/drive/get-file-metadata": {
-        "get_file_metadata": {
+            "additionalProperties": False
+        },
+       # drive/get-file-metadata (operation: get_file_metadata)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
             },
             "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/get-file-content": {
-        "get_file_content": {
+            "additionalProperties": False
+        },
+       # drive/get-file-content (operation: get_file_content)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
             },
             "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/create-file": {
-        "create_file": {
+            "additionalProperties": False
+        },
+       # drive/create-file (operation: create_file)
+        {
             "type": "object",
             "properties": {
                 "fileName": {"type": "string"},
@@ -493,29 +500,29 @@ validators = {
                 "mimeType": {"type": "string"},
             },
             "required": ["fileName", "content"],
-        }
-    },
-    "/google/integrations/drive/get-download-link": {
-        "get_download_link": {
+            "additionalProperties": False
+        },
+       # drive/get-download-link (operation: get_download_link)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
             },
             "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/create-shared-link": {
-        "create_shared_link": {
+            "additionalProperties": False
+        },
+       # drive/create-shared-link (operation: create_shared_link)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
                 "permission": {"type": "string", "enum": ["view", "edit"]},
             },
             "required": ["fileId", "permission"],
-        }
-    },
-    "/google/integrations/drive/share-file": {
-        "share_file": {
+            "additionalProperties": False
+        },
+       # drive/share-file (operation: share_file)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
@@ -523,203 +530,204 @@ validators = {
                 "role": {"type": "string", "enum": ["reader", "commenter", "writer"]},
             },
             "required": ["fileId", "emails", "role"],
-        }
-    },
-    "/google/integrations/drive/convert-file": {
-        "convert_file": {
+            "additionalProperties": False
+        },
+       # drive/convert-file (operation: convert_file)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
                 "targetMimeType": {"type": "string"},
             },
             "required": ["fileId", "targetMimeType"],
-        }
-    },
-    "/google/integrations/drive/list-folders": {
-        "list_folders": {
+            "additionalProperties": False
+        },
+       # drive/list-folders (operation: list_folders)
+        {
             "type": "object",
             "properties": {
                 "parentFolderId": {"type": "string"},
             },
             "required": [],
-        }
-    },
-    "/google/integrations/drive/move-item": {
-        "move_item": {
+            "additionalProperties": False
+        },
+       # drive/move-item (operation: move_item)
+        {
             "type": "object",
             "properties": {
                 "itemId": {"type": "string"},
                 "destinationFolderId": {"type": "string"},
             },
             "required": ["itemId", "destinationFolderId"],
-        }
-    },
-    "/google/integrations/drive/copy-item": {
-        "copy_item": {
+            "additionalProperties": False
+        },
+       # drive/copy-item (operation: copy_item)
+        {
             "type": "object",
             "properties": {
                 "itemId": {"type": "string"},
                 "newName": {"type": "string"},
             },
             "required": ["itemId"],
-        }
-    },
-    "/google/integrations/drive/rename-item": {
-        "rename_item": {
+            "additionalProperties": False
+        },
+       # drive/rename-item (operation: rename_item)
+        {
             "type": "object",
             "properties": {
                 "itemId": {"type": "string"},
                 "newName": {"type": "string"},
             },
             "required": ["itemId", "newName"],
-        }
-    },
-    "/google/integrations/drive/get-file-revisions": {
-        "get_file_revisions": {
+            "additionalProperties": False
+        },
+       # drive/get-file-revisions (operation: get_file_revisions)
+        {
             "type": "object",
             "properties": {
                 "fileId": {"type": "string"},
             },
             "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/create-folder": {
-        "create_folder": {
+            "additionalProperties": False
+        },
+       # drive/create-folder (operation: create_folder)
+        {
             "type": "object",
             "properties": {
                 "folderName": {"type": "string"},
                 "parentId": {"type": "string"},
             },
             "required": ["folderName"],
-        }
-    },
-    "/google/integrations/drive/delete-item-permanently": {
-        "delete_item_permanently": {
+            "additionalProperties": False
+        },
+       # drive/delete-item-permanently (operation: delete_item_permanently)
+        {
             "type": "object",
             "properties": {
                 "itemId": {"type": "string"},
             },
             "required": ["itemId"],
-        }
-    },
-    "/google/integrations/drive/get-root-folder-ids": {
-        "get_root_folder_ids": {
-        }
-    },
-
-    "/google/integrations/forms/create-form": {
-        "create_form": {
+            "additionalProperties": False
+        },
+       # drive/get-root-folder-ids (operation: get_root_folder_ids)
+        {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        },
+       # forms/create-form (operation: create_form)
+        {
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
-                "description": {"type": "string"}
+                "description": {"type": "string"},
             },
-            "required": ["title"]
-        }
-    },
-    "/google/integrations/forms/get-form-details": {
-        "get_form_details": {
+            "required": ["title"],
+            "additionalProperties": False
+        },
+       # forms/get-form-details (operation: get_form_details)
+        {
             "type": "object",
             "properties": {
-                "formId": {"type": "string"}
+                "formId": {"type": "string"},
             },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/add-question": {
-        "add_question": {
+            "required": ["formId"],
+            "additionalProperties": False
+        },
+       # forms/add-question (operation: add_question)
+        {
             "type": "object",
             "properties": {
                 "formId": {"type": "string"},
                 "questionType": {"type": "string"},
                 "title": {"type": "string"},
                 "required": {"type": "boolean"},
-                "options": {"type": "array", "items": {"type": "string"}}
+                "options": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["formId", "questionType", "title"]
-        }
-    },
-    "/google/integrations/forms/update-question": {
-        "update_question": {
+            "required": ["formId", "questionType", "title"],
+            "additionalProperties": False
+        },
+       # forms/update-question (operation: update_question)
+        {
             "type": "object",
             "properties": {
                 "formId": {"type": "string"},
                 "questionId": {"type": "string"},
                 "title": {"type": "string"},
                 "required": {"type": "boolean"},
-                "options": {"type": "array", "items": {"type": "string"}}
+                "options": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["formId", "questionId"]
-        }
-    },
-    "/google/integrations/forms/delete-question": {
-        "delete_question": {
+            "required": ["formId", "questionId"],
+            "additionalProperties": False
+        },
+       # forms/delete-question (operation: delete_question)
+        {
             "type": "object",
             "properties": {
                 "formId": {"type": "string"},
-                "questionId": {"type": "string"}
+                "questionId": {"type": "string"},
             },
-            "required": ["formId", "questionId"]
-        }
-    },
-    "/google/integrations/forms/get-responses": {
-        "get_responses": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"}
-            },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/get-response": {
-        "get_response": {
+            "required": ["formId", "questionId"],
+            "additionalProperties": False
+        },
+       # forms/get-responses (operation: get_responses)
+        {
             "type": "object",
             "properties": {
                 "formId": {"type": "string"},
-                "responseId": {"type": "string"}
             },
-            "required": ["formId", "responseId"]
-        }
-    },
-    "/google/integrations/forms/set-form-settings": {
-        "set_form_settings": {
+            "required": ["formId"],
+            "additionalProperties": False
+        },
+       # forms/get-response (operation: get_response)
+        {
             "type": "object",
             "properties": {
                 "formId": {"type": "string"},
-                "settings": {"type": "object"}
+                "responseId": {"type": "string"},
             },
-            "required": ["formId", "settings"]
-        }
-    },
-    "/google/integrations/forms/get-form-link": {
-        "get_form_link": {
+            "required": ["formId", "responseId"],
+            "additionalProperties": False
+        },
+       # forms/set-form-settings (operation: set_form_settings)
+        {
             "type": "object",
             "properties": {
-                "formId": {"type": "string"}
+                "formId": {"type": "string"},
+                "settings": {"type": "object"},
             },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/update-form-info": {
-        "update_form_info": {
+            "required": ["formId", "settings"],
+            "additionalProperties": False
+        },
+       # forms/get-form-link (operation: get_form_link)
+        {
+            "type": "object",
+            "properties": {
+                "formId": {"type": "string"},
+            },
+            "required": ["formId"],
+            "additionalProperties": False
+        },
+       # forms/update-form-info (operation: update_form_info)
+        {
             "type": "object",
             "properties": {
                 "formId": {"type": "string"},
                 "title": {"type": "string"},
-                "description": {"type": "string"}
+                "description": {"type": "string"},
             },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/list-user-forms": {
-        "list_user_forms": {
+            "required": ["formId"],
+            "additionalProperties": False
+        },
+       # forms/list-user-forms (operation: list_user_forms)
+        {
             "type": "object",
             "properties": {},
-            "required": []
-        }
-    },
-    "/google/integrations/gmail/compose-and-send": {
-        "compose_and_send_email": {
+            "required": [],
+            "additionalProperties": False
+        },
+       # gmail/compose-and-send (operation: compose_and_send_email)
+        {
             "type": "object",
             "properties": {
                 "to": {"type": "string"},
@@ -727,999 +735,94 @@ validators = {
                 "body": {"type": "string"},
                 "cc": {"type": "string"},
                 "bcc": {"type": "string"},
-                "scheduleTime": {"type": "string"}
+                "scheduleTime": {"type": "string"},
             },
-            "required": ["to", "subject", "body"]
-        }
-    },
-    "/google/integrations/gmail/compose-draft": {
-        "compose_email_draft": {
+            "required": ["to", "subject", "body"],
+            "additionalProperties": False
+        },
+       # gmail/compose-draft (operation: compose_email_draft)
+        {
             "type": "object",
             "properties": {
                 "to": {"type": "string"},
                 "subject": {"type": "string"},
                 "body": {"type": "string"},
                 "cc": {"type": "string"},
-                "bcc": {"type": "string"}
+                "bcc": {"type": "string"},
             },
-            "required": ["to", "subject", "body"]
-        }
-    },
-    "/google/integrations/gmail/get-recent-messages": {
-        "get_recent_messages": {
+            "required": ["to", "subject", "body"],
+            "additionalProperties": False
+        },
+       # gmail/get-recent-messages (operation: get_recent_messages)
+        {
             "type": "object",
             "properties": {
                 "n": {"type": "integer"},
                 "label": {"type": "string"},
-                "days": {"type": "integer"}
+                "days": {"type": "integer"},
             },
-            "required": ["n"]
-        }
-    },
-    "/google/integrations/gmail/search-messages": {
-        "search_messages": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"}
-            },
-            "required": ["query"]
-        }
-    },
-    "/google/integrations/gmail/get-attachment-links": {
-        "get_attachment_links": {
-            "type": "object",
-            "properties": {
-                "messageId": {"type": "string"}
-            },
-            "required": ["messageId"]
-        }
-    },
-    "/google/integrations/gmail/get-attachment-content": {
-        "get_attachment_content": {
-            "type": "object",
-            "properties": {
-                "messageId": {"type": "string"},
-                "attachmentId": {"type": "string"}
-            },
-            "required": ["messageId", "attachmentId"]
-        }
-    },
-    "/google/integrations/gmail/create-filter": {
-        "create_filter": {
-            "type": "object",
-            "properties": {
-                "criteria": {"type": "object"},
-                "action": {"type": "object"}
-            },
-            "required": ["criteria", "action"]
-        }
-    },
-    "/google/integrations/gmail/create-label": {
-        "create_label": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"}
-            },
-            "required": ["name"]
-        }
-    },
-    "/google/integrations/gmail/create-auto-filter-label-rule": {
-        "create_auto_filter_label_rule": {
-            "type": "object",
-            "properties": {
-                "criteria": {"type": "object"},
-                "labelName": {"type": "string"}
-            },
-            "required": ["criteria", "labelName"]
-        }
-    },
-    "/google/integrations/gmail/get-message-details": {
-        "get_message_details": {
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "type": "string",
-                    "description": "ID of the message to retrieve details for"
-                },
-                "fields": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "id", "threadId", "historyId", "sizeEstimate", "raw", "payload",
-                            "mimeType", "attachments", "sender", "subject", "labels", "date",
-                            "snippet", "body", "cc", "bcc", "deliveredTo", "receivedTime", "sentTime"
-                        ]
-                    },
-                    "description": "List of fields to include in the response"
-                }
-            },
-            "required": ["message_id"]
-        }
-    },
-
-        "/google/integrations/people/search-contacts": {
-            "search_contacts": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "page_size": {"type": "integer"}
-                },
-                "required": ["query"]
-            }
+            "required": ["n"],
+            "additionalProperties": False
         },
-        "/google/integrations/people/get-contact-details": {
-            "get_contact_details": {
-                "type": "object",
-                "properties": {
-                    "resource_name": {"type": "string"}
-                },
-                "required": ["resource_name"]
-            }
-        },
-        "/google/integrations/people/create-contact": {
-            "create_contact": {
-                "type": "object",
-                "properties": {
-                    "contact_info": {"type": "object"}
-                },
-                "required": ["contact_info"]
-            }
-        },
-        "/google/integrations/people/update-contact": {
-            "update_contact": {
-                "type": "object",
-                "properties": {
-                    "resource_name": {"type": "string"},
-                    "contact_info": {"type": "object"}
-                },
-                "required": ["resource_name", "contact_info"]
-            }
-        },
-        "/google/integrations/people/delete-contact": {
-            "delete_contact": {
-                "type": "object",
-                "properties": {
-                    "resource_name": {"type": "string"}
-                },
-                "required": ["resource_name"]
-            }
-        },
-        "/google/integrations/people/list-contact-groups": {
-            "list_contact_groups": {
-                "type": "object",
-                "properties": {}
-            }
-        },
-        "/google/integrations/people/create-contact-group": {
-            "create_contact_group": {
-                "type": "object",
-                "properties": {
-                    "group_name": {"type": "string"}
-                },
-                "required": ["group_name"]
-            }
-        },
-        "/google/integrations/people/update-contact-group": {
-            "update_contact_group": {
-                "type": "object",
-                "properties": {
-                    "resource_name": {"type": "string"},
-                    "new_name": {"type": "string"}
-                },
-                "required": ["resource_name", "new_name"]
-            }
-        },
-        "/google/integrations/people/delete-contact-group": {
-            "delete_contact_group": {
-                "type": "object",
-                "properties": {
-                    "resource_name": {"type": "string"}
-                },
-                "required": ["resource_name"]
-            }
-        },
-        "/google/integrations/people/add-contacts-to-group": {
-            "add_contacts_to_group": {
-                "type": "object",
-                "properties": {
-                    "group_resource_name": {"type": "string"},
-                    "contact_resource_names": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["group_resource_name", "contact_resource_names"]
-            }
-        },
-        "/google/integrations/people/remove-contacts-from-group": {
-            "remove_contacts_from_group": {
-                "type": "object",
-                "properties": {
-                    "group_resource_name": {"type": "string"},
-                    "contact_resource_names": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["group_resource_name", "contact_resource_names"]
-            }
-        }
-}
-
-api_validators = {
-    "/google/integrations/sheets/get-rows": {
-        "get_rows": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "cellRange": {"type": "string"},
-            },
-            "required": ["spreadsheetId", "cellRange"],
-        }
-    },
-    "/google/integrations/sheets/get-info": {
-        "get_google_sheets_info": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-            },
-            "required": ["spreadsheetId"],
-        }
-    },
-    "/google/integrations/sheets/get-sheet-names": {
-        "get_sheet_names": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-            },
-            "required": ["spreadsheetId"],
-        }
-    },
-    "/google/integrations/sheets/insert-rows": {
-        "insert_rows": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "rowsData": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
-                "sheetName": {"type": "string"},
-                "insertionPoint": {"type": "integer"}
-            },
-            "required": ["spreadsheetId", "rowsData"]
-        }
-    },
-    "/google/integrations/sheets/delete-rows": {
-        "delete_rows": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetName": {"type": "string"},
-                "startRow": {"type": "integer", "minimum": 1},
-                "endRow": {"type": "integer", "minimum": 1}
-            },
-            "required": ["spreadsheetId", "startRow", "endRow"]
-        }
-    },
-    "/google/integrations/sheets/update-rows": {
-        "update_rows": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "rowsData": {
-                    "type": "array",
-                    "items": {
-                        "type": "array",
-                        "items": {"type": ["string", "number"]},
-                        "minItems": 2
-                    }
-                },
-                "sheetName": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "rowsData"]
-        }
-    },
-    "/google/integrations/sheets/create-spreadsheet": {
-        "create_spreadsheet": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"}
-            },
-            "required": ["title"]
-        }
-    },
-    "/google/integrations/sheets/duplicate-sheet": {
-        "duplicate_sheet": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "newSheetName": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "sheetId", "newSheetName"]
-        }
-    },
-    "/google/integrations/sheets/rename-sheet": {
-        "rename_sheet": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "newName": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "sheetId", "newName"]
-        }
-    },
-    "/google/integrations/sheets/clear-range": {
-        "clear_range": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "rangeName": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "rangeName"]
-        }
-    },
-    "/google/integrations/sheets/apply-formatting": {
-        "apply_formatting": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "startRow": {"type": "integer", "minimum": 1},
-                "endRow": {"type": "integer", "minimum": 1},
-                "startCol": {"type": "integer", "minimum": 1},
-                "endCol": {"type": "integer", "minimum": 1},
-                "formatJson": {"type": "object"}
-            },
-            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "formatJson"]
-        }
-    },
-    "/google/integrations/sheets/add-chart": {
-        "add_chart": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "chartSpec": {"type": "object"}
-            },
-            "required": ["spreadsheetId", "sheetId", "chartSpec"]
-        }
-    },
-    "/google/integrations/sheets/get-cell-formulas": {
-        "get_cell_formulas": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "rangeName": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "rangeName"]
-        }
-    },
-    "/google/integrations/sheets/find-replace": {
-        "find_replace": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "find": {"type": "string"},
-                "replace": {"type": "string"},
-                "sheetId": {"type": "integer"}
-            },
-            "required": ["spreadsheetId", "find", "replace"]
-        }
-    },
-    "/google/integrations/sheets/sort-range": {
-        "sort_range": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "startRow": {"type": "integer", "minimum": 1},
-                "endRow": {"type": "integer", "minimum": 1},
-                "startCol": {"type": "integer", "minimum": 1},
-                "endCol": {"type": "integer", "minimum": 1},
-                "sortOrder": {"type": "array", "items": {"type": "object"}}
-            },
-            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "sortOrder"]
-        }
-    },
-    "/google/integrations/sheets/apply-conditional-formatting": {
-        "apply_conditional_formatting": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetId": {"type": "integer"},
-                "startRow": {"type": "integer", "minimum": 1},
-                "endRow": {"type": "integer", "minimum": 1},
-                "startCol": {"type": "integer", "minimum": 1},
-                "endCol": {"type": "integer", "minimum": 1},
-                "condition": {"type": "object"},
-                "format": {"type": "object"}
-            },
-            "required": ["spreadsheetId", "sheetId", "startRow", "endRow", "startCol", "endCol", "condition", "format"]
-        }
-    },
-    "/google/integrations/sheets/execute-query": {
-        "execute_query": {
-            "type": "object",
-            "properties": {
-                "spreadsheetId": {"type": "string"},
-                "sheetName": {"type": "string"},
-                "query": {"type": "string"}
-            },
-            "required": ["spreadsheetId", "query"]
-        }
-    },
-    "/google/integrations/docs/create-document": {
-        "create_new_document": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"}
-            },
-            "required": ["title"]
-        }
-    },
-    "/google/integrations/docs/get-contents": {
-        "get_document_contents": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"}
-            },
-            "required": ["documentId"]
-        }
-    },
-    "/google/integrations/docs/insert-text": {
-        "insert_text": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "text": {"type": "string"},
-                "index": {"type": "integer", "minimum": 1}
-            },
-            "required": ["documentId", "text", "index"]
-        }
-    },
-    "/google/integrations/docs/replace-text": {
-        "replace_text": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "oldText": {"type": "string"},
-                "newText": {"type": "string"}
-            },
-            "required": ["documentId", "oldText", "newText"]
-        }
-    },
-    "/google/integrations/docs/create-outline": {
-        "create_document_outline": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "outlineItems": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "start": {"type": "integer", "minimum": 1},
-                            "end": {"type": "integer", "minimum": 1}
-                        },
-                        "required": ["start", "end"]
-                    }
-                }
-            },
-            "required": ["documentId", "outlineItems"]
-        }
-    },
-    "/google/integrations/docs/export-document": {
-        "export_document": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "mimeType": {"type": "string"}
-            },
-            "required": ["documentId", "mimeType"]
-        }
-    },
-    "/google/integrations/docs/share-document": {
-        "share_document": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "email": {"type": "string", "format": "email"},
-                "role": {"type": "string", "enum": ["writer", "reader", "commenter"]}
-            },
-            "required": ["documentId", "email", "role"]
-        }
-    },
-    "/google/integrations/docs/find-text-indices": {
-        "find_text_indices": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "searchText": {"type": "string"}
-            },
-            "required": ["documentId", "searchText"]
-        }
-    },
-    "/google/integrations/docs/append-text": {
-        "append_text": {
-            "type": "object",
-            "properties": {
-                "documentId": {"type": "string"},
-                "text": {"type": "string"}
-            },
-            "required": ["documentId", "text"]
-        }
-    },
-    "/google/integrations/calendar/create-event": {
-        "create_event": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "startTime": {"type": "string", "format": "date-time"},
-                "endTime": {"type": "string", "format": "date-time"},
-                "description": {"type": "string"}
-            },
-            "required": ["title", "startTime", "endTime", "description"]
-        }
-    },
-    "/google/integrations/calendar/update-event": {
-        "update_event": {
-            "type": "object",
-            "properties": {
-                "eventId": {"type": "string"},
-                "updatedFields": {"type": "object"}
-            },
-            "required": ["eventId", "updatedFields"]
-        }
-    },
-    "/google/integrations/calendar/delete-event": {
-        "delete_event": {
-            "type": "object",
-            "properties": {
-                "eventId": {"type": "string"}
-            },
-            "required": ["eventId"]
-        }
-    },
-    "/google/integrations/calendar/get-event-details": {
-        "get_event_details": {
-            "type": "object",
-            "properties": {
-                "eventId": {"type": "string"}
-            },
-            "required": ["eventId"]
-        }
-    },
-    "/google/integrations/calendar/get-events-between-dates": {
-        "get_events_between_dates": {
-            "type": "object",
-            "properties": {
-                "startDate": {"type": "string", "format": "date-time"},
-                "endDate": {"type": "string", "format": "date-time"},
-                "includeDescription": {"type": "boolean"},
-                "includeAttendees": {"type": "boolean"},
-                "includeLocation": {"type": "boolean"}
-            },
-            "required": ["startDate", "endDate"]
-        }
-    },
-    "/google/integrations/calendar/get-events-for-date": {
-        "get_events_for_date": {
-            "type": "object",
-            "properties": {
-                "date": {"type": "string", "format": "date"},
-                "includeDescription": {"type": "boolean"},
-                "includeAttendees": {"type": "boolean"},
-                "includeLocation": {"type": "boolean"}
-            },
-            "required": ["date"]
-        }
-    },
-    "/google/integrations/calendar/get-upcoming-events": {
-        "get_upcoming_events": {
-            "type": "object",
-            "properties": {
-                "endDate": {"type": "string", "format": "date-time"},
-                "includeDescription": {"type": "boolean"},
-                "includeAttendees": {"type": "boolean"},
-                "includeLocation": {"type": "boolean"}
-            },
-            "required": ["endDate"]
-        }
-    },
-    "/google/integrations/calendar/get-free-time-slots": {
-        "get_free_time_slots": {
-            "type": "object",
-            "properties": {
-                "startDate": {"type": "string", "format": "date-time"},
-                "endDate": {"type": "string", "format": "date-time"},
-                "duration": {"type": "integer", "minimum": 1},
-                "userTimeZone": {"type": "string"}
-            },
-            "required": ["startDate", "endDate", "duration"]
-        }
-    },
-    "/google/integrations/calendar/check-event-conflicts": {
-        "check_event_conflicts": {
-            "type": "object",
-            "properties": {
-                "proposedStartTime": {"type": "string", "format": "date-time"},
-                "proposedEndTime": {"type": "string", "format": "date-time"},
-                "returnConflictingEvents": {"type": "boolean"}
-            },
-            "required": ["proposedStartTime", "proposedEndTime"]
-        }
-    },
-    "/google/integrations/drive/list-files": {
-        "list_files": {
-            "type": "object",
-            "properties": {
-                "folderId": {"type": "string"},
-            },
-            "required": [],
-        }
-    },
-    "/google/integrations/drive/search-files": {
-        "search_files": {
+       # gmail/search-messages (operation: search_messages)
+        {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
             },
             "required": ["query"],
-        }
-    },
-    "/google/integrations/drive/get-file-metadata": {
-        "get_file_metadata": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-            },
-            "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/get-file-content": {
-        "get_file_content": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-            },
-            "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/create-file": {
-        "create_file": {
-            "type": "object",
-            "properties": {
-                "fileName": {"type": "string"},
-                "content": {"type": "string"},
-                "mimeType": {"type": "string"},
-            },
-            "required": ["fileName", "content"],
-        }
-    },
-    "/google/integrations/drive/get-download-link": {
-        "get_download_link": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-            },
-            "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/create-shared-link": {
-        "create_shared_link": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-                "permission": {"type": "string", "enum": ["view", "edit"]},
-            },
-            "required": ["fileId", "permission"],
-        }
-    },
-    "/google/integrations/drive/share-file": {
-        "share_file": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-                "emails": {"type": "array", "items": {"type": "string"}},
-                "role": {"type": "string", "enum": ["reader", "commenter", "writer"]},
-            },
-            "required": ["fileId", "emails", "role"],
-        }
-    },
-    "/google/integrations/drive/convert-file": {
-        "convert_file": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-                "targetMimeType": {"type": "string"},
-            },
-            "required": ["fileId", "targetMimeType"],
-        }
-    },
-    "/google/integrations/drive/list-folders": {
-        "list_folders": {
-            "type": "object",
-            "properties": {
-                "parentFolderId": {"type": "string"},
-            },
-            "required": [],
-        }
-    },
-    "/google/integrations/drive/move-item": {
-        "move_item": {
-            "type": "object",
-            "properties": {
-                "itemId": {"type": "string"},
-                "destinationFolderId": {"type": "string"},
-            },
-            "required": ["itemId", "destinationFolderId"],
-        }
-    },
-    "/google/integrations/drive/copy-item": {
-        "copy_item": {
-            "type": "object",
-            "properties": {
-                "itemId": {"type": "string"},
-                "newName": {"type": "string"},
-            },
-            "required": ["itemId"],
-        }
-    },
-    "/google/integrations/drive/rename-item": {
-        "rename_item": {
-            "type": "object",
-            "properties": {
-                "itemId": {"type": "string"},
-                "newName": {"type": "string"},
-            },
-            "required": ["itemId", "newName"],
-        }
-    },
-    "/google/integrations/drive/get-file-revisions": {
-        "get_file_revisions": {
-            "type": "object",
-            "properties": {
-                "fileId": {"type": "string"},
-            },
-            "required": ["fileId"],
-        }
-    },
-    "/google/integrations/drive/create-folder": {
-        "create_folder": {
-            "type": "object",
-            "properties": {
-                "folderName": {"type": "string"},
-                "parentId": {"type": "string"},
-            },
-            "required": ["folderName"],
-        }
-    },
-    "/google/integrations/drive/delete-item-permanently": {
-        "delete_item_permanently": {
-            "type": "object",
-            "properties": {
-                "itemId": {"type": "string"},
-            },
-            "required": ["itemId"],
-        }
-    },
-    "/google/integrations/drive/get-root-folder-ids": {
-        "get_root_folder_ids": {
-        }
-    },
-
-    "/google/integrations/forms/create-form": {
-        "create_form": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "description": {"type": "string"}
-            },
-            "required": ["title"]
-        }
-    },
-    "/google/integrations/forms/get-form-details": {
-        "get_form_details": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"}
-            },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/add-question": {
-        "add_question": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"},
-                "questionType": {"type": "string"},
-                "title": {"type": "string"},
-                "required": {"type": "boolean"},
-                "options": {"type": "array", "items": {"type": "string"}}
-            },
-            "required": ["formId", "questionType", "title"]
-        }
-    },
-    "/google/integrations/forms/update-question": {
-        "update_question": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"},
-                "questionId": {"type": "string"},
-                "title": {"type": "string"},
-                "required": {"type": "boolean"},
-                "options": {"type": "array", "items": {"type": "string"}}
-            },
-            "required": ["formId", "questionId"]
-        }
-    },
-    "/google/integrations/forms/delete-question": {
-        "delete_question": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"},
-                "questionId": {"type": "string"}
-            },
-            "required": ["formId", "questionId"]
-        }
-    },
-    "/google/integrations/forms/get-responses": {
-        "get_responses": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"}
-            },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/get-response": {
-        "get_response": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"},
-                "responseId": {"type": "string"}
-            },
-            "required": ["formId", "responseId"]
-        }
-    },
-    "/google/integrations/forms/set-form-settings": {
-        "set_form_settings": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"},
-                "settings": {"type": "object"}
-            },
-            "required": ["formId", "settings"]
-        }
-    },
-    "/google/integrations/forms/get-form-link": {
-        "get_form_link": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"}
-            },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/update-form-info": {
-        "update_form_info": {
-            "type": "object",
-            "properties": {
-                "formId": {"type": "string"},
-                "title": {"type": "string"},
-                "description": {"type": "string"}
-            },
-            "required": ["formId"]
-        }
-    },
-    "/google/integrations/forms/list-user-forms": {
-        "list_user_forms": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    "/google/integrations/gmail/compose-and-send": {
-        "compose_and_send_email": {
-            "type": "object",
-            "properties": {
-                "to": {"type": "string"},
-                "subject": {"type": "string"},
-                "body": {"type": "string"},
-                "cc": {"type": "string"},
-                "bcc": {"type": "string"},
-                "scheduleTime": {"type": "string"}
-            },
-            "required": ["to", "subject", "body"]
-        }
-    },
-    "/google/integrations/gmail/compose-draft": {
-        "compose_email_draft": {
-            "type": "object",
-            "properties": {
-                "to": {"type": "string"},
-                "subject": {"type": "string"},
-                "body": {"type": "string"},
-                "cc": {"type": "string"},
-                "bcc": {"type": "string"}
-            },
-            "required": ["to", "subject", "body"]
-        }
-    },
-    "/google/integrations/gmail/get-messages-from-date": {
-        "get_messages_from_date": {
-            "type": "object",
-            "properties": {
-                "n": {"type": "integer"},
-                "startDate": {"type": "string"},
-                "label": {"type": "string"}
-            },
-            "required": ["n", "startDate"]
-        }
-    },
-    "/google/integrations/gmail/get-recent-messages": {
-        "get_recent_messages": {
-            "type": "object",
-            "properties": {
-                "n": {"type": "integer"},
-                "label": {"type": "string"}
-            }
-        }
-    },
-    "/google/integrations/gmail/search-messages": {
-        "search_messages": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"}
-            },
-            "required": ["query"]
-        }
-    },
-    "/google/integrations/gmail/get-attachment-links": {
-        "get_attachment_links": {
-            "type": "object",
-            "properties": {
-                "messageId": {"type": "string"}
-            },
-            "required": ["messageId"]
-        }
-    },
-    "/google/integrations/gmail/get-attachment-content": {
-        "get_attachment_content": {
+            "additionalProperties": False
+        },
+       # gmail/get-attachment-links (operation: get_attachment_links)
+        {
             "type": "object",
             "properties": {
                 "messageId": {"type": "string"},
-                "attachmentId": {"type": "string"}
             },
-            "required": ["messageId", "attachmentId"]
-        }
-    },
-    "/google/integrations/gmail/create-filter": {
-        "create_filter": {
+            "required": ["messageId"],
+            "additionalProperties": False
+        },
+       # gmail/get-attachment-content (operation: get_attachment_content)
+        {
+            "type": "object",
+            "properties": {
+                "messageId": {"type": "string"},
+                "attachmentId": {"type": "string"},
+            },
+            "required": ["messageId", "attachmentId"],
+            "additionalProperties": False
+        },
+       # gmail/create-filter (operation: create_filter)
+        {
             "type": "object",
             "properties": {
                 "criteria": {"type": "object"},
-                "action": {"type": "object"}
+                "action": {"type": "object"},
             },
-            "required": ["criteria", "action"]
-        }
-    },
-    "/google/integrations/gmail/create-label": {
-        "create_label": {
+            "required": ["criteria", "action"],
+            "additionalProperties": False
+        },
+       # gmail/create-label (operation: create_label)
+        {
             "type": "object",
             "properties": {
-                "name": {"type": "string"}
+                "name": {"type": "string"},
             },
-            "required": ["name"]
-        }
-    },
-    "/google/integrations/gmail/create-auto-filter-label-rule": {
-        "create_auto_filter_label_rule": {
+            "required": ["name"],
+            "additionalProperties": False
+        },
+       # gmail/create-auto-filter-label-rule (operation: create_auto_filter_label_rule)
+        {
             "type": "object",
             "properties": {
                 "criteria": {"type": "object"},
-                "labelName": {"type": "string"}
+                "labelName": {"type": "string"},
             },
-            "required": ["criteria", "labelName"]
-        }
-    },
-    "/google/integrations/gmail/get-message-details": {
-        "get_message_details": {
+            "required": ["criteria", "labelName"],
+            "additionalProperties": False
+        },
+       # gmail/get-message-details (operation: get_message_details)
+        {
             "type": "object",
             "properties": {
                 "message_id": {
@@ -1727,123 +830,140 @@ api_validators = {
                     "description": "ID of the message to retrieve details for"
                 },
                 "fields": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "id", "threadId", "historyId", "sizeEstimate", "raw", "payload",
-                            "mimeType", "attachments", "sender", "subject", "labels", "date",
-                            "snippet", "body", "cc", "bcc", "deliveredTo", "receivedTime", "sentTime"
-                        ]
-                    },
-                    "description": "List of fields to include in the response"
+                    "oneOf": [
+                        {"type": "string"},
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "id", "threadId", "historyId", "sizeEstimate", "raw", "payload",
+                                    "mimeType", "attachments", "sender", "subject", "labels", "date",
+                                    "snippet", "body", "cc", "bcc", "deliveredTo", "receivedTime", "sentTime"
+                                ]
+                            },
+                            "description": "List of fields to include in the response"
+                        }
+                    ]
                 }
             },
-            "required": ["message_id"]
-        }
-    },
-    "/google/integrations/people/search-contacts": {
-        "search_contacts": {
+            "required": ["message_id"],
+            "additionalProperties": False
+        },
+       # people/search-contacts (operation: search_contacts)
+        {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "page_size": {"type": "integer"}
+                "page_size": {"type": "integer"},
             },
-            "required": ["query"]
-        }
-    },
-    "/google/integrations/people/get-contact-details": {
-        "get_contact_details": {
-            "type": "object",
-            "properties": {
-                "resource_name": {"type": "string"}
-            },
-            "required": ["resource_name"]
-        }
-    },
-    "/google/integrations/people/create-contact": {
-        "create_contact": {
-            "type": "object",
-            "properties": {
-                "contact_info": {"type": "object"}
-            },
-            "required": ["contact_info"]
-        }
-    },
-    "/google/integrations/people/update-contact": {
-        "update_contact": {
+            "required": ["query"],
+            "additionalProperties": False
+        },
+       # people/get-contact-details (operation: get_contact_details)
+        {
             "type": "object",
             "properties": {
                 "resource_name": {"type": "string"},
-                "contact_info": {"type": "object"}
             },
-            "required": ["resource_name", "contact_info"]
-        }
-    },
-    "/google/integrations/people/delete-contact": {
-        "delete_contact": {
+            "required": ["resource_name"],
+            "additionalProperties": False
+        },
+       # people/create-contact (operation: create_contact)
+        {
             "type": "object",
             "properties": {
-                "resource_name": {"type": "string"}
+                "contact_info": {"type": "object"},
             },
-            "required": ["resource_name"]
-        }
-    },
-    "/google/integrations/people/list-contact-groups": {
-        "list_contact_groups": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    "/google/integrations/people/create-contact-group": {
-        "create_contact_group": {
-            "type": "object",
-            "properties": {
-                "group_name": {"type": "string"}
-            },
-            "required": ["group_name"]
-        }
-    },
-    "/google/integrations/people/update-contact-group": {
-        "update_contact_group": {
+            "required": ["contact_info"],
+            "additionalProperties": False
+        },
+       # people/update-contact (operation: update_contact)
+        {
             "type": "object",
             "properties": {
                 "resource_name": {"type": "string"},
-                "new_name": {"type": "string"}
+                "contact_info": {"type": "object"},
             },
-            "required": ["resource_name", "new_name"]
-        }
-    },
-    "/google/integrations/people/delete-contact-group": {
-        "delete_contact_group": {
+            "required": ["resource_name", "contact_info"],
+            "additionalProperties": False
+        },
+       # people/delete-contact (operation: delete_contact)
+        {
             "type": "object",
             "properties": {
-                "resource_name": {"type": "string"}
+                "resource_name": {"type": "string"},
             },
-            "required": ["resource_name"]
-        }
-    },
-    "/google/integrations/people/add-contacts-to-group": {
-        "add_contacts_to_group": {
+            "required": ["resource_name"],
+            "additionalProperties": False
+        },
+       # people/list-contact-groups (operation: list_contact_groups)
+        {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        },
+       # people/create-contact-group (operation: create_contact_group)
+        {
+            "type": "object",
+            "properties": {
+                "group_name": {"type": "string"},
+            },
+            "required": ["group_name"],
+            "additionalProperties": False
+        },
+       # people/update-contact-group (operation: update_contact_group)
+        {
+            "type": "object",
+            "properties": {
+                "resource_name": {"type": "string"},
+                "new_name": {"type": "string"},
+            },
+            "required": ["resource_name", "new_name"],
+            "additionalProperties": False
+        },
+       # people/delete-contact-group (operation: delete_contact_group)
+        {
+            "type": "object",
+            "properties": {
+                "resource_name": {"type": "string"},
+            },
+            "required": ["resource_name"],
+            "additionalProperties": False
+        },
+       # people/add-contacts-to-group (operation: add_contacts_to_group)
+        {
             "type": "object",
             "properties": {
                 "group_resource_name": {"type": "string"},
-                "contact_resource_names": {"type": "array", "items": {"type": "string"}}
+                "contact_resource_names": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["group_resource_name", "contact_resource_names"]
-        }
-    },
-    "/google/integrations/people/remove-contacts-from-group": {
-        "remove_contacts_from_group": {
+            "required": ["group_resource_name", "contact_resource_names"],
+            "additionalProperties": False
+        },
+       # people/remove-contacts-from-group (operation: remove_contacts_from_group)
+        {
             "type": "object",
             "properties": {
                 "group_resource_name": {"type": "string"},
-                "contact_resource_names": {"type": "array", "items": {"type": "string"}}
+                "contact_resource_names": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["group_resource_name", "contact_resource_names"]
-        }
-    }
+            "required": ["group_resource_name", "contact_resource_names"],
+            "additionalProperties": False
+        },
+    ]
 }
+
+
+validators = {
+    "/google/integrations" : {
+        "get" : {}
+    },
+    "/google/integrations/route" : {
+        "route" : route_data_schema
+    },
+}
+api_validators = validators
 
 
 def validate_data(name, op, data, api_accessed):
@@ -1967,9 +1087,10 @@ def get_claims(event, context, token):
             issuer=oauth_issuer_base_url,
         )
 
-        get_email = lambda text: text.split("_", 1)[1] if "_" in text else None
+        idp_prefix = os.getenv('IDP_PREFIX')
+        get_email = lambda text: text.split(idp_prefix + '_', 1)[1] if idp_prefix and text.startswith(idp_prefix + '_') else text
 
-        user = get_email(payload["username"])
+        user = get_email(payload['username'])
 
         # grab deafault account from accounts table
         dynamodb = boto3.resource("dynamodb")
@@ -2069,15 +1190,15 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get("accessTypes", [])
-        if (
-                "assistants" not in access
-                and "share" not in access
-                and "full_access" not in access
-        ):
-            print("API doesn't have access to assistants")
-            raise PermissionError(
-                "API key does not have access to assistants functionality"
-            )
+        # if (
+        #         "assistants" not in access
+        #         and "share" not in access
+        #         and "full_access" not in access
+        # ):
+        #     print("API doesn't have access to assistants")
+        #     raise PermissionError(
+        #         "API key does not have access to assistants functionality"
+        #     )
 
         # Determine API user
         current_user = determine_api_user(item)

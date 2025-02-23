@@ -8,7 +8,7 @@ from integrations.google.docs import find_text_indices, append_text
 from integrations.google.drive import convert_file, share_file, create_shared_link, get_download_link, create_file, \
     get_file_content, get_file_metadata, search_files, list_files, list_folders, move_item, copy_item, rename_item, \
     delete_item_permanently, get_file_revisions, create_folder, get_root_folder_ids
-from integrations.google.gmail import get_messages_details, compose_and_send_email, compose_email_draft, get_recent_messages, search_messages, \
+from integrations.google.gmail import get_message_details, compose_and_send_email, compose_email_draft, get_recent_messages, search_messages, \
     get_attachment_links, get_attachment_content, create_filter, create_label, create_auto_filter_label_rule, \
     get_messages_from_date
 from integrations.google.people import remove_contacts_from_group, add_contacts_to_group, delete_contact_group, \
@@ -19,17 +19,21 @@ from integrations.google.sheets import get_spreadsheet_rows, get_sheets_info, ge
     add_chart, apply_formatting, clear_range, rename_sheet, duplicate_sheet, execute_query
 from integrations.google.docs import create_new_document, get_document_contents, insert_text, replace_text, create_document_outline, export_document, share_document, find_text_indices
 from integrations.oauth import MissingCredentialsError
+
+
 import re
+
 
 def camel_to_snake(name):
     snake = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
     return snake
 
 def common_handler(operation, *required_params, **optional_params):
-    def handler(event, context, current_user, name, data):
+    def handler(current_user, data):
         try:
             params = {camel_to_snake(param): data['data'][param] for param in required_params}
             params.update({camel_to_snake(param): data['data'].get(param) for param in optional_params})
+            params['access_token'] = data['access_token']
             response = operation(current_user, **params)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
@@ -38,9 +42,199 @@ def common_handler(operation, *required_params, **optional_params):
             return {"success": False, "error": str(e)}
     return handler
 
+
+@validated("route")
+def route_request(event, context, current_user, name, data):
+
+    query_params = event.get('queryStringParameters', {})
+    print("Query params: ", query_params)
+    op = query_params.get('op', '')
+    if not op:
+        return {
+              'success': False,
+              'message': 'Invalid or missing op query parameter'
+              }
+    print("op: ", op)
+    print("data: ", data['data'])
+
+    match op:
+        case "get_rows":
+            return get_google_sheets_info(current_user, data)
+        case "get_google_sheets_info":
+            return get_google_sheets_info(current_user, data)
+        case "get_sheet_names":
+            return get_sheet_names_handler(current_user, data)
+        case "insert_rows":
+            return insert_rows_handler(current_user, data)
+        case "delete_rows":
+            return delete_rows_handler(current_user, data)
+        case "update_rows":
+            return update_rows_handler(current_user, data)
+        case "create_spreadsheet":
+            return create_spreadsheet_handler(current_user, data)
+        case "duplicate_sheet":
+            return duplicate_sheet_handler(current_user, data)
+        case "rename_sheet":
+            return rename_sheet_handler(current_user, data)
+        case "clear_range":
+            return clear_range_handler(current_user, data)
+        case "apply_formatting":
+            return apply_formatting_handler(current_user, data)
+        case "add_chart":
+            return add_chart_handler(current_user, data)
+        case "get_cell_formulas":
+            return get_cell_formulas_handler(current_user, data)
+        case "find_replace":
+            return find_replace_handler(current_user, data)
+        case "sort_range":
+            return sort_range_handler(current_user, data)
+        case "apply_conditional_formatting":
+            return apply_conditional_formatting_handler(current_user, data)
+        case "execute_query":
+            return execute_query_handler(current_user, data)
+        case "create_new_document":
+            return create_new_document_handler(current_user, data)
+        case "get_document_contents":
+            return get_document_contents_handler(current_user, data)
+        case "insert_text":
+            return insert_text_handler(current_user, data)
+        case "append_text":
+            return append_text_handler(current_user, data)
+        case "replace_text":
+            return replace_text_handler(current_user, data)
+        case "create_document_outline":
+            return create_document_outline_handler(current_user, data)
+        case "export_document":
+            return export_document_handler(current_user, data)
+        case "share_document":
+            return share_document_handler(current_user, data)
+        case "find_text_indices":
+            return find_text_indices_handler(current_user, data)
+        case "get_events_between_dates":
+            return get_events_between_dates_handler(current_user, data)
+        case "create_event":
+            return create_event_handler(current_user, data)
+        case "update_event":
+            return update_event_handler(current_user, data)
+        case "delete_event":
+            return delete_event_handler(current_user, data)
+        case "get_event_details":
+            return get_event_details_handler(current_user, data)
+        case "get_events_for_date":
+            return get_events_for_date_handler(current_user, data)
+        case "get_free_time_slots":
+            return get_free_time_slots_handler(current_user, data)
+        case "check_event_conflicts":
+            return check_event_conflicts_handler(current_user, data)
+        case "list_files":
+            return list_files_handler(current_user, data)
+        case "search_files":
+            return search_files_handler(current_user, data)
+        case "get_file_metadata":
+            return get_file_metadata_handler(current_user, data)
+        case "get_file_content":
+            return get_file_content_handler(current_user, data)
+        case "create_file":
+            return create_file_handler(current_user, data)
+        case "get_download_link":
+            return get_download_link_handler(current_user, data)
+        case "create_shared_link":
+            return create_shared_link_handler(current_user, data)
+        case "share_file":
+            return share_file_handler(current_user, data)
+        case "convert_file":
+            return convert_file_handler(current_user, data)
+        case "list_folders":
+            return list_folders_handler(current_user, data)
+        case "move_item":
+            return move_item_handler(current_user, data)
+        case "copy_item":
+            return copy_item_handler(current_user, data)
+        case "rename_item":
+            return rename_item_handler(current_user, data)
+        case "get_file_revisions":
+            return get_file_revisions_handler(current_user, data)
+        case "create_folder":
+            return create_folder_handler(current_user, data)
+        case "delete_item_permanently":
+            return delete_item_permanently_handler(current_user, data)
+        case "get_root_folder_ids":
+            return get_root_folder_ids_handler(current_user, data)
+        case "create_form":
+            return create_form_handler(current_user, data)
+        case "get_form_details":
+            return get_form_details_handler(current_user, data)
+        case "add_question":
+            return add_question_handler(current_user, data)
+        case "update_question":
+            return update_question_handler(current_user, data)
+        case "delete_question":
+            return delete_question_handler(current_user, data)
+        case "get_responses":
+            return get_responses_handler(current_user, data)
+        case "get_response":
+            return get_response_handler(current_user, data)
+        case "set_form_settings":
+            return set_form_settings_handler(current_user, data)
+        case "get_form_link":
+            return get_form_link_handler(current_user, data)
+        case "update_form_info":
+            return update_form_info_handler(current_user, data)
+        case "list_user_forms":
+            return list_user_forms_handler(current_user, data)
+        case "compose_and_send_email":
+            return compose_and_send_email_handler(current_user, data)
+        case "compose_email_draft":
+            return compose_email_draft_handler(current_user, data)
+        case "get_messages_from_date":
+            return get_messages_from_date_handler(current_user, data)
+        case "get_recent_messages":
+            return get_recent_messages_handler(current_user, data)
+        case "search_messages":
+            return search_messages_handler(current_user, data)
+        case "get_attachment_links":
+            return get_attachment_links_handler(current_user, data)
+        case "get_attachment_content":
+            return get_attachment_content_handler(current_user, data)
+        case "create_filter":
+            return create_filter_handler(current_user, data)
+        case "create_label":
+            return create_label_handler(current_user, data)
+        case "create_auto_filter_label_rule":
+            return create_auto_filter_label_rule_handler(current_user, data)
+        case "get_message_details":
+            return get_message_details_handler(current_user, data)
+        case "search_contacts":
+            return search_contacts_handler(current_user, data)
+        case "get_contact_details":
+            return get_contact_details_handler(current_user, data)
+        case "create_contact":
+            return create_contact_handler(current_user, data)
+        case "update_contact":
+            return update_contact_handler(current_user, data)
+        case "delete_contact":
+            return delete_contact_handler(current_user, data)
+        case "list_contact_groups":
+            return list_contact_groups_handler(current_user, data)
+        case "create_contact_group":
+            return create_contact_group_handler(current_user, data)
+        case "update_contact_group":
+            return update_contact_group_handler(current_user, data)
+        case "delete_contact_group":
+            return delete_contact_group_handler(current_user, data)
+        case "add_contacts_to_group":
+            return add_contacts_to_group_handler(current_user, data)
+        case "remove_contacts_from_group":
+            return remove_contacts_from_group_handler(current_user, data)
+        case _:
+            return {"success": False, "error": f"Unknown operation: {op}"}
+
+
+
+
 @vop(
-    path="/google/integrations/sheets/get-rows",
-    tags=["default"],
+    path="/google/integrations/route?op=get_rows",
+    tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getSpreadsheetRows",
     description="Returns the rows from a Google Sheet as JSON.",
     params={
@@ -62,13 +256,14 @@ def common_handler(operation, *required_params, **optional_params):
         "required": ["spreadsheetId", "cellRange"]
     }
 )
-@validated("get_rows")
-def get_sheet_rows(event, context, current_user, name, data):
-    return common_handler(get_spreadsheet_rows, 'spreadsheetId', 'cellRange')(event, context, current_user, name, data)
+# @validated("get_rows")
+def get_sheet_rows(current_user, data):
+    return common_handler(get_spreadsheet_rows, 'spreadsheetId', 'cellRange')(current_user, data)
+
 
 @vop(
-    path="/google/integrations/sheets/get-info",
-    tags=["default"],
+    path="/google/integrations/route?op=get_google_sheets_info",
+    tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getGoogleSheetsInfo",
     description="Returns information about Google Sheets, including sheet names and sample data.",
     params={
@@ -85,13 +280,13 @@ def get_sheet_rows(event, context, current_user, name, data):
         "required": ["spreadsheetId"]
     }
 )
-@validated("get_google_sheets_info")
-def get_google_sheets_info(event, context, current_user, name, data):
-    return common_handler(get_sheets_info, 'spreadsheetId')(event, context, current_user, name, data)
+# @validated("get_google_sheets_info")
+def get_google_sheets_info(current_user, data):
+    return common_handler(get_sheets_info, 'spreadsheetId')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/get-sheet-names",
-    tags=["default"],
+    path="/google/integrations/route?op=get_sheet_names",
+    tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getSheetNames",
     description="Returns the list of sheet names in a Google Sheets document.",
     params={
@@ -108,13 +303,13 @@ def get_google_sheets_info(event, context, current_user, name, data):
         "required": ["spreadsheetId"]
     }
 )
-@validated("get_sheet_names")
-def get_sheet_names_handler(event, context, current_user, name, data):
-    return common_handler(get_sheet_names, 'spreadsheetId')(event, context, current_user, name, data)
+# @validated("get_sheet_names")
+def get_sheet_names_handler(current_user, data):
+    return common_handler(get_sheet_names, 'spreadsheetId')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/insert-rows",
-    tags=["default"],
+    path="/google/integrations/route?op=insert_rows",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="insertRows",
     description="Inserts multiple new rows into a Google Sheet.",
     params={
@@ -152,13 +347,13 @@ def get_sheet_names_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", "rowsData"]
     }
 )
-@validated("insert_rows")
-def insert_rows_handler(event, context, current_user, name, data):
-    return common_handler(insert_rows, 'spreadsheetId', 'rowsData', sheetName=None, insertionPoint=None)(event, context, current_user, name, data)
+# @validated("insert_rows")
+def insert_rows_handler(current_user, data):
+    return common_handler(insert_rows, 'spreadsheetId', 'rowsData', sheetName=None, insertionPoint=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/delete-rows",
-    tags=["default"],
+    path="/google/integrations/route?op=delete_rows",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="deleteRows",
     description="Deletes a range of rows from a Google Sheet.",
     params={
@@ -190,13 +385,13 @@ def insert_rows_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", 'startRow', 'endRow']
     }
 )
-@validated("delete_rows")
-def delete_rows_handler(event, context, current_user, name, data):
-    return common_handler(delete_rows, 'spreadsheetId', 'startRow', 'endRow', sheetName=None)(event, context, current_user, name, data)
+# @validated("delete_rows")
+def delete_rows_handler(current_user, data):
+    return common_handler(delete_rows, 'spreadsheetId', 'startRow', 'endRow', sheetName=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/update-rows",
-    tags=["default"],
+    path="/google/integrations/route?op=update_rows",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="updateRows",
     description="Updates specified rows in a Google Sheet.",
     params={
@@ -226,13 +421,13 @@ def delete_rows_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", 'rowsData']
     }
 )
-@validated("update_rows")
-def update_rows_handler(event, context, current_user, name, data):
-    return common_handler(update_rows, 'spreadsheetId', 'rowsData', sheetName=None)(event, context, current_user, name, data)
+# @validated("update_rows")
+def update_rows_handler(current_user, data):
+    return common_handler(update_rows, 'spreadsheetId', 'rowsData', sheetName=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/create-spreadsheet",
-    tags=["default"],
+    path="/google/integrations/route?op=create_spreadsheet",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="createSpreadsheet",
     description="Creates a new Google Sheets spreadsheet.",
     params={
@@ -249,13 +444,13 @@ def update_rows_handler(event, context, current_user, name, data):
         "required": ["title"]
     }
 )
-@validated("create_spreadsheet")
-def create_spreadsheet_handler(event, context, current_user, name, data):
-    return common_handler(create_spreadsheet, 'title')(event, context, current_user, name, data)
+# @validated("create_spreadsheet")
+def create_spreadsheet_handler(current_user, data):
+    return common_handler(create_spreadsheet, 'title')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/duplicate-sheet",
-    tags=["default"],
+    path="/google/integrations/route?op=duplicate_sheet",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="duplicateSheet",
     description="Duplicates a sheet within a Google Sheets spreadsheet.",
     params={
@@ -282,13 +477,13 @@ def create_spreadsheet_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", 'sheetId', 'newSheetName']
     }
 )
-@validated("duplicate_sheet")
-def duplicate_sheet_handler(event, context, current_user, name, data):
-    return common_handler(duplicate_sheet, 'spreadsheetId', 'sheetId', 'newSheetName')(event, context, current_user, name, data)
+# @validated("duplicate_sheet")
+def duplicate_sheet_handler(current_user, data):
+    return common_handler(duplicate_sheet, 'spreadsheetId', 'sheetId', 'newSheetName')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/rename-sheet",
-    tags=["default"],
+    path="/google/integrations/route?op=rename_sheet",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="renameSheet",
     description="Renames a sheet in a Google Sheets spreadsheet.",
     params={
@@ -315,13 +510,13 @@ def duplicate_sheet_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", 'sheetId', 'newName']
     }
 )
-@validated("rename_sheet")
-def rename_sheet_handler(event, context, current_user, name, data):
-    return common_handler(rename_sheet, 'spreadsheetId', 'sheetId', 'newName')(event, context, current_user, name, data)
+# @validated("rename_sheet")
+def rename_sheet_handler(current_user, data):
+    return common_handler(rename_sheet, 'spreadsheetId', 'sheetId', 'newName')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/clear-range",
-    tags=["default"],
+    path="/google/integrations/route?op=clear_range",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="clearRange",
     description="Clears a range of cells in a Google Sheets spreadsheet.",
     params={
@@ -343,16 +538,16 @@ def rename_sheet_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", 'rangeName']
     }
 )
-@validated("clear_range")
-def clear_range_handler(event, context, current_user, name, data):
-    return common_handler(clear_range, 'spreadsheetId', 'rangeName')(event, context, current_user, name, data)
+# @validated("clear_range")
+def clear_range_handler(current_user, data):
+    return common_handler(clear_range, 'spreadsheetId', 'rangeName')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/apply-formatting",
-    tags=["default"],
+    path="/google/integrations/route?op=apply_formatting",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="applyFormatting",
     description="Applies formatting to a range of cells in a Google Sheets spreadsheet.",
-    params={
+    params={    
         "spreadsheetId": "The ID of the spreadsheet",
         "sheetId": "The ID of the sheet",
         "startRow": "The starting row (1-indexed)",
@@ -396,13 +591,13 @@ def clear_range_handler(event, context, current_user, name, data):
         'required': ['spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'formatJson']
     }
 )
-@validated("apply_formatting")
-def apply_formatting_handler(event, context, current_user, name, data):
-    return common_handler(apply_formatting, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'formatJson')(event, context, current_user, name, data)
+# @validated("apply_formatting")
+def apply_formatting_handler(current_user, data):
+    return common_handler(apply_formatting, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'formatJson')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/add-chart",
-    tags=["default"],
+    path="/google/integrations/route?op=add_chart",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="addChart",
     description="Adds a chart to a Google Sheets spreadsheet.",
     params={
@@ -429,13 +624,13 @@ def apply_formatting_handler(event, context, current_user, name, data):
         'required': ['spreadsheetId', 'sheetId', 'chartSpec']
     }
 )
-@validated("add_chart")
-def add_chart_handler(event, context, current_user, name, data):
-    return common_handler(add_chart, 'spreadsheetId', 'sheetId', 'chartSpec')(event, context, current_user, name, data)
+# @validated("add_chart")
+def add_chart_handler(current_user, data):
+    return common_handler(add_chart, 'spreadsheetId', 'sheetId', 'chartSpec')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/get-cell-formulas",
-    tags=["default"],
+    path="/google/integrations/route?op=get_cell_formulas",
+    tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getCellFormulas",
     description="Gets cell formulas for a range in a Google Sheets spreadsheet.",
     params={
@@ -457,13 +652,13 @@ def add_chart_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", 'rangeName']
     }
 )
-@validated("get_cell_formulas")
-def get_cell_formulas_handler(event, context, current_user, name, data):
-    return common_handler(get_cell_formulas, 'spreadsheetId', 'rangeName')(event, context, current_user, name, data)
+# @validated("get_cell_formulas")
+def get_cell_formulas_handler(current_user, data):
+    return common_handler(get_cell_formulas, 'spreadsheetId', 'rangeName')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/find-replace",
-    tags=["default"],
+    path="/google/integrations/route?op=find_replace",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="findReplace",
     description="Finds and replaces text in a Google Sheets spreadsheet.",
     params={
@@ -495,13 +690,13 @@ def get_cell_formulas_handler(event, context, current_user, name, data):
         "required": ["spreadsheetId", "find", "replace"]
     }
 )
-@validated("find_replace")
-def find_replace_handler(event, context, current_user, name, data):
-    return common_handler(find_replace, 'spreadsheetId', 'find', 'replace', sheetId='sheetId')(event, context, current_user, name, data)
+# @validated("find_replace")
+def find_replace_handler(current_user, data):
+    return common_handler(find_replace, 'spreadsheetId', 'find', 'replace', sheetId='sheetId')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/sort-range",
-    tags=["default"],
+    path="/google/integrations/route?op=sort_range",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="sortRange",
     description="Sorts a range of data in a Google Sheets spreadsheet.",
     params={
@@ -548,13 +743,13 @@ def find_replace_handler(event, context, current_user, name, data):
         'required': ['spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'sortOrder']
     }
 )
-@validated("sort_range")
-def sort_range_handler(event, context, current_user, name, data):
-    return common_handler(sort_range, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'sortOrder')(event, context, current_user, name, data)
+# @validated("sort_range")
+def sort_range_handler(current_user, data):
+    return common_handler(sort_range, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'sortOrder')(current_user, data)
 
 @vop(
-    path="/google/integrations/sheets/apply-conditional-formatting",
-    tags=["default"],
+    path="/google/integrations/route?op=apply_conditional_formatting",
+    tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="applyConditionalFormatting",
     description="Applies conditional formatting to a range in a Google Sheets spreadsheet.",
     params={
@@ -606,14 +801,14 @@ def sort_range_handler(event, context, current_user, name, data):
         'required': ['spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'condition', 'format']
     }
 )
-@validated("apply_conditional_formatting")
-def apply_conditional_formatting_handler(event, context, current_user, name, data):
-    return common_handler(apply_conditional_formatting, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'condition', 'format')(event, context, current_user, name, data)
+# @validated("apply_conditional_formatting")
+def apply_conditional_formatting_handler(current_user, data):
+    return common_handler(apply_conditional_formatting, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'condition', 'format')(current_user, data)
 
 
 @vop(
-    path="/google/integrations/sheets/execute-query",
-    tags=["default"],
+    path="/google/integrations/route?op=execute_query",
+    tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="executeQuery",
     description="Executes a SQL-like query on a Google Sheets spreadsheet.",
     params={
@@ -640,13 +835,13 @@ def apply_conditional_formatting_handler(event, context, current_user, name, dat
         "required": ["spreadsheetId", "query"]
     }
 )
-@validated("execute_query")
-def execute_query_handler(event, context, current_user, name, data):
-    return common_handler(execute_query, 'spreadsheetId', 'query', sheetName='sheetName')(event, context, current_user, name, data)
+# @validated("execute_query")
+def execute_query_handler(current_user, data):
+    return common_handler(execute_query, 'spreadsheetId', 'query', sheetName='sheetName')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/create-document",
-    tags=["default"],
+    path="/google/integrations/route?op=create_new_document",
+    tags=["default", "integration", "google_docs", "google_docs_write"],
     name="createNewDocument",
     description="Creates a new Google Docs document.",
     params={
@@ -663,13 +858,13 @@ def execute_query_handler(event, context, current_user, name, data):
         "required": ["title"]
     }
 )
-@validated("create_new_document")
-def create_new_document_handler(event, context, current_user, name, data):
-    return common_handler(create_new_document, 'title')(event, context, current_user, name, data)
+# @validated("create_new_document")
+def create_new_document_handler(current_user, data):
+    return common_handler(create_new_document, 'title')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/get-contents",
-    tags=["default"],
+    path="/google/integrations/route?op=get_document_contents",
+    tags=["default", "integration", "google_docs", "google_docs_read"],
     name="getDocumentContents",
     description="Retrieves the contents of a Google Docs document.",
     params={
@@ -686,13 +881,13 @@ def create_new_document_handler(event, context, current_user, name, data):
         "required": ["documentId"]
     }
 )
-@validated("get_document_contents")
-def get_document_contents_handler(event, context, current_user, name, data):
-    return common_handler(get_document_contents, 'documentId')(event, context, current_user, name, data)
+# @validated("get_document_contents")
+def get_document_contents_handler(current_user, data):
+    return common_handler(get_document_contents, 'documentId')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/insert-text",
-    tags=["default"],
+    path="/google/integrations/route?op=insert_text",
+    tags=["default", "integration", "google_docs", "google_docs_write"],
     name="insertText",
     description="Inserts text at a specific location in a Google Docs document.",
     params={
@@ -719,13 +914,13 @@ def get_document_contents_handler(event, context, current_user, name, data):
         'required': ['documentId', 'text', 'index']
     }
 )
-@validated("insert_text")
-def insert_text_handler(event, context, current_user, name, data):
-    return common_handler(insert_text, 'documentId', 'text', 'index')(event, context, current_user, name, data)
+# @validated("insert_text")
+def insert_text_handler(current_user, data):
+    return common_handler(insert_text, 'documentId', 'text', 'index')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/append-text",
-    tags=["default"],
+    path="/google/integrations/route?op=append_text",
+    tags=["default", "integration", "google_docs", "google_docs_write"],
     name="appendText",
     description="Appends text to the end of a Google Docs document.",
     params={
@@ -747,13 +942,13 @@ def insert_text_handler(event, context, current_user, name, data):
         'required': ['documentId', 'text']
     }
 )
-@validated("append_text")
-def append_text_handler(event, context, current_user, name, data):
-    return common_handler(append_text, 'documentId', 'text')(event, context, current_user, name, data)
+# @validated("append_text")
+def append_text_handler(current_user, data):
+    return common_handler(append_text, 'documentId', 'text')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/replace-text",
-    tags=["default"],
+    path="/google/integrations/route?op=replace_text",
+    tags=["default", "integration", "google_docs", "google_docs_write"],
     name="replaceText",
     description="Replaces all occurrences of text in a Google Docs document.",
     params={
@@ -780,13 +975,13 @@ def append_text_handler(event, context, current_user, name, data):
         'required': ['documentId', 'oldText', 'newText']
     }
 )
-@validated("replace_text")
-def replace_text_handler(event, context, current_user, name, data):
-    return common_handler(replace_text, 'documentId', 'oldText', 'newText')(event, context, current_user, name, data)
+# @validated("replace_text")
+def replace_text_handler(current_user, data):
+    return common_handler(replace_text, 'documentId', 'oldText', 'newText')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/create-outline",
-    tags=["default"],
+    path="/google/integrations/route?op=create_document_outline",
+    tags=["default", "integration", "google_docs", "google_docs_write"],
     name="createDocumentOutline",
     description="Creates an outline in a Google Docs document.",
     params={
@@ -822,13 +1017,13 @@ def replace_text_handler(event, context, current_user, name, data):
         'required': ['documentId', 'outlineItems']
     }
 )
-@validated("create_document_outline")
-def create_document_outline_handler(event, context, current_user, name, data):
-    return common_handler(create_document_outline, 'documentId', 'outlineItems')(event, context, current_user, name, data)
+# @validated("create_document_outline")
+def create_document_outline_handler(current_user, data):
+    return common_handler(create_document_outline, 'documentId', 'outlineItems')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/export-document",
-    tags=["default"],
+    path="/google/integrations/route?op=export_document",
+    tags=["default", "integration", "google_docs", "google_docs_read"],
     name="exportDocument",
     description="Exports a Google Docs document to a specified format.",
     params={
@@ -850,13 +1045,13 @@ def create_document_outline_handler(event, context, current_user, name, data):
         'required': ['documentId', 'mimeType']
     }
 )
-@validated("export_document")
-def export_document_handler(event, context, current_user, name, data):
-    return common_handler(export_document, 'documentId', 'mimeType')(event, context, current_user, name, data)
+# @validated("export_document")
+def export_document_handler(current_user, data):
+    return common_handler(export_document, 'documentId', 'mimeType')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/share-document",
-    tags=["default"],
+    path="/google/integrations/route?op=share_document",
+    tags=["default", "integration", "google_docs", "google_docs_write"],
     name="shareDocument",
     description="Shares a Google Docs document with another user.",
     params={
@@ -883,13 +1078,13 @@ def export_document_handler(event, context, current_user, name, data):
         'required': ['documentId', 'email', 'role']
     }
 )
-@validated("share_document")
-def share_document_handler(event, context, current_user, name, data):
-    return common_handler(share_document, 'documentId', 'email', 'role')(event, context, current_user, name, data)
+# @validated("share_document")
+def share_document_handler(current_user, data):
+    return common_handler(share_document, 'documentId', 'email', 'role')(current_user, data)
 
 @vop(
-    path="/google/integrations/docs/find-text-indices",
-    tags=["default"],
+    path="/google/integrations/route?op=find_text_indices",
+    tags=["default", "integration", "google_docs", "google_docs_read"],
     name="findTextIndices",
     description="Finds the indices of a specific text in a Google Docs document.",
     params={
@@ -911,13 +1106,13 @@ def share_document_handler(event, context, current_user, name, data):
         'required': ['documentId', 'searchText']
     }
 )
-@validated("find_text_indices")
-def find_text_indices_handler(event, context, current_user, name, data):
-    return common_handler(find_text_indices, 'documentId', 'searchText')(event, context, current_user, name, data)
+# @validated("find_text_indices")
+def find_text_indices_handler(current_user, data):
+    return common_handler(find_text_indices, 'documentId', 'searchText')(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/get-events-between-dates",
-    tags=["default"],
+    path="/google/integrations/route?op=get_events_between_dates",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventsBetweenDates",
     description="Retrieves events from Google Calendar between two specified dates.",
     params={
@@ -957,13 +1152,13 @@ def find_text_indices_handler(event, context, current_user, name, data):
         'required': ['startDate', 'endDate']
     }
 )
-@validated("get_events_between_dates")
-def get_events_between_dates_handler(event, context, current_user, name, data):
-    return common_handler(get_events_between_dates, 'startDate', 'endDate', includeDescription=False, includeAttendees=False, includeLocation=False)(event, context, current_user, name, data)
+# @validated("get_events_between_dates")
+def get_events_between_dates_handler(current_user, data):
+    return common_handler(get_events_between_dates, 'startDate', 'endDate', includeDescription=False, includeAttendees=False, includeLocation=False)(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/create-event",
-    tags=["default"],
+    path="/google/integrations/route?op=create_event",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="createEvent",
     description="Creates a new event in Google Calendar.",
     params={
@@ -1003,13 +1198,13 @@ def get_events_between_dates_handler(event, context, current_user, name, data):
         "required": ["title", "startTime", "endTime"]
     }
 )
-@validated("create_event")
-def create_event_handler(event, context, current_user, name, data):
-    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description', attendees=[])(event, context, current_user, name, data)
+# @validated("create_event")
+def create_event_handler(current_user, data):
+    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description', attendees=[])(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/update-event",
-    tags=["default"],
+    path="/google/integrations/route?op=update_event",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="updateEvent",
     description="Updates an existing event in Google Calendar.",
     params={
@@ -1031,13 +1226,13 @@ def create_event_handler(event, context, current_user, name, data):
         'required': ['eventId', 'updatedFields']
     }
 )
-@validated("update_event")
-def update_event_handler(event, context, current_user, name, data):
-    return common_handler(update_event, 'eventId', 'updatedFields')(event, context, current_user, name, data)
+# @validated("update_event")
+def update_event_handler(current_user, data):
+    return common_handler(update_event, 'eventId', 'updatedFields')(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/delete-event",
-    tags=["default"],
+    path="/google/integrations/route?op=delete_event",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="deleteEvent",
     description="Deletes an event from Google Calendar.",
     params={
@@ -1054,13 +1249,13 @@ def update_event_handler(event, context, current_user, name, data):
         'required': ['eventId']
     }
 )
-@validated("delete_event")
-def delete_event_handler(event, context, current_user, name, data):
-    return common_handler(delete_event, 'eventId')(event, context, current_user, name, data)
+# @validated("delete_event")
+def delete_event_handler(current_user, data):
+    return common_handler(delete_event, 'eventId')(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/get-event-details",
-    tags=["default"],
+    path="/google/integrations/route?op=get_event_details",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventDetails",
     description="Retrieves details of a specific event from Google Calendar.",
     params={
@@ -1077,13 +1272,13 @@ def delete_event_handler(event, context, current_user, name, data):
         'required': ['eventId']
     }
 )
-@validated("get_event_details")
-def get_event_details_handler(event, context, current_user, name, data):
-    return common_handler(get_event_details, 'eventId')(event, context, current_user, name, data)
+# @validated("get_event_details")
+def get_event_details_handler(current_user, data):
+    return common_handler(get_event_details, 'eventId')(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/get-events-for-date",
-    tags=["default"],
+    path="/google/integrations/route?op=get_events_for_date",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventsForDate",
     description="Retrieves events from Google Calendar for a specific date.",
     params={
@@ -1118,13 +1313,13 @@ def get_event_details_handler(event, context, current_user, name, data):
         'required': ['date']
     }
 )
-@validated("get_events_for_date")
-def get_events_for_date_handler(event, context, current_user, name, data):
-    return common_handler(get_events_for_date, 'date', includeDescription=False, includeAttendees=False, includeLocation=False)(event, context, current_user, name, data)
+# @validated("get_events_for_date")
+def get_events_for_date_handler(current_user, data):
+    return common_handler(get_events_for_date, 'date', includeDescription=False, includeAttendees=False, includeLocation=False)(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/get-free-time-slots",
-    tags=["default"],
+    path="/google/integrations/route?op=get_free_time_slots",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getFreeTimeSlots",
     description="Finds free time slots in Google Calendar between two dates.",
     params={
@@ -1181,22 +1376,14 @@ def get_events_for_date_handler(event, context, current_user, name, data):
         'required': ['startDate', 'endDate', 'duration']
     }
 )
-@validated("get_free_time_slots")
-def get_free_time_slots_handler(event, context, current_user, name, data):
-    return common_handler(
-        get_free_time_slots,
-        'startDate',
-        'endDate',
-        'duration',
-        userTimeZone="America/Chicago",
-        includeWeekends=False,
-        allowedTimeWindows=None,
-        excludeDates=None
-    )(event, context, current_user, name, data)
+# @validated("get_free_time_slots")
+def get_free_time_slots_handler(current_user, data):
+    return common_handler(get_free_time_slots, 'startDate', 'endDate', 'duration', userTimeZone="America/Chicago",
+                          includeWeekends=False, allowedTimeWindows=None, excludeDates=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/calendar/check-event-conflicts",
-    tags=["default"],
+    path="/google/integrations/route?op=check_event_conflicts",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="checkEventConflicts",
     description="Checks for conflicts with existing events in Google Calendar.",
     params={
@@ -1224,13 +1411,13 @@ def get_free_time_slots_handler(event, context, current_user, name, data):
         'required': ['proposedStartTime', 'proposedEndTime']
     }
 )
-@validated("check_event_conflicts")
-def check_event_conflicts_handler(event, context, current_user, name, data):
-    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime', returnConflictingEvents=False)(event, context, current_user, name, data)
+# @validated("check_event_conflicts")
+def check_event_conflicts_handler(current_user, data):
+    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime', returnConflictingEvents=False)(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/list-files",
-    tags=["default"],
+    path="/google/integrations/route?op=list_files",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="listFiles",
     description="Lists files in a specific folder or root directory of Google Drive.",
     params={
@@ -1247,13 +1434,13 @@ def check_event_conflicts_handler(event, context, current_user, name, data):
         'required': []
     }
 )
-@validated("list_files")
-def list_files_handler(event, context, current_user, name, data):
-    return common_handler(list_files, 'folderId')(event, context, current_user, name, data)
+# @validated("list_files")
+def list_files_handler(current_user, data):
+    return common_handler(list_files, 'folderId')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/search-files",
-    tags=["default"],
+    path="/google/integrations/route?op=search_files",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="searchFiles",
     description="Searches for files in Google Drive based on a query. You should know that \"name contains '<query>'\" is added automatically to the query.",
     params={
@@ -1270,13 +1457,13 @@ def list_files_handler(event, context, current_user, name, data):
         'required': ['query']
     }
 )
-@validated("search_files")
-def search_files_handler(event, context, current_user, name, data):
-    return common_handler(search_files, 'query')(event, context, current_user, name, data)
+# @validated("search_files")
+def search_files_handler(current_user, data):
+    return common_handler(search_files, 'query')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/get-file-metadata",
-    tags=["default"],
+    path="/google/integrations/route?op=get_file_metadata",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileMetadata",
     description="Retrieves metadata for a specific file in Google Drive.",
     params={
@@ -1293,13 +1480,13 @@ def search_files_handler(event, context, current_user, name, data):
         'required': ['fileId']
     }
 )
-@validated("get_file_metadata")
-def get_file_metadata_handler(event, context, current_user, name, data):
-    return common_handler(get_file_metadata, 'fileId')(event, context, current_user, name, data)
+# @validated("get_file_metadata")
+def get_file_metadata_handler(current_user, data):
+    return common_handler(get_file_metadata, 'fileId')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/get-file-content",
-    tags=["default"],
+    path="/google/integrations/route?op=get_file_content",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileContent",
     description="Gets the content of a file in Google Drive as text.",
     params={
@@ -1316,13 +1503,13 @@ def get_file_metadata_handler(event, context, current_user, name, data):
         'required': ['fileId']
     }
 )
-@validated("get_file_content")
-def get_file_content_handler(event, context, current_user, name, data):
-    return common_handler(get_file_content, 'fileId')(event, context, current_user, name, data)
+# @validated("get_file_content")
+def get_file_content_handler(current_user, data):
+    return common_handler(get_file_content, 'fileId')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/create-file",
-    tags=["default"],
+    path="/google/integrations/route?op=create_file",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createFile",
     description="Creates a new file in Google Drive with the given content.",
     params={
@@ -1350,13 +1537,13 @@ def get_file_content_handler(event, context, current_user, name, data):
         'required': ['fileName', 'content']
     }
 )
-@validated("create_file")
-def create_file_handler(event, context, current_user, name, data):
-    return common_handler(create_file, 'fileName', 'content', 'mimeType')(event, context, current_user, name, data)
+# @validated("create_file")
+def create_file_handler(current_user, data):
+    return common_handler(create_file, 'fileName', 'content', 'mimeType')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/get-download-link",
-    tags=["default"],
+    path="/google/integrations/route?op=get_download_link",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getDownloadLink",
     description="Gets the download link for a file in Google Drive.",
     params={
@@ -1373,13 +1560,13 @@ def create_file_handler(event, context, current_user, name, data):
         'required': ['fileId']
     }
 )
-@validated("get_download_link")
-def get_download_link_handler(event, context, current_user, name, data):
-    return common_handler(get_download_link, 'fileId')(event, context, current_user, name, data)
+# @validated("get_download_link")
+def get_download_link_handler(current_user, data):
+    return common_handler(get_download_link, 'fileId')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/create-shared-link",
-    tags=["default"],
+    path="/google/integrations/route?op=create_shared_link",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createSharedLink",
     description="Creates a shared link for a file in Google Drive with view or edit permissions.",
     params={
@@ -1401,13 +1588,13 @@ def get_download_link_handler(event, context, current_user, name, data):
         'required': ['fileId', 'permission']
     }
 )
-@validated("create_shared_link")
-def create_shared_link_handler(event, context, current_user, name, data):
-    return common_handler(create_shared_link, 'fileId', 'permission')(event, context, current_user, name, data)
+# @validated("create_shared_link")
+def create_shared_link_handler(current_user, data):
+    return common_handler(create_shared_link, 'fileId', 'permission')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/share-file",
-    tags=["default"],
+    path="/google/integrations/route?op=share_file",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="shareFile",
     description="Shares a file in Google Drive with multiple email addresses.",
     params={
@@ -1437,13 +1624,13 @@ def create_shared_link_handler(event, context, current_user, name, data):
         'required': ['fileId', 'emails', 'role']
     }
 )
-@validated("share_file")
-def share_file_handler(event, context, current_user, name, data):
-    return common_handler(share_file, 'fileId', 'emails', 'role')(event, context, current_user, name, data)
+# @validated("share_file")
+def share_file_handler(current_user, data):
+    return common_handler(share_file, 'fileId', 'emails', 'role')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/convert-file",
-    tags=["default"],
+    path="/google/integrations/route?op=convert_file",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="convertFile",
     description="Converts a file in Google Drive to a specified format and returns its download link.",
     params={
@@ -1465,13 +1652,13 @@ def share_file_handler(event, context, current_user, name, data):
         'required': ['fileId', 'targetMimeType']
     }
 )
-@validated("convert_file")
-def convert_file_handler(event, context, current_user, name, data):
-    return common_handler(convert_file, 'fileId', 'targetMimeType')(event, context, current_user, name, data)
+# @validated("convert_file")
+def convert_file_handler(current_user, data):
+    return common_handler(convert_file, 'fileId', 'targetMimeType')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/list-folders",
-    tags=["default"],
+    path="/google/integrations/route?op=list_folders",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="listFolders",
     description="Lists folders in Google Drive, optionally within a specific parent folder.",
     params={
@@ -1488,13 +1675,13 @@ def convert_file_handler(event, context, current_user, name, data):
         'required': []
     }
 )
-@validated("list_folders")
-def list_folders_handler(event, context, current_user, name, data):
-    return common_handler(list_folders, 'parentFolderId')(event, context, current_user, name, data)
+# @validated("list_folders")
+def list_folders_handler(current_user, data):
+    return common_handler(list_folders, 'parentFolderId')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/move-item",
-    tags=["default"],
+    path="/google/integrations/route?op=move_item",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="moveItem",
     description="Moves a file or folder to a specified destination folder in Google Drive.",
     params={
@@ -1516,13 +1703,13 @@ def list_folders_handler(event, context, current_user, name, data):
         'required': ['itemId', 'destinationFolderId']
     }
 )
-@validated("move_item")
-def move_item_handler(event, context, current_user, name, data):
-    return common_handler(move_item, 'itemId', 'destinationFolderId')(event, context, current_user, name, data)
+# @validated("move_item")
+def move_item_handler(current_user, data):
+    return common_handler(move_item, 'itemId', 'destinationFolderId')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/copy-item",
-    tags=["default"],
+    path="/google/integrations/route?op=copy_item",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="copyItem",
     description="Copies a file or folder in Google Drive.",
     params={
@@ -1544,13 +1731,13 @@ def move_item_handler(event, context, current_user, name, data):
         'required': ['itemId']
     }
 )
-@validated("copy_item")
-def copy_item_handler(event, context, current_user, name, data):
-    return common_handler(copy_item, 'itemId', 'newName')(event, context, current_user, name, data)
+# @validated("copy_item")
+def copy_item_handler(current_user, data):
+    return common_handler(copy_item, 'itemId', 'newName')(current_user, data)
 
 @vop(
-    path="/google/integrations/drive/rename-item",
-    tags=["default"],
+    path="/google/integrations/route?op=rename_item",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="renameItem",
     description="Renames a file or folder in Google Drive.",
     params={
@@ -1572,15 +1759,15 @@ def copy_item_handler(event, context, current_user, name, data):
         'required': ['itemId', 'newName']
     }
 )
-@validated("rename_item")
-def rename_item_handler(event, context, current_user, name, data):
-    return common_handler(rename_item, 'itemId', 'newName')(event, context, current_user, name, data)
+# @validated("rename_item")
+def rename_item_handler(current_user, data):
+    return common_handler(rename_item, 'itemId', 'newName')(current_user, data)
 
 
 
 @vop(
-    path="/google/integrations/drive/get-file-revisions",
-    tags=["default"],
+    path="/google/integrations/route?op=get_file_revisions",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileRevisions",
     description="Gets the revision history of a file in Google Drive.",
     params={
@@ -1597,14 +1784,14 @@ def rename_item_handler(event, context, current_user, name, data):
         'required': ['fileId']
     }
 )
-@validated("get_file_revisions")
-def get_file_revisions_handler(event, context, current_user, name, data):
-    return common_handler(get_file_revisions, 'fileId')(event, context, current_user, name, data)
+# @validated("get_file_revisions")
+def get_file_revisions_handler(current_user, data):
+    return common_handler(get_file_revisions, 'fileId')(current_user, data)
 
 
 @vop(
-    path="/google/integrations/drive/create-folder",
-    tags=["default"],
+    path="/google/integrations/route?op=create_folder",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createFolder",
     description="Creates a new folder in Google Drive.",
     params={
@@ -1626,91 +1813,15 @@ def get_file_revisions_handler(event, context, current_user, name, data):
         'required': ['folderName']
     }
 )
-@validated("create_folder")
-def create_folder_handler(event, context, current_user, name, data):
-    return common_handler(create_folder, 'folderName', 'parentId')(event, context, current_user, name, data)
-
-
-@vop(
-    path="/google/integrations/drive/get-file-revisions",
-    tags=["default"],
-    name="getFileRevisions",
-    description="Gets the revision history of a file in Google Drive.",
-    params={
-        "fileId": "The ID of the file to get revisions for"
-    },
-    parameters={
-        "type": "object",
-        "properties": {
-            "fileId": {
-                "type": "string",
-                "description": "The ID of the file to get revisions for"
-            }
-        },
-        'required': ['fileId']
-    }
-)
-@validated("get_file_revisions")
-def get_file_revisions_handler(event, context, current_user, name, data):
-    return common_handler(get_file_revisions, 'fileId')(event, context, current_user, name, data)
+# @validated("create_folder")
+def create_folder_handler(current_user, data):
+    return common_handler(create_folder, 'folderName', 'parentId')(current_user, data)
 
 
 
 @vop(
-    path="/google/integrations/drive/create-folder",
-    tags=["default"],
-    name="createFolder",
-    description="Creates a new folder in Google Drive.",
-    params={
-        "folderName": "The name of the new folder",
-        "parentId": "The ID of the parent folder (optional)"
-    },
-    parameters={
-        "type": "object",
-        "properties": {
-            "folderName": {
-                "type": "string",
-                "description": "The name of the new folder"
-            },
-            "parentId": {
-                "type": ["string"],
-                "description": "The ID of the parent folder (optional)"
-            }
-        },
-        'required': ['folderName']
-    }
-)
-@validated("create_folder")
-def create_folder_handler(event, context, current_user, name, data):
-    return common_handler(create_folder, 'folderName', 'parentId')(event, context, current_user, name, data)
-
-@vop(
-    path="/google/integrations/drive/get-file-revisions",
-    tags=["default"],
-    name="getFileRevisions",
-    description="Gets the revision history of a file in Google Drive.",
-    params={
-        "fileId": "The ID of the file to get revisions for"
-    },
-    parameters={
-        "type": "object",
-        "properties": {
-            "fileId": {
-                "type": "string",
-                "description": "The ID of the file to get revisions for"
-            }
-        },
-        'required': ['fileId']
-    }
-)
-@validated("get_file_revisions")
-def get_file_revisions_handler(event, context, current_user, name, data):
-    return common_handler(get_file_revisions, 'fileId')(event, context, current_user, name, data)
-
-
-@vop(
-    path="/google/integrations/drive/delete-item-permanently",
-    tags=["default"],
+    path="/google/integrations/route?op=delete_item_permanently",
+    tags=["default", "integration", "google_drive", "google_drive_write"],
     name="deleteItemPermanently",
     description="Permanently deletes a file or folder from Google Drive.",
     params={
@@ -1727,14 +1838,14 @@ def get_file_revisions_handler(event, context, current_user, name, data):
         'required': ['itemId']
     }
 )
-@validated("delete_item_permanently")
-def delete_item_permanently_handler(event, context, current_user, name, data):
-    return common_handler(delete_item_permanently, 'itemId')(event, context, current_user, name, data)
+# @validated("delete_item_permanently")
+def delete_item_permanently_handler(current_user, data):
+    return common_handler(delete_item_permanently, 'itemId')(current_user, data)
 
 
 @vop(
-    path="/google/integrations/drive/get-root-folder-ids",
-    tags=["default"],
+    path="/google/integrations/route?op=get_root_folder_ids",
+    tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getRootFolderIds",
     description="Retrieves the IDs of root-level folders in Google Drive.",
     params={
@@ -1744,14 +1855,14 @@ def delete_item_permanently_handler(event, context, current_user, name, data):
         "properties": {}
     }
 )
-@validated("get_root_folder_ids")
-def get_root_folder_ids_handler(event, context, current_user, name, data):
-    return common_handler(get_root_folder_ids)(event, context, current_user, name, data)
+# @validated("get_root_folder_ids")
+def get_root_folder_ids_handler(current_user, data):
+    return common_handler(get_root_folder_ids)(current_user, data)
 
 
 @vop(
-    path="/google/integrations/forms/create-form",
-    tags=["default"],
+    path="/google/integrations/route?op=create_form",
+    tags=["default", "integration", "google_forms", "google_forms_write"],
     name="createForm",
     description="Creates a new Google Form.",
     params={
@@ -1773,13 +1884,13 @@ def get_root_folder_ids_handler(event, context, current_user, name, data):
         'required': ['title']
     }
 )
-@validated("create_form")
-def create_form_handler(event, context, current_user, name, data):
-    return common_handler(create_form, 'title', description="")(event, context, current_user, name, data)
+# @validated("create_form")
+def create_form_handler(current_user, data):
+    return common_handler(create_form, 'title', description="")(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/get-form-details",
-    tags=["default"],
+    path="/google/integrations/route?op=get_form_details",
+    tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getFormDetails",
     description="Retrieves details of a specific Google Form.",
     params={
@@ -1796,13 +1907,13 @@ def create_form_handler(event, context, current_user, name, data):
         'required': ['formId']
     }
 )
-@validated("get_form_details")
-def get_form_details_handler(event, context, current_user, name, data):
-    return common_handler(get_form_details, 'formId')(event, context, current_user, name, data)
+# @validated("get_form_details")
+def get_form_details_handler(current_user, data):
+    return common_handler(get_form_details, 'formId')(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/add-question",
-    tags=["default"],
+    path="/google/integrations/route?op=add_question",
+    tags=["default", "integration", "google_forms", "google_forms_write"],
     name="addQuestion",
     description="Adds a new question to a Google Form.",
     params={
@@ -1841,13 +1952,13 @@ def get_form_details_handler(event, context, current_user, name, data):
         'required': ['formId', 'questionType', 'title']
     }
 )
-@validated("add_question")
-def add_question_handler(event, context, current_user, name, data):
-    return common_handler(add_question, 'formId', 'questionType', 'title', required=False, options=None)(event, context, current_user, name, data)
+# @validated("add_question")
+def add_question_handler(current_user, data):
+    return common_handler(add_question, 'formId', 'questionType', 'title', required=False, options=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/update-question",
-    tags=["default"],
+    path="/google/integrations/route?op=update_question",
+    tags=["default", "integration", "google_forms", "google_forms_write"],
     name="updateQuestion",
     description="Updates an existing question in a Google Form.",
     params={
@@ -1886,13 +1997,13 @@ def add_question_handler(event, context, current_user, name, data):
         'required': ['formId', 'questionId']
     }
 )
-@validated("update_question")
-def update_question_handler(event, context, current_user, name, data):
-    return common_handler(update_question, 'formId', 'questionId', title=None, required=None, options=None)(event, context, current_user, name, data)
+# @validated("update_question")
+def update_question_handler(current_user, data):
+    return common_handler(update_question, 'formId', 'questionId', title=None, required=None, options=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/delete-question",
-    tags=["default"],
+    path="/google/integrations/route?op=delete_question",
+    tags=["default", "integration", "google_forms", "google_forms_write"],
     name="deleteQuestion",
     description="Deletes a question from a Google Form.",
     params={
@@ -1914,13 +2025,13 @@ def update_question_handler(event, context, current_user, name, data):
         'required': ['formId', 'questionId']
     }
 )
-@validated("delete_question")
-def delete_question_handler(event, context, current_user, name, data):
-    return common_handler(delete_question, 'formId', 'questionId')(event, context, current_user, name, data)
+# @validated("delete_question")
+def delete_question_handler(current_user, data):
+    return common_handler(delete_question, 'formId', 'questionId')(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/get-responses",
-    tags=["default"],
+    path="/google/integrations/route?op=get_responses",
+    tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getResponses",
     description="Retrieves all responses for a Google Form.",
     params={
@@ -1937,13 +2048,13 @@ def delete_question_handler(event, context, current_user, name, data):
         'required': ['formId']
     }
 )
-@validated("get_responses")
-def get_responses_handler(event, context, current_user, name, data):
-    return common_handler(get_responses, 'formId')(event, context, current_user, name, data)
+# @validated("get_responses")
+def get_responses_handler(current_user, data):
+    return common_handler(get_responses, 'formId')(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/get-response",
-    tags=["default"],
+    path="/google/integrations/route?op=get_response",
+    tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getResponse",
     description="Retrieves a specific response from a Google Form.",
     params={
@@ -1965,13 +2076,13 @@ def get_responses_handler(event, context, current_user, name, data):
         'required': ['formId', 'responseId']
     }
 )
-@validated("get_response")
-def get_response_handler(event, context, current_user, name, data):
-    return common_handler(get_response, 'formId', 'responseId')(event, context, current_user, name, data)
+# @validated("get_response")
+def get_response_handler(current_user, data):
+    return common_handler(get_response, 'formId', 'responseId')(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/set-form-settings",
-    tags=["default"],
+    path="/google/integrations/route?op=set_form_settings",
+    tags=["default", "integration", "google_forms", "google_forms_write"],
     name="setFormSettings",
     description="Updates the settings of a Google Form.",
     params={
@@ -1993,13 +2104,13 @@ def get_response_handler(event, context, current_user, name, data):
         'required': ['formId', 'settings']
     }
 )
-@validated("set_form_settings")
-def set_form_settings_handler(event, context, current_user, name, data):
-    return common_handler(set_form_settings, 'formId', 'settings')(event, context, current_user, name, data)
+# @validated("set_form_settings")
+def set_form_settings_handler(current_user, data):
+    return common_handler(set_form_settings, 'formId', 'settings')(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/get-form-link",
-    tags=["default"],
+    path="/google/integrations/route?op=get_form_link",
+    tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getFormLink",
     description="Retrieves the public link for a Google Form.",
     params={
@@ -2016,13 +2127,13 @@ def set_form_settings_handler(event, context, current_user, name, data):
         'required': ['formId']
     }
 )
-@validated("get_form_link")
-def get_form_link_handler(event, context, current_user, name, data):
-    return common_handler(get_form_link, 'formId')(event, context, current_user, name, data)
+# @validated("get_form_link")
+def get_form_link_handler(current_user, data):
+    return common_handler(get_form_link, 'formId')(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/update-form-info",
-    tags=["default"],
+    path="/google/integrations/route?op=update_form_info",
+    tags=["default", "integration", "google_forms", "google_forms_write"],
     name="updateFormInfo",
     description="Updates the title and/or description of a Google Form.",
     params={
@@ -2049,13 +2160,13 @@ def get_form_link_handler(event, context, current_user, name, data):
         'required': ['formId']
     }
 )
-@validated("update_form_info")
-def update_form_info_handler(event, context, current_user, name, data):
-    return common_handler(update_form_info, 'formId', title=None, description=None)(event, context, current_user, name, data)
+# @validated("update_form_info")
+def update_form_info_handler(current_user, data):
+    return common_handler(update_form_info, 'formId', title=None, description=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/forms/list-user-forms",
-    tags=["default"],
+    path="/google/integrations/route?op=list_user_forms",
+    tags=["default", "integration", "google_forms", "google_forms_read"],
     name="listUserForms",
     description="Lists all forms owned by the current user.",
     params={},
@@ -2064,13 +2175,13 @@ def update_form_info_handler(event, context, current_user, name, data):
         "properties": {}
     }
 )
-@validated("list_user_forms")
-def list_user_forms_handler(event, context, current_user, name, data):
-    return common_handler(list_user_forms)(event, context, current_user, name, data)
+# @validated("list_user_forms")
+def list_user_forms_handler(current_user, data):
+    return common_handler(list_user_forms)(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/compose-and-send",
-    tags=["default"],
+    path="/google/integrations/route?op=compose_and_send_email",
+    tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="composeAndSendEmail",
     description="Composes and sends an email, with an option to schedule for future.",
     params={
@@ -2112,13 +2223,13 @@ def list_user_forms_handler(event, context, current_user, name, data):
         'required': ['to', 'subject', 'body']
     }
 )
-@validated("compose_and_send_email")
-def compose_and_send_email_handler(event, context, current_user, name, data):
-    return common_handler(compose_and_send_email, 'to', 'subject', 'body', cc=None, bcc=None, schedule_time=None)(event, context, current_user, name, data)
+# @validated("compose_and_send_email")
+def compose_and_send_email_handler(current_user, data):
+    return common_handler(compose_and_send_email, 'to', 'subject', 'body', cc=None, bcc=None, schedule_time=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/compose-draft",
-    tags=["default"],
+    path="/google/integrations/route?op=compose_email_draft",
+    tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="composeEmailDraft",
     description="Composes an email draft.",
     params={
@@ -2155,13 +2266,13 @@ def compose_and_send_email_handler(event, context, current_user, name, data):
         "required": ["to", "subject", "body"]
     }
 )
-@validated("compose_email_draft")
-def compose_email_draft_handler(event, context, current_user, name, data):
-    return common_handler(compose_email_draft, 'to', 'subject', 'body', cc=None, bcc=None)(event, context, current_user, name, data)
+# @validated("compose_email_draft")
+def compose_email_draft_handler(current_user, data):
+    return common_handler(compose_email_draft, 'to', 'subject', 'body', cc=None, bcc=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/get-messages-from-date",
-    tags=["default"],
+    path="/google/integrations/route?op=get_messages_from_date",
+    tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getMessagesFromDate",
     description="Gets messages from a specific start date (optional label).",
     params={
@@ -2188,13 +2299,13 @@ def compose_email_draft_handler(event, context, current_user, name, data):
         'required': ['n', 'startDate']
     }
 )
-@validated("get_messages_from_date")
-def get_messages_from_date_handler(event, context, current_user, name, data):
-    return common_handler(get_messages_from_date, 'n', 'start_date', label=None)(event, context, current_user, name, data)
+# @validated("get_messages_from_date")
+def get_messages_from_date_handler(current_user, data):
+    return common_handler(get_messages_from_date, 'n', 'start_date', label=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/get-recent-messages",
-    tags=["default"],
+    path="/google/integrations/route?op=get_recent_messages",
+    tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getRecentMessages",
     description="Gets the N most recent messages (optional label).",
     params={
@@ -2215,14 +2326,14 @@ def get_messages_from_date_handler(event, context, current_user, name, data):
         }
     }
 )
-@validated("get_recent_messages")
-def get_recent_messages_handler(event, context, current_user, name, data):
-    return common_handler(get_recent_messages, n=25, label=None)(event, context, current_user, name, data)
+# @validated("get_recent_messages")
+def get_recent_messages_handler(current_user, data):
+    return common_handler(get_recent_messages, n=25, label=None)(current_user, data)
 
 
 @vop(
-    path="/google/integrations/gmail/search-messages",
-    tags=["default"],
+    path="/google/integrations/route?op=search_messages",
+    tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="searchMessages",
     description="Searches for messages using the Gmail search language.",
     params={
@@ -2239,13 +2350,13 @@ def get_recent_messages_handler(event, context, current_user, name, data):
         'required': ['query']
     }
 )
-@validated("search_messages")
-def search_messages_handler(event, context, current_user, name, data):
-    return common_handler(search_messages, 'query')(event, context, current_user, name, data)
+# @validated("search_messages")
+def search_messages_handler(current_user, data):
+    return common_handler(search_messages, 'query')(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/get-attachment-links",
-    tags=["default"],
+    path="/google/integrations/route?op=get_attachment_links",
+    tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getAttachmentLinks",
     description="Gets links to download attachments for a specific email.",
     params={
@@ -2262,13 +2373,13 @@ def search_messages_handler(event, context, current_user, name, data):
         'required': ['messageId']
     }
 )
-@validated("get_attachment_links")
-def get_attachment_links_handler(event, context, current_user, name, data):
-    return common_handler(get_attachment_links, 'message_id')(event, context, current_user, name, data)
+# @validated("get_attachment_links")
+def get_attachment_links_handler(current_user, data):
+    return common_handler(get_attachment_links, 'message_id')(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/get-attachment-content",
-    tags=["default"],
+    path="/google/integrations/route?op=get_attachment_content",
+    tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getAttachmentContent",
     description="Gets the content of a specific attachment.",
     params={
@@ -2290,13 +2401,13 @@ def get_attachment_links_handler(event, context, current_user, name, data):
         'required': ['messageId', 'attachmentId']
     }
 )
-@validated("get_attachment_content")
-def get_attachment_content_handler(event, context, current_user, name, data):
-    return common_handler(get_attachment_content, 'message_id', 'attachment_id')(event, context, current_user, name, data)
+# @validated("get_attachment_content")
+def get_attachment_content_handler(current_user, data):
+    return common_handler(get_attachment_content, 'message_id', 'attachment_id')(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/create-filter",
-    tags=["default"],
+    path="/google/integrations/route?op=create_filter",
+    tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createFilter",
     description="Creates a new email filter.",
     params={
@@ -2318,13 +2429,13 @@ def get_attachment_content_handler(event, context, current_user, name, data):
         'required': ['criteria', 'action']
     }
 )
-@validated("create_filter")
-def create_filter_handler(event, context, current_user, name, data):
-    return common_handler(create_filter, 'criteria', 'action')(event, context, current_user, name, data)
+# @validated("create_filter")
+def create_filter_handler(current_user, data):
+    return common_handler(create_filter, 'criteria', 'action')(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/create-label",
-    tags=["default"],
+    path="/google/integrations/route?op=create_label",
+    tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createLabel",
     description="Creates a new label.",
     params={
@@ -2341,13 +2452,13 @@ def create_filter_handler(event, context, current_user, name, data):
         'required': ['name']
     }
 )
-@validated("create_label")
-def create_label_handler(event, context, current_user, name, data):
-    return common_handler(create_label, 'name')(event, context, current_user, name, data)
+# @validated("create_label")
+def create_label_handler(current_user, data):
+    return common_handler(create_label, 'name')(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/create-auto-filter-label-rule",
-    tags=["default"],
+    path="/google/integrations/route?op=create_auto_filter_label_rule",
+    tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createAutoFilterLabelRule",
     description="Creates an auto-filter and label rule.",
     params={
@@ -2369,13 +2480,13 @@ def create_label_handler(event, context, current_user, name, data):
         'required': ['criteria', 'labelName']
     }
 )
-@validated("create_auto_filter_label_rule")
-def create_auto_filter_label_rule_handler(event, context, current_user, name, data):
-    return common_handler(create_auto_filter_label_rule, 'criteria', 'label_name')(event, context, current_user, name, data)
+# @validated("create_auto_filter_label_rule")
+def create_auto_filter_label_rule_handler(current_user, data):
+    return common_handler(create_auto_filter_label_rule, 'criteria', 'label_name')(current_user, data)
 
 @vop(
-    path="/google/integrations/gmail/get-message-details",
-    tags=["default"],
+    path="/google/integrations/route?op=get_message_details",
+    tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getMessageDetails",
     description="Gets detailed information, such as body, bcc, sent date, etc. for one or more Gmail messages.",
     params={
@@ -2399,13 +2510,13 @@ def create_auto_filter_label_rule_handler(event, context, current_user, name, da
         'required': ['message_id']
     }
 )
-@validated("get_message_details")
-def get_message_details_handler(event, context, current_user, name, data):
-    return common_handler(get_messages_details, message_id=None, fields=None)(event, context, current_user, name, data)
+# @validated("get_message_details")
+def get_message_details_handler(current_user, data):
+    return common_handler(get_message_details, message_id=None, fields=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/search-contacts",
-    tags=["default"],
+    path="/google/integrations/route?op=search_contacts",
+    tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="searchContacts",
     description="Searches the user's Google Contacts.",
     params={
@@ -2428,13 +2539,13 @@ def get_message_details_handler(event, context, current_user, name, data):
         'required': ['query']
     }
 )
-@validated("search_contacts")
-def search_contacts_handler(event, context, current_user, name, data):
-    return common_handler(search_contacts, query=None, page_size=10)(event, context, current_user, name, data)
+# @validated("search_contacts")
+def search_contacts_handler(current_user, data):
+    return common_handler(search_contacts, query=None, page_size=10)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/get-contact-details",
-    tags=["default"],
+    path="/google/integrations/route?op=get_contact_details",
+    tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="getContactDetails",
     description="Gets details for a specific contact.",
     params={
@@ -2451,13 +2562,13 @@ def search_contacts_handler(event, context, current_user, name, data):
         'required': ['resource_name']
     }
 )
-@validated("get_contact_details")
-def get_contact_details_handler(event, context, current_user, name, data):
-    return common_handler(get_contact_details, resource_name=None)(event, context, current_user, name, data)
+# @validated("get_contact_details")
+def get_contact_details_handler(current_user, data):
+    return common_handler(get_contact_details, resource_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/create-contact",
-    tags=["default"],
+    path="/google/integrations/route?op=create_contact",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="createContact",
     description="Creates a new contact.",
     params={
@@ -2474,13 +2585,13 @@ def get_contact_details_handler(event, context, current_user, name, data):
         'required': ['contact_info']
     }
 )
-@validated("create_contact")
-def create_contact_handler(event, context, current_user, name, data):
-    return common_handler(create_contact, contact_info=None)(event, context, current_user, name, data)
+# @validated("create_contact")
+def create_contact_handler(current_user, data):
+    return common_handler(create_contact, contact_info=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/update-contact",
-    tags=["default"],
+    path="/google/integrations/route?op=update_contact",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="updateContact",
     description="Updates an existing contact.",
     params={
@@ -2502,13 +2613,13 @@ def create_contact_handler(event, context, current_user, name, data):
         'required': ['resource_name', 'contact_info']
     }
 )
-@validated("update_contact")
-def update_contact_handler(event, context, current_user, name, data):
-    return common_handler(update_contact, resource_name=None, contact_info=None)(event, context, current_user, name, data)
+# @validated("update_contact")
+def update_contact_handler(current_user, data):
+    return common_handler(update_contact, resource_name=None, contact_info=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/delete-contact",
-    tags=["default"],
+    path="/google/integrations/route?op=delete_contact",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="deleteContact",
     description="Deletes a contact.",
     params={
@@ -2525,13 +2636,13 @@ def update_contact_handler(event, context, current_user, name, data):
         'required': ['resource_name']
     }
 )
-@validated("delete_contact")
-def delete_contact_handler(event, context, current_user, name, data):
-    return common_handler(delete_contact, resource_name=None)(event, context, current_user, name, data)
+# @validated("delete_contact")
+def delete_contact_handler(current_user, data):
+    return common_handler(delete_contact, resource_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/list-contact-groups",
-    tags=["default"],
+    path="/google/integrations/route?op=list_contact_groups",
+    tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="listContactGroups",
     description="Lists all contact groups.",
     params={},
@@ -2540,13 +2651,13 @@ def delete_contact_handler(event, context, current_user, name, data):
         "properties": {}
     }
 )
-@validated("list_contact_groups")
-def list_contact_groups_handler(event, context, current_user, name, data):
-    return common_handler(list_contact_groups)(event, context, current_user, name, data)
+# @validated("list_contact_groups")
+def list_contact_groups_handler(current_user, data):
+    return common_handler(list_contact_groups)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/create-contact-group",
-    tags=["default"],
+    path="/google/integrations/route?op=create_contact_group",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="createContactGroup",
     description="Creates a new contact group.",
     params={
@@ -2563,13 +2674,13 @@ def list_contact_groups_handler(event, context, current_user, name, data):
         'required': ['group_name']
     }
 )
-@validated("create_contact_group")
-def create_contact_group_handler(event, context, current_user, name, data):
-    return common_handler(create_contact_group, group_name=None)(event, context, current_user, name, data)
+# @validated("create_contact_group")
+def create_contact_group_handler(current_user, data):
+    return common_handler(create_contact_group, group_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/update-contact-group",
-    tags=["default"],
+    path="/google/integrations/route?op=update_contact_group",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="updateContactGroup",
     description="Updates an existing contact group.",
     params={
@@ -2591,13 +2702,13 @@ def create_contact_group_handler(event, context, current_user, name, data):
         'required': ['resource_name', 'new_name']
     }
 )
-@validated("update_contact_group")
-def update_contact_group_handler(event, context, current_user, name, data):
-    return common_handler(update_contact_group, resource_name=None, new_name=None)(event, context, current_user, name, data)
+# @validated("update_contact_group")
+def update_contact_group_handler(current_user, data):
+    return common_handler(update_contact_group, resource_name=None, new_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/delete-contact-group",
-    tags=["default"],
+    path="/google/integrations/route?op=delete_contact_group",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="deleteContactGroup",
     description="Deletes a contact group.",
     params={
@@ -2614,13 +2725,13 @@ def update_contact_group_handler(event, context, current_user, name, data):
         'required': ['resource_name']
     }
 )
-@validated("delete_contact_group")
-def delete_contact_group_handler(event, context, current_user, name, data):
-    return common_handler(delete_contact_group, resource_name=None)(event, context, current_user, name, data)
+# @validated("delete_contact_group")
+def delete_contact_group_handler(current_user, data):
+    return common_handler(delete_contact_group, resource_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/add-contacts-to-group",
-    tags=["default"],
+    path="/google/integrations/route?op=add_contacts_to_group",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="addContactsToGroup",
     description="Adds contacts to a group.",
     params={
@@ -2643,13 +2754,13 @@ def delete_contact_group_handler(event, context, current_user, name, data):
         'required': ['group_resource_name', 'contact_resource_names']
     }
 )
-@validated("add_contacts_to_group")
-def add_contacts_to_group_handler(event, context, current_user, name, data):
-    return common_handler(add_contacts_to_group, group_resource_name=None, contact_resource_names=None)(event, context, current_user, name, data)
+# @validated("add_contacts_to_group")
+def add_contacts_to_group_handler(current_user, data):
+    return common_handler(add_contacts_to_group, group_resource_name=None, contact_resource_names=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/people/remove-contacts-from-group",
-    tags=["default"],
+    path="/google/integrations/route?op=remove_contacts_from_group",
+    tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="removeContactsFromGroup",
     description="Removes contacts from a group.",
     params={
@@ -2672,9 +2783,9 @@ def add_contacts_to_group_handler(event, context, current_user, name, data):
         'required': ['group_resource_name', 'contact_resource_names']
     }
 )
-@validated("remove_contacts_from_group")
-def remove_contacts_from_group_handler(event, context, current_user, name, data):
-    return common_handler(remove_contacts_from_group, group_resource_name=None, contact_resource_names=None)(event, context, current_user, name, data)
+# @validated("remove_contacts_from_group")
+def remove_contacts_from_group_handler(current_user, data):
+    return common_handler(remove_contacts_from_group, group_resource_name=None, contact_resource_names=None)(current_user, data)
 
 
 

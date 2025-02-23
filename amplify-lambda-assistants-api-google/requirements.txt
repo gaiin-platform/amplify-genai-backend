@@ -14,3 +14,4 @@ google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
 python-dateutil
+cryptography>=36.0.0,<46.0.0 #as per the dependencies requirements

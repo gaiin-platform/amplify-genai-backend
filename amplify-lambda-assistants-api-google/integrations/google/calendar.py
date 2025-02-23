@@ -51,12 +51,12 @@ def format_event(event, include_description=False, include_attendees=False, incl
 
 
 
-def create_event(current_user, title, start_time, end_time, description, attendees=None):
+def create_event(current_user, title, start_time, end_time, description, attendees=None, access_token=None):
     if attendees:
         for email in attendees:
             validate_email(email)
 
-    service = get_calendar_service(current_user)
+    service = get_calendar_service(current_user, access_token)
     event = {
         'summary': title,
         'description': description,
@@ -68,20 +68,20 @@ def create_event(current_user, title, start_time, end_time, description, attende
     return {'id': created_event['id'], 'title': created_event['summary']}
 
 
-def update_event(current_user, event_id, updated_fields):
-    service = get_calendar_service(current_user)
+def update_event(current_user, event_id, updated_fields, access_token=None):
+    service = get_calendar_service(current_user, access_token)
     event = service.events().get(calendarId='primary', eventId=event_id).execute()
     event.update(updated_fields)
     updated_event = service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
     return {'id': updated_event['id'], 'title': updated_event['summary']}
 
-def delete_event(current_user, event_id):
-    service = get_calendar_service(current_user)
+def delete_event(current_user, event_id, access_token=None):
+    service = get_calendar_service(current_user, access_token)
     service.events().delete(calendarId='primary', eventId=event_id).execute()
     return {'status': 'deleted', 'id': event_id}
 
-def check_event_conflicts(current_user, proposed_start_time, proposed_end_time, return_conflicting_events=False):
-    service = get_calendar_service(current_user)
+def check_event_conflicts(current_user, proposed_start_time, proposed_end_time, return_conflicting_events=False, access_token=None):
+    service = get_calendar_service(current_user, access_token)
     events_result = service.events().list(calendarId='primary', timeMin=proposed_start_time,
                                           timeMax=proposed_end_time, singleEvents=True).execute()
     conflicts = events_result.get('items', [])
@@ -102,13 +102,13 @@ def check_event_conflicts(current_user, proposed_start_time, proposed_end_time, 
 
     return result
 
-def get_event_details(current_user, event_id):
-    service = get_calendar_service(current_user)
+def get_event_details(current_user, event_id, access_token=None):
+    service = get_calendar_service(current_user, access_token)
     event = service.events().get(calendarId='primary', eventId=event_id).execute()
     return format_event(event, include_description=True, include_attendees=True, include_location=True)
 
-def get_events_between_dates(current_user, start_date, end_date, include_description=False, include_attendees=False, include_location=False):
-    service = get_calendar_service(current_user)
+def get_events_between_dates(current_user, start_date, end_date, include_description=False, include_attendees=False, include_location=False, access_token=None):
+    service = get_calendar_service(current_user, access_token)
     start_date = normalize_date(start_date)
     end_date = normalize_date(end_date)
     events_result = service.events().list(calendarId='primary', timeMin=start_date,
@@ -117,8 +117,8 @@ def get_events_between_dates(current_user, start_date, end_date, include_descrip
     return [format_event(event, include_description, include_attendees, include_location)
             for event in events_result.get('items', [])]
 
-def get_events_for_date(current_user, date, include_description=False, include_attendees=False, include_location=False):
-    service = get_calendar_service(current_user)
+def get_events_for_date(current_user, date, include_description=False, include_attendees=False, include_location=False, access_token=None):
+    service = get_calendar_service(current_user, access_token)
 
     # Normalize the input date
     normalized_date = normalize_date(date)
@@ -181,16 +181,20 @@ def normalize_date(date_string):
     raise ValueError(f"Could not parse date {date_string}. Please use %Y-%m-%dT%H:%M:%SZ format.")
 
 
-def get_free_time_slots(current_user, start_date, end_date, duration,
-                        user_time_zone='America/Chicago', include_weekends=False,
-                        allowed_time_windows=["08:00-17:00"], exclude_dates=None):
+def get_free_time_slots(current_user, start_date, end_date, duration, user_time_zone='America/Chicago', 
+                        include_weekends=False, allowed_time_windows=["08:00-17:00"], exclude_dates=None, access_token=None):
     if user_time_zone is None:
         user_time_zone = 'America/Chicago'
 
     allowed_time_windows = allowed_time_windows or ["08:00-17:00"]
 
-    service = get_calendar_service(current_user)
-    events = get_events_between_dates(current_user, start_date, end_date)
+
+    # service = get_calendar_service(current_user, access_token)
+    events = get_events_between_dates(current_user, start_date, end_date, access_token=access_token)
+
+    print(f"User time zone: {user_time_zone}")
+
+    free_slots_by_date = {}
     usertz = ZoneInfo(user_time_zone)
 
     # Parse start and end times
@@ -351,7 +355,7 @@ def parse_datetime(date_str, usertz):
         dt = dt.astimezone(usertz)
     return dt
 
-def get_calendar_service(current_user):
-    user_credentials = get_user_credentials(current_user, integration_name)
+def get_calendar_service(current_user, access_token):
+    user_credentials = get_user_credentials(current_user, integration_name, access_token)
     credentials = Credentials.from_authorized_user_info(user_credentials)
     return build('calendar', 'v3', credentials=credentials)
