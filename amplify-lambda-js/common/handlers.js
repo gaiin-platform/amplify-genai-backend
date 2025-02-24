@@ -19,7 +19,7 @@ config({ path: join(__dirname, '../../.env.local') });
 // Read environment variables
 const userPoolId = process.env.COGNITO_USER_POOL_ID;
 const clientId = process.env.COGNITO_CLIENT_ID;
-const idpPrefix = process.env.IDP_PREFIX;
+const idpPrefix = (process.env.IDP_PREFIX || '').toLowerCase();
 
 // Ensure the environment variables are defined
 if (!userPoolId || !clientId) {
@@ -78,7 +78,7 @@ export const extractParams = async (event) => {
         }
 
         const user = payload.username;
-        const current_user = idpPrefix && user.startsWith(idpPrefix) ? user.slice( idpPrefix.length + 1 ) : user;
+        const current_user = idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
         console.log("Current user: " + current_user);
 
         let requestBody;
