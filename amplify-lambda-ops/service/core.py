@@ -10,6 +10,15 @@ from common.auth_admin import verify_user_as_admin
 dynamodb = boto3.client('dynamodb')
 
 
+
+
+@validated(op="get")
+def get_all_ops(event, context, current_user, name, data):
+    if (not verify_user_as_admin(data['access_token'], 'Get All Ops')):
+        return {'success': False , 'error': 'Unable to authenticate user as admin'}
+
+    return fetch_user_ops("system", 'all')
+
 @op(
     path="/ops/get",
     tags=["ops", "default"],
@@ -19,15 +28,6 @@ dynamodb = boto3.client('dynamodb')
         "tag": "The optional tag to search for.",
     }
 )
-
-@validated(op="get")
-def get_all_ops(event, context, current_user, name, data):
-    if (not verify_user_as_admin(data['access_token'], 'Get All Ops')):
-        return {'success': False , 'error': 'Unable to authenticate user as admin'}
-
-    return fetch_user_ops("system", 'all')
-
-
 @validated(op="get")
 def get_ops(event, context, current_user, name, data):
     data = data['data']
