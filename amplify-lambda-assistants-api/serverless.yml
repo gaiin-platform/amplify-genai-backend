@@ -51,9 +51,10 @@ provider:
     OP_TRACING_ENABLED: true
     OP_TRACING_REQUEST_DETAILS_ENABLED: true
     OP_TRACING_RESULT_DETAILS_ENABLED: true
-    JOB_STATUS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-job-status
-    JOB_RESULTS_BUCKET: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-job-results
+    JOB_STATUS_TABLE: ${self:service}-${sls:stage}-job-status
+    JOB_RESULTS_BUCKET: ${self:service}-${sls:stage}-job-results
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+
 
   iam:
     role:
