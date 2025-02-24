@@ -67,9 +67,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             returnResponse(responseStream, {
                 statusCode: 429,
                 statusText: "Request limit reached. Please try again in a few minutes.",
-                body: {error: "Too Many Requests",
-                       rateLimitInfo: rateLimit,
-                }
+                body: {error: "Too Many Requests"}
             });
 
         } else {
