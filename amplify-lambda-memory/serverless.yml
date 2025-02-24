@@ -164,6 +164,8 @@ resources:
             KeySchema:
               - AttributeName: taxonomy_path
                 KeyType: HASH
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.MEMORY_DYNAMO_TABLE}
 
     ProjectsDynamoDbTable:
