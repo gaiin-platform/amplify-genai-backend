@@ -84,7 +84,6 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
     MAX_CHUNKS: 1000
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
@@ -207,7 +206,7 @@ functions:
           method: post
           cors: true
     environment:
-        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+        FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     timeout: 9    
 
   download_file:
@@ -427,7 +426,7 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
-        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+        FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
     
@@ -499,7 +498,8 @@ resources:
                 - ssm:DescribeParameters
                 - ssm:PutParameter
               Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/s3/metadata/encryption/*
+                
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -540,7 +540,6 @@ resources:
                 - rds-data:BeginTransaction
                 - rds-data:CommitTransaction
                 - rds-data:RollbackTransaction
-                - secretsmanager:GetSecretValue
               Resource:
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
