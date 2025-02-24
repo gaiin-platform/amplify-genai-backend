@@ -12,7 +12,7 @@ from functools import wraps
 from typing import Callable, Any, Dict, Type
 import yaml
 from inspect import signature, Parameter, Signature
-
+from common.get_chat_endpoint import get_chat_endpoint
 
 def tag_file(api_url, file_key, access_token, tags):
     data = {
@@ -361,8 +361,11 @@ def chat_simple(access_token, model, system_instructions, prompt_instructions):
     if not model:
         raise ValueError("You must provide a model to the function as a keyword arg.")
 
+    chat_endpoint = get_chat_endpoint()
+    if not chat_endpoint:
+        raise ValueError("Couldnt retrieve 'CHAT_ENDPOINT' from secrets manager.")
     response, meta = chat(
-        os.getenv("CHAT_ENDPOINT"),
+        chat_endpoint,
         access_token,
         {
             "model": model,
@@ -394,7 +397,7 @@ def prompt(system_prompt: str = ""):
             sig = signature(func)
 
             new_params = [
-                Parameter("chat_url", Parameter.KEYWORD_ONLY, annotation=str, default=os.getenv('AMPLIFY_CHAT_URL')),
+                Parameter("chat_url", Parameter.KEYWORD_ONLY, annotation=str, default=None),
                 Parameter("access_token", Parameter.KEYWORD_ONLY, annotation=str, default=os.getenv('AMPLIFY_TOKEN')),
                 Parameter("api_key", Parameter.KEYWORD_ONLY, annotation=str, default=os.getenv('AMPLIFY_API_KEY')),
                 Parameter("system_prompt", Parameter.KEYWORD_ONLY, annotation=str, default=None),
@@ -426,7 +429,7 @@ def prompt(system_prompt: str = ""):
             bound_args = new_sig.bind(*args, **kwargs)
             bound_args.apply_defaults()
 
-            chat_url = kwargs.get('chat_url', os.getenv('CHAT_ENDPOINT'))
+            chat_url = kwargs.get('chat_url') or get_chat_endpoint()
             access_token = kwargs.get('access_token', os.getenv('AMPLIFY_TOKEN'))
             passed_system_prompt = kwargs.get('system_prompt', None)
             api_key = kwargs.get('api_key', None)

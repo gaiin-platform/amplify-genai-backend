@@ -15,7 +15,7 @@ from common.validate import validated
 from flow.steps import parse_workflow
 from llm.chat import chat, prompt
 from work.session import create_session
-
+from common.get_chat_endpoint import get_chat_endpoint
 
 @vop(
     path="/llm/rag_query",
@@ -224,9 +224,9 @@ def prompt_llm(access_token, model, datasource, custom_instructions, query, rag_
         }
     }
 
-    chat_endpoint = os.getenv('CHAT_ENDPOINT')
+    chat_endpoint = get_chat_endpoint()
     if not chat_endpoint:
-        raise ValueError("Environment variable 'CHAT_ENDPOINT' is not set.")
+        raise ValueError("Couldnt retrieve 'CHAT_ENDPOINT' from secrets manager.")
 
     response, meta_events = chat(chat_endpoint, access_token, payload)
 
