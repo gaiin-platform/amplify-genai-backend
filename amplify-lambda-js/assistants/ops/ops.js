@@ -19,14 +19,29 @@ Operations:
   {{{name}}}: {{{description}}}
 {{/each}}
 {{/each}}
-`
+`,
+    "integrationsFormat": `
+    Integrations:
+{{#each __assistantOps}}
+
+PATH: {{{url}}}
+Tags: {{joinFiltered tags}}
+
+
+{{/each}}
+`,
 }
 
-
-export const formatOps = async (ops, format) => {
+Handlebars.registerHelper('joinFiltered', function(tags, options) {
+    const filtered = tags.filter(t => t !== 'all' && t !== 'default');
+    return filtered.join(', ');
+});
+// NoEscape - Handlebars will not convert HTML or special characters into HTML entities when displaying your template variables
+export const formatOps = async (ops, format, noEscape = false) => {
+    
     try {
         const templateStr = format ? opFormats[format] || opFormats["default"] : opFormats["default"];
-        const template = Handlebars.compile(templateStr);
+        const template = Handlebars.compile(templateStr, { noEscape: noEscape });
         const result = template({"__assistantOps": ops});
         return result;
     } catch (e) {

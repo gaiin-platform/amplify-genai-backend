@@ -423,21 +423,35 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 return;
 
-            }
-            else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+            } else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
+                if (assistant.data.opsLanguageVersion !== "custom") {
+                    const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
+                    const langVersion = opsLanguages[opsLanguageVersion];
+                    const instructionsPreProcessor = langVersion.instructionsPreProcessor;
 
-                const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
-                const langVersion = opsLanguages[opsLanguageVersion];
-                const instructionsPreProcessor = langVersion.instructionsPreProcessor;
+                    if (instructionsPreProcessor) {
+                        assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                    }
 
-                if (instructionsPreProcessor) {
-                    assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                    const langMessages = langVersion.messages;
+                    blockTerminator = langVersion.blockTerminator;
+                    extraMessages.push(...langMessages);
+                    suffixMessages.push(...(langVersion.suffixMessages || []));
                 }
+                const containsIntegrations = assistant.data.operations.some(op => op.tags.includes("integration"));
+                if (containsIntegrations) {
+                    const integrationInstructions = `
+                    If you detect an error message regarding *api credentials* please respond with your message and then finish with:
 
-                const langMessages = langVersion.messages;
-                blockTerminator = langVersion.blockTerminator;
-                extraMessages.push(...langMessages);
-                suffixMessages.push(...(langVersion.suffixMessages || []));
+                        \`\`\` integrationsDialog 
+                        \`\`\`
+
+                    You must provide this exactly with the 3 tick marks and a newline, so i can render a button. Let the user know they can connect to the service by clicking on the button. 
+
+                    This only applies when you have been notified there was an error regarding *api credentials* otherwise DO NOT mention it
+                    `;
+                    assistant.instructions += "\n\n" + integrationInstructions;
+                }
 
             }
 
