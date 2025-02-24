@@ -2,17 +2,22 @@ import Handlebars from "handlebars";
 import yaml from "js-yaml";
 import {formatOps, getOps} from "../ops/ops.js";
 
-const extractTagAndFormat = (str) => {
-    const regex = /\{\{\s*ops\s+([a-zA-Z0-9_./-]+)?(:[a-zA-Z0-9_./-]+)?\s*\}\}/;
-    const match = str.match(regex);
 
-    if (match) {                        // remove colon
-        return { tag: match[1], format: match[2]?.slice(1) };
-    } else {
-        return { tag: null, format: null };
+function parseAllOpsOccurrences(templateStr) {
+    const pattern = /\{\{\s*ops\s+([a-zA-Z0-9_./\-]+)(?::([a-zA-Z0-9_./\-]+))?(\s+noAdd)?\s*\}\}/g;
+
+    let match;
+    const results = [];
+    while ((match = pattern.exec(templateStr)) !== null) {
+      const raw = match[0];
+      const tag = match[1].trim();
+      const format = match[2];
+      const noAdd = !!match[3]; // True if we matched " noAdd"
+      const id = format ? `${tag}:${format}` : tag;
+      results.push({ id, tag, format, noAdd });
     }
-}
-
+    return results;
+  }
 
 export const fillInTemplate = async (llm, params, body, ds, templateStr, contextData) => {
 
@@ -23,30 +28,46 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
 
     let result = templateStr;
     try {
+        const ASSISTANT_OPS_STR = "__assistantOps";
 
         let includedOperations = contextData.operations || [];
-        let hasTemplateForOps = false;
 
-        let opsStr = "";
-        const { tag, format } = extractTagAndFormat(templateStr);
-        if(tag || templateStr.includes("__assistantOps")) {
-            hasTemplateForOps = true;
-            const ops = await getOps(params.account.accessToken, tag);
+        const opsOccurrences = parseAllOpsOccurrences(templateStr);
+        let hasTemplateForOps = opsOccurrences.length > 0 || templateStr.includes(ASSISTANT_OPS_STR);
+        const opsByTag = {};
+        const opsFormatMap = {};
 
-            includedOperations = [...includedOperations, ...ops];
-        }
-
-        if(includedOperations.length > 0) {
-            llm.sendStateEventToStream({resolvedOps: includedOperations});
-
-            opsStr = await formatOps(includedOperations, format);
-            // console.log(opsStr)
-            contextData["__assistantOps"] = includedOperations;
-
-            if (!hasTemplateForOps) {
-                templateStr = "{{ops __assistantOps}}\n\n" + templateStr;
+        for (const { id, tag, format, noAdd } of opsOccurrences) {
+            if (!opsByTag[tag]) {
+                const fetchedOps = await getOps(params.account.accessToken, tag);  
+                opsByTag[tag] = fetchedOps;
+                opsFormatMap[id] = await formatOps(fetchedOps, format, noAdd)
+                if (!noAdd) includedOperations = [...includedOperations, ...fetchedOps];
             }
         }
+
+        if ( includedOperations.length > 0) { 
+            llm.sendStateEventToStream({ resolvedOps: includedOperations });
+            contextData[ASSISTANT_OPS_STR] = includedOperations;
+            
+            if (!hasTemplateForOps) {
+                const opsStr = `"${ASSISTANT_OPS_STR}"`;
+                templateStr = `{{ ops ${opsStr} }}\n\n` + templateStr;
+                opsFormatMap[opsStr] = formatOps(contextData.operations);
+            }
+        }
+        const isQuotedRegex = /^(['"]).*\1$/;
+        Object.keys(opsFormatMap).forEach(op => {
+            if (!(isQuotedRegex.test(op))) {
+                templateStr = templateStr.replaceAll(`ops ${op}`, `ops "${op}"`);
+            }
+        })
+
+        Handlebars.registerHelper("ops", function (opKey) {
+            if (!opKey || !opsFormatMap[opKey]) return "";
+            return opsFormatMap[opKey];
+          });
+   
 
         const dataSourcesInConversationAlready = (body) => {
             return body.messages.slice(0, -1)
@@ -70,10 +91,6 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
         Handlebars.registerHelper('dataSourcesInCurrentMessage', function (tagandformat) {
 
             return yaml.dump(ds);
-        });
-
-        Handlebars.registerHelper('ops', function (tagandformat) {
-            return opsStr;
         });
 
         Handlebars.registerHelper('assistantName', function () {
