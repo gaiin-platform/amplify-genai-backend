@@ -37,32 +37,47 @@ class OperationModel(BaseModel):
         return v.upper()
 
 
-def  integration_config_trigger(event, context):
-       """
-       Triggered by a DynamoDB stream event on the admin configs table.
-       This function checks for new rows with config_id 'integrations' and a null data field,
-       then calls register_ops to register the operations.
-       """
-       print("Admin Config Trigger invoked")
+def integration_config_trigger(event, context):
+    """
+    Triggered by a DynamoDB stream event on the admin configs table.
+    For the 'integrations' record, on MODIFY events: if the specified provider key
+    (PROVIDER) is newly added to the data field, call register_ops.
+    """
+    print("Admin Config Trigger invoked")
+    PROVIDER = "microsoft"
+    for record in event.get('Records', []):
+        if record.get('eventName') != 'MODIFY':
+            continue
 
-       for record in event.get('Records', []):
-           # Process only new records (INSERT events)
-           if record.get('eventName') != 'INSERT':
-               continue
+        new_image = record.get('dynamodb', {}).get('NewImage', {})
+        config_id = new_image.get('config_id', {}).get('S')
+        if config_id != "integrations":
+            continue
 
-           new_image = record.get('dynamodb', {}).get('NewImage', {})
-           config_id = new_image.get('config_id', {}).get('S')
+        old_image = record.get('dynamodb', {}).get('OldImage', {})
+        new_data = new_image.get('data', {})
+        old_data = old_image.get('data', {})
 
-           # DynamoDB streams represent a NULL attribute as {"NULL": True}
-           data_field = new_image.get('data', {})
-           is_data_none = data_field.get('NULL', False)
+        def extract_keys(data_field):
+            # Assuming data_field is stored as a DynamoDB Map attribute.
+            if 'M' in data_field:
+                return set(data_field['M'].keys())
+            # Assume it's already a native dict.
+            return set(data_field.keys())
 
-           if config_id == "integrations" and is_data_none:
-                print(f"Registering Mircosft ops")
-                result = register_ops()
-                if not result['success']:
-                    print(f"Failed to register Mircosft ops")
-                    
+        old_keys = extract_keys(old_data)
+        new_keys = extract_keys(new_data)
+        print(f"Old keys: {old_keys}")
+        print(f"New keys: {new_keys}")
+
+        # If the provider key was absent before and is now present, register ops.
+        if PROVIDER not in old_keys and PROVIDER in new_keys:
+            print(f"Registering {PROVIDER} ops (provider key added)")
+            result = register_ops()
+            if not result.get('success'):
+                print(f"Failed to register {PROVIDER} ops")
+        else:
+            print(f"Provider {PROVIDER} ops already exists, skipping op registration")        
 
 
 def register_ops(current_user: str = "system", file_path: Optional[str] = None) -> dict:
