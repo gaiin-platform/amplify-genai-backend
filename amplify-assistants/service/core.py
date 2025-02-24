@@ -355,15 +355,30 @@ def list_user_assistants(user_id):
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
-    # Query the DynamoDB table to get all assistants for the user
-    response = assistants_table.query(
-        IndexName="UserNameIndex",
-        KeyConditionExpression=Key("user").eq(user_id),
-    )
+    assistants = []
+    last_evaluated_key = None
 
-    # Create a list of dictionaries representing the assistants
-    assistants = [item for item in response["Items"]]
+    while True:
+        # Build the query parameters
+        query_params = {
+            'IndexName': "UserNameIndex",
+            'KeyConditionExpression': Key("user").eq(user_id),
+        }
 
+        # If there is a last evaluated key, include it in the query
+        if last_evaluated_key:
+            query_params['ExclusiveStartKey'] = last_evaluated_key
+        response = assistants_table.query(**query_params)
+
+        assistants.extend(response.get("Items", []))
+
+        # Check if there's more data to retrieve
+        last_evaluated_key = response.get('LastEvaluatedKey')
+
+        if not last_evaluated_key:
+            print("No more data to retrieve")
+            # No more data to retrieve
+            break
 
     # filter out old versions 
     return get_latest_assistants(assistants)
