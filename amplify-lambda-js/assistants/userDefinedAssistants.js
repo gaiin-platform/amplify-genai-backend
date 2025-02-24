@@ -329,7 +329,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     params.account.accessToken,
                     params.options.conversationId,
                     body.messages,
-                    {assistant}
+                    {assistant, model: params.model.id}
                 );
                 llm.sendStatus(statusInfo);
                 llm.forceFlush();
@@ -398,11 +398,16 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 if (result.success) {
                     let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
 
-                    if(responseFromAssistant.args && responseFromAssistant.args.message){
-                        responseFromAssistant = responseFromAssistant.args.message;
+                    if(responseFromAssistant) {
+                        if (responseFromAssistant.args && responseFromAssistant.args.message) {
+                            responseFromAssistant = responseFromAssistant.args.message;
+                        } else {
+                            responseFromAssistant = JSON.stringify(responseFromAssistant);
+                        }
                     }
                     else {
-                        responseFromAssistant = JSON.stringify(responseFromAssistant);
+                        console.log("Error getting the last assistant message from the agent result: ", JSON.stringify(result));
+                        responseFromAssistant = "No response from assistant. Something went wrong.";
                     }
 
                     const summaryRequest = {
