@@ -199,7 +199,12 @@ resources:
             AttributeType: 'S'
         KeySchema:
           - AttributeName: 'config_id'
-            KeyType: 'HASH'   
+            KeyType: 'HASH'  
+        # Enable streams so we can trigger on new inserts:
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    
 
 
     AmplifyAdminLogTable:
@@ -217,5 +222,11 @@ resources:
         KeySchema:
           - AttributeName: "log_id"
             KeyType: "HASH"      
+
+  Outputs:
+    AmplifyAdminTableStreamArn:
+      Value: !GetAtt AmplifyAdminTable.StreamArn
+      Export:
+        Name: AmplifyAdminTableStreamArn  
 
    

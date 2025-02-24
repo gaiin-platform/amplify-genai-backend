@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from botocore.exceptions import ClientError
@@ -14,9 +13,7 @@ from common.supported_models import update_supported_models, get_supported_model
 from common.ast_admin_groups import get_all_ast_admin_groups, update_ast_admin_groups
 from common.ops_reqs import get_all_op
 from base_feature_flags import feature_flags
-import base64
-import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from botocore.config import Config
 
 # Setup AWS DynamoDB access
@@ -37,6 +34,7 @@ class AdminConfigTypes(Enum):
     RATE_LIMIT = 'rateLimit'
     PROMPT_COST_ALERT = 'promtCostAlert'
     OPS = 'ops'
+    INTEGRATIONS = 'integrations'
 
 # Map config_type to the corresponding secret name in Secrets Manager
 secret_name_map = {
@@ -86,7 +84,8 @@ def update_configs(event, context, current_user, name, data):
 def handle_update_config(config_type, update_data, token):
 
     match config_type:
-        case AdminConfigTypes.ADMINS | AdminConfigTypes.FEATURE_FLAGS | AdminConfigTypes.RATE_LIMIT | AdminConfigTypes.PROMPT_COST_ALERT | AdminConfigTypes.AMPLIFY_GROUPS:
+        case (AdminConfigTypes.ADMINS | AdminConfigTypes.FEATURE_FLAGS | AdminConfigTypes.RATE_LIMIT | 
+              AdminConfigTypes.PROMPT_COST_ALERT | AdminConfigTypes.AMPLIFY_GROUPS | AdminConfigTypes.INTEGRATIONS):
             return update_admin_config_data(config_type.value, update_data)
 
         case AdminConfigTypes.AVAILABLE_MODELS:
@@ -230,7 +229,8 @@ def get_configs(event, context, current_user, name, data):
     if (lazy_load):
         print("Loading admin table configs only")
         dynamo_config_types = [AdminConfigTypes.FEATURE_FLAGS, AdminConfigTypes.ADMINS, AdminConfigTypes.PPTX_TEMPLATES, 
-                            AdminConfigTypes.AMPLIFY_GROUPS, AdminConfigTypes.RATE_LIMIT, AdminConfigTypes.PROMPT_COST_ALERT]
+                               AdminConfigTypes.AMPLIFY_GROUPS, AdminConfigTypes.RATE_LIMIT, AdminConfigTypes.PROMPT_COST_ALERT,
+                               AdminConfigTypes.INTEGRATIONS]
         
         for config_type in dynamo_config_types:
             try:
@@ -347,11 +347,15 @@ def initialize_config(config_type):
         item['data'] =  { 'isActive' : False, 'cost': 5,
                           'alertMessage': 'This request will cost an estimated $<totalCost> (the actual cost may be more) and require <prompts> prompt(s).', 
                         }
+    
+    elif config_type == AdminConfigTypes.INTEGRATIONS:
+        item['data'] = {} # No integrtaions have been initialized from the admin panel
     else:
         raise ValueError(f"Unknown config type: {config_type}")
     
     try:
         admin_table.put_item(Item=item)
+        print(f"Config Item Initialized: {config_type.value}")
     except Exception as e:
         print(f"Error initializing AMPLIFY_GROUPS config: {str(e)}")
 

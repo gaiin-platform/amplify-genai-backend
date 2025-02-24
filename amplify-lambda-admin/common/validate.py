@@ -425,6 +425,39 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                    {
+                        # Configuration for 'integrations'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "integrations"
+                            },
+                            "data": {
+                                "type": "object",
+                                "patternProperties": {
+                                    "^(google|microsoft|drive|github|slack)$": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "id": {"type": "string"},
+                                                "icon": {"type": "string"},
+                                                "description": {"type": "string"},
+                                                "isAvailable": {"type": "boolean"},
+                                            },
+                                            "required": ["name", "id", "icon", "description"],
+                                            "additionalProperties": False
+                                        },
+                                    }
+                                },
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                 ]
             }
         }
