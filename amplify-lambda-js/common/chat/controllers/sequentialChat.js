@@ -82,6 +82,7 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
         logger.debug("Creating stream wrapper");
         const streamReceiver = new PassThrough();
 
+
         // Capture data as it's written to the streamReceiver for AI analysis
         streamReceiver.on('data', (chunk) => {
             const chunkStr = chunk.toString();
