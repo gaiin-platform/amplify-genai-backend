@@ -392,7 +392,7 @@ def update_object_permissions(current_user, data):
 
 def decrypt_account_data(encrypted_data_b64):
     ssm_client = boto3.client('ssm')
-    parameter_name = os.getenv('ENCRYPTION_PARAMETER')
+    parameter_name = os.getenv('FILE_UPLOAD_ENCRYPTION_PARAMETER')
     print("Enter decrypt account data")
     try:
         # Fetch the parameter securely, which holds the encryption key
