@@ -498,8 +498,7 @@ resources:
                 - ssm:DescribeParameters
                 - ssm:PutParameter
               Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/s3/metadata/encryption/*
-                
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/s3/metadata/encryption        
             - Effect: Allow
               Action:
                 - ssm:GetParameter
