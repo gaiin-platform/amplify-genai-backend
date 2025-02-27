@@ -117,7 +117,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (isOmodel) {
         data = {max_completion_tokens: model.outputTokenLimit,
-                messages: data.messages
+                messages: data.messages, model: modelId, stream: true
                 }
 
         if (modelId.includes("o3")) {
@@ -130,14 +130,9 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     }
                 ]
             }));
-
-            // Extract reasoning effort from model ID
-            const effortMatch = modelId.match(/o3-mini-(low|medium|high)/);
-            if (effortMatch) {
-                data.reasoning_effort = effortMatch[1];
-            }
         }
     }
+    if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
     
     if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
 
@@ -157,17 +152,16 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 .then(response => {
 
                     const streamError = (err) => {
-                        if (statusTimer) clearTimeout(statusTimer);
+                        clearTimeout(statusTimer);
                         sendErrorMessage(writableStream);
                         reject(err);
                     };
+                    const finalizeSuccess = () => {
+                        clearTimeout(statusTimer);
+                        resolve();
+                    };
 
-                    if (isOmodel && !isOpenAiEndpoint) { // azure currently does not support streaming 
-
-                        const finalizeSuccess = () => {
-                            clearTimeout(statusTimer);
-                            resolve();
-                        };
+                    if (!data.stream) {
                     
                         let jsonBuffer = '';
                         let numOfChunks = 0;
@@ -204,7 +198,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     } else {
                         response.data.pipe(writableStream);
                         // Handle the 'finish' event to resolve the promise
-                        writableStream.on('finish', resolve);
+                        writableStream.on('finish', finalizeSuccess);
 
                         // Handle errors
                         response.data.on('error', streamError);
@@ -239,17 +233,15 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         });
     }
     let statusTimer = null;
-    if (isOmodel && !isOpenAiEndpoint) {
-        const statusInterval = 8000;
-        const handleSendStatusMessage = () => {
-            console.log("Sending status message...");
-            sendStatusMessage(writable);
-            statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
-            };
+    const statusInterval = 8000;
+    const handleSendStatusMessage = () => {
+        console.log("Sending status message...");
+        sendStatusMessage(writable);
+        statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
+        };
 
-            // Start the timer
-        statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
-    }
+        // Start the timer
+    statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
 
     return streamAxiosResponseToWritable(url, writable, statusTimer);
 }
