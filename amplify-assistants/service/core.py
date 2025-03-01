@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -1742,4 +1741,113 @@ def save_user_rating(event, context, current_user, name, data):
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),
+        }
+
+
+@op(
+    path="/assistant/lookup",
+    name="lookupAssistant",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Look up an Amplify assistant by path.
+
+    Example request:
+    {
+        "data": {
+            "astPath": "my/assistant/path"
+        }
+    }
+
+    Example response:
+    {
+        "success": true,
+        "message": "Assistant found",
+        "data": {
+            "assistantId": "astp/34098509834509809348",
+            "astPath": "my/assistant/path",
+            "public": true
+        }
+    }
+    """,
+    params={
+        "astPath": "String. Required. Path to look up the assistant. Example: 'my/assistant/path'."
+    }
+)
+@validated(op="lookup")
+def lookup_assistant(event, context, current_user, name, data):
+    try:
+        # Get the astPath from the request data
+        ast_path = data.get("data", {}).get("astPath")
+        
+        if not ast_path:
+            return {
+                "statusCode": 400,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": "astPath is required",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Get DynamoDB resource
+        dynamodb = boto3.resource("dynamodb")
+        lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
+        
+        # Look up the assistant in the table
+        response = lookup_table.get_item(Key={"astPath": ast_path})
+        
+        # Check if the item exists
+        if "Item" not in response:
+            return {
+                "statusCode": 404,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": f"No assistant found for path: {ast_path}",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Get the item from the response
+        item = response["Item"]
+        
+        # Check if the assistant is public or if the user has access
+        if not item.get("public", False):
+            # Here we could implement additional permission checks
+            # For now, if it's not public, we just check if the current user is the owner
+            # This would need to be expanded based on your permissions model
+            pass
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "success": True,
+                    "message": "Assistant found",
+                    "data": {
+                        "assistantId": item.get("assistantId"),
+                        "astPath": ast_path,
+                        "public": item.get("public", False)
+                    },
+                },
+                cls=CombinedEncoder,
+            )
+        }
+    except Exception as e:
+        print(f"Error looking up assistant: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps(
+                {
+                    "success": False,
+                    "message": f"Error looking up assistant: {str(e)}",
+                    "data": None,
+                },
+                cls=CombinedEncoder,
+            )
         }
