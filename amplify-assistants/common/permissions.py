@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -59,6 +58,9 @@ def can_save_user_rating(user, data):
 def can_get_group_conversations_data(user, data):
     return True
 
+def can_lookup_assistant(user, data):
+    return True
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -92,5 +94,8 @@ permissions_by_state_type = {
     },
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": can_get_group_conversations_data
+    },
+    "/assistant/lookup": {
+        "lookup": can_lookup_assistant
     }
 }

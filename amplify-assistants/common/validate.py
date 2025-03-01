@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -59,6 +58,17 @@ delete_assistant_schema = {
         },
     },
     "required": ["assistantId"],
+}
+
+lookup_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "astPath": {
+            "type": "string",
+            "description": "The path to look up an assistant",
+        },
+    },
+    "required": ["astPath"],
 }
 
 create_assistant_schema = {
@@ -379,6 +389,9 @@ validators = {
     },
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
+    },
+    "/assistant/lookup": {
+        "lookup": lookup_assistant_schema
     }
 }
 
@@ -412,6 +425,9 @@ api_validators = {
     },
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
+    },
+    "/assistant/lookup": {
+        "lookup": lookup_assistant_schema
     }
 }
 

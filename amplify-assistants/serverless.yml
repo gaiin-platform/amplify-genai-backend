@@ -85,6 +85,7 @@ provider:
     GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
 
 
   iam:
@@ -237,8 +238,45 @@ functions:
           method: post
           cors: true
 
+  lookup_assistant:
+    handler: service/core.lookup_assistant
+    timeout: 30
+    events:
+      - http:
+          path: assistant/lookup
+          method: post
+          cors: true
+
 resources:
   Resources:
+
+    AssistantLookupDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          -
+            AttributeName: astPath
+            AttributeType: S
+          -
+            AttributeName: assistantId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: astPath
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: AssistantIdIndex
+            KeySchema:
+              -
+                AttributeName: assistantId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}
 
     AssistantsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -547,6 +585,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
 
             - Effect: Allow
               Action:
