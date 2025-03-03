@@ -51,9 +51,8 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
             contextData[ASSISTANT_OPS_STR] = includedOperations;
             
             if (!hasTemplateForOps) {
-                const opsStr = `"${ASSISTANT_OPS_STR}"`;
-                templateStr = `{{ ops ${opsStr} }}\n\n` + templateStr;
-                opsFormatMap[opsStr] = formatOps(contextData.operations);
+                templateStr = `{{ ops ${ASSISTANT_OPS_STR} }}\n\n` + templateStr;
+                opsFormatMap[ASSISTANT_OPS_STR] = await formatOps(contextData.operations);
             }
         }
         const isQuotedRegex = /^(['"]).*\1$/;
@@ -62,9 +61,9 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
                 templateStr = templateStr.replaceAll(`ops ${op}`, `ops "${op}"`);
             }
         })
-
         Handlebars.registerHelper("ops", function (opKey) {
             if (!opKey || !opsFormatMap[opKey]) return "";
+            // console.log("opsFormatMap[opKey]: ", opsFormatMap[opKey]);
             return opsFormatMap[opKey];
           });
    
