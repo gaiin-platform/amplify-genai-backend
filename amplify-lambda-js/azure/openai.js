@@ -120,17 +120,18 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 messages: data.messages, model: modelId, stream: true
                 }
 
-        if (modelId.includes("o3")) {
+        // was working previously and now isnt?
+        // if (modelId.includes("o3")) {
             // Convert messages to O3 format and handle system->developer role
-            data.messages = data.messages.map(msg => ({
-                role: msg.role === 'system' ? 'developer' : msg.role,
-                content: [
-                    {   type: "text",
-                        text: msg.content
-                    }
-                ]
-            }));
-        }
+            // data.messages = data.messages.map(msg => ({
+            //     role: msg.role === 'system' ? 'developer' : msg.role,
+            //     content: [
+            //         {   type: "text",
+            //             text: msg.content
+            //         }
+            //     ]
+            // }));
+        // }
     }
     if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
     
@@ -153,7 +154,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
                     const streamError = (err) => {
                         clearTimeout(statusTimer);
-                        sendErrorMessage(writableStream);
+                        sendErrorMessage(writableStream, err.response?.status, err.response?.statusText);
                         reject(err);
                     };
                     const finalizeSuccess = () => {
@@ -209,9 +210,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 })
                 .catch((e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
-                    sendErrorMessage(writableStream);
-                    
-                    if(e.response && e.response.data) {
+                    sendErrorMessage(writableStream, e.response.status, e.response.statusText);
+                    if (e.response && e.response.data) {
                         console.log("Error invoking OpenAI API: ",e.response.statusText);
 
                         if (e.response.data.readable) {
@@ -235,7 +235,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     let statusTimer = null;
     const statusInterval = 8000;
     const handleSendStatusMessage = () => {
-        console.log("Sending status message...");
+        // console.log("Sending status message...");
         sendStatusMessage(writable);
         statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
         };
