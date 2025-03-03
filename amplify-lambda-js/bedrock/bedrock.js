@@ -41,12 +41,12 @@ export const chatBedrock = async (chatBody, writable) => {
         
         logger.debug("Initiating call to Bedrock");
 
-        const maxModelTokens = 4096; // currently it seems like bedrock has it maxed out at 4096 not the models output max token
-        //options.model.outputTokenLimit;
+        const maxModelTokens = options.model.outputTokenLimit;
+
         const maxTokens = body.max_tokens || 1000;
         const inferenceConfigs = {"temperature": options.temperature, 
-                                  "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens};
-
+                                  "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens, };
+        
         const input = { modelId: currentModel.id,
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
@@ -84,13 +84,16 @@ export const chatBedrock = async (chatBody, writable) => {
 
         writable.on('error', (error) => {
             logger.error('Error with Writable stream: ', error);
-            sendErrorMessage(writable);
+            const statusCode = error.code || error.statusCode;
+            const statusText = error.message || error.name || 'Stream Error';
+            sendErrorMessage(writable, statusCode, statusText);
             reject(error);
         });
          
     } catch (error) {
+        if (error.message || error.$response?.message) console.log("Error invoking Bedrock API:", error.message || error.$response?.message);
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        sendErrorMessage(writable);
+        sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
     }
 }
 

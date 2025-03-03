@@ -131,7 +131,7 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
     }
     
     trace(requestId, ["LLM Complete Response"], {data: llmResponse});
-    // console.log("--llm response: ", llmResponse );
+    console.log("--llm response-- ", llmResponse );
                                                    //prod ast
     if ((chatRequest.options.analysisCategories || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && 
        ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {
