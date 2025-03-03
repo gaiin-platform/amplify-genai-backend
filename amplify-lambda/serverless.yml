@@ -981,17 +981,7 @@ resources:
             DestinationBucketName: 
               Ref: AccessLogsBucket
             LogFilePrefix: S3AccessLogs/ 
-          NotificationConfiguration:
-            LambdaConfigurations:
-              - Event: 's3:ObjectCreated:Put'
-                Filter:
-                  S3Key:
-                    Rules:
-                      - Name: prefix
-                        Value: 'templates/'
-                      - Name: suffix
-                        Value: '.pptx' 
-                Function: !GetAtt HandlePptxUploadLambdaFunction.Arn
+
 
     RagInputBucket:
         Type: AWS::S3::Bucket
