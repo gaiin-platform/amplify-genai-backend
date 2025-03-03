@@ -73,6 +73,8 @@ provider:
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}  
     HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+
   iam:
     role:
       managedPolicies:
@@ -301,6 +303,7 @@ resources:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-groups"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-group-logs"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs"
             - Effect: Allow
               Action:
                 - cognito-idp:ListUsers
