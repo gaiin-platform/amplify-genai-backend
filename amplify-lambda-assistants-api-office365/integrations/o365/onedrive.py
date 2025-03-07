@@ -3,7 +3,7 @@ import requests
 from typing import Dict, List, Optional, Union, BinaryIO
 from integrations.oauth import get_ms_graph_session
 
-integration_name = "microsoft_onedrive"
+integration_name = "microsoft_drive"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 MAX_SIMPLE_UPLOAD_SIZE = 4 * 1024 * 1024  # 4 MB
 
@@ -49,7 +49,8 @@ def list_drive_items(current_user: str, folder_id: str = "root",
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{folder_id}/children?$top={page_size}"
+        # Try to request download URL in the listing (though MS Graph may not honor this for listings)
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{folder_id}/children?$top={page_size}&$select=id,name,size,file,folder,createdDateTime,lastModifiedDateTime,shared,createdBy,lastModifiedBy"
         
         all_items = []
         while url:
@@ -59,12 +60,22 @@ def list_drive_items(current_user: str, folder_id: str = "root",
                 
             data = response.json()
             items = data.get('value', [])
-            all_items.extend([format_drive_item(item) for item in items])
+            
+            # Process each item
+            formatted_items = []
+            for item in items:
+                # Format the basic item data
+                formatted_item = format_drive_item(item)
+                        
+                formatted_items.append(formatted_item)
+                
+            all_items.extend(formatted_items)
             
             # Handle pagination
             url = data.get('@odata.nextLink')
-            
-        return all_items
+        
+        # Convert to standardized format before returning
+        return convert_dictionaries(all_items)
         
     except requests.RequestException as e:
         raise DriveError(f"Network error while listing drive items: {str(e)}")
@@ -115,7 +126,7 @@ def _simple_upload(session: requests.Session, file_path: str,
     
     if not response.ok:
         handle_graph_error(response)
-        
+    
     return format_drive_item(response.json())
 
 def _large_file_upload(session: requests.Session, file_path: str, 
@@ -152,16 +163,17 @@ def _large_file_upload(session: requests.Session, file_path: str,
             
     return format_drive_item(response.json())
 
-def download_file(current_user: str, item_id: str, access_token: str) -> bytes:
+def download_file(current_user: str, item_id: str, access_token: str = None) -> Dict:
     """
-    Downloads a file from OneDrive.
+    Gets a download URL for a file from OneDrive instead of returning raw bytes.
     
     Args:
         current_user: User identifier
         item_id: ID of the file to download
+        access_token: Optional OAuth token
     
     Returns:
-        File content as bytes
+        Dict with download URL and file info
     
     Raises:
         ItemNotFoundError: If file doesn't exist
@@ -169,16 +181,26 @@ def download_file(current_user: str, item_id: str, access_token: str) -> bytes:
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/content"
+        
+        # First get file metadata to get name and download URL
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}"
         response = session.get(url)
         
         if not response.ok:
             handle_graph_error(response)
             
-        return response.content
+        file_data = response.json()
+        
+        # Return a dict with the download URL and file metadata
+        return {
+            "id": file_data.get("id"),
+            "name": file_data.get("name"),
+            "mimeType": file_data.get("file", {}).get("mimeType", ""),
+            "downloadLink": file_data.get("@microsoft.graph.downloadUrl"),
+        }
         
     except requests.RequestException as e:
-        raise DriveError(f"Network error while downloading file: {str(e)}")
+        raise DriveError(f"Network error while getting download URL: {str(e)}")
 
 def delete_item(current_user: str, item_id: str, access_token: str) -> Dict:
     """
@@ -208,6 +230,39 @@ def delete_item(current_user: str, item_id: str, access_token: str) -> Dict:
     except requests.RequestException as e:
         raise DriveError(f"Network error while deleting item: {str(e)}")
 
+def convert_dictionaries(input_list: List[Dict]) -> List[Dict]:
+    """
+    Convert a list of OneDrive item dictionaries to a standardized format.
+    
+    Args:
+        input_list: List of drive items to convert
+    
+    Returns:
+        List of standardized dictionaries with consistent format
+    """
+    result = []
+    for item in input_list:
+        # Extract basic information
+        name = item.get('name', '')
+        mimeType = item.get('type', '')
+        # Add slash prefix to folder names like in Google Drive
+        if mimeType == 'folder':
+            name = '/' + name
+            
+        # Create standardized dictionary with required fields
+        file_data = {
+            'id': item.get('id', ''),
+            'name': name,
+            'mimeType': mimeType,
+        }
+        
+        # Add size if available
+        if 'size' in item:
+            file_data['size'] = item.get('size', 0)
+            
+        result.append(file_data)
+    return result
+
 def format_drive_item(item: Dict) -> Dict:
     """
     Format drive item data consistently.
@@ -222,12 +277,12 @@ def format_drive_item(item: Dict) -> Dict:
         'id': item['id'],
         'name': item.get('name', ''),
         'size': item.get('size', 0),
-        'webUrl': item.get('webUrl', ''),
+        'downloadUrl': item.get('@microsoft.graph.downloadUrl'),  # This may be None for folder listings
         'createdDateTime': item.get('createdDateTime', ''),
         'lastModifiedDateTime': item.get('lastModifiedDateTime', ''),
         'type': 'folder' if item.get('folder') else 'file',
         'mimeType': item.get('file', {}).get('mimeType', '') if item.get('file') else '',
-        'parentReference': item.get('parentReference', {}),
+        # 'parentReference': item.get('parentReference', {}),
         'shared': bool(item.get('shared')),
         'createdBy': item.get('createdBy', {}).get('user', {}).get('displayName', ''),
         'lastModifiedBy': item.get('lastModifiedBy', {}).get('user', {}).get('displayName', '')
@@ -270,7 +325,7 @@ def update_drive_item(current_user: str, item_id: str, updates: Dict, access_tok
         response = session.patch(url, json=updates)
         if not response.ok:
             handle_graph_error(response)
-        return format_drive_item(response.json())
+        format_drive_item(response.json())
     except requests.RequestException as e:
         raise DriveError(f"Network error while updating drive item: {str(e)}")
 
