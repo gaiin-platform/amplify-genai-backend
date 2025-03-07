@@ -35,6 +35,7 @@ class AdminConfigTypes(Enum):
     PROMPT_COST_ALERT = 'promtCostAlert'
     OPS = 'ops'
     INTEGRATIONS = 'integrations'
+    EMAIL_SUPPORT = 'emailSupport'
 
 # Map config_type to the corresponding secret name in Secrets Manager
 secret_name_map = {
@@ -85,7 +86,8 @@ def handle_update_config(config_type, update_data, token):
 
     match config_type:
         case (AdminConfigTypes.ADMINS | AdminConfigTypes.FEATURE_FLAGS | AdminConfigTypes.RATE_LIMIT | 
-              AdminConfigTypes.PROMPT_COST_ALERT | AdminConfigTypes.AMPLIFY_GROUPS | AdminConfigTypes.INTEGRATIONS):
+              AdminConfigTypes.PROMPT_COST_ALERT | AdminConfigTypes.AMPLIFY_GROUPS | AdminConfigTypes.INTEGRATIONS |
+              AdminConfigTypes.EMAIL_SUPPORT):
             return update_admin_config_data(config_type.value, update_data)
 
         case AdminConfigTypes.AVAILABLE_MODELS:
@@ -230,7 +232,7 @@ def get_configs(event, context, current_user, name, data):
         print("Loading admin table configs only")
         dynamo_config_types = [AdminConfigTypes.FEATURE_FLAGS, AdminConfigTypes.ADMINS, AdminConfigTypes.PPTX_TEMPLATES, 
                                AdminConfigTypes.AMPLIFY_GROUPS, AdminConfigTypes.RATE_LIMIT, AdminConfigTypes.PROMPT_COST_ALERT,
-                               AdminConfigTypes.INTEGRATIONS]
+                               AdminConfigTypes.INTEGRATIONS, AdminConfigTypes.EMAIL_SUPPORT]
         
         for config_type in dynamo_config_types:
             try:
@@ -239,6 +241,12 @@ def get_configs(event, context, current_user, name, data):
                 new_data = None
                 if 'Item' in config_item:
                     new_data = config_item['Item']['data']
+                    if config_type == AdminConfigTypes.FEATURE_FLAGS:
+                        # Check if any base feature flags are missing and add them
+                        missing_base_flags = check_and_update_missing_base_flags(new_data)
+                        if missing_base_flags:
+                            new_data.update(missing_base_flags)
+                            print(f"Added missing base feature flags: {list(missing_base_flags.keys())}")
                 else:
                     # Configuration does not exist, initialize it
                     new_data = initialize_config(config_type)
@@ -347,7 +355,8 @@ def initialize_config(config_type):
         item['data'] =  { 'isActive' : False, 'cost': 5,
                           'alertMessage': 'This request will cost an estimated $<totalCost> (the actual cost may be more) and require <prompts> prompt(s).', 
                         }
-    
+    elif config_type == AdminConfigTypes.EMAIL_SUPPORT:
+        item['data'] = { 'isActive' : False, 'email': '' }
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item['data'] = {} # No integrtaions have been initialized from the admin panel
     else:
@@ -362,6 +371,17 @@ def initialize_config(config_type):
     return item['data']
 
 
+@validated(op='read')
+def get_support_email_data(event, context, current_user, name, data):
+    try:
+        response = admin_table.get_item(Key={'config_id': AdminConfigTypes.EMAIL_SUPPORT.value})
+        if 'Item' in response:
+            return {"success": True, "data": response['Item']['data']}
+        else:
+            return {"success": False, "message": "No Email Support Data Found"}
+    except Exception as e:
+        return {"success": False, "message": f"Error retrieving Email Support Data: {str(e)}"}
+
 
 @validated(op='read')
 def get_user_feature_flags(event, context, current_user, name, data):
@@ -370,6 +390,11 @@ def get_user_feature_flags(event, context, current_user, name, data):
         response = admin_table.get_item(Key={'config_id': AdminConfigTypes.FEATURE_FLAGS.value})
         if 'Item' in response:
             feature_flags = response['Item'].get('data', {})
+            # Check if any base feature flags are missing and add them
+            missing_base_flags = check_and_update_missing_base_flags(feature_flags)
+            if missing_base_flags:
+                feature_flags.update(missing_base_flags)
+                print(f"Added missing base feature flags: {list(missing_base_flags.keys())}")
         else:
             feature_flags = initialize_config(AdminConfigTypes.FEATURE_FLAGS)
     except Exception as e:
@@ -394,6 +419,51 @@ def get_user_feature_flags(event, context, current_user, name, data):
     # print("users: ", user_feature_flags)
     return {"success": True, "data": user_feature_flags}
 
+
+def check_and_update_missing_base_flags(stored_flags):
+    """
+    Check if any base feature flags are missing from the stored flags.
+    If missing flags are found, update the DynamoDB table and return the missing flags.
+    
+    Args:
+        stored_flags (dict): The feature flags stored in DynamoDB
+        
+    Returns:
+        dict: Missing feature flags that were added, or empty dict if none were missing
+    """
+    # Find flags in base_flags that are not in stored_flags
+    missing_flags = {}
+    for flag_name, enabled in feature_flags.FEATURE_FLAGS.items():
+        if flag_name not in stored_flags:
+            # Create the default structure for a new feature flag
+            missing_flags[flag_name] = {
+                'enabled': enabled,
+                'userExceptions': [],
+                'amplifyGroupExceptions': []
+            }
+    
+    # If we found missing flags, update the DynamoDB table
+    if missing_flags:
+        print("Updating Missing flags: ", missing_flags.keys())
+        # Create a new dictionary with all flags (existing + missing)
+        updated_flags = {**stored_flags, **missing_flags}
+        
+        try:
+            # Update the DynamoDB table with the merged flags
+            admin_table.put_item(
+                Item={
+                    'config_id': AdminConfigTypes.FEATURE_FLAGS.value,
+                    'data': updated_flags,
+                    'last_updated': datetime.now(timezone.utc).isoformat()
+                }
+            )
+            print(f"Updated feature flags in DynamoDB with {len(missing_flags)} new base flags")
+        except Exception as e:
+            print(f"Error updating feature flags in DynamoDB: {str(e)}")
+            # We'll return an empty dict if we couldn't update the table
+            return {}
+    
+    return missing_flags
 
 @validated(op='read')
 def get_pptx_for_users(event, context, current_user, name, data):
@@ -533,6 +603,26 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
         return {"success": False, "message": f"Error generating presigned URL: {str(e)}"}
 
 
+@validated(op='read')
+def get_user_amplify_groups(event, context, current_user, name, data):
+    # will need some rework - for now we are just going to return all the groups 
+    all_groups = get_all_amplify_groups()
+    if not all_groups:
+        return {"success": False, "message": "No Amplify Groups Found"}
+    return {"success": True, "data": list(all_groups.keys())}
+
+
+def get_all_amplify_groups():
+    try:
+        config_item = admin_table.get_item(Key={'config_id': AdminConfigTypes.AMPLIFY_GROUPS.value})
+        if 'Item' in config_item and 'data' in config_item['Item']:
+            return config_item['Item']['data']
+        else:
+            print("No Amplify Groups Found")
+    except Exception as e:
+        print(f"Error retrieving {AdminConfigTypes.AMPLIFY_GROUPS.value}: {str(e)}")
+    return None
+    
 
 @validated(op='read')
 def verify_is_in_amp_group(event, context, current_user, name, data):
@@ -553,20 +643,8 @@ def is_in_amp_group(current_user, check_amplify_groups):
     3. If found in any, return True. Otherwise, return False.
     """
 
-    # Retrieve the amplify groups configuration
-    try:
-        config_item = admin_table.get_item(Key={'config_id': AdminConfigTypes.AMPLIFY_GROUPS.value})
-        if 'Item' in config_item and 'data' in config_item['Item']:
-            all_amplify_groups = config_item['Item']['data']
-        else:
-            print("No Amplify Groups Found")
-            return False
-    except Exception as e:
-        print(f"Error retrieving {AdminConfigTypes.AMPLIFY_GROUPS.value}: {str(e)}")
-        raise Exception(f"Error retrieving amplify groups: {str(e)}")
-
-
-    if (len(all_amplify_groups) == 0):
+    all_amplify_groups = get_all_amplify_groups()
+    if (not all_amplify_groups or len(all_amplify_groups) == 0):
         return False
 
     # Check each provided group in check_amplify_groups for user membership
@@ -651,11 +729,6 @@ def log_item(config_type, username, details):
         }
     )
 
-
-
-
-# think about instead of sending a variable in the chatbody for location, you can pull it from purpose when creating 
-# the key so that we add it to the chatbody on the fly, where is comes in 
 
 
 

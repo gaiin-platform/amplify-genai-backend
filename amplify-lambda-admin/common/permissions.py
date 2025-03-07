@@ -26,19 +26,19 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/amplifymin/configs/get": {
+    "/amplifymin/configs": {
         "read": can_read
     },
     "/amplifymin/configs/update": {
         "update": can_update
     },
-    "/amplifymin/feature_flags/get": {
+    "/amplifymin/feature_flags": {
         "read": can_read
     },
     "/amplifymin/auth": {
         "read": can_read
     },
-     "/amplifymin/pptx_templates/get": {
+     "/amplifymin/pptx_templates": {
         "read": can_read
     },
      "/amplifymin/pptx_templates/delete": {
@@ -50,5 +50,10 @@ permissions_by_state_type = {
      "/amplifymin/verify_amp_member" : {
         "read": can_read
     },
-
+    "/amplifymin/amplify_groups/list" : {
+        "read": can_read
+    },
+    "/amplifymin/support_email": {
+        "read": can_read
+    },
 }
