@@ -234,6 +234,9 @@ update_admin_config_schema = {
                                              "supportsImages": {
                                                 "type": "boolean"
                                             },
+                                            "supportsReasoning": {
+                                                "type": "boolean"
+                                            },
                                              "defaultCheapestModel": {
                                                 "type": "boolean"
                                             },
@@ -269,7 +272,7 @@ update_admin_config_schema = {
                                             }
                                         },
                                         "required": ["id","name", "provider", "description", "isAvailable", 
-                                                     "supportsImages","supportsSystemPrompts", "systemPrompt",
+                                                     "supportsImages", "supportsReasoning", "supportsSystemPrompts", "systemPrompt",
                                                      "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
                                                      "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
@@ -405,6 +408,28 @@ update_admin_config_schema = {
                         "additionalProperties": False
                     },
                     {
+                        # Configuration for 'emailSupport'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "emailSupport"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "email": {"type": "string"},
+                                },
+                                "required": ["isActive", "email"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                                
+                    {
                         # Configuration for 'rateLimit'
                         "type": "object",
                         "properties": {
@@ -523,19 +548,19 @@ add_user_access_ast_admin = {
 
 
 validators = {
-    "/amplifymin/configs/get": {
+    "/amplifymin/configs": {
         "read": {} #get
     },
     "/amplifymin/configs/update": {
         "update": update_admin_config_schema
     },
-    "/amplifymin/feature_flags/get": {
+    "/amplifymin/feature_flags": {
         "read": {} 
     },
     "/amplifymin/auth": {
         "read": auth_as_admin_schema
     },
-    "/amplifymin/pptx_templates/get": {
+    "/amplifymin/pptx_templates": {
         "read": {} 
     },
     "/amplifymin/pptx_templates/delete": {
@@ -547,6 +572,12 @@ validators = {
     "/amplifymin/verify_amp_member" : {
         "read": verify_in_amp_group_schema
     },
+    "/amplifymin/amplify_groups/list" : {
+        "read": {}
+    },
+    "/amplifymin/support_email": {
+        "read": {}
+    }
     
 }
 
