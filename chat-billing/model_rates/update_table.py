@@ -36,6 +36,7 @@ def load_model_rate_table(model_data):
                     updated_item = dict(existing_item) 
                     for key, value in csv_item.items():
                         if key not in existing_item:
+                            print("Updating column: ", key)
                             # Only add the column if it doesn't exist in the existing item
                             updated_item[key] = value
 
