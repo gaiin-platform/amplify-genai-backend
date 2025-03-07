@@ -64,9 +64,6 @@ validators = {
         "start_oauth": {
         }
     },
-    "/integrations/oauth/user/list": {
-        "list_integrations": {}
-    },
     "/integrations/oauth/user/delete": {
         "delete_integration": {
             "type": "object",
@@ -76,9 +73,7 @@ validators = {
             "required": ["integration"],
         }
     },
-    "/integrations/oauth/list": {
-        "list_integrations":{}
-    },
+    
     "/assistant-api/get-job-result":
     {
         "get_result": {
@@ -104,6 +99,29 @@ validators = {
     },
     "/integrations/list_supported": {
         "list_integrations": {}
+    },
+    "/integrations/oauth/user/list": {
+        "list_integrations": {}
+    },
+    "/integrations/user/files": {
+        "list_files": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string"},
+                "folder_id": {"type": "string"}
+            },  
+            "required": ["integration"],
+        }
+    },
+    "/integrations/user/files/download": {
+        "download_file": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string"},
+                "file_id": {"type": "string"}   
+            },
+            "required": ["integration", "file_id"],
+        }
     },
     "/integrations/oauth/register_secret": {
         "register_secret": {
@@ -143,15 +161,7 @@ api_validators = {
             "required": ["sheetId", "cellRange"],
         }
     },
-    "/integrations/oauth/user/list": {
-        "list_integrations": {
-            "type": "object",
-            "properties": {
-                "integrations": {"type": "array"},
-            },
-            "required": ["integrations"],
-        }
-    },
+   
     "/integrations/oauth/user/delete": {
         "delete_integration": {
             "type": "object",
@@ -183,6 +193,9 @@ api_validators = {
             "required": ["jobId", "result"],
             "additionalProperties": True
         }
+    }, 
+    "/integrations/oauth/user/list": {
+        "list_integrations": {}
     },
     "/integrations/list_supported": {
         "list_integrations": {}
@@ -196,7 +209,7 @@ api_validators = {
             "required": ["integration"],
             "additionalProperties": False
         }
-    }
+    },
 }
 
 

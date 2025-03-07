@@ -28,9 +28,7 @@ permissions_by_state_type = {
     "/integrations/oauth/start-auth": {
         "start_oauth": lambda for_user, with_data: True
     },
-    "/integrations/oauth/user/list": {
-        "list_integrations": lambda for_user, with_data: True
-    },
+   
     "/integrations/oauth/user/delete": {
         "delete_integration": lambda for_user, with_data: True
     },
@@ -39,14 +37,23 @@ permissions_by_state_type = {
     },
     "/assistant-api/set-job-result": {
         "set_result": lambda for_user, with_data: True
+    }, 
+    "/integrations/oauth/user/list": {
+        "list_integrations": lambda for_user, with_data: True
     },
     "/integrations/list_supported": {
         "list_integrations": lambda for_user, with_data: True
+    },
+    "/integrations/user/files": {
+        "list_files": lambda for_user, with_data: True
+    },
+    "/integrations/user/files/download": {
+        "download_file": lambda for_user, with_data: True
     },
     "/integrations/oauth/register_secret": {
         "register_secret": lambda for_user, with_data: True
     },
      "/integrations/oauth/refresh_token": {
         "refresh_token": lambda for_user, with_data: True
-     }
+    }
 }

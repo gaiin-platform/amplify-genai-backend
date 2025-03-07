@@ -81,6 +81,22 @@ functions:
           path: integrations/oauth/user/list
           method: get
 
+  listIntegrationFiles:
+    handler: integrations/drive_files.list_integration_files
+    timeout: 30
+    events:
+      - http:
+          path: integrations/user/files
+          method: post
+
+  downloadIntegrationFile:
+    handler: integrations/drive_files.download_integration_file
+    timeout: 30
+    events:
+      - http:
+          path: integrations/user/files/download
+          method: post
+
   registerIntegrationSecret:
     handler: integrations/oauth.regiser_secret
     timeout: 30
