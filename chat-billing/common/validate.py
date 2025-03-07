@@ -91,6 +91,9 @@ update_models_schema = {
                             "supportsImages": {
                             "type": "boolean"
                         },
+                            "supportsReasoning": {
+                            "type": "boolean"
+                        },
                             "defaultCheapestModel": {
                             "type": "boolean"
                         },
@@ -125,7 +128,7 @@ update_models_schema = {
                             }
                         }
                     },
-                    "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages",
+                    "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages", "supportsReasoning",
                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost",
                                     "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],

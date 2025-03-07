@@ -29,6 +29,7 @@ COST_FIELDS = ['OutputCostPerThousandTokens', 'InputCostPerThousandTokens', 'Cac
                     "inputContextWindow": 200000,
                     "outputTokenLimit": 4096, 
                     "supportsImages": true,
+                    "supportsReasoning": false,
                     "provider": "OpenAI",
                     "supportsSystemPrompts": true,
                     "systemPrompt": "Additional Prompt",
@@ -85,9 +86,13 @@ def extract_data(model_id, model_data):
         "inputContextWindow": model_data.get("inputContextWindow", -1),
         "outputTokenLimit": model_data.get("outputTokenLimit", -1),
         "supportsImages": model_data.get("supportsImages", False),
+        "supportsReasoning": model_data.get("supportsReasoning", False),
         "provider": model_data.get("provider", ''),
         "supportsSystemPrompts": model_data.get("supportsSystemPrompts", False),
         "systemPrompt": model_data.get("systemPrompt", ''),
+        "inputTokenCost": model_data.get("inputTokenCost", 0),  
+        "outputTokenCost": model_data.get("outputTokenCost", 0),
+        "cachedTokenCost": model_data.get("cachedTokenCost", 0),
         }
 
 
@@ -248,6 +253,7 @@ dynamodb_to_internal_field_map = {
     'Description': 'description',
     'ExclusiveGroupAvailability': 'exclusiveGroupAvailability',
     'SupportsImages': 'supportsImages',
+    'SupportsReasoning': 'supportsReasoning',
     'DefaultCheapestModel': 'defaultCheapestModel',
     'DefaultAdvancedModel': 'defaultAdvancedModel',
     'DefaultEmbeddingsModel': 'defaultEmbeddingsModel',
