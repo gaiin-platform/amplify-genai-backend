@@ -1377,7 +1377,7 @@ def delete_list_item_handler(current_user, data):
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
     name="listTeams",
     description="Lists teams that the user is a member of.",
-    method="GET",
+    # method="GET",
     parameters={}
 )
 # @validated("list_teams")
@@ -2385,7 +2385,7 @@ def move_message_handler(current_user, data):
     path="/microsoft/integrations/route?op=list_folders",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="listFolders",
-    method="GET",
+    # method="GET",
     description="Lists all mail folders.",
     parameters={}
 )
@@ -2509,7 +2509,7 @@ def list_calendar_events_handler(current_user, data):
     path="/microsoft/integrations/route?op=list_calendars",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="listCalendars",
-    method="GET",
+    # method="GET",
     description="Lists all calendars in the user's mailbox.",
     parameters={}
 )

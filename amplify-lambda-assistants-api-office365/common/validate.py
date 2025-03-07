@@ -50,6 +50,11 @@ The permission is related to a request path and to a specific operation.
 route_data_schema = {
     "type": "object",
     "anyOf": [
+         {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False
+        },
         # OneDrive endpoints
         {
             "description": "list_drive_items",
