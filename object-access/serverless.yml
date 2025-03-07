@@ -282,7 +282,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /groups/assistants/update
+          path: /groups/update/assistants
           method: post
           cors: true
 
