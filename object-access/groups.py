@@ -27,9 +27,12 @@ def create_group(event, context, current_user, name, data):
     group_name = data['group_name']
     members = data.get('members', {}) # includes admins
     group_types = data.get('types', {})
-    return group_creation(current_user, group_name, members, group_types)
+    amplify_groups = data.get('amplify_groups', [])
+    system_users = data.get('system_users', [])
 
-def group_creation(current_user, group_name, members, group_types):
+    return group_creation(current_user, group_name, members, group_types, amplify_groups, system_users)
+
+def group_creation(current_user, group_name, members, group_types=[], amplify_groups=[], system_users=[]):
     # create_api key - 
     api_key_result = create_api_key_for_group(group_name)
     if (not api_key_result['success']):
@@ -49,8 +52,8 @@ def group_creation(current_user, group_name, members, group_types):
         'createdAt': datetime.now(timezone.utc).isoformat(),
         'access': api_key_result['api_key'],
         'groupTypes' : group_types,
-        'amplifyGroups':[],
-        'systemUsers': []
+        'amplifyGroups': amplify_groups,
+        'systemUsers': system_users
     }
     
     try:
@@ -456,6 +459,66 @@ def update_group_types(event, context, current_user, name, data):
         print(group_id, 'Update Group Types', current_user, str(e))
         return {"message": "Failed to update group types due to an error.", "success": False, "error": str(e)}
 
+
+@validated(op='update')
+def update_amplify_groups(event, context, current_user, name, data):
+    data = data['data']
+    group_id = data['group_id']
+    amplify_groups = data['amplify_groups']
+
+    auth_check = authorized_user(group_id, current_user, True)
+    if not auth_check['success']:
+        return auth_check
+
+    try:
+        # Update the amplify groups in the database
+        response = groups_table.update_item(
+            Key={'group_id': group_id},
+        UpdateExpression="set amplifyGroups = :ag",
+        ExpressionAttributeValues={
+            ':ag': amplify_groups
+        },
+        ReturnValues="UPDATED_NEW"
+        )
+        
+        log_item(group_id, 'Group Amplify Groups Updated', current_user, f"Group amplify groups updated to {amplify_groups}")
+
+        return {"message": "Amplify groups updated successfully", "success": True}
+    except Exception as e:
+        print(f"Failed to update group amplify groups in DynamoDB: {str(e)}")
+        return {'success': False, 'message': f"Failed to update DynamoDB: {str(e)}"}
+
+
+@validated(op='update')
+def update_system_users(event, context, current_user, name, data):
+    data = data['data']
+    group_id = data['group_id']
+    system_users = data['system_users']
+
+    auth_check = authorized_user(group_id, current_user, True)
+
+    if not auth_check['success']:
+        return auth_check
+    
+    try:
+        # Update the system users in the database
+        response = groups_table.update_item(
+            Key={'group_id': group_id},
+            UpdateExpression="set systemUsers = :su",
+            ExpressionAttributeValues={
+                ':su': system_users
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        
+        log_item(group_id, 'Group System Users Updated', current_user, f"Group system users updated to {system_users}") 
+
+        return {"message": "System users updated successfully", "success": True}
+    except Exception as e:
+        print(f"Failed to update group system users in DynamoDB: {str(e)}")
+        return {'success': False, 'message': f"Failed to update DynamoDB: {str(e)}"}
+    
+
 def is_valid_group_id(group_id):
     pattern = r'^.+\_[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$'
     return bool(re.match(pattern, group_id))
@@ -533,13 +596,14 @@ def list_groups(event, context, current_user, name, data):
         if (not ast_result['success']):
             failed_to_list.append(group_name)
             continue
-
-        ast_access = group["members"][current_user]
+        
+        group_members = group.get("members", {})
+        ast_access = group_members.get(current_user)
         hasAdminInterfaceAccess = ast_access in ['write', 'admin']
 
         #filter old versions
         assistants = get_latest_assistants(ast_result['data'])
-        print(f"{group_name} - {len(assistants)}")
+        print(f"{group_name} - {len(assistants)} Assistant Count")
         published_assistants = []
         #append groupId and correct permissions if published
         for ast in assistants:
@@ -552,10 +616,12 @@ def list_groups(event, context, current_user, name, data):
             group_info.append({
                 'name' : group_name, 
                 'id' : group['group_id'], 
-                'members': group['members'], 
+                'members': group_members, 
                 'assistants': published_assistants,
                 'groupTypes': group['groupTypes'],
                 'supportConvAnalysis': group.get('supportConvAnalysis', False), 
+                'amplifyGroups': group.get('amplifyGroups', []),
+                'systemUsers': group.get('systemUsers', [])
             })
 
     if (len(failed_to_list) == len(group_info)):
@@ -571,7 +637,9 @@ def get_my_groups(current_user, token):
         response = groups_table.scan()
 
         for group in response.get('Items', []):
-            if is_group_member(current_user, group, token): group_rows.append(group)
+            if is_group_member(current_user, group, token): 
+                print(f"Adding {group['groupName']} to group_rows")
+                group_rows.append(group)
 
         # Handle pagination if there are more records
         while 'LastEvaluatedKey' in response:
@@ -595,6 +663,7 @@ def get_my_groups(current_user, token):
         }
 
 def is_group_member(current_user, group, token):
+    print(f"\n\nChecking if {current_user} is a member of {group['groupName']}")
     members = group.get('members', {})
     in_members_list = current_user in members
     
@@ -613,19 +682,18 @@ def is_group_member(current_user, group, token):
             print("groups amplify groups: ", groups_amplify_groups)
             # Check for intersection if there is at least one common group then they are a member
             is_in_amplify_group = verify_user_in_amp_group(token, groups_amplify_groups)
-            print("is_in_amplify_group: ", is_in_amplify_group)
+            # print("is_in_amplify_group: ", is_in_amplify_group)
 
-        
             # if so add them to the members list 
         if (is_public or is_in_amplify_group):
-            print("Is Public Group: ", is_public)
+            print(f"Is Public Group: ", is_public)
             print("Is user in amplify group: ", is_in_amplify_group)
-            #update members list
-            group_id = group["group_id"]
-            members[current_user] = 'read'
-            update_res = update_members_db(group_id, members)
-            if (not update_res['success']):
-                print(f"Warning: amplify group member failed to add to group: {group_id} members dict")
+            # update members list --- no longer adding to members list ---
+            # group_id = group["group_id"]
+            # members[current_user] = 'read'
+            # update_res = update_members_db(group_id, members)
+            # if (not update_res['success']):
+            #     print(f"Warning: amplify group member failed to add to group: {group_id} members dict")
             return True
     return False
         
@@ -638,7 +706,7 @@ def authorized_user(group_id, user, requires_admin_access = False):
     if not item:
         return {"message": "Group not found", "success": False}
     
-    members = item["members"]
+    members = item.get("members", {})
     
     if (not user in members.keys()):
         return {"message": "User is not a member of the group", "success": False}
@@ -923,7 +991,7 @@ def create_amplify_assistants(event, context, current_user, name, data):
     members_access_map = {member: 'admin' for member in members} 
     
     assistants = data.get('assistants', [])
-    create_result = group_creation(current_user, "Amplify Assistants", members_access_map, [])
+    create_result = group_creation(current_user, "Amplify Assistants", members_access_map)
     if (not create_result['success']): 
         print("Failed to create group")
         return create_result

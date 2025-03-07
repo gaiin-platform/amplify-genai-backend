@@ -272,8 +272,9 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group ast
         const user = llm.params.account.user;
+        const token = llm.params.account.accessToken;
         const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : user;
-        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, ast_owner, clientSelectedAssistant);
+        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, ast_owner, clientSelectedAssistant, token);
         if (!selectedAssistant) {
             llm.sendStatus(newStatus(
                 {   inProgress: false,
