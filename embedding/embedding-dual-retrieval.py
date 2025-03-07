@@ -14,6 +14,7 @@ import logging
 import boto3
 from boto3.dynamodb.conditions import Key
 from common.ops import op
+from common.amplify_groups import verify_user_in_amp_group
 
 # Configure Logging 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -167,7 +168,7 @@ def classify_src_ids_by_access(raw_src_ids, current_user):
     return accessible_src_ids, access_denied_src_ids
 
 # groupId is the key : list of globals is the value
-def classify_group_src_ids_by_access(raw_group_src_ids, current_user): 
+def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token): 
     accessible_src_ids = []
     access_denied_src_ids = []
 
@@ -179,6 +180,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user):
     # prereq groupId has perms 
     # 1. group is public 
     # 2. user is a member of the group 
+    # 3. is member of listed amplify groups - call 
      # Iterate over each groupId and associated dataSourceIds
     for groupId, dataSourceIds in raw_group_src_ids.items():
         print("Checking perms for GroupId: ", groupId, "\nDS Ids: ", dataSourceIds)
@@ -209,7 +211,8 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user):
             if 'Item' in response:
                 item = response['Item']
                 # Check if the group is public or if the user is in the members
-                if item.get('isPublic', False) or current_user in item.get('members', {}).keys() or current_user in item.get('systemUsers', []):
+                if item.get('isPublic', False) or current_user in item.get('members', {}).keys() or \
+                   current_user in item.get('systemUsers', []) or verify_user_in_amp_group(token, item.get('amplifyGroups', [])):
                     accessible_src_ids.extend(accessible_to_group_ds_ids)
                 else:
                     access_denied_src_ids.extend(accessible_to_group_ds_ids)
@@ -224,7 +227,6 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user):
 
     print(f"Group Accessible src_ids: {accessible_src_ids}, Group Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
-
 
 @op(
     path="/embedding-dual-retrieval",
@@ -262,6 +264,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user):
 )
 @validated("dual-retrieval")
 def process_input_with_dual_retrieval(event, context, current_user, name, data):
+    token = data['access_token']
     data = data['data']
     content = data['userInput']
     raw_src_ids = data['dataSources']
@@ -269,7 +272,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     limit = data.get('limit', 10)
 
     accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
-    group_accessible_src_ids, group_access_denied_src_ids = classify_group_src_ids_by_access(raw_group_src_ids, current_user)
+    group_accessible_src_ids, group_access_denied_src_ids = classify_group_src_ids_by_access(raw_group_src_ids, current_user, token)
 
     src_ids = accessible_src_ids + group_accessible_src_ids
 

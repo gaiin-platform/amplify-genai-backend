@@ -4,10 +4,8 @@
 
 
 import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
-import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
-import {getOps} from "./ops/ops.js";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
@@ -97,42 +95,81 @@ const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
     }
 }
 
+const isMemberOfGroup = async (current_user, ast_owner, token) => {
 
-export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId) => {
+    try {
+        const params = {
+            TableName: process.env.GROUPS_DYNAMO_TABLE,
+            Key: {
+                group_id: { S: ast_owner }
+            }
+        };
+    
+        const response = await dynamodbClient.send(new GetItemCommand(params));
+        
+        if (response.Item) {
+            const item = unmarshall(response.Item);
+            // Check if the group is public or if the user is a direct member, a system user, or a member of an amplify group
+            if (item.isPublic || 
+                (item.members && Object.keys(item.members).includes(current_user)) || 
+                (item.systemUsers && item.systemUsers.includes(current_user)) || 
+                userInAmplifyGroup(item.amplifyGroups ?? [], token)) {
+                return true;
+            } 
+            console.error( `User is not a member of groupId: ${ast_owner}`);
+        } else {
+            console.error(`No group entry found for groupId: ${ast_owner}`);
+        }
+    
+    } catch (error) {
+        console.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
+    }
+}
+
+const userInAmplifyGroup = async (amplifyGroups, token) => {
+    if (amplifyGroups.length === 0) return false;
+    console.log("Checking if user is in amplify groups: ", amplifyGroups)
+
+    const apiBaseUrl = process.env.API_BASE_URL;
+    if (!apiBaseUrl) {
+        console.error("API_BASE_URL environment variable is not set");
+        return false;
+    }
+
+    try {
+        const response = await fetch(`${apiBaseUrl}/amplifymin/verify_amp_member`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({data: {groups: amplifyGroups}})
+        });
+        
+        const responseContent = await response.json();
+
+        if (response.status !== 200 || !responseContent.success) {
+            console.error(`Error verifying amp group membership: ${responseContent}`);
+            return false;
+        } else if (response.status === 200 && responseContent.success) {
+            return responseContent.isMember || false;
+        }
+    } catch (e) {
+        console.error(`Error verifying amp group membership: ${e}`);
+        
+    }
+    return false;
+
+
+}
+
+export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId, token) => {
     if (!ast_owner) return null;
 
     // verify the user has access to the group since this is a group assistant
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
         console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
-
-        try {
-            const params = {
-                TableName: process.env.GROUPS_DYNAMO_TABLE,
-                Key: {
-                    group_id: { S: ast_owner }
-                }
-            };
-        
-            const response = await dynamodbClient.send(new GetItemCommand(params));
-            
-            if (response.Item) {
-                const item = unmarshall(response.Item);
-                // Check if the group is public or if the user is in the members
-                if (!(item.isPublic || 
-                    (item.members && Object.keys(item.members).includes(current_user)) || 
-                    (item.systemUsers && item.systemUsers.includes(current_user)))) {
-                    console.error( `User is not a member of groupId: ${ast_owner}`);
-                    return null;
-                }
-            } else {
-                console.error(`No group entry found for groupId: ${ast_owner}`);
-                return null;
-            }
-        
-        } catch (error) {
-            console.error(`An error occurred while processing groupId ${ast_owner}:`, error);
-            return null;
-        }
+        if (!isMemberOfGroup(current_user, ast_owner, token)) return null;
     }
 
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);

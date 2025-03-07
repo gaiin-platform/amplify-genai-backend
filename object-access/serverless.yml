@@ -105,7 +105,7 @@ functions:
 
 
   
-  update_ojbect_perms:
+  update_object_perms:
     runtime: python3.11
     handler: object_access.update_object_permissions
     layers:
@@ -193,7 +193,7 @@ functions:
     timeout: 12
     events:
       - http:
-          path: /groups/members/update
+          path: /groups/update/members
           method: post
           cors: true
 
@@ -204,7 +204,29 @@ functions:
     timeout: 12
     events:
       - http:
-          path: /groups/types/update
+          path: /groups/update/types
+          method: post
+          cors: true
+      
+  update_group_amp_groups:
+    handler: groups.update_amplify_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/update/amplify_groups
+          method: post
+          cors: true
+
+  update_group_system_users:
+    handler: groups.update_system_users
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/update/system_users
           method: post
           cors: true
 
@@ -215,7 +237,7 @@ functions:
     timeout: 12
     events:
       - http:
-          path: /groups/members/update_permissions
+          path: /groups/update/members/permissions
           method: post
           cors: true
 

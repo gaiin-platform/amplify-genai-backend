@@ -18,6 +18,7 @@ Example response:
                 "inputContextWindow": 200000,
                 "outputTokenLimit": 4096, 
                 "supportsImages": true,
+                "supportsReasoning": false,
                 "provider": "OpenAI",
                 "supportsSystemPrompts": true,
                 "systemPrompt": "Additional Prompt",
