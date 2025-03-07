@@ -15,9 +15,15 @@ def convert_dictionaries(input_list):
     result = []
     for item in input_list:
         name = item['name']
+        
         if item['mimeType'] == 'application/vnd.google-apps.folder':
             name = '/' + name
-        result.append([item['id'], name])
+        file_data = [item['id'], name, item['mimeType']]
+        if item.get('size'):
+            file_data.append(item['size'])
+        if item.get('webContentLink'):
+            file_data.append(item['webContentLink'])
+        result.append(file_data)
     return result
 
 
@@ -54,10 +60,35 @@ def create_file(current_user, file_name, content, mime_type='text/plain', access
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     return file.get('id')
 
-def get_download_link(current_user, file_id, access_token = None):
-    service = get_drive_service(current_user, access_token)
-    file = service.files().get(fileId=file_id, fields='webContentLink').execute()
-    return file.get('webContentLink')
+def get_download_link(current_user, file_id, access_token = None, service = None, allow_conversion = True):
+    #prevent duplicate service creation
+    if (not service): service = get_drive_service(current_user, access_token)
+    file = service.files().get(fileId=file_id, fields='webContentLink,name,mimeType').execute()
+    if file.get('webContentLink'):
+        return {"id": file.get('id'), "downloadLink": file.get('webContentLink'), "name": file.get('name'), "mimeType": file.get('mimeType')}
+    else:
+        if allow_conversion: # prevent infinite loop for download links => convert file => download link => convert file ...
+            mime_type = file.get('mimeType', '')
+            if mime_type.startswith('application/vnd.google-apps') and mime_type != 'application/vnd.google-apps.folder':
+                print(f"No webContentLink found for file {file_id}, converting file...")
+                # Map of Google Workspace types to export formats
+                export_formats = {
+                    'application/vnd.google-apps.document': 'application/pdf',  # Docs to PDF
+                    'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # Sheets to XLSX
+                    'application/vnd.google-apps.presentation': 'application/pdf',  # Slides to PDF
+                    'application/vnd.google-apps.drawing': 'application/pdf',  # Drawings to PDF
+                }
+                target_format = export_formats.get(mime_type, 'application/pdf')
+                # Convert the file
+                try:
+                    converted_file = convert_file(current_user, file_id, target_format, access_token, service)
+                    if (converted_file and converted_file.get('downloadLink')):
+                        return converted_file
+                except Exception as e:
+                    print(f"Error converting file: {e}")    
+        else:
+            print(f"No webContentLink found for file {file_id}, no conversion attempted")
+    return None
 
 def create_shared_link(current_user, file_id, permission='view', access_token = None):
     service = get_drive_service(current_user, access_token)
@@ -92,28 +123,56 @@ def share_file(current_user, file_id, emails, role='reader', access_token = None
     batch.execute()
     return f"File shared with {len(emails)} email(s)"
 
-def convert_file(current_user, file_id, target_mime_type, access_token = None):
-    service = get_drive_service(current_user, access_token)
+def convert_file(current_user, file_id, target_mime_type, access_token = None, service = None):
+    #prevent duplicate service creation
+    if (not service): service = get_drive_service(current_user, access_token)
 
     # Get the current file's metadata
-    file = service.files().get(fileId=file_id, fields='name').execute()
-
-    # Create a copy of the file with the new MIME type
-    body = {
-        'name': f"{file['name']} (Converted)",
-        'mimeType': target_mime_type
-    }
-    converted_file = service.files().copy(fileId=file_id, body=body).execute()
-
-    # Get the download link for the converted file
-    download_link = get_download_link(current_user, converted_file['id'], access_token)
-
-    return {
-        'id': converted_file['id'],
-        'name': converted_file['name'],
-        'mimeType': converted_file['mimeType'],
-        'downloadLink': download_link
-    }
+    file = service.files().get(fileId=file_id, fields='name,mimeType').execute()
+    mime_type = file.get('mimeType', '')
+    
+    # Handle Google Workspace files using export
+    if mime_type.startswith('application/vnd.google-apps') and mime_type != 'application/vnd.google-apps.folder':
+        # For Google Workspace files, use the export method
+        try:
+            # Create a BytesIO object to store the exported file
+            file_content = BytesIO()
+            request = service.files().export_media(fileId=file_id, mimeType=target_mime_type)
+            downloader = MediaIoBaseDownload(file_content, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+            
+            # Create a new file with the exported content
+            new_filename = f"{file['name']}"
+            file_content.seek(0)
+            new_file_metadata = {'name': new_filename}
+            media = MediaIoBaseUpload(file_content, mimetype=target_mime_type)
+            converted_file = service.files().create(body=new_file_metadata, media_body=media, fields='id,name,mimeType,webContentLink').execute()
+            
+            return {
+                'id': converted_file.get('id'),
+                'name': converted_file.get('name'),
+                'mimeType': converted_file.get('mimeType'),
+                'downloadLink': converted_file.get('webContentLink')
+            }
+        except Exception as e:
+            print(f"Error exporting file: {e}")
+            return None
+    else:
+        # For non-Google Workspace files, use the copy method (though this likely won't change the format)
+        body = {
+            'name': f"{file['name']} (Converted)",
+            'mimeType': target_mime_type
+        }
+        converted_file = service.files().copy(fileId=file_id, body=body, fields='id,name,mimeType,webContentLink').execute()
+        
+        return {
+            'id': converted_file.get('id'),
+            'name': converted_file.get('name'),
+            'mimeType': converted_file.get('mimeType'),
+            'downloadLink': converted_file.get('webContentLink')
+        }
 
 def move_item(current_user, item_id, destination_folder_id, access_token = None):
     service = get_drive_service(current_user, access_token)
@@ -159,6 +218,7 @@ def delete_item_permanently(current_user, item_id, access_token = None):
     service.files().delete(fileId=item_id).execute()
     return {"success": True, "message": f"Item with ID {item_id} has been permanently deleted."}
 
+
 def list_files(current_user, folder_id=None, access_token = None):
     if folder_id is None:
         root_folder_ids = get_root_folder_ids(current_user, access_token)
@@ -166,8 +226,27 @@ def list_files(current_user, folder_id=None, access_token = None):
 
     service = get_drive_service(current_user, access_token)
     query = f"'{folder_id}' in parents" if folder_id else None
-    results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
-    return convert_dictionaries(results.get('files', []))
+    
+    all_files = []
+    page_token = None
+    
+    while True:
+        # Get a batch of files with pagination
+        results = service.files().list(
+            q=query,
+            fields="nextPageToken, files(id, name, mimeType, size, webContentLink)",
+            pageToken=page_token
+        ).execute()
+        
+        # Add the current batch to our collection
+        all_files.extend(results.get('files', []))
+        
+        # Check if there are more pages
+        page_token = results.get('nextPageToken')
+        if not page_token:
+            break
+    
+    return convert_dictionaries(all_files)
 
 def search_files(current_user, query, access_token = None):
     service = get_drive_service(current_user, access_token)
