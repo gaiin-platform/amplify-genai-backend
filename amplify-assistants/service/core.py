@@ -1851,3 +1851,229 @@ def lookup_assistant(event, context, current_user, name, data):
                 cls=CombinedEncoder,
             )
         }
+
+
+@op(
+    path="/assistant/add_path",
+    name="addAssistantPath",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Add a path to an Amplify assistant.
+
+    Example request:
+    {
+        "data": {
+            "assistantId": "astp/34098509834509809348",
+            "astPath": "my/assistant/path"
+        }
+    }
+
+    Example response:
+    {
+        "success": true,
+        "message": "Path added to assistant successfully",
+        "data": {
+            "assistantId": "astp/34098509834509809348",
+            "astPath": "my/assistant/path"
+        }
+    }
+    """,
+    params={
+        "assistantId": "String. Required. ID of the assistant to add a path to.",
+        "astPath": "String. Required. Path to add to the assistant."
+    }
+)
+@validated(op="add_path")
+def add_assistant_path(event, context, current_user, name, data):
+    try:
+        # Get the assistantId and astPath from the request data
+        assistant_id = data.get("data", {}).get("assistantId")
+        ast_path = data.get("data", {}).get("astPath")
+        previous_path = data.get("data", {}).get("previousPath")
+        
+        # Validate required parameters
+        if not assistant_id or not ast_path:
+            missing_params = []
+            if not assistant_id:
+                missing_params.append("assistantId")
+            if not ast_path:
+                missing_params.append("astPath")
+                
+            return {
+                "statusCode": 400,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": f"Missing required parameters: {', '.join(missing_params)}",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Check for inappropriate content in the path
+        is_valid, validation_message = validate_path_for_inappropriate_content(ast_path)
+        if not is_valid:
+            return {
+                "statusCode": 400,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": validation_message,
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Get DynamoDB resources
+        dynamodb = boto3.resource("dynamodb")
+        lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
+        object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
+        
+        # If a previous path was provided and it's different from the new path, delete it first
+        if previous_path and previous_path != ast_path:
+            print(f"Deleting previous path '{previous_path}' for assistant {assistant_id}")
+            
+            # Check if the previous path exists and belongs to this assistant
+            previous_path_response = lookup_table.get_item(Key={"astPath": previous_path})
+            if "Item" in previous_path_response and previous_path_response["Item"].get("assistantId") == assistant_id:
+                # Delete the previous path
+                lookup_table.delete_item(Key={"astPath": previous_path})
+                print(f"Previous path '{previous_path}' deleted successfully")
+            else:
+                print(f"Previous path '{previous_path}' not found or doesn't belong to assistant {assistant_id}")
+        
+        # Check if the new path already exists in the lookup table
+        existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
+        if "Item" in existing_path_response:
+            # If the path exists but belongs to the same assistant, it's ok to update
+            if existing_path_response["Item"].get("assistantId") == assistant_id:
+                print(f"Path '{ast_path}' already belongs to this assistant. Will update it.")
+            else:
+                return {
+                    "statusCode": 409,  # Conflict
+                    "body": json.dumps(
+                        {
+                            "success": False,
+                            "message": f"Path '{ast_path}' is already in use by another assistant",
+                            "data": None,
+                        },
+                        cls=CombinedEncoder,
+                    )
+                }
+        
+        # Check if the assistant exists and get its details using the AssistantIdIndex GSI
+        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+        gsi_response = assistants_table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_id)
+        )
+        
+        if not gsi_response.get("Items"):
+            return {
+                "statusCode": 404,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": f"Assistant with ID '{assistant_id}' not found",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Get the assistant's database ID 
+        assistant_db_id = gsi_response["Items"][0]["id"]
+        
+        # Check if the user has ownership or edit rights to the assistant
+        access_response = object_access_table.get_item(
+            Key={
+                'object_id': assistant_db_id,
+                'principal_id': current_user
+            }
+        )
+        
+        has_permission = False
+        if "Item" in access_response:
+            permission_level = access_response["Item"].get("permission_level")
+            if permission_level in ["owner", "write"]:
+                has_permission = True
+        
+        # If the user doesn't have permissions, check if they're the creator of the assistant
+        if not has_permission:
+            assistant = assistants_table.get_item(Key={"id": assistant_db_id})
+            if "Item" in assistant and assistant["Item"].get("user") == current_user:
+                has_permission = True
+        
+        if not has_permission:
+            return {
+                "statusCode": 403,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": "You don't have permission to add a path to this assistant",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Check if the assistant already has 2 or more paths using the AssistantIdIndex GSI
+        existing_paths_response = lookup_table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_id)
+        )
+        
+        if existing_paths_response.get("Count", 0) >= 2:
+            return {
+                "statusCode": 400,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": "This assistant already has the maximum number of paths (2)",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
+        
+        # Add the path to the lookup table
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        lookup_table.put_item(
+            Item={
+                "astPath": ast_path,
+                "assistantId": assistant_id,
+                "createdAt": timestamp,
+                "createdBy": current_user,
+                "public": False  # Default to not public
+            }
+        )
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "success": True,
+                    "message": "Path added to assistant successfully",
+                    "data": {
+                        "assistantId": assistant_id,
+                        "astPath": ast_path
+                    },
+                },
+                cls=CombinedEncoder,
+            )
+        }
+    except Exception as e:
+        print(f"Error adding path to assistant: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps(
+                {
+                    "success": False,
+                    "message": f"Error adding path to assistant: {str(e)}",
+                    "data": None,
+                },
+                cls=CombinedEncoder,
+            )
+        }

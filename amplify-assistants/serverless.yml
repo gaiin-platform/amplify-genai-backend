@@ -238,12 +238,21 @@ functions:
           method: post
           cors: true
 
-  lookup_assistant:
-    handler: service/core.lookup_assistant
+  lookup_assistant_path:
+    handler: service/core.lookup_assistant_path
     timeout: 30
     events:
       - http:
           path: assistant/lookup
+          method: post
+          cors: true
+
+  add_assistant_path:
+    handler: service/core.add_assistant_path
+    timeout: 30
+    events:
+      - http:
+          path: assistant/add_path
           method: post
           cors: true
 

@@ -71,6 +71,25 @@ lookup_assistant_schema = {
     "required": ["astPath"],
 }
 
+add_assistant_path_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The ID of the assistant to add a path to",
+        },
+        "astPath": {
+            "type": "string",
+            "description": "The path to add to the assistant",
+        },
+        "previousPath": {
+            "type": "string",
+            "description": "The previous path to replace (if updating an existing path)",
+        },
+    },
+    "required": ["assistantId", "astPath"],
+}
+
 create_assistant_schema = {
     "type": "object",
     "properties": {
@@ -392,6 +411,9 @@ validators = {
     },
     "/assistant/lookup": {
         "lookup": lookup_assistant_schema
+    },
+    "/assistant/add_path": {
+        "add_path": add_assistant_path_schema
     }
 }
 
@@ -428,6 +450,9 @@ api_validators = {
     },
     "/assistant/lookup": {
         "lookup": lookup_assistant_schema
+    },
+    "/assistant/add_path": {
+        "add_path": add_assistant_path_schema
     }
 }
 
