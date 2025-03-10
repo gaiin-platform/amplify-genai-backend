@@ -7,8 +7,11 @@ LLM_ENDPOINTS_SECRETS_NAME_ARN: "" #openai_endpoints_secret_arn from IAC output
 LLM_ENDPOINTS_SECRETS_NAME: "" #openai_endpoints_secret_name from IAC output
 OAUTH_AUDIENCE: "" #base of application
 OAUTH_ISSUER_BASE_URL: "" #Cognito user pool url from IAC
+CUSTOM_API_DOMAIN: "" #custom domain for the API
+COGNITO_USER_POOL_ID: "" #cognito_user_pool_id from IAC output
+COGNITO_CLIENT_ID: "" #cognito_client_id from IAC output
 OPENAI_API_KEY: "" #openai_api_key_secret_name from IAC output
-ORGANIZATION_EMAIL_DOMAIN: "" 
+ORGANIZATION_EMAIL_DOMAIN: "" #organization email domain
 PANDOC_LAMBDA_LAYER_ARN: "" #value provided by IAC output
 PRIVATE_SUBNET_ONE: "" #private subnet one id from IAC output
 PRIVATE_SUBNET_TWO: ""  #private subnet two id from IAC output
@@ -36,4 +39,4 @@ MIN_ACU: "0.5"
 MAX_ACU: "16"
 
 # Var for Admin interface access
-ADMINS:"" #CSV list of email usernames that need admin access. Can add secondary admins once deployed
+ADMINS: "" #CSV list of email usernames that need admin access. Can add secondary admins once deployed
