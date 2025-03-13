@@ -573,6 +573,21 @@ save_settings_schema = {
     "required": ["settings"]
 }
 
+file_delete_schema = {
+    "type": "object",
+    "properties": {
+        "key": {
+            "type": "string",
+            "description": "Key."
+        },
+        "groupId": {
+            "type": "string",
+            "description": "Group Id."
+        }
+    },
+    "required": ["key"]
+}
+
 register_conversation_schema = {
     "type": "object",
     "properties": {
@@ -715,6 +730,9 @@ validators = {
     },
     "/files/download": {
         "download": key_request_schema
+    },
+    "/files/delete": {
+        "delete": file_delete_schema
     },
     "/files/set_tags": {
         "set_tags": file_set_tags_schema

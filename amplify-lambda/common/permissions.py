@@ -41,6 +41,9 @@ def get_user(event, data):
 def get_data_owner(event, data):
   return data['user']
 
+def can_delete_file(user, data):
+  return True
+
 permissions_by_state_type = {
   "/state/share": {
     "append": can_share,
@@ -72,6 +75,9 @@ permissions_by_state_type = {
   },
   "/files/download": {
     "download": can_upload
+  },
+  "/files/delete": {
+    "delete": can_delete_file
   },
   "/chat/convert": {
     "convert": can_publish_item
