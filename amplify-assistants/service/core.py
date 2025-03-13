@@ -237,13 +237,27 @@ def delete_assistant(event, context, current_user, name, data):
                 "message": "You are not authorized to delete this assistant.",
             }
 
+        # First, delete any paths associated with this assistant
+        lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
+        # Query for all paths belonging to this assistant
+        response = lookup_table.query(
+            IndexName="AssistantIdIndex",
+            KeyConditionExpression=Key("assistantId").eq(assistant_public_id)
+        )
+        
+        # Delete each path entry
+        for item in response.get("Items", []):
+            lookup_table.delete_item(Key={"astPath": item["astPath"]})
+            print(f"Deleted path '{item['astPath']}' associated with assistant {assistant_public_id}")
+        
+        # Now delete the assistant itself
         delete_assistant_by_public_id(assistants_table, assistant_public_id)
         # remove permissions
         delete_assistant_permissions_by_public_id(
             assistant_public_id, [current_user] + users_who_have_perms
         )
         delete_assistant_permissions_by_id(existing_assistant["id"], current_user)
-        print(f"Assistant {assistant_public_id} deleted successfully.")
+        print(f"Assistant {assistant_public_id} and all associated paths deleted successfully.")
         return {"success": True, "message": "Assistant deleted successfully."}
     except Exception as e:
         print(f"Error deleting assistant: {e}")
@@ -622,7 +636,10 @@ def share_assistant_with(
     data_sources = get_data_source_keys(assistant_entry["dataSources"])
     print("DS: ", data_sources)
 
-    if not can_access_objects(
+    # Import the function locally to avoid name conflicts
+    from common.object_permissions import can_access_objects as check_access, update_object_permissions as update_permissions
+
+    if not check_access(
         access_token=access_token,
         data_sources=[{"id": assistant_key}],
         permission_level="owner",
@@ -634,7 +651,7 @@ def share_assistant_with(
 
     assistant_public_id = assistant_entry["assistantId"]
 
-    if not update_object_permissions(
+    if not update_permissions(
         access_token=access_token,
         shared_with_users=recipient_users,
         keys=[assistant_public_id],
@@ -649,7 +666,7 @@ def share_assistant_with(
         print(
             f"Update data sources object access permissions for users {recipient_users} for assistant {assistant_public_id}"
         )
-        update_object_permissions(
+        update_permissions(
             access_token=access_token,
             shared_with_users=recipient_users,
             keys=data_sources,
@@ -1076,6 +1093,7 @@ def create_or_update_assistant(
     """
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
 
     existing_assistant = get_most_recent_assistant_version(
         assistants_table, assistant_public_id
@@ -1122,8 +1140,9 @@ def create_or_update_assistant(
         )
         new_item["version"] = new_version
 
-        # Update the permissions for the new assistant
-        if not update_object_permissions(
+        # Update permissions for the new assistant using the imported function
+        from common.object_permissions import update_object_permissions as update_permissions
+        if not update_permissions(
             access_token,
             [user_that_owns_the_assistant],
             [new_item["id"]],
@@ -1135,6 +1154,23 @@ def create_or_update_assistant(
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
 
+        # Update permissions for the new version to ensure the user retains edit rights
+        try:
+            # Add direct permissions entry in DynamoDB for the new version ID
+            object_access_table.put_item(
+                Item={
+                    "object_id": new_item["id"],  # The ID of the new assistant version
+                    "principal_id": user_that_owns_the_assistant,
+                    "permission_level": "owner",  # Give the user full ownership rights
+                    "principal_type": principal_type,  # For individual users or groups
+                    "object_type": "assistant"    # The type of object being accessed
+                }
+            )
+            print(f"Successfully added direct permissions for {principal_type} {user_that_owns_the_assistant} on assistant version {new_item['id']}")
+        except Exception as e:
+            print(f"Error adding permissions for assistant version: {str(e)}")
+        
+        # Update the latest alias to point to the new version
         update_assistant_latest_alias(assistant_public_id, new_item["id"], new_version)
 
         print(f"Indexing assistant {new_item['id']} for RAG")
@@ -1170,8 +1206,9 @@ def create_or_update_assistant(
             is_group_sys_user,
         )
 
-        # Update the permissions for the new assistant
-        if not update_object_permissions(
+        # Update the permissions for the new assistant using the imported function
+        from common.object_permissions import update_object_permissions as update_permissions
+        if not update_permissions(
             access_token,
             [user_that_owns_the_assistant],
             [new_item["assistantId"], new_item["id"]],
@@ -1182,6 +1219,32 @@ def create_or_update_assistant(
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
+
+        # Also add direct permissions in DynamoDB
+        try:
+            # Add direct permissions entry in DynamoDB for both IDs
+            object_access_table.put_item(
+                Item={
+                    "object_id": new_item["id"],  # The ID of the new assistant version
+                    "principal_id": user_that_owns_the_assistant,
+                    "permission_level": "owner",  # Give the user full ownership rights
+                    "principal_type": principal_type,  # For individual users or groups
+                    "object_type": "assistant"    # The type of object being accessed
+                }
+            )
+            
+            object_access_table.put_item(
+                Item={
+                    "object_id": new_item["assistantId"],  # The public ID of the assistant
+                    "principal_id": user_that_owns_the_assistant,
+                    "permission_level": "owner",  # Give the user full ownership rights
+                    "principal_type": principal_type,  # For individual users or groups
+                    "object_type": "assistant"    # The type of object being accessed
+                }
+            )
+            print(f"Successfully added direct permissions for {principal_type} {user_that_owns_the_assistant} on assistant {new_item['id']} and {new_item['assistantId']}")
+        except Exception as e:
+            print(f"Error adding direct permissions for assistant: {str(e)}")
 
         create_assistant_alias(
             user_that_owns_the_assistant,
@@ -1745,6 +1808,167 @@ def save_user_rating(event, context, current_user, name, data):
 
 
 @op(
+    path="/assistant/add_path",
+    name="addAssistantPath",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Add or update a path for an Amplify assistant.
+
+    Example request:
+    {
+        "data": {
+            "assistantId": "astp/3209457834985793094",
+            "astPath": "my/assistant/path",
+            "previousPath": "" 
+        }
+    }
+    """,
+    params={
+        "assistantId": "String. Required. Unique identifier of the assistant. Example: 'astp/3209457834985793094'.",
+        "astPath": "String. Required. Path to assign to the assistant. Example: 'my/assistant/path'.",
+        "previousPath": "String. Optional. If changing an existing path, provide the current path. Empty string if adding a new path."
+    }
+)
+@validated(op="add_assistant_path")
+def add_assistant_path(event, context, current_user, name, data):
+    print(f"Adding path to assistant with data: {data}")
+    
+    # Extract the assistant ID and path from the data
+    ast_path = data["data"]["astPath"]
+    assistant_id = data["data"]["assistantId"]
+    previous_path = data["data"].get("previousPath", "")
+    
+    print(f"Adding path '{ast_path}' to assistant '{assistant_id}'")
+    print(f"Previous path: '{previous_path}'")
+    
+    # Get DynamoDB resources
+    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
+    
+    try:
+        # First, find the current version of the assistant
+        existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+        
+        if not existing_assistant:
+            return {
+                "success": False,
+                "message": f"Assistant not found: {assistant_id}",
+            }
+        
+        # Check if the user has permission to update this assistant
+        if not check_user_can_update_assistant(existing_assistant, current_user):
+            return {
+                "success": False,
+                "message": "You do not have permission to update this assistant.",
+            }
+        
+        # If we have a previous path and it's different from the new path, remove it
+        if previous_path and previous_path != ast_path:
+            try:
+                # First check if the previous path exists
+                prev_response = lookup_table.get_item(Key={"astPath": previous_path})
+                if "Item" in prev_response:
+                    # Delete the previous path entry
+                    lookup_table.delete_item(Key={"astPath": previous_path})
+                    print(f"Removed previous path '{previous_path}' from lookup table")
+                else:
+                    print(f"Previous path '{previous_path}' not found in lookup table")
+            except Exception as e:
+                print(f"Error removing previous path: {str(e)}")
+                # Continue anyway - we still want to add the new path
+        
+        # Add an entry to the lookup table
+        lookup_item = {
+            "astPath": ast_path,
+            "assistantId": assistant_id,
+            "public": True,  # Default to public for now
+            "userId": current_user,
+            "createdAt": datetime.now().isoformat()
+        }
+        
+        # Add the entry to the lookup table
+        lookup_table.put_item(Item=lookup_item)
+        print(f"Added lookup entry for path '{ast_path}' to assistant '{assistant_id}'")
+        
+        # Now create a new version of the assistant with the path saved in its definition
+        assistant_version = existing_assistant.get("version", 1)
+        
+        # Clone the existing assistant data or initialize if not present
+        assistant_data = existing_assistant.get("data", {})
+        if assistant_data is None:
+            assistant_data = {}
+        
+        # Update the path in the assistant data
+        assistant_data["astPath"] = ast_path
+        
+        # Increment the version number
+        new_version = assistant_version + 1
+        
+        # Save the updated assistant
+        new_item = save_assistant(
+            assistants_table,
+            existing_assistant["name"],
+            existing_assistant["description"],
+            existing_assistant["instructions"],
+            assistant_data,
+            existing_assistant.get("disclaimer", ""),
+            existing_assistant.get("dataSources", []),
+            existing_assistant.get("provider", "amplify"),
+            existing_assistant.get("tools", []),
+            current_user,
+            new_version,
+            existing_assistant.get("tags", []),
+            existing_assistant.get("uri", None),
+            assistant_id,
+            False,
+        )
+        
+        # Update permissions for the new version to ensure the user retains edit rights
+        try:
+            # Determine the principal type (user for non-system users)
+            principal_type = "user"
+            
+            # Add direct permissions entry in DynamoDB for the new version ID
+            object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
+            object_access_table.put_item(
+                Item={
+                    "object_id": new_item["id"],  # The ID of the new assistant version
+                    "principal_id": current_user,
+                    "permission_level": "owner",  # Give the user full ownership rights
+                    "principal_type": principal_type,  # For individual users
+                    "object_type": "assistant"    # The type of object being accessed
+                }
+            )
+            print(f"Successfully added direct permissions for {principal_type} {current_user} on assistant version {new_item['id']}")
+        except Exception as e:
+            print(f"Error adding permissions for assistant version: {str(e)}")
+        
+        # Update the latest alias to point to the new version
+        update_assistant_latest_alias(assistant_id, new_item["id"], new_version)
+        
+        return {
+            "success": True,
+            "message": "Assistant path updated successfully",
+            "data": {
+                "assistantId": assistant_id,
+                "astPath": ast_path,
+                "previousPath": previous_path,
+                "version": new_version
+            }
+        }
+    
+    except Exception as e:
+        print(f"Error adding assistant path: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "message": f"Failed to add path to assistant: {str(e)}"
+        }
+
+
+@op(
     path="/assistant/lookup",
     name="lookupAssistant",
     method="POST",
@@ -1765,7 +1989,8 @@ def save_user_rating(event, context, current_user, name, data):
         "data": {
             "assistantId": "astp/34098509834509809348",
             "astPath": "my/assistant/path",
-            "public": true
+            "public": true,
+            "pathFromDefinition": "my/assistant/path"
         }
     }
     """,
@@ -1774,12 +1999,15 @@ def save_user_rating(event, context, current_user, name, data):
     }
 )
 @validated(op="lookup")
-def lookup_assistant(event, context, current_user, name, data):
+def lookup_assistant_path(event, context, current_user, name, data):
     try:
         # Get the astPath from the request data
         ast_path = data.get("data", {}).get("astPath")
         
+        print(f"Looking up assistant with path: '{ast_path}', type: {type(ast_path)}")
+        
         if not ast_path:
+            print("No astPath provided in the request")
             return {
                 "statusCode": 400,
                 "body": json.dumps(
@@ -1792,15 +2020,38 @@ def lookup_assistant(event, context, current_user, name, data):
                 )
             }
         
+        # Convert the path to lowercase to match frontend behavior
+        ast_path = ast_path.lower() if isinstance(ast_path, str) else ast_path
+        print(f"Using lowercase path for lookup: '{ast_path}'")
+        
         # Get DynamoDB resource
         dynamodb = boto3.resource("dynamodb")
         lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
         
+        # Print the table name for debugging
+        table_name = os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
+        print(f"Using lookup table: {table_name}")
+        
         # Look up the assistant in the table
+        print(f"Querying DynamoDB with Key={{'astPath': '{ast_path}'}}")
         response = lookup_table.get_item(Key={"astPath": ast_path})
+        
+        # Log the raw response
+        print(f"DynamoDB response: {json.dumps(response, cls=CombinedEncoder)}")
         
         # Check if the item exists
         if "Item" not in response:
+            print(f"No item found for path: '{ast_path}'")
+            
+            # Try to list all items with a similar path to help debug
+            try:
+                # Scan the table to find similar paths (for debugging)
+                scan_response = lookup_table.scan()
+                paths = [item.get("astPath") for item in scan_response.get("Items", [])]
+                print(f"Available paths in the table: {paths}")
+            except Exception as scan_error:
+                print(f"Error scanning table: {str(scan_error)}")
+            
             return {
                 "statusCode": 404,
                 "body": json.dumps(
@@ -1823,17 +2074,41 @@ def lookup_assistant(event, context, current_user, name, data):
             # This would need to be expanded based on your permissions model
             pass
         
+        # Get the assistant definition to include the astPath
+        assistant_id = item.get("assistantId")
+        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+        assistant_definition = get_most_recent_assistant_version(assistants_table, assistant_id)
+        
+        # Create response with path information from both lookup table and assistant definition
+        response_data = {
+            "assistantId": assistant_id,
+            "astPath": ast_path,
+            "public": item.get("public", False)
+        }
+        
+        # Add path from assistant definition if available
+        if assistant_definition and assistant_definition.get("data") and assistant_definition["data"].get("astPath"):
+            response_data["pathFromDefinition"] = assistant_definition["data"]["astPath"]
+        
+        # Add assistant name to the response if available
+        if assistant_definition:
+            # First check if name is at the top level of the definition
+            if "name" in assistant_definition:
+                response_data["name"] = assistant_definition["name"]
+            # As a fallback, check if name exists in data
+            elif assistant_definition.get("data") and "name" in assistant_definition["data"]:
+                response_data["name"] = assistant_definition["data"]["name"]
+            
+            # Also include the full definition for the frontend to use
+            response_data["definition"] = assistant_definition
+        
         return {
             "statusCode": 200,
             "body": json.dumps(
                 {
                     "success": True,
                     "message": "Assistant found",
-                    "data": {
-                        "assistantId": item.get("assistantId"),
-                        "astPath": ast_path,
-                        "public": item.get("public", False)
-                    },
+                    "data": response_data,
                 },
                 cls=CombinedEncoder,
             )
@@ -1846,232 +2121,6 @@ def lookup_assistant(event, context, current_user, name, data):
                 {
                     "success": False,
                     "message": f"Error looking up assistant: {str(e)}",
-                    "data": None,
-                },
-                cls=CombinedEncoder,
-            )
-        }
-
-
-@op(
-    path="/assistant/add_path",
-    name="addAssistantPath",
-    method="POST",
-    tags=["apiDocumentation"],
-    description="""Add a path to an Amplify assistant.
-
-    Example request:
-    {
-        "data": {
-            "assistantId": "astp/34098509834509809348",
-            "astPath": "my/assistant/path"
-        }
-    }
-
-    Example response:
-    {
-        "success": true,
-        "message": "Path added to assistant successfully",
-        "data": {
-            "assistantId": "astp/34098509834509809348",
-            "astPath": "my/assistant/path"
-        }
-    }
-    """,
-    params={
-        "assistantId": "String. Required. ID of the assistant to add a path to.",
-        "astPath": "String. Required. Path to add to the assistant."
-    }
-)
-@validated(op="add_path")
-def add_assistant_path(event, context, current_user, name, data):
-    try:
-        # Get the assistantId and astPath from the request data
-        assistant_id = data.get("data", {}).get("assistantId")
-        ast_path = data.get("data", {}).get("astPath")
-        previous_path = data.get("data", {}).get("previousPath")
-        
-        # Validate required parameters
-        if not assistant_id or not ast_path:
-            missing_params = []
-            if not assistant_id:
-                missing_params.append("assistantId")
-            if not ast_path:
-                missing_params.append("astPath")
-                
-            return {
-                "statusCode": 400,
-                "body": json.dumps(
-                    {
-                        "success": False,
-                        "message": f"Missing required parameters: {', '.join(missing_params)}",
-                        "data": None,
-                    },
-                    cls=CombinedEncoder,
-                )
-            }
-        
-        # Check for inappropriate content in the path
-        is_valid, validation_message = validate_path_for_inappropriate_content(ast_path)
-        if not is_valid:
-            return {
-                "statusCode": 400,
-                "body": json.dumps(
-                    {
-                        "success": False,
-                        "message": validation_message,
-                        "data": None,
-                    },
-                    cls=CombinedEncoder,
-                )
-            }
-        
-        # Get DynamoDB resources
-        dynamodb = boto3.resource("dynamodb")
-        lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
-        object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
-        
-        # If a previous path was provided and it's different from the new path, delete it first
-        if previous_path and previous_path != ast_path:
-            print(f"Deleting previous path '{previous_path}' for assistant {assistant_id}")
-            
-            # Check if the previous path exists and belongs to this assistant
-            previous_path_response = lookup_table.get_item(Key={"astPath": previous_path})
-            if "Item" in previous_path_response and previous_path_response["Item"].get("assistantId") == assistant_id:
-                # Delete the previous path
-                lookup_table.delete_item(Key={"astPath": previous_path})
-                print(f"Previous path '{previous_path}' deleted successfully")
-            else:
-                print(f"Previous path '{previous_path}' not found or doesn't belong to assistant {assistant_id}")
-        
-        # Check if the new path already exists in the lookup table
-        existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
-        if "Item" in existing_path_response:
-            # If the path exists but belongs to the same assistant, it's ok to update
-            if existing_path_response["Item"].get("assistantId") == assistant_id:
-                print(f"Path '{ast_path}' already belongs to this assistant. Will update it.")
-            else:
-                return {
-                    "statusCode": 409,  # Conflict
-                    "body": json.dumps(
-                        {
-                            "success": False,
-                            "message": f"Path '{ast_path}' is already in use by another assistant",
-                            "data": None,
-                        },
-                        cls=CombinedEncoder,
-                    )
-                }
-        
-        # Check if the assistant exists and get its details using the AssistantIdIndex GSI
-        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
-        gsi_response = assistants_table.query(
-            IndexName="AssistantIdIndex",
-            KeyConditionExpression=Key("assistantId").eq(assistant_id)
-        )
-        
-        if not gsi_response.get("Items"):
-            return {
-                "statusCode": 404,
-                "body": json.dumps(
-                    {
-                        "success": False,
-                        "message": f"Assistant with ID '{assistant_id}' not found",
-                        "data": None,
-                    },
-                    cls=CombinedEncoder,
-                )
-            }
-        
-        # Get the assistant's database ID 
-        assistant_db_id = gsi_response["Items"][0]["id"]
-        
-        # Check if the user has ownership or edit rights to the assistant
-        access_response = object_access_table.get_item(
-            Key={
-                'object_id': assistant_db_id,
-                'principal_id': current_user
-            }
-        )
-        
-        has_permission = False
-        if "Item" in access_response:
-            permission_level = access_response["Item"].get("permission_level")
-            if permission_level in ["owner", "write"]:
-                has_permission = True
-        
-        # If the user doesn't have permissions, check if they're the creator of the assistant
-        if not has_permission:
-            assistant = assistants_table.get_item(Key={"id": assistant_db_id})
-            if "Item" in assistant and assistant["Item"].get("user") == current_user:
-                has_permission = True
-        
-        if not has_permission:
-            return {
-                "statusCode": 403,
-                "body": json.dumps(
-                    {
-                        "success": False,
-                        "message": "You don't have permission to add a path to this assistant",
-                        "data": None,
-                    },
-                    cls=CombinedEncoder,
-                )
-            }
-        
-        # Check if the assistant already has 2 or more paths using the AssistantIdIndex GSI
-        existing_paths_response = lookup_table.query(
-            IndexName="AssistantIdIndex",
-            KeyConditionExpression=Key("assistantId").eq(assistant_id)
-        )
-        
-        if existing_paths_response.get("Count", 0) >= 2:
-            return {
-                "statusCode": 400,
-                "body": json.dumps(
-                    {
-                        "success": False,
-                        "message": "This assistant already has the maximum number of paths (2)",
-                        "data": None,
-                    },
-                    cls=CombinedEncoder,
-                )
-            }
-        
-        # Add the path to the lookup table
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-        lookup_table.put_item(
-            Item={
-                "astPath": ast_path,
-                "assistantId": assistant_id,
-                "createdAt": timestamp,
-                "createdBy": current_user,
-                "public": False  # Default to not public
-            }
-        )
-        
-        return {
-            "statusCode": 200,
-            "body": json.dumps(
-                {
-                    "success": True,
-                    "message": "Path added to assistant successfully",
-                    "data": {
-                        "assistantId": assistant_id,
-                        "astPath": ast_path
-                    },
-                },
-                cls=CombinedEncoder,
-            )
-        }
-    except Exception as e:
-        print(f"Error adding path to assistant: {str(e)}")
-        return {
-            "statusCode": 500,
-            "body": json.dumps(
-                {
-                    "success": False,
-                    "message": f"Error adding path to assistant: {str(e)}",
                     "data": None,
                 },
                 cls=CombinedEncoder,
