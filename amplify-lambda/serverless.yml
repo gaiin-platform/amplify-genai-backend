@@ -220,15 +220,15 @@ functions:
           cors: true
 
     delete_file:
-    handler: files/file.delete_embeddings
-    timeout: 30
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: files/delete
-          method: post
-          cors: true
+      handler: files/file.delete_embeddings
+      timeout: 30
+      layers:
+        - Ref: PythonRequirementsLambdaLayer
+      events:
+        - http:
+            path: files/delete
+            method: post
+            cors: true
 
   list_tags_user:
     handler: files/file.list_tags_for_user
