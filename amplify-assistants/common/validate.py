@@ -76,18 +76,19 @@ add_assistant_path_schema = {
     "properties": {
         "assistantId": {
             "type": "string",
-            "description": "The ID of the assistant to add a path to",
+            "description": "The ID of the assistant"
         },
         "astPath": {
             "type": "string",
-            "description": "The path to add to the assistant",
+            "description": "The path to add to the assistant"
         },
         "previousPath": {
             "type": "string",
-            "description": "The previous path to replace (if updating an existing path)",
-        },
+            "description": "The previous path of the assistant (optional)",
+            "default": ""
+        }
     },
-    "required": ["assistantId", "astPath"],
+    "required": ["assistantId", "astPath"]
 }
 
 create_assistant_schema = {
@@ -413,7 +414,7 @@ validators = {
         "lookup": lookup_assistant_schema
     },
     "/assistant/add_path": {
-        "add_path": add_assistant_path_schema
+        "add_assistant_path": add_assistant_path_schema
     }
 }
 
@@ -452,7 +453,7 @@ api_validators = {
         "lookup": lookup_assistant_schema
     },
     "/assistant/add_path": {
-        "add_path": add_assistant_path_schema
+        "add_assistant_path": add_assistant_path_schema
     }
 }
 
