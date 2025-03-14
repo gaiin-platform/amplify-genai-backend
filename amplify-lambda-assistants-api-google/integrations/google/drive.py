@@ -162,7 +162,7 @@ def convert_file(current_user, file_id, target_mime_type, access_token = None, s
     else:
         # For non-Google Workspace files, use the copy method (though this likely won't change the format)
         body = {
-            'name': f"{file['name']} (Converted)",
+            'name': file['name'],
             'mimeType': target_mime_type
         }
         converted_file = service.files().copy(fileId=file_id, body=body, fields='id,name,mimeType,webContentLink').execute()
