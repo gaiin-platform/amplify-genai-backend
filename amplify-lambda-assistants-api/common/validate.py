@@ -118,7 +118,8 @@ validators = {
             "type": "object",
             "properties": {
                 "integration": {"type": "string"},
-                "file_id": {"type": "string"}   
+                "file_id": {"type": "string"},
+                "direct_download": {"type": "boolean"}
             },
             "required": ["integration", "file_id"],
         }

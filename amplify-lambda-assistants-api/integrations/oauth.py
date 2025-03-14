@@ -625,6 +625,7 @@ def get_oauth_user_table():
 def refresh_integration_tokens(event, context, current_user, name, data):
     integration = data['data']['integration']
     credentials = get_user_credentials(current_user, integration)
+    # ultimately returns only success or failure, no credentials are returned
     return refresh_credentials(current_user, integration, credentials)
 
 

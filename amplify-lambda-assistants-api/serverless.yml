@@ -54,6 +54,7 @@ provider:
     JOB_STATUS_TABLE: ${self:service}-${sls:stage}-job-status
     JOB_RESULTS_BUCKET: ${self:service}-${sls:stage}-job-results
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-document-conversion-output # temp storage for downloaded integration file
 
 
   iam:
@@ -96,6 +97,8 @@ functions:
       - http:
           path: integrations/user/files/download
           method: post
+    environment:
+      OAUTH_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/oauth/integrations/encryption #must start with /
 
   registerIntegrationSecret:
     handler: integrations/oauth.regiser_secret
@@ -224,6 +227,12 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.JOB_STATUS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OP_LOG_DYNAMO_TABLE}"
+            - Effect: Allow  
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
 
     OauthStateTable:
       Type: AWS::DynamoDB::Table
