@@ -237,7 +237,7 @@ def delete_assistant(event, context, current_user, name, data):
                 "message": "You are not authorized to delete this assistant.",
             }
 
-        # First, delete any paths associated with this assistant
+            # First, delete any paths associated with this assistant
         lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
         # Query for all paths belonging to this assistant
         response = lookup_table.query(
@@ -1864,20 +1864,19 @@ def add_assistant_path(event, context, current_user, name, data):
                 "message": "You do not have permission to update this assistant.",
             }
         
-        # If we have a previous path and it's different from the new path, remove it
-        if previous_path and previous_path != ast_path:
-            try:
-                # First check if the previous path exists
-                prev_response = lookup_table.get_item(Key={"astPath": previous_path})
-                if "Item" in prev_response:
-                    # Delete the previous path entry
-                    lookup_table.delete_item(Key={"astPath": previous_path})
-                    print(f"Removed previous path '{previous_path}' from lookup table")
-                else:
-                    print(f"Previous path '{previous_path}' not found in lookup table")
-            except Exception as e:
-                print(f"Error removing previous path: {str(e)}")
-                # Continue anyway - we still want to add the new path
+        # Check if the new path already exists but belongs to a different assistant
+        try:
+            existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
+            if "Item" in existing_path_response:
+                existing_item = existing_path_response["Item"]
+                if existing_item.get("assistantId") != assistant_id:
+                    return {
+                        "success": False,
+                        "message": f"Path '{ast_path}' is already in use by another assistant.",
+                    }
+        except Exception as e:
+            print(f"Error checking for existing path: {str(e)}")
+            # Continue anyway - this is just a validation check
         
         # Add an entry to the lookup table
         lookup_item = {
@@ -1885,7 +1884,9 @@ def add_assistant_path(event, context, current_user, name, data):
             "assistantId": assistant_id,
             "public": True,  # Default to public for now
             "userId": current_user,
-            "createdAt": datetime.now().isoformat()
+            "createdAt": datetime.now().isoformat(),
+            "lastAccessed": datetime.now().isoformat(),
+            "lastAccessedBy": current_user
         }
         
         # Add the entry to the lookup table
@@ -1937,7 +1938,7 @@ def add_assistant_path(event, context, current_user, name, data):
                     "object_id": new_item["id"],  # The ID of the new assistant version
                     "principal_id": current_user,
                     "permission_level": "owner",  # Give the user full ownership rights
-                    "principal_type": principal_type,  # For individual users
+                    "principal_type": principal_type,  # For individual users or groups
                     "object_type": "assistant"    # The type of object being accessed
                 }
             )
@@ -1947,6 +1948,30 @@ def add_assistant_path(event, context, current_user, name, data):
         
         # Update the latest alias to point to the new version
         update_assistant_latest_alias(assistant_id, new_item["id"], new_version)
+        
+        # Now that we've successfully saved the new path, remove ALL previous paths for this assistant except the new one
+        try:
+            # Query for all paths belonging to this assistant
+            response = lookup_table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(assistant_id)
+            )
+            
+            paths_to_remove = []
+            for item in response.get("Items", []):
+                # Skip the new path we just added
+                if item["astPath"] != ast_path:
+                    paths_to_remove.append(item["astPath"])
+            
+            # Remove all old paths
+            for path_to_remove in paths_to_remove:
+                lookup_table.delete_item(Key={"astPath": path_to_remove})
+                print(f"Removed previous path '{path_to_remove}' from lookup table")
+            
+            print(f"Removed {len(paths_to_remove)} previous path(s) associated with assistant {assistant_id}")
+        except Exception as e:
+            print(f"Error removing previous paths: {str(e)}")
+            # Continue anyway - we've already saved the new path successfully
         
         return {
             "success": True,
@@ -2067,6 +2092,23 @@ def lookup_assistant_path(event, context, current_user, name, data):
         
         # Get the item from the response
         item = response["Item"]
+        
+        # Update lastAccessed and lastAccessedBy columns
+        current_time = datetime.now().isoformat()
+        try:
+            # Update the item with access tracking information
+            lookup_table.update_item(
+                Key={"astPath": ast_path},
+                UpdateExpression="SET lastAccessed = :time, lastAccessedBy = :user",
+                ExpressionAttributeValues={
+                    ":time": current_time,
+                    ":user": current_user
+                }
+            )
+            print(f"Updated access tracking for path '{ast_path}': lastAccessed={current_time}, lastAccessedBy={current_user}")
+        except Exception as update_error:
+            # Log the error but continue - don't fail the lookup just because tracking failed
+            print(f"Error updating access tracking: {str(update_error)}")
         
         # Check if the assistant is public or if the user has access
         if not item.get("public", False):
