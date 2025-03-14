@@ -1811,7 +1811,7 @@ def save_user_rating(event, context, current_user, name, data):
     path="/assistant/add_path",
     name="addAssistantPath",
     method="POST",
-    tags=["apiDocumentation"],
+    tags=["standaloneAst"],
     description="""Add or update a path for an Amplify assistant.
 
     Example request:
@@ -1831,6 +1831,7 @@ def save_user_rating(event, context, current_user, name, data):
 )
 @validated(op="add_assistant_path")
 def add_assistant_path(event, context, current_user, name, data):
+    is_group_sys_user = data["is_group_sys_user"]
     print(f"Adding path to assistant with data: {data}")
     
     # Extract the assistant ID and path from the data
@@ -1927,7 +1928,7 @@ def add_assistant_path(event, context, current_user, name, data):
         # Update permissions for the new version to ensure the user retains edit rights
         try:
             # Determine the principal type (user for non-system users)
-            principal_type = "user"
+            principal_type = "group" if is_group_sys_user else "user"
             
             # Add direct permissions entry in DynamoDB for the new version ID
             object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
@@ -1972,7 +1973,7 @@ def add_assistant_path(event, context, current_user, name, data):
     path="/assistant/lookup",
     name="lookupAssistant",
     method="POST",
-    tags=["apiDocumentation"],
+    tags=["standaloneAst"],
     description="""Look up an Amplify assistant by path.
 
     Example request:
