@@ -411,15 +411,14 @@ def terminate_embedding(event, context, current_user, name, data):
     table = dynamodb.Table(progress_table)
 
     try:
-        # Update the `terminated` column to True for the specified `object_id`
         response = table.update_item(
-            Key={'object_id': object_id}, 
-            UpdateExpression="SET terminated = :val",
+            Key={'object_id': object_id},
+            UpdateExpression="SET #terminated = :val",
+            ExpressionAttributeNames={'#terminated': 'terminated'},
             ExpressionAttributeValues={':val': True},
-            ReturnValues="UPDATED_NEW" 
+            ReturnValues="UPDATED_NEW"
         )
         
-        # Check if the update was successful
         if response.get('Attributes', {}).get('terminated') is True:
             print(f"Successfully terminated object with ID: {object_id}")
             return True
@@ -427,5 +426,5 @@ def terminate_embedding(event, context, current_user, name, data):
             print(f"Failed to update termination status for object with ID: {object_id}")
             return False
     except Exception as e:
-        print(f"Error terminating embedding for object_id {object_id}: {e}", exc_info=True)
+        print(f"Error terminating embedding for object_id {object_id}: {e}")
         return False
