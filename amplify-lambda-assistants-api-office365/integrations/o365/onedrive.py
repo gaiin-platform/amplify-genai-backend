@@ -31,7 +31,7 @@ def handle_graph_error(response: requests.Response) -> None:
     raise DriveError(f"Graph API error: {error_message} (Status: {response.status_code})")
 
 def list_drive_items(current_user: str, folder_id: str = "root", 
-                    page_size: int = 25, access_token: str = None) -> List[Dict]:
+                    page_size: int = 999, access_token: str = None) -> List[Dict]:
     """
     Lists items in the specified OneDrive folder with pagination support.
     
