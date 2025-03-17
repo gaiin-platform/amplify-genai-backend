@@ -55,7 +55,7 @@ def list_files(integration_provider, token, folder_id = None):
       case IntegrationType.MICROSOFT:
          return execute_request(token, "/microsoft/integrations/route?op=list_drive_items", {'folder_id': folder_id if folder_id else 'root', 'page_size': 100})
          
-   print(f"No result from list_files for integration: {integration}")
+   print(f"No result from list_files for integration: {integration_provider}")
    return None
 
 
@@ -88,6 +88,7 @@ def download_integration_file(event, context, current_user, name, data):
                file_name = result.get('name', 'downloaded_file')
                file_mime_type = result.get('mimeType', 'application/octet-stream')
                file_extension = MIME_TO_EXT.get(file_mime_type, '')
+               print(f"File name: {file_name}, mime type: {file_mime_type}, extension: {file_extension}")
                safe_file_name = re.sub(r'[^a-zA-Z0-9._-]', '', file_name)
 
                if '.' in safe_file_name:
