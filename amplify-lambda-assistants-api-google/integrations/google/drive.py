@@ -77,6 +77,15 @@ def get_download_link(current_user, file_id, access_token = None, service = None
                     'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # Sheets to XLSX
                     'application/vnd.google-apps.presentation': 'application/pdf',  # Slides to PDF
                     'application/vnd.google-apps.drawing': 'application/pdf',  # Drawings to PDF
+                    'application/vnd.google-apps.jam': 'application/pdf',  # Jamboard to PDF
+                    'application/vnd.google-apps.form': 'application/pdf',  # Forms to PDF
+                    'application/vnd.google-apps.script': 'application/json',  # Scripts to JSON
+                    'application/vnd.google-apps.site': 'text/plain',  # Sites to text (limited support)
+                    'application/vnd.google-apps.fusiontable': 'text/csv',  # Fusion Tables to CSV
+                    'application/vnd.google-apps.map': 'application/pdf',  # My Maps to PDF
+                    'application/vnd.google-apps.drive-sdk': 'application/pdf',  # Drive SDK to PDF
+                    # Special handling for Colab notebooks
+                    'application/vnd.google.colaboratory': 'application/json',  # Colab to JSON
                 }
                 target_format = export_formats.get(mime_type, 'application/pdf')
                 # Convert the file
