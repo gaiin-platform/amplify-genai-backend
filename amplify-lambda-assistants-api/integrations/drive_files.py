@@ -157,6 +157,7 @@ def request_download_link(integration_provider, file_id, token):
    
 
 def get_file_contents(integration_provider, credentials, file_id, download_url):
+   print(f"Getting file contents for integration: {integration_provider}, file_id: {file_id}")
    try:
       match integration_provider:
          case IntegrationType.GOOGLE:
