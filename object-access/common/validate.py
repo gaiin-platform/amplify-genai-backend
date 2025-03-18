@@ -416,7 +416,7 @@ update_groups_schema = {
     "required": []
 }
 
-replace_key_schema = {
+groupId_schema = {
     "type": "object",
     "properties": {
         "groupId": {
@@ -424,6 +424,39 @@ replace_key_schema = {
         }
     },
     "required": ["groupId"]
+}
+
+assistant_path_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The ID of the assistant"
+        },
+        "astPath": {
+            "type": "string",
+            "description": "The path to add to the assistant"
+        },
+        "previousPath": {
+            "type": "string",
+            "description": "The previous path of the assistant (optional)",
+            "default": ""
+        }
+    },
+    "required": [ "assistantId", "astPath"]
+}
+
+
+add_assistant_path_schema = {
+    "type": "object",
+    "properties": {
+         "group_id": {
+            "type": "string",
+            "description": "The ID of the group."
+        },
+        "path_data": assistant_path_schema
+    },
+    "required": ["group_id", "path_data"]
 }
 
 validators = {
@@ -485,10 +518,16 @@ validators = {
         "update": update_groups_schema
     },
     "/groups/replace_key" : {
-        "update" : replace_key_schema
+        "update" : groupId_schema
     },
     "/groups/assistants/amplify": {
         "create": create_amplify_assistants_group_schema
+    },
+     "/groups/assistant/add_path": {
+        "add_assistant_path": add_assistant_path_schema
+    },
+    "/groups/verify_ast_group_member": {
+        "verify_member": groupId_schema
     }
 }
 
@@ -503,6 +542,9 @@ api_validators = {
     "/utilities/simulate_access_to_objects": {
         "simulate_access_to_objects": simulate_access_to_objects
     },
+    "/groups/verify_ast_group_member": {
+        "verify_member": groupId_schema
+    }
 }
 
 def validate_data(name, op, data, api_accessed):
