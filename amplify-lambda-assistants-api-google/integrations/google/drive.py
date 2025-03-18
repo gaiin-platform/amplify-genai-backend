@@ -63,7 +63,7 @@ def create_file(current_user, file_name, content, mime_type='text/plain', access
 def get_download_link(current_user, file_id, access_token = None, service = None, allow_conversion = True):
     #prevent duplicate service creation
     if (not service): service = get_drive_service(current_user, access_token)
-    file = service.files().get(fileId=file_id, fields='webContentLink,name,mimeType').execute()
+    file = service.files().get(fileId=file_id, fields='id,webContentLink,name,mimeType').execute()
     if file.get('webContentLink'):
         return {"id": file.get('id'), "downloadLink": file.get('webContentLink'), "name": file.get('name'), "mimeType": file.get('mimeType')}
     else:
