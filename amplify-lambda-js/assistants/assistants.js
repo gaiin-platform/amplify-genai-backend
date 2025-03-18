@@ -52,7 +52,7 @@ const defaultAssistant = {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
         }
 
-        if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
+        if(!body.options.ragOnly && aboveLimit){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
         }
         else {
