@@ -35,7 +35,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         response = process_and_invoke_agent(agent_input_event)
                         print("Agent response:", response)
 
-                        if response.get("success"):
+                        if response.get("handled"):
                             result = response.get("data",{}).get("result")
                             if not result:
                                 print(f"Agent response missing")

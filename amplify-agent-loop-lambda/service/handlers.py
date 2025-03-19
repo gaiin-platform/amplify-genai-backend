@@ -217,6 +217,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         # Determine which Python built-in operations to include
         all_built_in_operations = []
         if metadata:
+
             built_in_operations = metadata.get('builtInOperations', [])
             assistant_built_in_operations = metadata.get('assistant', {}).get('data',{}).get('builtInOperations', [])
             all_built_in_operations = built_in_operations + assistant_built_in_operations
