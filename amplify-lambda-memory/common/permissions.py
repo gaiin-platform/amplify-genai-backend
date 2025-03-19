@@ -9,15 +9,7 @@ def get_permission_checker(user, ptype, op, data):
     )
 
 
-def can_save_memory(user, data):
-    return True
-
-
 def can_extract_facts(user, data):
-    return True
-
-
-def can_read_memory(user, data):
     return True
 
 
@@ -29,19 +21,15 @@ def can_edit_memory(user, data):
     return True
 
 
-def can_create_project(user, data):
+def can_save_memory_batch(user, data):
     return True
 
 
-def can_get_projects(user, data):
+def can_read_memory_by_taxonomy(user, data):
     return True
 
 
-def can_remove_project(user, data):
-    return True
-
-
-def can_edit_project(user, data):
+def can_update_memory_taxonomy(user, data):
     return True
 
 
@@ -54,13 +42,14 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/memory/save-memory": {"save_memory": can_save_memory},
     "/memory/extract-facts": {"extract_facts": can_extract_facts},
-    "/memory/read-memory": {"read_memory": can_read_memory},
     "/memory/remove-memory": {"remove_memory": can_remove_memory},
     "/memory/edit-memory": {"edit_memory": can_edit_memory},
-    "/memory/create-project": {"create_project": can_create_project},
-    "/memory/get-projects": {"get_projects": can_get_projects},
-    "/memory/remove-project": {"remove_project": can_remove_project},
-    "/memory/edit-project": {"edit_project": can_edit_project},
+    "/memory/save-memory-batch": {"save_memory_batch": can_save_memory_batch},
+    "/memory/read-memory-by-taxonomy": {
+        "read_memory_by_taxonomy": can_read_memory_by_taxonomy
+    },
+    "/memory/update-memory-taxonomy": {
+        "update_memory_taxonomy": can_update_memory_taxonomy
+    },
 }

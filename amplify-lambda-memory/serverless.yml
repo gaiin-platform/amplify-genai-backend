@@ -61,24 +61,6 @@ functions:
           method: post
           cors: true
   
-  # read from memory table
-  read_memory:
-    handler: service/core.read_memory
-    events:
-      - http:
-          path: /memory/read-memory
-          method: post
-          cors: true
-  
-  # save to memory table
-  save_memory:
-    handler: service/core.save_memory
-    events:
-      - http:
-          path: /memory/save-memory
-          method: post
-          cors: true
-  
   # remove from memory table
   remove_memory:
     handler: service/core.remove_memory
@@ -96,35 +78,27 @@ functions:
           method: post
           cors: true
   
-  create_project:
-    handler: service/core.create_project
+  save_memory_batch:
+    handler: service/core.save_memory_batch
     events:
       - http:
-          path: /memory/create-project
+          path: /memory/save-memory-batch
           method: post
           cors: true
   
-  get_projects:
-    handler: service/core.get_projects
+  read_memory_by_taxonomy:
+    handler: service/core.read_memory_by_taxonomy
     events:
       - http:
-          path: /memory/get-projects
-          method: post
-          cors: true
-
-  remove_project:
-    handler: service/core.remove_project
-    events:
-      - http:
-          path: /memory/remove-project
+          path: /memory/read-memory-by-taxonomy
           method: post
           cors: true
   
-  edit_project:
-    handler: service/core.edit_project
+  update_memory_taxonomy:
+    handler: service/core.update_memory_taxonomy
     events:
       - http:
-          path: /memory/edit-project
+          path: /memory/update-memory-taxonomy
           method: post
           cors: true
 
@@ -174,6 +148,8 @@ resources:
             AttributeType: S
           - AttributeName: user
             AttributeType: S
+          - AttributeName: taxonomy_path
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
@@ -181,6 +157,12 @@ resources:
           - IndexName: UserIndex
             KeySchema:
               - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: TaxonomyIndex
+            KeySchema:
+              - AttributeName: taxonomy_path
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
