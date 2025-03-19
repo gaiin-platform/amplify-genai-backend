@@ -414,7 +414,7 @@ class Agent:
         # ========================
         while True:
 
-            can_start_loop = reduce(lambda a, c: c.start_agent_loop(self, action_context), self.capabilities, False)
+            can_start_loop = reduce(lambda a, c: c.start_agent_loop(self, action_context), self.capabilities, len(self.capabilities) == 0)
             if not can_start_loop:
                 break
 

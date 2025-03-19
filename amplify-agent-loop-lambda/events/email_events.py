@@ -507,8 +507,15 @@ class SESMessageHandler(MessageHandler):
     def can_handle(self, message: Dict[str, Any]) -> bool:
         try:
             ses_content = json.loads(message['Message'])
-            return all(k in ses_content for k in ['notificationType', 'mail', 'receipt'])
-        except (KeyError, json.JSONDecodeError):
+            print(f"notificationType: {ses_content.get('notificationType')}")
+            print(f"mail: {ses_content.get('mail')}")
+            print(f"receipt: {ses_content.get('receipt')}")
+            can_handle = all(k in ses_content for k in ['notificationType', 'mail', 'receipt'])
+            print(f"SESMessageHandler can_handle:{can_handle}")
+            return can_handle
+        except (KeyError, json.JSONDecodeError) as e:
+            print(f"Error: {e}")
+            print("SESMessageHandler cannot handle message")
             return False
 
     def process(self, message: Dict[str, Any], context: Any) -> Dict[str, Any]:

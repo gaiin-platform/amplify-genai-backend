@@ -4,6 +4,8 @@ from common.ops import vop
 from events.email_sender_controls import add_allowed_sender, remove_allowed_sender
 from events.event_templates import remove_event_template, get_event_template, list_event_templates_for_user, \
     add_event_template
+from events.mock import generate_ses_event
+from service.agent_queue import route_queue_event
 
 
 @vop(
@@ -187,4 +189,67 @@ def handle_remove_allowed_sender(current_user, access_token, tag, sender):
             "success": False,
             "data": None,
             "message": "Server error: Unable to remove allowed sender. Please try again later."
+        }
+
+
+@vop(
+    path="/vu-agent/test-send-email-notification",
+    tags=["email", "default"],
+    name="testSendEmailNotification",
+    description="Generate an email notification event.",
+    params={
+        "sender": "The sender email. This must always be set to the current user.",
+        "receiver": "The receiver email.",
+        "subject": "The subject of the email.",
+        "body": "The body of the email."
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "sender": {
+                "type": "string",
+                "description": "The sender of the email. This must be set to the current user."
+            },
+            "receiver": {"type": "string", "description": "Receiver's email address"},
+            "subject": {"type": "string", "description": "Subject of the email."},
+            "body": {"type": "string", "description": "Body of the email."}
+        },
+        "required": ["sender", "receiver", "subject", "body"]
+    }
+)
+def test_send_email_notification(current_user, access_token, sender, receiver, subject, body):
+    # Validate that the sender matches the current_user
+    if sender != current_user:
+        return {
+            "success": False,
+            "data": None,
+            "message": "Sender mismatch: You are not authorized to send as this user."
+        }
+
+    try:
+        # Generate the email notification event
+        email_notification = generate_ses_event(
+            sender=sender,
+            receiver=receiver,
+            subject=subject,
+            body=body
+        )
+
+        route_queue_event(email_notification, {})
+
+        # Here, you might do something with the generated email notification,
+        # such as saving it to a database or sending it to a queue
+
+        return {
+            "success": True,
+            "data": email_notification,
+            "message": "Email notification event generated successfully."
+        }
+
+    except Exception as e:
+        traceback.print_exc()
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Server error: Unable to generate email notification. Error: {str(e)}"
         }
