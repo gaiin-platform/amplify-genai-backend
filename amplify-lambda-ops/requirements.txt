@@ -36,6 +36,9 @@ jmespath==1.0.1
     # via
     #   boto3
     #   botocore
+jsonschema==4.23.0
+    # via -r requirements.in
+jsonschema-specifications==2024.10.1
 pillow==11.1.0
     # via -r requirements.in
 pyasn1==0.6.1

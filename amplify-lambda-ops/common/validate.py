@@ -369,7 +369,7 @@ def api_claims(event, context, token):
             raise PermissionError("API key has expired.")
 
         # Check for access rights
-        # access = item.get('accessTypes', [])
+        access = item.get('accessTypes', [])
         # if ('ops' not in access):
         #     # and 'full_access' not in access
         #     print("API doesn't have access to api key functionality")
