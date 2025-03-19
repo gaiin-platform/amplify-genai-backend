@@ -41,31 +41,12 @@ class NotFound(HTTPException):
         super().__init__(404, message)
 
 
-save_memory_schema = {
-    "type": "object",
-    "properties": {
-        "MemoryItem": {"type": "string"},
-        "MemoryType": {"type": "string"},
-        "MemoryTypeID": {"type": "string"},
-    },
-    "required": ["MemoryItem", "MemoryType", "MemoryTypeID"],
-}
-
 extract_facts_schema = {
     "type": "object",
     "properties": {
         "user_input": {"type": "string"},
     },
     "required": ["user_input"],
-}
-
-read_memory_schema = {
-    "type": "object",
-    "properties": {
-        "assistant_id": {"type": "string"},
-        "project_id": {"type": "string"},
-    },
-    "required": [],
 }
 
 remove_memory_schema = {
@@ -85,37 +66,46 @@ edit_memory_schema = {
     "required": ["memory_id", "content"],
 }
 
-create_project_schema = {
+save_memory_batch_schema = {
     "type": "object",
     "properties": {
-        "ProjectName": {"type": "string"},
+        "memories": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "taxonomy_path": {"type": "string"},
+                    "memory_type": {"type": "string"},
+                    "memory_type_id": {"type": "string"},
+                    "conversation_id": {"type": "string"},
+                },
+                "required": ["content", "taxonomy_path"],
+            },
+        }
     },
-    "required": ["ProjectName"],
+    "required": ["memories"],
 }
 
-get_projects_schema = {
+read_memory_by_taxonomy_schema = {
     "type": "object",
     "properties": {
-        "Email": {"type": "string"},
+        "category": {"type": "string"},
+        "subcategory": {"type": "string"},
+        "memory_type": {"type": "string"},
+        "memory_type_id": {"type": "string"},
+        "conversation_id": {"type": "string"},
     },
-    "required": ["Email"],
+    "required": [],
 }
 
-remove_project_schema = {
+update_memory_taxonomy_schema = {
     "type": "object",
     "properties": {
-        "ProjectID": {"type": "string"},
+        "memory_id": {"type": "string"},
+        "new_taxonomy_path": {"type": "string"},
     },
-    "required": ["ProjectID"],
-}
-
-edit_project_schema = {
-    "type": "object",
-    "properties": {
-        "ProjectID": {"type": "string"},
-        "ProjectName": {"type": "string"},
-    },
-    "required": ["ProjectID", "ProjectName"],
+    "required": ["memory_id", "new_taxonomy_path"],
 }
 
 """
@@ -123,27 +113,29 @@ Every service must define the permissions for each operation here.
 The permission is related to a request path and to a specific operation.
 """
 validators = {
-    "/memory/save-memory": {"save_memory": save_memory_schema},
     "/memory/extract-facts": {"extract_facts": extract_facts_schema},
-    "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
     "/memory/edit-memory": {"edit_memory": edit_memory_schema},
-    "/memory/create-project": {"create_project": create_project_schema},
-    "/memory/get-projects": {"get_projects": get_projects_schema},
-    "/memory/remove-project": {"remove_project": remove_project_schema},
-    "/memory/edit-project": {"edit_project": edit_project_schema},
+    "/memory/save-memory-batch": {"save_memory_batch": save_memory_batch_schema},
+    "/memory/read-memory-by-taxonomy": {
+        "read_memory_by_taxonomy": read_memory_by_taxonomy_schema
+    },
+    "/memory/update-memory-taxonomy": {
+        "update_memory_taxonomy": update_memory_taxonomy_schema
+    },
 }
 
 api_validators = {
-    "/memory/save-memory": {"save_memory": save_memory_schema},
     "/memory/extract-facts": {"extract_facts": extract_facts_schema},
-    "/memory/read-memory": {"read_memory": read_memory_schema},
     "/memory/remove-memory": {"remove_memory": remove_memory_schema},
     "/memory/edit-memory": {"edit_memory": edit_memory_schema},
-    "/memory/create-project": {"create_project": create_project_schema},
-    "/memory/get-projects": {"get_projects": get_projects_schema},
-    "/memory/remove-project": {"remove_project": remove_project_schema},
-    "/memory/edit-project": {"edit_project": edit_project_schema},
+    "/memory/save-memory-batch": {"save_memory_batch": save_memory_batch_schema},
+    "/memory/read-memory-by-taxonomy": {
+        "read_memory_by_taxonomy": read_memory_by_taxonomy_schema
+    },
+    "/memory/update-memory-taxonomy": {
+        "update_memory_taxonomy": update_memory_taxonomy_schema
+    },
 }
 
 
