@@ -44,7 +44,7 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     OAUTH_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-assistants-api/${sls:stage}/oauth/integrations/encryption #must start with /
     OAUTH_USER_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-user-oauth-integrations
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
