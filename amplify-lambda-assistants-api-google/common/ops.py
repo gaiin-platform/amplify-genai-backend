@@ -1,6 +1,5 @@
 
-from common import permissions
-
+from service.routes import route_data
 
 def op(tags=None, path="", name="", description="", params=None, method="POST", parameters=None):
     # This is the actual decorator
@@ -20,7 +19,8 @@ def op(tags=None, path="", name="", description="", params=None, method="POST", 
         return wrapper
     return decorator
 
-def vop(tags=None, path="", name="", description="", params=None, parameters=None):
+
+def vop(tags=None, path="", name="", description="", params=None, schema=None):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -31,16 +31,18 @@ def vop(tags=None, path="", name="", description="", params=None, parameters=Non
             # print(f"Description: {description}")
             # print(f"Params: {params}")
 
-            if not permissions.permissions_by_state_type.get(path, None):
-
-                operation = path.split("/")[-1]
-
-                permissions.permissions_by_state_type[path] = {
-                    operation: lambda user, data: True
-                }
-
             # Call the actual function
             result = func(*args, **kwargs)
             return result
+
+        route_data[path] = {
+            'schema': schema,
+            'tags': tags,
+            'name': name,
+            'description': description,
+            'params': params,
+        }
+
         return wrapper
     return decorator
+

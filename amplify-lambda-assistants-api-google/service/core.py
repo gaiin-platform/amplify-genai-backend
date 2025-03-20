@@ -19,6 +19,9 @@ from integrations.google.sheets import get_spreadsheet_rows, get_sheets_info, ge
     add_chart, apply_formatting, clear_range, rename_sheet, duplicate_sheet, execute_query
 from integrations.google.docs import create_new_document, get_document_contents, insert_text, replace_text, create_document_outline, export_document, share_document, find_text_indices
 from integrations.oauth import MissingCredentialsError
+from service.routes import route_data
+from jsonschema import validate
+from jsonschema.exceptions import ValidationError
 
 
 import re
@@ -45,195 +48,73 @@ def common_handler(operation, *required_params, **optional_params):
 
 @validated("route")
 def route_request(event, context, current_user, name, data):
+    try:
+        # First try to use path-based routing if available
+        target_path_string = event.get('path', event.get('rawPath', ''))
+        print(f"Route path: {target_path_string}")
+        
+        # Check if we have a direct path match in our route_data
+        route_info = route_data.get(target_path_string, None)
+        
+        if not route_info:
+            return {"success": False, "error": "Invalid path"}
 
-    query_params = event.get('queryStringParameters', {})
-    print("Query params: ", query_params)
-    op = query_params.get('op', '')
-    if not op:
+        func_schema = route_info['schema'] or {}
+
+        wrapper_schema = {
+                "type": "object",
+                "properties": {
+                    "data": func_schema
+                },
+                "required": ["data"]
+            }
+
+        print("Validating request")
+        try:
+            validate(data, wrapper_schema)
+            print("Request data validated")
+        except ValidationError as e:
+            raise ValueError(f"Invalid request: {str(e)}")
+    
+        service = "/google/integrations/"
+        # If no op parameter, try to extract from the path
+        op = None
+        if target_path_string.startswith(service):
+            op = target_path_string.split(service)[1]
+        else:
+            return {
+                'success': False,
+                'message': 'Invalid path'
+            }
+            
+        print("Operation to execute: ", op)
+
+        # Dynamically look up the handler function based on the operation name
+        handler_name = f"{op}_handler"
+        handler_func = globals().get(handler_name)
+        
+        if not handler_func:
+            return {
+                'success': False,
+                'message': f'Invalid operation: {op}. No handler function found for {handler_name}'
+            }
+
+        print("Executing handler function...")
+        return handler_func(current_user, data)
+            
+    except Exception as e:
+        import traceback
         return {
-              'success': False,
-              'message': 'Invalid or missing op query parameter'
-              }
-    print("op: ", op)
-    print("data: ", data['data'])
-
-    match op:
-        case "get_rows":
-            return get_google_sheets_info(current_user, data)
-        case "get_google_sheets_info":
-            return get_google_sheets_info(current_user, data)
-        case "get_sheet_names":
-            return get_sheet_names_handler(current_user, data)
-        case "insert_rows":
-            return insert_rows_handler(current_user, data)
-        case "delete_rows":
-            return delete_rows_handler(current_user, data)
-        case "update_rows":
-            return update_rows_handler(current_user, data)
-        case "create_spreadsheet":
-            return create_spreadsheet_handler(current_user, data)
-        case "duplicate_sheet":
-            return duplicate_sheet_handler(current_user, data)
-        case "rename_sheet":
-            return rename_sheet_handler(current_user, data)
-        case "clear_range":
-            return clear_range_handler(current_user, data)
-        case "apply_formatting":
-            return apply_formatting_handler(current_user, data)
-        case "add_chart":
-            return add_chart_handler(current_user, data)
-        case "get_cell_formulas":
-            return get_cell_formulas_handler(current_user, data)
-        case "find_replace":
-            return find_replace_handler(current_user, data)
-        case "sort_range":
-            return sort_range_handler(current_user, data)
-        case "apply_conditional_formatting":
-            return apply_conditional_formatting_handler(current_user, data)
-        case "execute_query":
-            return execute_query_handler(current_user, data)
-        case "create_new_document":
-            return create_new_document_handler(current_user, data)
-        case "get_document_contents":
-            return get_document_contents_handler(current_user, data)
-        case "insert_text":
-            return insert_text_handler(current_user, data)
-        case "append_text":
-            return append_text_handler(current_user, data)
-        case "replace_text":
-            return replace_text_handler(current_user, data)
-        case "create_document_outline":
-            return create_document_outline_handler(current_user, data)
-        case "export_document":
-            return export_document_handler(current_user, data)
-        case "share_document":
-            return share_document_handler(current_user, data)
-        case "find_text_indices":
-            return find_text_indices_handler(current_user, data)
-        case "get_events_between_dates":
-            return get_events_between_dates_handler(current_user, data)
-        case "create_event":
-            return create_event_handler(current_user, data)
-        case "update_event":
-            return update_event_handler(current_user, data)
-        case "delete_event":
-            return delete_event_handler(current_user, data)
-        case "get_event_details":
-            return get_event_details_handler(current_user, data)
-        case "get_events_for_date":
-            return get_events_for_date_handler(current_user, data)
-        case "get_free_time_slots":
-            return get_free_time_slots_handler(current_user, data)
-        case "check_event_conflicts":
-            return check_event_conflicts_handler(current_user, data)
-        case "list_files":
-            return list_files_handler(current_user, data)
-        case "search_files":
-            return search_files_handler(current_user, data)
-        case "get_file_metadata":
-            return get_file_metadata_handler(current_user, data)
-        case "get_file_content":
-            return get_file_content_handler(current_user, data)
-        case "create_file":
-            return create_file_handler(current_user, data)
-        case "get_download_link":
-            return get_download_link_handler(current_user, data)
-        case "create_shared_link":
-            return create_shared_link_handler(current_user, data)
-        case "share_file":
-            return share_file_handler(current_user, data)
-        case "convert_file":
-            return convert_file_handler(current_user, data)
-        case "list_folders":
-            return list_folders_handler(current_user, data)
-        case "move_item":
-            return move_item_handler(current_user, data)
-        case "copy_item":
-            return copy_item_handler(current_user, data)
-        case "rename_item":
-            return rename_item_handler(current_user, data)
-        case "get_file_revisions":
-            return get_file_revisions_handler(current_user, data)
-        case "create_folder":
-            return create_folder_handler(current_user, data)
-        case "delete_item_permanently":
-            return delete_item_permanently_handler(current_user, data)
-        case "get_root_folder_ids":
-            return get_root_folder_ids_handler(current_user, data)
-        case "create_form":
-            return create_form_handler(current_user, data)
-        case "get_form_details":
-            return get_form_details_handler(current_user, data)
-        case "add_question":
-            return add_question_handler(current_user, data)
-        case "update_question":
-            return update_question_handler(current_user, data)
-        case "delete_question":
-            return delete_question_handler(current_user, data)
-        case "get_responses":
-            return get_responses_handler(current_user, data)
-        case "get_response":
-            return get_response_handler(current_user, data)
-        case "set_form_settings":
-            return set_form_settings_handler(current_user, data)
-        case "get_form_link":
-            return get_form_link_handler(current_user, data)
-        case "update_form_info":
-            return update_form_info_handler(current_user, data)
-        case "list_user_forms":
-            return list_user_forms_handler(current_user, data)
-        case "compose_and_send_email":
-            return compose_and_send_email_handler(current_user, data)
-        case "compose_email_draft":
-            return compose_email_draft_handler(current_user, data)
-        case "get_messages_from_date":
-            return get_messages_from_date_handler(current_user, data)
-        case "get_recent_messages":
-            return get_recent_messages_handler(current_user, data)
-        case "search_messages":
-            return search_messages_handler(current_user, data)
-        case "get_attachment_links":
-            return get_attachment_links_handler(current_user, data)
-        case "get_attachment_content":
-            return get_attachment_content_handler(current_user, data)
-        case "create_filter":
-            return create_filter_handler(current_user, data)
-        case "create_label":
-            return create_label_handler(current_user, data)
-        case "create_auto_filter_label_rule":
-            return create_auto_filter_label_rule_handler(current_user, data)
-        case "get_message_details":
-            return get_message_details_handler(current_user, data)
-        case "search_contacts":
-            return search_contacts_handler(current_user, data)
-        case "get_contact_details":
-            return get_contact_details_handler(current_user, data)
-        case "create_contact":
-            return create_contact_handler(current_user, data)
-        case "update_contact":
-            return update_contact_handler(current_user, data)
-        case "delete_contact":
-            return delete_contact_handler(current_user, data)
-        case "list_contact_groups":
-            return list_contact_groups_handler(current_user, data)
-        case "create_contact_group":
-            return create_contact_group_handler(current_user, data)
-        case "update_contact_group":
-            return update_contact_group_handler(current_user, data)
-        case "delete_contact_group":
-            return delete_contact_group_handler(current_user, data)
-        case "add_contacts_to_group":
-            return add_contacts_to_group_handler(current_user, data)
-        case "remove_contacts_from_group":
-            return remove_contacts_from_group_handler(current_user, data)
-        case _:
-            return {"success": False, "error": f"Unknown operation: {op}"}
+            'success': False,
+            'message': f'Error processing request: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
 
 
 
 
 @vop(
-    path="/google/integrations/route?op=get_rows",
+    path="/google/integrations/get_rows",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getSpreadsheetRows",
     description="Returns the rows from a Google Sheet as JSON.",
@@ -241,7 +122,7 @@ def route_request(event, context, current_user, name, data):
         "spreadsheetId": "The ID of the spreadsheet as a string",
         "cellRange": "The range of cells to read as a string, such as A1:A"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -257,19 +138,18 @@ def route_request(event, context, current_user, name, data):
     }
 )
 # @validated("get_rows")
-def get_sheet_rows(current_user, data):
+def get_rows_handler(current_user, data):
     return common_handler(get_spreadsheet_rows, 'spreadsheetId', 'cellRange')(current_user, data)
 
-
 @vop(
-    path="/google/integrations/route?op=get_google_sheets_info",
+    path="/google/integrations/get_google_sheets_info",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getGoogleSheetsInfo",
     description="Returns information about Google Sheets, including sheet names and sample data.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -281,18 +161,18 @@ def get_sheet_rows(current_user, data):
     }
 )
 # @validated("get_google_sheets_info")
-def get_google_sheets_info(current_user, data):
+def get_google_sheets_info_handler(current_user, data):
     return common_handler(get_sheets_info, 'spreadsheetId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_sheet_names",
+    path="/google/integrations/get_sheet_names",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getSheetNames",
     description="Returns the list of sheet names in a Google Sheets document.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -308,7 +188,7 @@ def get_sheet_names_handler(current_user, data):
     return common_handler(get_sheet_names, 'spreadsheetId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=insert_rows",
+    path="/google/integrations/insert_rows",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="insertRows",
     description="Inserts multiple new rows into a Google Sheet.",
@@ -318,7 +198,7 @@ def get_sheet_names_handler(current_user, data):
         "sheetName": "Optional: The name of the sheet to insert into",
         "insertionPoint": "Optional: The row number to start insertion at"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -352,7 +232,7 @@ def insert_rows_handler(current_user, data):
     return common_handler(insert_rows, 'spreadsheetId', 'rowsData', sheetName=None, insertionPoint=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=delete_rows",
+    path="/google/integrations/delete_rows",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="deleteRows",
     description="Deletes a range of rows from a Google Sheet.",
@@ -362,7 +242,7 @@ def insert_rows_handler(current_user, data):
         "endRow": "The last row to delete (inclusive)",
         "sheetName": "Optional: The name of the sheet to delete from"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -390,7 +270,7 @@ def delete_rows_handler(current_user, data):
     return common_handler(delete_rows, 'spreadsheetId', 'startRow', 'endRow', sheetName=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=update_rows",
+    path="/google/integrations/update_rows",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="updateRows",
     description="Updates specified rows in a Google Sheet.",
@@ -399,7 +279,7 @@ def delete_rows_handler(current_user, data):
         "rowsData": "An array of arrays, each representing a row to update. The first item in each array should be the row number to update. Example to update rows 3 and 8: [[3, 'something'],[8, 'new value 1', 'new value 2']]",
         "sheetName": "Optional: The name of the sheet to update"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -426,14 +306,14 @@ def update_rows_handler(current_user, data):
     return common_handler(update_rows, 'spreadsheetId', 'rowsData', sheetName=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_spreadsheet",
+    path="/google/integrations/create_spreadsheet",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="createSpreadsheet",
     description="Creates a new Google Sheets spreadsheet.",
     params={
         "title": "The title of the new spreadsheet"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "title": {
@@ -449,7 +329,7 @@ def create_spreadsheet_handler(current_user, data):
     return common_handler(create_spreadsheet, 'title')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=duplicate_sheet",
+    path="/google/integrations/duplicate_sheet",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="duplicateSheet",
     description="Duplicates a sheet within a Google Sheets spreadsheet.",
@@ -458,7 +338,7 @@ def create_spreadsheet_handler(current_user, data):
         "sheetId": "The ID of the sheet to duplicate",
         "newSheetName": "The name for the new duplicated sheet"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -482,7 +362,7 @@ def duplicate_sheet_handler(current_user, data):
     return common_handler(duplicate_sheet, 'spreadsheetId', 'sheetId', 'newSheetName')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=rename_sheet",
+    path="/google/integrations/rename_sheet",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="renameSheet",
     description="Renames a sheet in a Google Sheets spreadsheet.",
@@ -491,7 +371,7 @@ def duplicate_sheet_handler(current_user, data):
         "sheetId": "The ID of the sheet to rename",
         "newName": "The new name for the sheet"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -515,7 +395,7 @@ def rename_sheet_handler(current_user, data):
     return common_handler(rename_sheet, 'spreadsheetId', 'sheetId', 'newName')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=clear_range",
+    path="/google/integrations/clear_range",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="clearRange",
     description="Clears a range of cells in a Google Sheets spreadsheet.",
@@ -523,7 +403,7 @@ def rename_sheet_handler(current_user, data):
         "spreadsheetId": "The ID of the spreadsheet",
         "rangeName": "The A1 notation of the range to clear"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -543,7 +423,7 @@ def clear_range_handler(current_user, data):
     return common_handler(clear_range, 'spreadsheetId', 'rangeName')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=apply_formatting",
+    path="/google/integrations/apply_formatting",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="applyFormatting",
     description="Applies formatting to a range of cells in a Google Sheets spreadsheet.",
@@ -556,7 +436,7 @@ def clear_range_handler(current_user, data):
         "endCol": "The ending column (1-indexed)",
         "formatJson": "The formatting to apply as a JSON object"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -596,7 +476,7 @@ def apply_formatting_handler(current_user, data):
     return common_handler(apply_formatting, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'formatJson')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=add_chart",
+    path="/google/integrations/add_chart",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="addChart",
     description="Adds a chart to a Google Sheets spreadsheet.",
@@ -605,7 +485,7 @@ def apply_formatting_handler(current_user, data):
         "sheetId": "The ID of the sheet",
         "chartSpec": "The chart specification as a JSON object"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -629,7 +509,7 @@ def add_chart_handler(current_user, data):
     return common_handler(add_chart, 'spreadsheetId', 'sheetId', 'chartSpec')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_cell_formulas",
+    path="/google/integrations/get_cell_formulas",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getCellFormulas",
     description="Gets cell formulas for a range in a Google Sheets spreadsheet.",
@@ -637,7 +517,7 @@ def add_chart_handler(current_user, data):
         "spreadsheetId": "The ID of the spreadsheet",
         "rangeName": "The A1 notation of the range to get formulas from"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -657,7 +537,7 @@ def get_cell_formulas_handler(current_user, data):
     return common_handler(get_cell_formulas, 'spreadsheetId', 'rangeName')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=find_replace",
+    path="/google/integrations/find_replace",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="findReplace",
     description="Finds and replaces text in a Google Sheets spreadsheet.",
@@ -667,7 +547,7 @@ def get_cell_formulas_handler(current_user, data):
         "replace": "The text to replace with",
         "sheetId": "Optional: The ID of the sheet to perform find/replace on"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -695,7 +575,7 @@ def find_replace_handler(current_user, data):
     return common_handler(find_replace, 'spreadsheetId', 'find', 'replace', sheetId='sheetId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=sort_range",
+    path="/google/integrations/sort_range",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="sortRange",
     description="Sorts a range of data in a Google Sheets spreadsheet.",
@@ -708,7 +588,7 @@ def find_replace_handler(current_user, data):
         "endCol": "The ending column (1-indexed)",
         "sortOrder": "The sort order specification as a JSON object"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -748,7 +628,7 @@ def sort_range_handler(current_user, data):
     return common_handler(sort_range, 'spreadsheetId', 'sheetId', 'startRow', 'endRow', 'startCol', 'endCol', 'sortOrder')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=apply_conditional_formatting",
+    path="/google/integrations/apply_conditional_formatting",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="applyConditionalFormatting",
     description="Applies conditional formatting to a range in a Google Sheets spreadsheet.",
@@ -762,7 +642,7 @@ def sort_range_handler(current_user, data):
         "condition": "The condition for the formatting as a JSON object",
         "format": "The format to apply as a JSON object"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -807,7 +687,7 @@ def apply_conditional_formatting_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=execute_query",
+    path="/google/integrations/execute_query",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="executeQuery",
     description="Executes a SQL-like query on a Google Sheets spreadsheet.",
@@ -816,7 +696,7 @@ def apply_conditional_formatting_handler(current_user, data):
         "query": "The SQL-like query to execute e.g., a == 1 and b < 34",
         "sheetName": "(Optional) The name of the sheet to query"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "spreadsheetId": {
@@ -840,14 +720,14 @@ def execute_query_handler(current_user, data):
     return common_handler(execute_query, 'spreadsheetId', 'query', sheetName='sheetName')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_new_document",
+    path="/google/integrations/create_new_document",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="createNewDocument",
     description="Creates a new Google Docs document.",
     params={
         "title": "The title of the new document"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "title": {
@@ -863,14 +743,14 @@ def create_new_document_handler(current_user, data):
     return common_handler(create_new_document, 'title')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_document_contents",
+    path="/google/integrations/get_document_contents",
     tags=["default", "integration", "google_docs", "google_docs_read"],
     name="getDocumentContents",
     description="Retrieves the contents of a Google Docs document.",
     params={
         "documentId": "The ID of the document"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -886,7 +766,7 @@ def get_document_contents_handler(current_user, data):
     return common_handler(get_document_contents, 'documentId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=insert_text",
+    path="/google/integrations/insert_text",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="insertText",
     description="Inserts text at a specific location in a Google Docs document.",
@@ -895,7 +775,7 @@ def get_document_contents_handler(current_user, data):
         "text": "The text to insert",
         "index": "The index at which to insert the text"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -919,7 +799,7 @@ def insert_text_handler(current_user, data):
     return common_handler(insert_text, 'documentId', 'text', 'index')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=append_text",
+    path="/google/integrations/append_text",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="appendText",
     description="Appends text to the end of a Google Docs document.",
@@ -927,7 +807,7 @@ def insert_text_handler(current_user, data):
         "documentId": "The ID of the document",
         "text": "The text to append"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -947,7 +827,7 @@ def append_text_handler(current_user, data):
     return common_handler(append_text, 'documentId', 'text')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=replace_text",
+    path="/google/integrations/replace_text",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="replaceText",
     description="Replaces all occurrences of text in a Google Docs document.",
@@ -956,7 +836,7 @@ def append_text_handler(current_user, data):
         "oldText": "The text to be replaced",
         "newText": "The text to replace with"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -980,7 +860,7 @@ def replace_text_handler(current_user, data):
     return common_handler(replace_text, 'documentId', 'oldText', 'newText')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_document_outline",
+    path="/google/integrations/create_document_outline",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="createDocumentOutline",
     description="Creates an outline in a Google Docs document.",
@@ -988,7 +868,7 @@ def replace_text_handler(current_user, data):
         "documentId": "The ID of the document",
         "outlineItems": "An array of objects with 'start' and 'end' indices for each outline item"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -1022,7 +902,7 @@ def create_document_outline_handler(current_user, data):
     return common_handler(create_document_outline, 'documentId', 'outlineItems')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=export_document",
+    path="/google/integrations/export_document",
     tags=["default", "integration", "google_docs", "google_docs_read"],
     name="exportDocument",
     description="Exports a Google Docs document to a specified format.",
@@ -1030,7 +910,7 @@ def create_document_outline_handler(current_user, data):
         "documentId": "The ID of the document",
         "mimeType": "The MIME type of the format to export to"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -1050,7 +930,7 @@ def export_document_handler(current_user, data):
     return common_handler(export_document, 'documentId', 'mimeType')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=share_document",
+    path="/google/integrations/share_document",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="shareDocument",
     description="Shares a Google Docs document with another user.",
@@ -1059,7 +939,7 @@ def export_document_handler(current_user, data):
         "email": "The email address of the user to share with",
         "role": "The role to grant to the user (e.g., 'writer', 'reader')"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -1083,7 +963,7 @@ def share_document_handler(current_user, data):
     return common_handler(share_document, 'documentId', 'email', 'role')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=find_text_indices",
+    path="/google/integrations/find_text_indices",
     tags=["default", "integration", "google_docs", "google_docs_read"],
     name="findTextIndices",
     description="Finds the indices of a specific text in a Google Docs document.",
@@ -1091,7 +971,7 @@ def share_document_handler(current_user, data):
         "documentId": "The ID of the document",
         "searchText": "The text to search for"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "documentId": {
@@ -1111,7 +991,7 @@ def find_text_indices_handler(current_user, data):
     return common_handler(find_text_indices, 'documentId', 'searchText')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_events_between_dates",
+    path="/google/integrations/get_events_between_dates",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventsBetweenDates",
     description="Retrieves events from Google Calendar between two specified dates.",
@@ -1122,7 +1002,7 @@ def find_text_indices_handler(current_user, data):
         "includeAttendees": "Optional. Include event attendees (default: false)",
         "includeLocation": "Optional. Include event location (default: false)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "startDate": {
@@ -1157,7 +1037,7 @@ def get_events_between_dates_handler(current_user, data):
     return common_handler(get_events_between_dates, 'startDate', 'endDate', includeDescription=False, includeAttendees=False, includeLocation=False)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_event",
+    path="/google/integrations/create_event",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="createEvent",
     description="Creates a new event in Google Calendar.",
@@ -1168,7 +1048,7 @@ def get_events_between_dates_handler(current_user, data):
         "description": "Optional: The description of the event",
         "attendees": "Optional: List of attendees' email addresses"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "title": {
@@ -1203,7 +1083,7 @@ def create_event_handler(current_user, data):
     return common_handler(create_event, 'title', 'startTime', 'endTime', 'description', attendees=[])(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=update_event",
+    path="/google/integrations/update_event",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="updateEvent",
     description="Updates an existing event in Google Calendar.",
@@ -1211,7 +1091,7 @@ def create_event_handler(current_user, data):
         "eventId": "The ID of the event to update",
         "updatedFields": "A dictionary of fields to update and their new values"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "eventId": {
@@ -1231,14 +1111,14 @@ def update_event_handler(current_user, data):
     return common_handler(update_event, 'eventId', 'updatedFields')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=delete_event",
+    path="/google/integrations/delete_event",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="deleteEvent",
     description="Deletes an event from Google Calendar.",
     params={
         "eventId": "The ID of the event to delete"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "eventId": {
@@ -1254,14 +1134,14 @@ def delete_event_handler(current_user, data):
     return common_handler(delete_event, 'eventId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_event_details",
+    path="/google/integrations/get_event_details",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventDetails",
     description="Retrieves details of a specific event from Google Calendar.",
     params={
         "eventId": "The ID of the event to retrieve"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "eventId": {
@@ -1277,7 +1157,7 @@ def get_event_details_handler(current_user, data):
     return common_handler(get_event_details, 'eventId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_events_for_date",
+    path="/google/integrations/get_events_for_date",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventsForDate",
     description="Retrieves events from Google Calendar for a specific date.",
@@ -1287,7 +1167,7 @@ def get_event_details_handler(current_user, data):
         "includeAttendees": "Optional. Include event attendees (default: false)",
         "includeLocation": "Optional. Include event location (default: false)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "date": {
@@ -1318,7 +1198,7 @@ def get_events_for_date_handler(current_user, data):
     return common_handler(get_events_for_date, 'date', includeDescription=False, includeAttendees=False, includeLocation=False)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_free_time_slots",
+    path="/google/integrations/get_free_time_slots",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getFreeTimeSlots",
     description="Finds free time slots in Google Calendar between two dates.",
@@ -1331,7 +1211,7 @@ def get_events_for_date_handler(current_user, data):
         'allowedTimeWindows': "Optional. List of time windows in format ['HH:MM-HH:MM']",
         'excludeDates': "Optional. List of dates to exclude in ISO 8601 format"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "startDate": {
@@ -1382,7 +1262,7 @@ def get_free_time_slots_handler(current_user, data):
                           includeWeekends=False, allowedTimeWindows=None, excludeDates=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=check_event_conflicts",
+    path="/google/integrations/check_event_conflicts",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="checkEventConflicts",
     description="Checks for conflicts with existing events in Google Calendar.",
@@ -1391,7 +1271,7 @@ def get_free_time_slots_handler(current_user, data):
         "proposedEndTime": "The proposed end time in ISO 8601 format",
         "returnConflictingEvents": "Optional. Return details of conflicting events (default: false)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "proposedStartTime": {
@@ -1416,14 +1296,14 @@ def check_event_conflicts_handler(current_user, data):
     return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime', returnConflictingEvents=False)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=list_files",
+    path="/google/integrations/list_files",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="listFiles",
     description="Lists files in a specific folder or root directory of Google Drive.",
     params={
         "folderId": "The ID of the folder to list files from (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "folderId": {
@@ -1439,14 +1319,14 @@ def list_files_handler(current_user, data):
     return common_handler(list_files, 'folderId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=search_files",
+    path="/google/integrations/search_files",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="searchFiles",
     description="Searches for files in Google Drive based on a query. You should know that \"name contains '<query>'\" is added automatically to the query.",
     params={
         "query": "The search query string"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "query": {
@@ -1462,14 +1342,14 @@ def search_files_handler(current_user, data):
     return common_handler(search_files, 'query')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_file_metadata",
+    path="/google/integrations/get_file_metadata",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileMetadata",
     description="Retrieves metadata for a specific file in Google Drive.",
     params={
         "fileId": "The ID of the file"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1485,14 +1365,14 @@ def get_file_metadata_handler(current_user, data):
     return common_handler(get_file_metadata, 'fileId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_file_content",
+    path="/google/integrations/get_file_content",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileContent",
     description="Gets the content of a file in Google Drive as text.",
     params={
         "fileId": "The ID of the file"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1508,7 +1388,7 @@ def get_file_content_handler(current_user, data):
     return common_handler(get_file_content, 'fileId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_file",
+    path="/google/integrations/create_file",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createFile",
     description="Creates a new file in Google Drive with the given content.",
@@ -1517,7 +1397,7 @@ def get_file_content_handler(current_user, data):
         "content": "The content of the file",
         "mimeType": "The MIME type of the file (optional, defaults to 'text/plain')"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileName": {
@@ -1542,14 +1422,14 @@ def create_file_handler(current_user, data):
     return common_handler(create_file, 'fileName', 'content', 'mimeType')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_download_link",
+    path="/google/integrations/get_download_link",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getDownloadLink",
     description="Gets the download link for a file in Google Drive.",
     params={
         "fileId": "The ID of the file"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1565,7 +1445,7 @@ def get_download_link_handler(current_user, data):
     return common_handler(get_download_link, 'fileId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_shared_link",
+    path="/google/integrations/create_shared_link",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createSharedLink",
     description="Creates a shared link for a file in Google Drive with view or edit permissions.",
@@ -1573,7 +1453,7 @@ def get_download_link_handler(current_user, data):
         "fileId": "The ID of the file",
         "permission": "The permission level ('view' or 'edit')"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1593,7 +1473,7 @@ def create_shared_link_handler(current_user, data):
     return common_handler(create_shared_link, 'fileId', 'permission')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=share_file",
+    path="/google/integrations/share_file",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="shareFile",
     description="Shares a file in Google Drive with multiple email addresses.",
@@ -1602,7 +1482,7 @@ def create_shared_link_handler(current_user, data):
         "emails": "List of email addresses to share the file with",
         "role": "The role to assign ('reader', 'commenter', or 'writer')"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1629,7 +1509,7 @@ def share_file_handler(current_user, data):
     return common_handler(share_file, 'fileId', 'emails', 'role')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=convert_file",
+    path="/google/integrations/convert_file",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="convertFile",
     description="Converts a file in Google Drive to a specified format and returns its download link.",
@@ -1637,7 +1517,7 @@ def share_file_handler(current_user, data):
         "fileId": "The ID of the file to convert",
         "targetMimeType": "The target MIME type for conversion"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1657,14 +1537,14 @@ def convert_file_handler(current_user, data):
     return common_handler(convert_file, 'fileId', 'targetMimeType')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=list_folders",
+    path="/google/integrations/list_folders",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="listFolders",
     description="Lists folders in Google Drive, optionally within a specific parent folder.",
     params={
         "parentFolderId": "The ID of the parent folder (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "parentFolderId": {
@@ -1680,7 +1560,7 @@ def list_folders_handler(current_user, data):
     return common_handler(list_folders, 'parentFolderId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=move_item",
+    path="/google/integrations/move_item",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="moveItem",
     description="Moves a file or folder to a specified destination folder in Google Drive.",
@@ -1688,7 +1568,7 @@ def list_folders_handler(current_user, data):
         "itemId": "The ID of the file or folder to move",
         "destinationFolderId": "The ID of the destination folder"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "itemId": {
@@ -1708,7 +1588,7 @@ def move_item_handler(current_user, data):
     return common_handler(move_item, 'itemId', 'destinationFolderId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=copy_item",
+    path="/google/integrations/copy_item",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="copyItem",
     description="Copies a file or folder in Google Drive.",
@@ -1716,7 +1596,7 @@ def move_item_handler(current_user, data):
         "itemId": "The ID of the file or folder to copy",
         "newName": "The name for the copied item (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "itemId": {
@@ -1736,7 +1616,7 @@ def copy_item_handler(current_user, data):
     return common_handler(copy_item, 'itemId', 'newName')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=rename_item",
+    path="/google/integrations/rename_item",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="renameItem",
     description="Renames a file or folder in Google Drive.",
@@ -1744,7 +1624,7 @@ def copy_item_handler(current_user, data):
         "itemId": "The ID of the file or folder to rename",
         "newName": "The new name for the item"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "itemId": {
@@ -1766,14 +1646,14 @@ def rename_item_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=get_file_revisions",
+    path="/google/integrations/get_file_revisions",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileRevisions",
     description="Gets the revision history of a file in Google Drive.",
     params={
         "fileId": "The ID of the file to get revisions for"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "fileId": {
@@ -1790,7 +1670,7 @@ def get_file_revisions_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=create_folder",
+    path="/google/integrations/create_folder",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createFolder",
     description="Creates a new folder in Google Drive.",
@@ -1798,7 +1678,7 @@ def get_file_revisions_handler(current_user, data):
         "folderName": "The name of the new folder",
         "parentId": "The ID of the parent folder (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "folderName": {
@@ -1820,14 +1700,14 @@ def create_folder_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=delete_item_permanently",
+    path="/google/integrations/delete_item_permanently",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="deleteItemPermanently",
     description="Permanently deletes a file or folder from Google Drive.",
     params={
         "itemId": "The ID of the file or folder to delete"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "itemId": {
@@ -1844,13 +1724,13 @@ def delete_item_permanently_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=get_root_folder_ids",
+    path="/google/integrations/get_root_folder_ids",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getRootFolderIds",
     description="Retrieves the IDs of root-level folders in Google Drive.",
     params={
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {}
     }
@@ -1861,7 +1741,7 @@ def get_root_folder_ids_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=create_form",
+    path="/google/integrations/create_form",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="createForm",
     description="Creates a new Google Form.",
@@ -1869,7 +1749,7 @@ def get_root_folder_ids_handler(current_user, data):
         "title": "The title of the new form",
         "description": "Optional description for the form"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "title": {
@@ -1889,14 +1769,14 @@ def create_form_handler(current_user, data):
     return common_handler(create_form, 'title', description="")(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_form_details",
+    path="/google/integrations/get_form_details",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getFormDetails",
     description="Retrieves details of a specific Google Form.",
     params={
         "formId": "The ID of the form to retrieve"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -1912,7 +1792,7 @@ def get_form_details_handler(current_user, data):
     return common_handler(get_form_details, 'formId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=add_question",
+    path="/google/integrations/add_question",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="addQuestion",
     description="Adds a new question to a Google Form.",
@@ -1923,7 +1803,7 @@ def get_form_details_handler(current_user, data):
         "required": "Whether the question is required (default: false)",
         "options": "List of options for multiple choice or checkbox questions (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -1957,7 +1837,7 @@ def add_question_handler(current_user, data):
     return common_handler(add_question, 'formId', 'questionType', 'title', required=False, options=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=update_question",
+    path="/google/integrations/update_question",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="updateQuestion",
     description="Updates an existing question in a Google Form.",
@@ -1968,7 +1848,7 @@ def add_question_handler(current_user, data):
         "required": "Whether the question is required (optional)",
         "options": "New list of options for multiple choice or checkbox questions (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2002,7 +1882,7 @@ def update_question_handler(current_user, data):
     return common_handler(update_question, 'formId', 'questionId', title=None, required=None, options=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=delete_question",
+    path="/google/integrations/delete_question",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="deleteQuestion",
     description="Deletes a question from a Google Form.",
@@ -2010,7 +1890,7 @@ def update_question_handler(current_user, data):
         "formId": "The ID of the form",
         "questionId": "The ID of the question to delete"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2030,14 +1910,14 @@ def delete_question_handler(current_user, data):
     return common_handler(delete_question, 'formId', 'questionId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_responses",
+    path="/google/integrations/get_responses",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getResponses",
     description="Retrieves all responses for a Google Form.",
     params={
         "formId": "The ID of the form"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2053,7 +1933,7 @@ def get_responses_handler(current_user, data):
     return common_handler(get_responses, 'formId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_response",
+    path="/google/integrations/get_response",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getResponse",
     description="Retrieves a specific response from a Google Form.",
@@ -2061,7 +1941,7 @@ def get_responses_handler(current_user, data):
         "formId": "The ID of the form",
         "responseId": "The ID of the response to retrieve"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2081,7 +1961,7 @@ def get_response_handler(current_user, data):
     return common_handler(get_response, 'formId', 'responseId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=set_form_settings",
+    path="/google/integrations/set_form_settings",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="setFormSettings",
     description="Updates the settings of a Google Form.",
@@ -2089,7 +1969,7 @@ def get_response_handler(current_user, data):
         "formId": "The ID of the form",
         "settings": "A dictionary of settings to update"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2109,14 +1989,14 @@ def set_form_settings_handler(current_user, data):
     return common_handler(set_form_settings, 'formId', 'settings')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_form_link",
+    path="/google/integrations/get_form_link",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getFormLink",
     description="Retrieves the public link for a Google Form.",
     params={
         "formId": "The ID of the form"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2132,7 +2012,7 @@ def get_form_link_handler(current_user, data):
     return common_handler(get_form_link, 'formId')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=update_form_info",
+    path="/google/integrations/update_form_info",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="updateFormInfo",
     description="Updates the title and/or description of a Google Form.",
@@ -2141,7 +2021,7 @@ def get_form_link_handler(current_user, data):
         "title": "The new title for the form (optional)",
         "description": "The new description for the form (optional)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "formId": {
@@ -2165,12 +2045,12 @@ def update_form_info_handler(current_user, data):
     return common_handler(update_form_info, 'formId', title=None, description=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=list_user_forms",
+    path="/google/integrations/list_user_forms",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="listUserForms",
     description="Lists all forms owned by the current user.",
     params={},
-    parameters={
+    schema={
         "type": "object",
         "properties": {}
     }
@@ -2180,7 +2060,7 @@ def list_user_forms_handler(current_user, data):
     return common_handler(list_user_forms)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=compose_and_send_email",
+    path="/google/integrations/compose_and_send_email",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="composeAndSendEmail",
     description="Composes and sends an email, with an option to schedule for future.",
@@ -2192,7 +2072,7 @@ def list_user_forms_handler(current_user, data):
         "bcc": "Optional: BCC recipient(s) email address(es)",
         "scheduleTime": "Optional: ISO format datetime string for scheduled sending"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "to": {
@@ -2228,7 +2108,7 @@ def compose_and_send_email_handler(current_user, data):
     return common_handler(compose_and_send_email, 'to', 'subject', 'body', cc=None, bcc=None, schedule_time=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=compose_email_draft",
+    path="/google/integrations/compose_email_draft",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="composeEmailDraft",
     description="Composes an email draft.",
@@ -2239,7 +2119,7 @@ def compose_and_send_email_handler(current_user, data):
         "cc": "Optional: CC recipient(s) email address(es)",
         "bcc": "Optional: BCC recipient(s) email address(es)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "to": {
@@ -2271,7 +2151,7 @@ def compose_email_draft_handler(current_user, data):
     return common_handler(compose_email_draft, 'to', 'subject', 'body', cc=None, bcc=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_messages_from_date",
+    path="/google/integrations/get_messages_from_date",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getMessagesFromDate",
     description="Gets messages from a specific start date (optional label).",
@@ -2280,7 +2160,7 @@ def compose_email_draft_handler(current_user, data):
         "startDate": "Start date in YYYY-MM-DD format",
         "label": "Optional: Label to filter messages"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "n": {
@@ -2304,7 +2184,7 @@ def get_messages_from_date_handler(current_user, data):
     return common_handler(get_messages_from_date, 'n', 'start_date', label=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_recent_messages",
+    path="/google/integrations/get_recent_messages",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getRecentMessages",
     description="Gets the N most recent messages (optional label).",
@@ -2312,7 +2192,7 @@ def get_messages_from_date_handler(current_user, data):
         "n": "Number of messages to retrieve (default 25)",
         "label": "Optional: Label to filter messages"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "n": {
@@ -2332,14 +2212,14 @@ def get_recent_messages_handler(current_user, data):
 
 
 @vop(
-    path="/google/integrations/route?op=search_messages",
+    path="/google/integrations/search_messages",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="searchMessages",
     description="Searches for messages using the Gmail search language.",
     params={
         "query": "Search query string using Gmail search language"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "query": {
@@ -2355,14 +2235,14 @@ def search_messages_handler(current_user, data):
     return common_handler(search_messages, 'query')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_attachment_links",
+    path="/google/integrations/get_attachment_links",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getAttachmentLinks",
     description="Gets links to download attachments for a specific email.",
     params={
         "messageId": "ID of the email message"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "messageId": {
@@ -2378,7 +2258,7 @@ def get_attachment_links_handler(current_user, data):
     return common_handler(get_attachment_links, 'message_id')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_attachment_content",
+    path="/google/integrations/get_attachment_content",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getAttachmentContent",
     description="Gets the content of a specific attachment.",
@@ -2386,7 +2266,7 @@ def get_attachment_links_handler(current_user, data):
         "messageId": "ID of the email message",
         "attachmentId": "ID of the attachment"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "messageId": {
@@ -2406,7 +2286,7 @@ def get_attachment_content_handler(current_user, data):
     return common_handler(get_attachment_content, 'message_id', 'attachment_id')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_filter",
+    path="/google/integrations/create_filter",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createFilter",
     description="Creates a new email filter.",
@@ -2414,7 +2294,7 @@ def get_attachment_content_handler(current_user, data):
         "criteria": "Filter criteria as a dictionary",
         "action": "Action to take when filter criteria are met, as a dictionary"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "criteria": {
@@ -2434,14 +2314,14 @@ def create_filter_handler(current_user, data):
     return common_handler(create_filter, 'criteria', 'action')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_label",
+    path="/google/integrations/create_label",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createLabel",
     description="Creates a new label.",
     params={
         "name": "Name of the new label"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "name": {
@@ -2457,7 +2337,7 @@ def create_label_handler(current_user, data):
     return common_handler(create_label, 'name')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_auto_filter_label_rule",
+    path="/google/integrations/create_auto_filter_label_rule",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createAutoFilterLabelRule",
     description="Creates an auto-filter and label rule.",
@@ -2465,7 +2345,7 @@ def create_label_handler(current_user, data):
         "criteria": "Filter criteria as a dictionary",
         "labelName": "Name of the label to apply"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "criteria": {
@@ -2485,7 +2365,7 @@ def create_auto_filter_label_rule_handler(current_user, data):
     return common_handler(create_auto_filter_label_rule, 'criteria', 'label_name')(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_message_details",
+    path="/google/integrations/get_message_details",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getMessageDetails",
     description="Gets detailed information, such as body, bcc, sent date, etc. for one or more Gmail messages.",
@@ -2493,7 +2373,7 @@ def create_auto_filter_label_rule_handler(current_user, data):
         "message_id": "ID of the message to retrieve details for",
         "fields": "Optional: List of fields to include in the response. Default is (id, sender, subject, labels, date). Full list is (id, threadId, historyId, sizeEstimate, raw, payload, mimeType, attachments, sender, subject, labels, date, snippet, body, cc, bcc, deliveredTo, receivedTime, sentTime)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "message_id": {
@@ -2515,7 +2395,7 @@ def get_message_details_handler(current_user, data):
     return common_handler(get_message_details, message_id=None, fields=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=search_contacts",
+    path="/google/integrations/search_contacts",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="searchContacts",
     description="Searches the user's Google Contacts.",
@@ -2523,7 +2403,7 @@ def get_message_details_handler(current_user, data):
         "query": "Search query string",
         "page_size": "Optional: Number of results to return (default 10)"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "query": {
@@ -2544,14 +2424,14 @@ def search_contacts_handler(current_user, data):
     return common_handler(search_contacts, query=None, page_size=10)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=get_contact_details",
+    path="/google/integrations/get_contact_details",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="getContactDetails",
     description="Gets details for a specific contact.",
     params={
         "resource_name": "Resource name of the contact"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "resource_name": {
@@ -2567,14 +2447,14 @@ def get_contact_details_handler(current_user, data):
     return common_handler(get_contact_details, resource_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_contact",
+    path="/google/integrations/create_contact",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="createContact",
     description="Creates a new contact.",
     params={
         "contact_info": "Contact information"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "contact_info": {
@@ -2590,7 +2470,7 @@ def create_contact_handler(current_user, data):
     return common_handler(create_contact, contact_info=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=update_contact",
+    path="/google/integrations/update_contact",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="updateContact",
     description="Updates an existing contact.",
@@ -2598,7 +2478,7 @@ def create_contact_handler(current_user, data):
         "resource_name": "Resource name of the contact",
         "contact_info": "Updated contact information"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "resource_name": {
@@ -2618,14 +2498,14 @@ def update_contact_handler(current_user, data):
     return common_handler(update_contact, resource_name=None, contact_info=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=delete_contact",
+    path="/google/integrations/delete_contact",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="deleteContact",
     description="Deletes a contact.",
     params={
         "resource_name": "Resource name of the contact to delete"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "resource_name": {
@@ -2641,12 +2521,12 @@ def delete_contact_handler(current_user, data):
     return common_handler(delete_contact, resource_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=list_contact_groups",
+    path="/google/integrations/list_contact_groups",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="listContactGroups",
     description="Lists all contact groups.",
     params={},
-    parameters={
+    schema={
         "type": "object",
         "properties": {}
     }
@@ -2656,14 +2536,14 @@ def list_contact_groups_handler(current_user, data):
     return common_handler(list_contact_groups)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=create_contact_group",
+    path="/google/integrations/create_contact_group",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="createContactGroup",
     description="Creates a new contact group.",
     params={
         "group_name": "Name of the new contact group"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "group_name": {
@@ -2679,7 +2559,7 @@ def create_contact_group_handler(current_user, data):
     return common_handler(create_contact_group, group_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=update_contact_group",
+    path="/google/integrations/update_contact_group",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="updateContactGroup",
     description="Updates an existing contact group.",
@@ -2687,7 +2567,7 @@ def create_contact_group_handler(current_user, data):
         "resource_name": "Resource name of the contact group",
         "new_name": "New name for the contact group"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "resource_name": {
@@ -2707,14 +2587,14 @@ def update_contact_group_handler(current_user, data):
     return common_handler(update_contact_group, resource_name=None, new_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=delete_contact_group",
+    path="/google/integrations/delete_contact_group",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="deleteContactGroup",
     description="Deletes a contact group.",
     params={
         "resource_name": "Resource name of the contact group to delete"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "resource_name": {
@@ -2730,7 +2610,7 @@ def delete_contact_group_handler(current_user, data):
     return common_handler(delete_contact_group, resource_name=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=add_contacts_to_group",
+    path="/google/integrations/add_contacts_to_group",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="addContactsToGroup",
     description="Adds contacts to a group.",
@@ -2738,7 +2618,7 @@ def delete_contact_group_handler(current_user, data):
         "group_resource_name": "Resource name of the contact group",
         "contact_resource_names": "List of resource names of contacts to add"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "group_resource_name": {
@@ -2759,7 +2639,7 @@ def add_contacts_to_group_handler(current_user, data):
     return common_handler(add_contacts_to_group, group_resource_name=None, contact_resource_names=None)(current_user, data)
 
 @vop(
-    path="/google/integrations/route?op=remove_contacts_from_group",
+    path="/google/integrations/remove_contacts_from_group",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="removeContactsFromGroup",
     description="Removes contacts from a group.",
@@ -2767,7 +2647,7 @@ def add_contacts_to_group_handler(current_user, data):
         "group_resource_name": "Resource name of the contact group",
         "contact_resource_names": "List of resource names of contacts to remove"
     },
-    parameters={
+    schema={
         "type": "object",
         "properties": {
             "group_resource_name": {

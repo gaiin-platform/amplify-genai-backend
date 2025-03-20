@@ -4,9 +4,13 @@ def get_permission_checker(user, ptype, op, data):
             user, ptype, op
         )
     )
+    
+    if op == "route":
+        return lambda for_user, with_data: True
+
     return permissions_by_state_type.get(ptype, {}).get(
         op, lambda for_user, with_data: False
-    )
+    ) 
 
 
 def can_execute_custom_auto(user, data): 
@@ -25,9 +29,5 @@ permissions_by_state_type = {
     "/google/integrations" : {
         "get" : lambda for_user, with_data: True,
     },
-    "/google/integrations/route" : {
-        "route" : lambda for_user, with_data: True,
-    },
-
 
 }

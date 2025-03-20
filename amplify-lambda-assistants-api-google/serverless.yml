@@ -70,12 +70,12 @@ functions:
 
   googleIntegrationsRouter:
     handler: service/core.route_request
-    timeout: 30
+    timeout: 900
     events:
       - http:
-          path: google/integrations/route
+          path: google/integrations/{proxy+}
           method: post
-  
+
   googleAdminConfigOpsTrigger:
     handler: service/register_ops.integration_config_trigger
     memorySize: 1024
