@@ -201,6 +201,9 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
+                - 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
