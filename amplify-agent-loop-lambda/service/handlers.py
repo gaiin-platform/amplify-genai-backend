@@ -19,7 +19,7 @@ from agent.components.common_goals import Goal
 from agent.components.python_action_registry import PythonActionRegistry
 from agent.components.python_environment import PythonEnvironment
 from agent.core import Action, UnknownActionError, ActionRegistry
-from agent.prompt import create_llm
+from agent.prompt import Prompt, create_llm
 from agent.tools.ops import ops_to_tools
 from common.ops import vop
 from datetime import datetime
@@ -255,6 +255,8 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
         action_registry = PythonActionRegistry(tags=tags, tool_names=tool_names)
         action_registry.register_terminate_tool() # We always include terminate
 
+        model = metadata.get('model', os.getenv("AGENT_MODEL"))
+
         if 'assistant' in metadata:
             assistant = metadata['assistant']
             print(f"Assistant metadata: {metadata['assistant']}")
@@ -281,6 +283,9 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                         terminal=op_tool.get("terminal", False)
                     )
                 )
+            # enforce assistant selected model
+            if ("data" in assistant and "model" in assistant["data"]):
+                model = assistant["data"]["model"]
 
 
         print("Registered actions in action registry:")
@@ -300,7 +305,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None):
                 if not action:
                     raise UnknownActionError(f"Invalid Workflow. Action not found: Step {i+1}, Action: {step.tool}")
 
-        model = metadata.get('model', os.getenv("AGENT_MODEL"))
+       
         print(f"Using model: {model}")
 
         llm = create_llm(access_token, model)

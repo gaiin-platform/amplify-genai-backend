@@ -74,6 +74,7 @@ provider:
       managedPolicies:
         - !Ref LambdaAPIIAMPolicy
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - Fn::ImportValue: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-BedrockIAMPolicyArn
 
 
 functions:
