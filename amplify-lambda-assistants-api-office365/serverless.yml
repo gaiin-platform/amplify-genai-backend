@@ -72,7 +72,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: microsoft/integrations/route
+          path: microsoft/integrations/{proxy+}
           method: post
 
    
