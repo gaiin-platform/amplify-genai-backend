@@ -84,7 +84,7 @@ functions:
 
   listIntegrationFiles:
     handler: integrations/drive_files.list_integration_files
-    timeout: 30
+    timeout: 300
     events:
       - http:
           path: integrations/user/files

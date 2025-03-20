@@ -39,7 +39,7 @@ def list_files(integration_provider, token, folder_id = None):
    """
    match integration_provider:
       case IntegrationType.GOOGLE:
-         result = execute_request(token, "/google/integrations/route?op=list_files", {'folderId': folder_id if folder_id else ''})
+         result = execute_request(token, "/google/integrations/list_files", {'folderId': folder_id if folder_id else ''})
          if result:
             files = []
             for file_list in result:
@@ -53,7 +53,7 @@ def list_files(integration_provider, token, folder_id = None):
             return files
          
       case IntegrationType.MICROSOFT:
-         return execute_request(token, "/microsoft/integrations/route?op=list_drive_items", {'folder_id': folder_id if folder_id else 'root', 'page_size': 100})
+         return execute_request(token, "/microsoft/integrations/list_drive_items", {'folder_id': folder_id if folder_id else 'root', 'page_size': 100})
          
    print(f"No result from list_files for integration: {integration_provider}")
    return None
@@ -151,9 +151,9 @@ def request_download_link(integration_provider, file_id, token):
     """
     match integration_provider:
         case IntegrationType.GOOGLE:
-           return execute_request(token, "/google/integrations/route?op=get_download_link", {'fileId': file_id})
+           return execute_request(token, "/google/integrations/get_download_link", {'fileId': file_id})
         case IntegrationType.MICROSOFT:
-           return execute_request(token, "/microsoft/integrations/route?op=download_file", {'item_id': file_id})
+           return execute_request(token, "/microsoft/integrations/download_file", {'item_id': file_id})
    
 
 def get_file_contents(integration_provider, credentials, file_id, download_url):
@@ -215,8 +215,10 @@ def execute_request(access_token, url_path, data):
       response_content = response.json() # to adhere to object access return response dict
 
       if response.status_code != 200 or not response_content.get('success'):
+         print(f"Error executing request: {response_content}")
          return None
       elif response.status_code == 200 and response_content.get('success', False):
+         print(f"Successfully executed request: ", url_path)
          return response_content.get('data', None)
 
    except Exception as e:
@@ -231,7 +233,7 @@ def cleanup_after_download_file(integration_provider, download_file_id, token):
          # Clean up converted file if it was created during this process
          try:
             print(f"Cleaning up converted file with ID: {download_file_id}")
-            cleanup_result = execute_request(token, "/google/integrations/route?op=delete_item_permanently", {'itemId': download_file_id})
+            cleanup_result = execute_request(token, "/google/integrations/delete_item_permanently", {'itemId': download_file_id})
             if cleanup_result:
                print(f"Successfully deleted converted file")
             else:
