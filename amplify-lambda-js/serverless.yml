@@ -201,8 +201,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
-                - 'arn:aws:bedrock:*::foundation-model/*'
-                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -309,3 +307,23 @@ resources:
         Type: AWS::S3::Bucket
         Properties:
           BucketName: ${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}
+    BedrockIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-${sls:stage}-bedrock-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModelWithResponseStream
+                - bedrock:InvokeModel
+              Resource:
+                - 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+  Outputs:
+    BedrockIAMPolicyArn:
+      Value: 
+        Ref: BedrockIAMPolicy
+      Export:
+        Name: ${self:service}-${sls:stage}-BedrockIAMPolicyArn
