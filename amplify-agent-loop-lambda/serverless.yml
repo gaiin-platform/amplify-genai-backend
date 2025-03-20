@@ -52,12 +52,12 @@ provider:
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
     AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
     # We will need to change this below in the policy when we migrate too
-    OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-opExecLambda
+    OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
     AGENT_QUEUE_URL: !Ref AgentQueue
     FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
     EMAIL_SETTINGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-email-settings
-    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVariables.ORGANIZATION_EMAIL_DOMAIN}
+    ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
     S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
     S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
@@ -66,9 +66,8 @@ provider:
     DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
     WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
     WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
-    #AWS_REGION optional for /chat/service.py 
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-
+    #AWS_REGION optional for /chat/service.py 
 
   iam:
     role:
@@ -134,8 +133,6 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
@@ -150,12 +147,14 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
-                - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}'
+                - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
 
     AgentStateDynamoDBTable:
