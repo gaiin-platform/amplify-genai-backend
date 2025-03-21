@@ -79,6 +79,7 @@ provider:
       managedPolicies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - !Ref LambdaJSIAMPolicy
+        - !Ref BedrockIAMPolicy
         #- arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_JS_IAM_POLICY_NAME}
 
 
