@@ -19,10 +19,12 @@ https://<Your_URL>,,,,,,,
     ""advanced<model Object>,
     ""cheapest"": <model Object> }
 }",
-          /chat,POST," Offers real-time chat capabilities exclusively through streaming. Interact with a selection of the most advanced AI chat models available, including GPT, Claude, and Mistral.","model (string): Required. Options include gpt-35-turbo, gpt-4o, gpt-4o-mini, gpt-4-1106-Preview, anthropic.claude-3-haiku-20240307-v1:0, anthropic.claude-3-5-sonnet-20240620-v1:0, anthropic.claude-3-opus-20240229-v1:0, mistral.mistral-7b-instruct-v0:2, mistral.mixtral-8x7b-instruct-v0:1, mistral.mistral-large-2402-v1:0
+          /chat,POST," Offers real-time chat capabilities exclusively through streaming. Interact with a selection of the most advanced AI chat models available, including GPT, Claude, and Mistral.","model (string): Required. To get model Ids, make a request to the /available_models endpoint
 temperature (number)
 max_tokens (integer)
-dataSources (array of strings)
+dataSources (array of strings) Obtain data source ids in the following ways:
+1.	Call the /files/query endpoint. 
+2.	Upload a new data source using the /files/upload endpoint, the id is returned as the key attribute.
 messages (array of objects):
  - role (string): Required. Options include system, assistant, user.
  -content (string): Required.
@@ -45,12 +47,7 @@ data (string)
         ""model"": ""gpt-4o"",
         ""temperature"": 0.7,
         ""max_tokens"": 4000,
-        ""dataSources"": [
-	{
-	“id”: “s3://user@vanderbilt.edu/56789876rtfghjkbvder5678"", 
-	“type”:”application/pdf”
-	}
-        ],
+        ""dataSources"": [""user@vanderbilt.edu/56789876rtfghjkbvder5678""],
         ""messages"": [
             {
             ""role"": ""user"",

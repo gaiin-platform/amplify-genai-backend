@@ -18,7 +18,7 @@ import boto3
     "data":{
         "temperature": 0.7,
         "max_tokens": 4000,
-        "dataSources": [{"id": "s3://user@vanderbilt.edu/2014-qwertyuio","type": "application/pdf"}],
+        "dataSources": ["yourEmail@vanderbilt.edu/2014-qwertyuio.json"],
         "messages": [
             {
             "role": "user",
@@ -38,7 +38,7 @@ import boto3
         "model": "String representing the model ID. User can request a list of the models by calling the /available_models endpoint",
         "temperature": "Float value controlling the randomness of responses. Example: 0.7 for balanced outputs.",
         "max_tokens": "Integer representing the maximum number of tokens the model can generate in the response. Typically never over 2048. The user can confirm the max tokens for each model by calling the /available_models endpoint",
-        "dataSources": "Array of objects representing input files or documents for retrieval-augmented generation (RAG). Each object must contain an 'id' and 'type'. Example: [{'id': 's3://example_file.pdf', 'type': 'application/pdf'}]. The user can make a call to the /files/query endpoint to get the id for their file.",
+        "dataSources": "Array of strings representing input file ids, primarily used for retrieval-augmented generation (RAG). The user can make a call to the /files/query endpoint to get the id for their file. In the case of uploading a new data source through the /files/upload endpoint, the user can use the returned key as the id.",
         "messages": "Array of objects representing the conversation history. Each object includes 'role' (system/assistant/user) and 'content' (the message text). Example: [{'role': 'user', 'content': 'What is the capital of France?'}].",
         "options": {
             "ragOnly": "Boolean indicating whether only retrieval-augmented responses should be used. Example: false.",
@@ -62,6 +62,7 @@ def chat_endpoint(event, context, current_user, name, data):
         access_token = data['access_token']
 
         payload = data['data']
+        payload["dataSources"] = get_data_source_details(payload["dataSources"])
         payload_options = payload["options"]
         payload["model"] = payload_options["model"]["id"]
         messages = payload["messages"]
@@ -102,3 +103,63 @@ def get_chat_endpoint():
 
     return None
 
+def get_data_source_details(data_sources):
+    if (len(data_sources) == 0): return []
+    
+    table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
+    dynamodb = boto3.resource('dynamodb')
+    data_source_ids = []
+
+    for data_source in data_sources:
+        id = None
+        if isinstance(data_source, str):
+            id = data_source
+        elif isinstance(data_source, dict) and "id" in data_source:
+            id = data_source["id"]
+
+        if id:
+            if id.startswith("s3://"):
+                id = id.split("s3://")[1]
+            data_source_ids.append(id)
+
+    # Properly format batch_get_item request
+    response = dynamodb.batch_get_item(
+        RequestItems={
+            table_name: {
+                'Keys': [{'id': collection_id} for collection_id in data_source_ids]
+            }
+        }
+    )
+
+    # Format the response items as required
+    formatted_sources = []
+    found_ids = set()
+    if 'Responses' in response and table_name in response['Responses']:
+        items = response['Responses'][table_name]
+        for item in items:
+            found_ids.add(item.get("id", ""))
+            # Create metadata object
+            metadata = {
+                "createdAt": item.get("createdAt", ""),
+                "tags": item.get("tags", []),
+                "totalTokens": item.get("totalTokens", 0)
+            }
+            id = item.get("id", "")
+            
+            # Create formatted object
+            formatted_item = {
+                "id": "s3://" + id,
+                "name": item.get("name", ""),
+                "type": item.get("type", ""),
+                "data": item.get("data", ""),
+                "metadata": metadata,
+                "key": id 
+            }
+            formatted_sources.append(formatted_item)
+    
+    # Optional: track missing items
+    missing_ids = set(data_source_ids) - found_ids
+    if missing_ids:
+        print(f"Warning: The following requested IDs were not found: {missing_ids}")
+    
+    return formatted_sources
