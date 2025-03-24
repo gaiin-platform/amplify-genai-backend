@@ -7,7 +7,7 @@ import json
 def get_all_ast_admin_groups(access_token):
     print("Initiate get ast admin call")
 
-    update_model_endpoint =  os.environ['API_BASE_URL'] + '/groups/list_all'
+    endpoint =  os.environ['API_BASE_URL'] + '/groups/list_all'
 
     headers = {
         'Content-Type': 'application/json',
@@ -16,7 +16,7 @@ def get_all_ast_admin_groups(access_token):
 
     try:
         response = requests.get(
-            update_model_endpoint,
+            endpoint,
             headers=headers,
         )
         print("Response: ", response.content)
@@ -37,7 +37,7 @@ def get_all_ast_admin_groups(access_token):
 def update_ast_admin_groups(access_token, data):
     print("Initiate update ast admin groups call")
 
-    update_model_endpoint = os.environ['API_BASE_URL'] + '/groups/update'
+    endpoint = os.environ['API_BASE_URL'] + '/groups/update'
     
     request = {
         "data": data
@@ -50,7 +50,7 @@ def update_ast_admin_groups(access_token, data):
 
     try:
         response = requests.post(
-            update_model_endpoint,
+            endpoint,
             headers=headers,
             data=json.dumps(request)
         )
