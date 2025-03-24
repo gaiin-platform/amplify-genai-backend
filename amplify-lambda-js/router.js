@@ -130,8 +130,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 logger.info("Request data sources", dataSources);
                 dataSources = await resolveDataSources(params, body, dataSources);
 
-                for(const ds of dataSources) {
-                    console.debug("Resolved data source", ds.id, ds);
+                for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
+                    console.debug("Resolved data source: ", ds.id, "\n". ds);
                 }
 
             } catch (e) {

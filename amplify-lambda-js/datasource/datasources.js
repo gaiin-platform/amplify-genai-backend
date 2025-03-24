@@ -377,7 +377,12 @@ export const resolveDataSources = async (params, body, dataSources) => {
     if (body && body.messages && body.messages.length > 0) {
         const lastMsg = body.messages[body.messages.length - 1];
         const ds = lastMsg.data && lastMsg.data.dataSources;
-        if (ds) body.imageSources = ds.filter(d => isImage(d));
+        if (ds) {
+            body.imageSources = ds.filter(d => isImage(d));
+        } else if (body.options?.api_accessed){ // support images coming from the /chat endpoint
+            const imageSources = dataSources.filter(d => isImage(d));
+            if (imageSources.length > 0) body.imageSources = imageSources;
+        }
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
