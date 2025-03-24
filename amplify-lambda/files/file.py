@@ -11,10 +11,10 @@ from common.validate import validated
 import os
 import boto3
 import rag.util
-import images.core
 from boto3.dynamodb.conditions import Key
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
 from common.object_permissions import can_access_objects
+from common.amplify_groups import verify_member_of_ast_admin_group
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -65,25 +65,12 @@ def get_presigned_download_url(event, context, current_user, name, data):
     print("Item found: ", response['Item'])
     if response['Item']['createdBy'] == group_id:
         # ensure the user/system user has access to the group by either
-        # 1. group is public 
-        # 2. user is a member of the group 
-        try:
-            print("Checking if user is a member of the group")
-            group_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
-            member_response = group_table.get_item(Key={'group_id': group_id})
+        print("Checking if user is a member of the group: ", group_id)
+        is_member = verify_member_of_ast_admin_group(access_token, group_id)
+        if (not is_member):
+            return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
+        print("User is a member of the group: ", group_id)
 
-            # Check if the item was found
-            if 'Item' in member_response:
-                item = member_response['Item']
-                # Check if the group is public or if the user is in the members
-                if not (item.get('isPublic', False) or current_user in item.get('members', {}).keys() or current_user in item.get('systemUsers', [])):
-                    return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
-            else:
-                return {'success': False, 'message': f"No group entry found for groupId: {group_id}"}
-
-        except Exception as e:
-            print(f"An error occurred while processing groupId {group_id}: {e}")
-            return {'success': False, 'message': f"An error occurred while processing groupId: {group_id}"}
     elif response['Item']['createdBy'] != current_user:
         translated_ds = None
         try:# need global 
