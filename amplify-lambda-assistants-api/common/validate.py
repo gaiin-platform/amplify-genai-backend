@@ -103,6 +103,15 @@ validators = {
     "/integrations/oauth/user/list": {
         "list_integrations": {}
     },
+    "/integrations/oauth/user/get" :{
+        "get_user_oauth_token":{
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string", "description": "The name of the integration (e.g., google_sheets)"}
+            },
+            "required": ["integration"]
+        }
+    },
     "/integrations/user/files": {
         "list_files": {
             "type": "object",
@@ -200,6 +209,15 @@ api_validators = {
     },
     "/integrations/list_supported": {
         "list_integrations": {}
+    },
+    "/integrations/oauth/user/get" :{
+        "get_user_oauth_token":{
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string", "description": "The name of the integration (e.g., google_sheets)"}
+            },
+            "required": ["integration"]
+        }
     },
     "/integrations/oauth/refresh_token": {
         "refresh_token": {

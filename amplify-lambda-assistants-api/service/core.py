@@ -11,6 +11,7 @@ from datetime import datetime
 import re
 import urllib.parse
 
+from integrations.oauth import get_user_credentials
 from service.jobs import check_job_status, set_job_result
 
 dynamodb = boto3.resource('dynamodb')
@@ -385,6 +386,38 @@ def update_job_result(event, context, current_user, name, data):
             'data': {
                 'message': "Job result updated."
             }
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+@vop(
+    path="/integrations/oauth/user/get",
+    tags=["default"],
+    name="getUserOAuthTokenForService",
+    description="Returns a token for the specified integration if the user has enabled it.",
+    params={
+        "integration": "The name of the integration (e.g., google_sheets)"
+    },
+    parameters={
+        "type": "object",
+        "properties": {
+            "integration": {"type": "string", "description": "The name of the integration (e.g., google_sheets)"}
+        },
+        "required": ["integration"]
+    }
+)
+@validated("get_user_oauth_token")
+def get_user_oauth_token(event, context, current_user, name, data):
+    try:
+        integration = data["data"]["integration"]
+        token = get_user_credentials(current_user, integration);
+        return {
+            'success': token is not None,
+            'data': token
         }
     except Exception as e:
         return {

@@ -171,6 +171,7 @@ def get_user_credentials(current_user, integration):
     try:
         response = oauth_user_table.get_item(Key={'user_integration': item_key})
         record = response.get('Item')
+
         if record and 'integrations' in record:
             integration_map = record['integrations']
             credentials = integration_map.get(integration)

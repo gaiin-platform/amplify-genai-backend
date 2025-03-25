@@ -55,5 +55,8 @@ permissions_by_state_type = {
     },
      "/integrations/oauth/refresh_token": {
         "refresh_token": lambda for_user, with_data: True
+    },
+    "/integrations/oauth/user/get": {
+        "get_user_oauth_token": lambda for_user, with_data: True
     }
 }
