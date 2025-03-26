@@ -2,7 +2,7 @@ from googleapiclient.discovery import build
 from integrations.oauth import get_user_credentials
 from google.oauth2.credentials import Credentials
 
-integration_name = "google_gmail"
+integration_name = "google_contacts"
 
 def get_people_service(current_user, access_token):
     user_credentials = get_user_credentials(current_user, integration_name, access_token)
