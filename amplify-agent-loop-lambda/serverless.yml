@@ -67,6 +67,8 @@ provider:
     WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
     WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
+    MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
     #AWS_REGION optional for /chat/service.py 
 
   iam:
@@ -150,6 +152,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue

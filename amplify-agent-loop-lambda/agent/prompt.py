@@ -8,6 +8,7 @@ from attr import dataclass
 from litellm import completion
 
 from common.secrets import get_llm_config
+from common.accounting import record_usage
 import boto3
 from botocore.config import Config
 
@@ -18,7 +19,7 @@ class Prompt:
     metadata: dict = {}
 
 
-def generate_response(model, prompt: Prompt) -> str:
+def generate_response(model, prompt: Prompt, account_details: dict, details: dict = {}) -> str:
     """Call LLM to get response"""
 
     messages = prompt.messages
@@ -27,7 +28,7 @@ def generate_response(model, prompt: Prompt) -> str:
     result = None
 
     try:
-
+        response = None
         if not tools:
             print("Prompting without tools.")
             response = completion(
@@ -47,13 +48,57 @@ def generate_response(model, prompt: Prompt) -> str:
 
             if response.choices[0].message.tool_calls:
                 tool = response.choices[0].message.tool_calls[0]
+                tool_args = None
+                try:
+                    tool_args = json.loads(tool.function.arguments)
+                except:
+                    print(f"Error parsing tool arguments coming from litellm: {tool.function.arguments}")
+                
                 result = {
                     "tool": tool.function.name,
-                    "args": json.loads(tool.function.arguments),
+                    "args": tool_args,
                 }
                 result = json.dumps(result)
             else:
                 result = response.choices[0].message.content
+        
+        # print(f"--litellm Response: {response}")
+        print("Recording usage for litellm response id: ", response.id)
+        model_id = model.split("/")[1]
+
+        usage = response.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+
+        details["litellm_used"] = True
+
+        completion_tokens_details = usage.get("completion_tokens_details", None)
+        prompt_tokens_details = usage.get("prompt_tokens_details", None)
+        
+        if completion_tokens_details:
+            # Convert to dictionary using vars() or __dict__
+            try:
+                details["completion_tokens_details"] = {
+                    "reasoning_tokens": getattr(completion_tokens_details, "reasoning_tokens", 0),
+                    "text_tokens": getattr(completion_tokens_details, "text_tokens", None)
+                }
+            except:
+                print(f"Error converting completion_tokens_details to dictionary: {completion_tokens_details}")
+               
+        cached_tokens = 0
+        if prompt_tokens_details:
+            try:
+                details["prompt_tokens_details"] = {
+                    "reasoning_tokens": getattr(prompt_tokens_details, "reasoning_tokens", 0),
+                    "text_tokens": getattr(prompt_tokens_details, "text_tokens", None),
+                    "image_tokens": getattr(prompt_tokens_details, "image_tokens", 0),
+                    "cached_tokens": getattr(prompt_tokens_details, "cached_tokens", 0)
+                }
+                cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0)
+            except:
+                print(f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}")
+
+        record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
 
     except Exception as e:
         traceback.print_exc()
@@ -79,7 +124,7 @@ def is_bedrock_model(model):
     return any(provider in model for provider in ["anthropic", "claude", "amazon", "titan", "ai21", "cohere", "meta", "deepseek"])
 
 
-def create_llm(access_token, model):
+def create_llm(access_token, model, current_user = "Agent", account_id = "general_account", details: dict = {}):
     provider_prefix = ""
     if is_openai_model(model):
         key, uri = get_llm_config(model)
@@ -105,6 +150,12 @@ def create_llm(access_token, model):
     else:
         raise ValueError(f"Unsupported model: {model}")
     
+    account_details = {
+        "user": current_user,
+        "accountId": account_id,
+        "accessToken": access_token,
+    }
+    
     def llm(prompt):
-            return generate_response(f"{provider_prefix}/{model}", prompt)
+            return generate_response(f"{provider_prefix}/{model}", prompt, account_details, details)
     return llm

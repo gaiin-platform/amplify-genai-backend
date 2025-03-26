@@ -136,8 +136,9 @@ def think(action_context, _memory: Memory, what_to_think_about: str):
     return thoughts
 
 
-def build_python_agent(workflow_file, model="gpt-4o-mini", additional_goals=None):
-    generate_response = create_llm(None, model)
+def build_python_agent(workflow_file, model="gpt-4o-mini", access_token=None, current_user = "Agent", additional_goals=None):
+
+    generate_response = create_llm(access_token, model, current_user) 
 
     workflow = load_workflow(workflow_file)
 

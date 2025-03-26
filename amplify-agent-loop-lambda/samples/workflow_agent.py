@@ -23,10 +23,12 @@ if __name__ == "__main__":
 
     if not os.getenv("ACCESS_TOKEN") or not os.getenv("CURRENT_USER"):
         raise Exception("Unable to fetch APIs. Check that the ACCESS_TOKEN has not expired and CURRENT_USER is set.")
+    access_token = os.getenv("ACCESS_TOKEN")
+    current_user = os.getenv("CURRENT_USER")
 
     workflow_file = "workflows/schedule.json"
-
-    agent = workflow_agent.build_python_agent(workflow_file, model="gpt-4o-mini", additional_goals=[
+  
+    agent = workflow_agent.build_python_agent(workflow_file, model="gpt-4o-mini", access_token=access_token, current_user=current_user, additional_goals=[
         Goal(
             name="Always Choose a Tool",
             description="""
@@ -43,12 +45,12 @@ if __name__ == "__main__":
         )
     ])
 
-    register_op_actions(agent.actions, os.getenv("ACCESS_TOKEN"), os.getenv("CURRENT_USER"))
+    register_op_actions(agent.actions, access_token, current_user)
 
     action_context_props={
         "event_handler": event_printer,
-        "access_token": os.getenv("ACCESS_TOKEN"),
-        "current_user": os.getenv("CURRENT_USER")
+        "access_token": access_token,
+        "current_user": current_user
     }
 
     user_input = input("Enter a prompt for the agent: ")
@@ -56,7 +58,7 @@ if __name__ == "__main__":
     result = agent.run(user_input=user_input, action_context_props=action_context_props)
 
     register_agent_conversation(
-        access_token=os.getenv("ACCESS_TOKEN"),
+        access_token=access_token,
         input=user_input,
         memory=result)
 

@@ -36,6 +36,7 @@ def common_handler(operation, func_schema, **optional_params):
             print(f"Function schema: {func_schema}")
 
             access_token = data['access_token']
+            account_id = data['account']
 
             wrapper_schema = {
                 "type": "object",
@@ -67,6 +68,9 @@ def common_handler(operation, func_schema, **optional_params):
 
             if has_named_parameter(operation, "access_token"):
                 args["access_token"] = access_token
+            
+            if has_named_parameter(operation, "account_id"):
+                args["account_id"] = account_id
 
 
             print("Invoking operation")
