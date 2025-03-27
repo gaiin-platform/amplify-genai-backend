@@ -61,7 +61,7 @@ def log_execution(current_user, data, code, message, result, metadata={}):
         print(f"Error logging execution: {str(e)}")
 
 
-def build_amplify_api_action(current_user, token, data):
+def build_amplify_api_action(current_user, token, data, method = "POST"):
     base_url = os.environ.get('API_BASE_URL', None)
     if not base_url:
         raise ValueError("API_BASE_URL environment variable is not set")
@@ -74,13 +74,17 @@ def build_amplify_api_action(current_user, token, data):
         "Content-Type": "application/json"
     }
 
-    payload = {
-        "data": data["action"].get("payload", {})
-    }
+    payload = data["action"].get("payload", {})
+
 
     def send_request():
-        #print(f"Sending POST request to {url} with payload: {payload}")
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        if method.upper() == "GET":
+            print(f"Sending GET request to {url} with query params: {payload}")
+            response = requests.get(url, headers=headers, params=payload)
+        else:
+            print(f"Sending POST request to {url} with payload: {payload}")
+            response = requests.post(url, headers=headers, data=json.dumps({"data": payload}))
+        
         response.raise_for_status()
 
         result = None
@@ -242,7 +246,7 @@ def build_action(current_user, token, action_name, data):
 
     if action_type != "http":
         print("Building Amplify API action.")
-        return build_amplify_api_action(current_user, token, data)
+        return build_amplify_api_action(current_user, token, data, op_def.get("method", "POST"))
     else:
         print("Building HTTP action.")
         return build_http_action(current_user, data)
@@ -414,7 +418,7 @@ def update_job_result(event, context, current_user, name, data):
 def get_user_oauth_token(event, context, current_user, name, data):
     try:
         integration = data["data"]["integration"]
-        token = get_user_credentials(current_user, integration);
+        token = get_user_credentials(current_user, integration)
         return {
             'success': token is not None,
             'data': token
