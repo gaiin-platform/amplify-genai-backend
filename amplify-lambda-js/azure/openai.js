@@ -313,15 +313,14 @@ const forceFlush = (responseStream) => {
 }
 
 const sendStatusMessage = (responseStream) => {
-    const statusInfo = newStatus(
-        {
-            animated: true,
-            inProgress: true,
-            sticky: true,
-            summary: getThinkingMessage(),
-            icon: "info",
-        }
-    );
+    const statusInfo = { id: "openai",
+                         animated: true,
+                         inProgress: true,
+                         sticky: true,
+                         summary: getThinkingMessage(),
+                         icon: "info",
+                         type: "info",
+                       };
 
     sendStatusEventToStream(responseStream, statusInfo);
 

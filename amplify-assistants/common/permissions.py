@@ -97,5 +97,8 @@ permissions_by_state_type = {
     },
     "/assistant/lookup": {
         "lookup": can_lookup_assistant
+    },
+    "/assistant/add_path": {
+        "add_assistant_path": can_create_assistant
     }
 }

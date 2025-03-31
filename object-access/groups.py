@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr
 from common.api_key import deactivate_key
-from common.assistants import share_assistant, list_assistants, delete_assistant, create_assistant
+from common.assistants import add_assistant_path, share_assistant, list_assistants, delete_assistant, create_assistant
 import boto3
 from common.validate import validated
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
@@ -236,7 +236,6 @@ def update_members_db(group_id, updated_members):
 
 @validated(op='update')
 def update_members_permission(event, context, current_user, name, data):
-    token = data['access_token']
     data = data['data']
     group_id = data['group_id']
     affected_user_dict = data['affected_members']
@@ -411,6 +410,32 @@ def update_assistants(current_user, group_id, update_type, ast_list):
         return {'success': False, 'message': f"Failed to update DynamoDB: {str(e)}"}
 
 
+@validated(op='add_assistant_path')
+def add_path_to_assistant(event, context, current_user, name, data):
+    data = data['data']
+    group_id = data['group_id']
+    path_data = data['path_data']
+
+    auth_check = authorized_user(group_id, current_user)
+    
+    if (not auth_check['success']):
+        return auth_check
+    
+    item = auth_check['item']
+    access_token = item['access']
+    assistantId = path_data['assistantId']
+    current_assistants = item.get('assistants', [])
+
+    # find the assistant in the current assistants
+    assistant = next((a for a in current_assistants if a['assistantId'] == assistantId), None)
+    if not assistant:
+        return {"message": "Assistant not found", "success": False}
+    print("Adding path to group_id: ", group_id, " with data: ", path_data)
+    # call add path to assistant
+    return add_assistant_path(access_token, path_data)
+
+    
+    
 @validated(op='update')
 def update_group_types(event, context, current_user, name, data):
     data = data['data']
@@ -664,39 +689,48 @@ def get_my_groups(current_user, token):
 
 def is_group_member(current_user, group, token):
     print(f"\n\nChecking if {current_user} is a member of {group['groupName']}")
-    members = group.get('members', {})
-    in_members_list = current_user in members
-    
     # check if member
-    if in_members_list:  # Check if current_user is a key in the members dictionary
+    if current_user in group.get('members', {}):  # Check if current_user is a key in the members dictionary
+        print(f"User is a direct member of {group['group_id']}")
+        return True
+    elif current_user in group.get('systemUsers', []):
+        print(f"User is a system user of {group['group_id']}")
+        return True
+    elif group.get("isPublic", False): 
+        print(f"Group is public")
         return True
     else: 
-        print(f"User is not a member of {group['group_id']}... checking if group is public or the user and group share a common amplify group")
-         # check if public
-        is_public = group.get("isPublic", False)
-
-        is_in_amplify_group = False
-        if (not is_public):
+        print(f"User is not a member of {group['group_id']}... checking if the user and group share a common amplify group")
             # check if amplify group
-            groups_amplify_groups = group.get("amplifyGroups", [])
-            print("groups amplify groups: ", groups_amplify_groups)
-            # Check for intersection if there is at least one common group then they are a member
-            is_in_amplify_group = verify_user_in_amp_group(token, groups_amplify_groups)
-            # print("is_in_amplify_group: ", is_in_amplify_group)
+        groups_amplify_groups = group.get("amplifyGroups", [])
+        print("Groups amplify groups: ", groups_amplify_groups)
+        # Check for intersection if there is at least one common group then they are a member
+        is_in_amplify_group = verify_user_in_amp_group(token, groups_amplify_groups)
+        print("Is user in any of the amplify groups: ", is_in_amplify_group)
+        return is_in_amplify_group
+    
 
-            # if so add them to the members list 
-        if (is_public or is_in_amplify_group):
-            print(f"Is Public Group: ", is_public)
-            print("Is user in amplify group: ", is_in_amplify_group)
-            # update members list --- no longer adding to members list ---
-            # group_id = group["group_id"]
-            # members[current_user] = 'read'
-            # update_res = update_members_db(group_id, members)
-            # if (not update_res['success']):
-            #     print(f"Warning: amplify group member failed to add to group: {group_id} members dict")
-            return True
-    return False
+@validated(op='verify_member')
+def verify_is_member_ast_group(event, context, current_user, name, data):
+    token = data['access_token']
+    data = data['data']
+    group_id = data["groupId"]
+
+    try:
+        response = groups_table.get_item(Key={'group_id': group_id})
+        group_item = response.get('Item')
         
+        if not group_item:
+            return {'success': False, 'message': f"No group entry found for groupId: {group_id}"}
+
+        is_member = is_group_member(current_user, group_item, token)
+        return {"isMember": is_member, "success": True}
+    except Exception as e:
+        print(f"An error occurred while verifying if user is a member of the group: {str(e)}")
+    
+    return {"message": f"Unable to verify if user is a member of the group", "success": False}
+
+    
     
 def authorized_user(group_id, user, requires_admin_access = False):
      # Fetch the current item from DynamoDB

@@ -62,7 +62,6 @@ provider:
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
-    GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  
@@ -550,6 +549,7 @@ resources:
                 - rds-data:BeginTransaction
                 - rds-data:CommitTransaction
                 - rds-data:RollbackTransaction
+                - dynamodb:BatchGetItem
               Resource:
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
@@ -579,8 +579,6 @@ resources:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
@@ -996,6 +994,17 @@ resources:
             DestinationBucketName: 
               Ref: AccessLogsBucket
             LogFilePrefix: S3AccessLogs/ 
+          NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: 's3:ObjectCreated:Put'
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: prefix
+                        Value: 'templates/'
+                      - Name: suffix
+                        Value: '.pptx' 
+                Function: !GetAtt HandlePptxUploadLambdaFunction.Arn
 
 
     RagInputBucket:
