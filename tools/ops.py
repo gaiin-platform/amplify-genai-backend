@@ -149,7 +149,7 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
                                         method=op_kwargs['method'].s if 'method' in op_kwargs else "POST",  # Default method
                                         name=op_kwargs['name'].s,
                                         params=params,
-                                        type="custom",  # Assuming custom type
+                                        type=op_kwargs['type'].s if 'type' in op_kwargs else "built_in",  # Assuming custom type
                                         url=op_kwargs['path'].s,
                                         tags=extract_tags(op_kwargs),
                                         parameters=parameters
