@@ -84,8 +84,10 @@ def fetch_user_ops(current_user, tag):
 
 @validated(op="write")
 def write_ops(event, context, current_user, name, data):
-    ops = data['data']["ops"]
-    user = 'system' # for now 
+    data = data['data']
+    system_op = data.get("system_op", True)
+    ops = data["ops"]
+    user = 'system' if system_op else current_user
 
     table_name = os.environ.get('OPS_DYNAMODB_TABLE')
     if not table_name:
