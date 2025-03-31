@@ -315,7 +315,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // context window of whatever model we are using. Each chunk becomes a "context" and we will prompt
     // against each context in a separate request to the LLM.
     let contexts = []
-    if(!params.options.ragOnly) {
+    if(!params.options.ragOnly && dataSources.length > 0) {
         try {
             const contextResolverEnv = {
                 tokenCounter: tokenCounter.countTokens,
@@ -367,7 +367,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                     }
                     else if(dataSource && isDocument(dataSource)){
                         const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
-                        const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations, contentKey: dataSource.metadata.userDataSourceId};
+                        const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations, contentKey: dataSource.metadata?.userDataSourceId};
                         return {type: 'documentContext', source};
                     }
                     else if(dataSource) {
@@ -395,6 +395,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                     }
                 });
             }
+
         } catch (e) {
             logger.error(e);
             logger.error("Error fetching contexts: " + e);
@@ -413,7 +414,18 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // Create the source metadata that maps contexts to shorter ids to
     // to be more efficient.
     const metaData = getSourceMetadata({contexts});
-    const updatedContexts = aliasContexts(metaData, contexts);
+    let updatedContexts = aliasContexts(metaData, contexts);
+
+    // if the all contexts fit within the token limit then we can just merge them into one while leaving the metadata as its been
+    if (updatedContexts.length > 1) {
+        const totalDsTokens = contexts.reduce((acc, context) => acc + (context.tokens || 1000), 0);
+        if (totalDsTokens <= maxTokens) {
+            logger.debug("Merging contexts into one: ", updatedContexts);
+            const mergedContext = contexts.map(c => c.context).join("\n\n");
+            // we can save the old contexts in its own attribute for now
+            updatedContexts = [{id: 0, context: mergedContext, contexts: updatedContexts}];
+        }
+    }
 
     const chatContext = {
         account,

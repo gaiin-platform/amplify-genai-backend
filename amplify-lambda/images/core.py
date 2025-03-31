@@ -98,6 +98,7 @@ def process_images_for_chat(event, context):
         name = item.get('name', 'Unknown')
         tags = item.get('tags', [])
         file_type = item.get('type', 'Unknown')
+        createdAt = item.get('createdAt', datetime.now().isoformat())
     
         # Convert image to base64
         print("Convert image to base64")
@@ -131,7 +132,19 @@ def process_images_for_chat(event, context):
         update_object_permissions(user, permissions_update)
 
         # Update metadata
-        put_image_file_metadata(bucket_name, file_key, name, tags, image.size)
+        image_metadata = put_image_file_metadata(bucket_name, file_key, name, tags, image.size, createdAt)
+        
+        try:
+            files_table.update_item(
+                Key={'id': file_key},
+                UpdateExpression='SET totalTokens = :totalTokens',
+                ExpressionAttributeValues={':totalTokens': image_metadata["totalTokens"]}
+            )
+            print(f"Updated file total tokens for {file_key}")
+           
+        except Exception as e:
+            print(f"Error updating file total tokens for {file_key}: {str(e)}")
+            # continue
 
         return {
             'statusCode': 200,
@@ -148,13 +161,13 @@ def process_images_for_chat(event, context):
 
 
 
-def put_image_file_metadata (bucket_name, key, name, tags, image_size):
+def put_image_file_metadata (bucket_name, key, name, tags, image_size, createdAt):
     width, height = image_size
     metadata_key = key + ".metadata.json"
     image_metadata = {
                     'name': name,
                     'contentKey': key,
-                    'createdAt': datetime.now().isoformat(),
+                    'createdAt': createdAt,
                     'totalTokens':  {'claude': cal_total_tokens_claude(width, height),
                                      'gpt': cal_total_tokens_gpt(width, height) },
                     'tags': tags,
@@ -168,4 +181,6 @@ def put_image_file_metadata (bucket_name, key, name, tags, image_size):
                     Key=metadata_key,
                     Body=json.dumps(image_metadata))
     print(f"Uploaded metadata to {bucket_name}/{metadata_key}")
+
+    return image_metadata
 

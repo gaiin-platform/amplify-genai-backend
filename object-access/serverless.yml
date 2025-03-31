@@ -251,6 +251,7 @@ functions:
           path: /groups/list
           method: get
           cors: true
+
   list_all_groups:
     handler: groups.list_all_groups_for_admins
     layers:
@@ -295,6 +296,28 @@ functions:
       - http:
           path: /groups/delete
           method: delete
+          cors: true
+    
+  add_group_assistant_path:
+    handler: groups.add_path_to_assistant
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/assistant/add_path
+          method: post
+          cors: true
+
+  is_member_of_Ast_group:
+    handler: groups.verify_is_member_ast_group
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/verify_ast_group_member
+          method: post
           cors: true
 
 resources:

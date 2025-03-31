@@ -54,8 +54,22 @@ chat_input_schema = {
         },
         "dataSources": {
         "type": "array",
-        "items": {
-            "type": "object"
+        "items":  {
+            "oneOf": [
+            {
+                "type": "string"
+            },
+            {
+                "type": "object",
+                "required": ["id"],
+                "additionalProperties": True,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    }
+                }
+            }
+        ]
         }
         },
         "messages": {

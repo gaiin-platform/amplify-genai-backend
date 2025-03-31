@@ -7,7 +7,7 @@ def verify_user_in_amp_group(access_token, groups):
     if (not groups or len(groups) == 0): return False
     print("Initiate verify in amp group call")
 
-    update_model_endpoint = os.environ['API_BASE_URL'] + '/amplifymin/verify_amp_member'
+    endpoint = os.environ['API_BASE_URL'] + '/amplifymin/verify_amp_member'
  
     request = {
         "data": {'groups': groups}
@@ -20,7 +20,7 @@ def verify_user_in_amp_group(access_token, groups):
 
     try:
         response = requests.post(
-            update_model_endpoint,
+            endpoint,
             headers=headers,
             data=json.dumps(request)
         )

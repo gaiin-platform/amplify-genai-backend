@@ -4,7 +4,7 @@
 import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
-import {getChatFn, getCheapestModel} from "../common/params.js";
+import {getChatFn, getCheapestModel, isOpenAIModel} from "../common/params.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
@@ -52,7 +52,7 @@ const defaultAssistant = {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
         }
 
-        if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
+        if(!body.options.ragOnly && aboveLimit){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
         }
         else {
@@ -235,8 +235,8 @@ const getTokenCount = (dataSource, model) => {
     if (dataSource.metadata && dataSource.metadata.totalTokens ) {
         const totalTokens = dataSource.metadata.totalTokens;
         if (isImage(dataSource)) {
-            return model.id.includes("gpt") ? totalTokens.gpt : 
-                   model.id.includes("anthropic") ? totalTokens.claude : "";
+            return isOpenAIModel (model.id) ? totalTokens.gpt : 
+                 model.id.includes("anthropic") ? totalTokens.claude : 1000;
         }
         if (!dataSource.metadata.ragOnly) return totalTokens;
     }

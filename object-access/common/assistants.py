@@ -164,3 +164,35 @@ def create_assistant(access_token, data):
         return {"success": False}
     
 
+
+def add_assistant_path(access_token, data):
+    print("Initiate add assistant path call")
+
+    path_assistant_endpoint = os.environ['API_BASE_URL'] + '/assistant/add_path'
+
+    request = {
+        "data": data
+    }
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    try:
+        response = requests.post(
+            path_assistant_endpoint,
+            headers=headers,
+            data=json.dumps(request)
+        )
+        # print("Response: ", response.content)
+        response_content = response.json() # to adhere to object access return response dict
+
+        if response.status_code != 200 or not response_content.get('success', False):
+            return {"success": False, "message": response_content.get('message', 'Failed to add path to assistant')}
+        elif response.status_code == 200 and response_content.get('success', False):
+            return response_content
+
+    except Exception as e:
+        print(f"Error adding path to assistant: {e}")
+        return {"success": False, "message": f"Error adding path to assistant: {e}"}

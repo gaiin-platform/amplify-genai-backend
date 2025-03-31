@@ -23,9 +23,10 @@ export const chatBedrock = async (chatBody, writable) => {
 
     const withoutSystemMessages = [];
     // options.prompt is a match for the first message in messages 
-    for (const msg of body.messages.slice(1)) {
+    for (const msg of body.messages) {
         if (msg.role === "system") {
-            if (msg.content.trim()) systemPrompts.push({ "text": msg.content });
+                                      // avoid duplicate system prompts
+            if (msg.content.trim() && msg.content !== options.prompt) systemPrompts.push({ "text": msg.content });
         } else {
             withoutSystemMessages.push(msg);
         }
@@ -99,13 +100,12 @@ export const chatBedrock = async (chatBody, writable) => {
 
 
 function combineMessages(oldMessages, failSafeUserMessage) {
-    if (!oldMessages) return oldMessages;
+    if (!oldMessages || oldMessages.length === 0) return oldMessages;
     let messages = [];
     const delimiter = "\n_________________________\n";
     
     const newestMessage = oldMessages[oldMessages.length - 1]
     if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] =
-        //`${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
         `${delimiter}${newestMessage['content']}`
     
     let i = -1;
