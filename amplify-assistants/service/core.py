@@ -30,6 +30,8 @@ from common.ops import op
 
 from decimal import Decimal
 
+from common.amplify_groups import verify_member_of_ast_admin_group, verify_user_in_amp_group
+
 
 SYSTEM_TAG = "amplify:system"
 ASSISTANT_BUILDER_TAG = "amplify:assistant-builder"
@@ -1284,21 +1286,21 @@ def get_assistant_hashes(
     # This will be used to check if the assistant already exists
     # and to check if the assistant has been updated
     core_sha256 = hashlib.sha256(
-        json.dumps(core_details, sort_keys=True).encode()
+        json.dumps(core_details, sort_keys=True, cls=CombinedEncoder).encode()
     ).hexdigest()
     datasources_sha256 = hashlib.sha256(
-        json.dumps(data_sources.sort(key=lambda x: x["id"])).encode()
+        json.dumps(data_sources.sort(key=lambda x: x["id"]), cls=CombinedEncoder).encode()
     ).hexdigest()
     instructions_sha256 = hashlib.sha256(
-        json.dumps(instructions, sort_keys=True).encode()
+        json.dumps(instructions, sort_keys=True, cls=CombinedEncoder).encode()
     ).hexdigest()
     disclaimer_sha256 = hashlib.sha256(
-        json.dumps(disclaimer, sort_keys=True).encode()
+        json.dumps(disclaimer, sort_keys=True, cls=CombinedEncoder).encode()
     ).hexdigest()
     core_details["assistant"] = assistant_name
     core_details["description"] = description
     full_sha256 = hashlib.sha256(
-        json.dumps(core_details, sort_keys=True).encode()
+        json.dumps(core_details, sort_keys=True, cls=CombinedEncoder).encode()
     ).hexdigest()
     return (
         core_sha256,
@@ -1819,14 +1821,12 @@ def save_user_rating(event, context, current_user, name, data):
         "data": {
             "assistantId": "astp/3209457834985793094",
             "astPath": "my/assistant/path",
-            "previousPath": "" 
         }
     }
     """,
     params={
         "assistantId": "String. Required. Unique identifier of the assistant. Example: 'astp/3209457834985793094'.",
         "astPath": "String. Required. Path to assign to the assistant. Example: 'my/assistant/path'.",
-        "previousPath": "String. Optional. If changing an existing path, provide the current path. Empty string if adding a new path."
     }
 )
 @validated(op="add_assistant_path")
@@ -1835,12 +1835,15 @@ def add_assistant_path(event, context, current_user, name, data):
     print(f"Adding path to assistant with data: {data}")
     
     # Extract the assistant ID and path from the data
-    ast_path = data["data"]["astPath"]
-    assistant_id = data["data"]["assistantId"]
-    previous_path = data["data"].get("previousPath", "")
+    data = data['data']
+    ast_path = data["astPath"]
+    assistant_id = data["assistantId"]
+    is_public = data['isPublic']
+    access_to = data.get('accessTo',{})
+    amplify_groups = access_to.get('amplifyGroups', [])
+    users = access_to.get('users', [])
     
     print(f"Adding path '{ast_path}' to assistant '{assistant_id}'")
-    print(f"Previous path: '{previous_path}'")
     
     # Get DynamoDB resources
     dynamodb = boto3.resource("dynamodb")
@@ -1865,6 +1868,8 @@ def add_assistant_path(event, context, current_user, name, data):
             }
         
         # Check if the new path already exists but belongs to a different assistant
+        path_history = []
+        prevAstPath = None
         try:
             existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
             if "Item" in existing_path_response:
@@ -1874,19 +1879,56 @@ def add_assistant_path(event, context, current_user, name, data):
                         "success": False,
                         "message": f"Path '{ast_path}' is already in use by another assistant.",
                     }
+                
+                prevAstPath = existing_item.get("astPath")
+                path_history = existing_item.get("pathHistory", [])
         except Exception as e:
             print(f"Error checking for existing path: {str(e)}")
-            # Continue anyway - this is just a validation check
+     
+        if (not prevAstPath):
+        # Now find any existing paths for this assistant to get the path history
+            try:
+            # Query for the current path entry for this assistant
+                response = lookup_table.query(
+                    IndexName="AssistantIdIndex",
+                    KeyConditionExpression=Key("assistantId").eq(assistant_id),
+                    Limit=1  # We just need the most recent one
+                )
+                
+                # If we found an existing path entry for this assistant, get its path history
+                if response.get("Items") and len(response["Items"]) > 0:
+                    current_path_item = response["Items"][0]
+                    
+                    path_history = current_path_item.get("pathHistory", [])
+                    prevAstPath = current_path_item.get("astPath")
+                    print("previous AstPath", prevAstPath)
+            except Exception as e:
+                print(f"Error retrieving current path history: {str(e)}")
+                # Continue with empty path history if we can't find the existing one
         
+        created_at = datetime.now().isoformat()
+        
+        if path_history and len(path_history) > 1 and \
+           path_history[-1]["path"] == ast_path and path_history[-1]["changedBy"] == current_user:
+            path_history[-1]["changedAt"] = created_at
+        else:
+            # Otherwise append a new entry to the history
+            path_history.append({"path": ast_path, "assistant_id": assistant_id, "changedAt": created_at, "changedBy": current_user})
+
         # Add an entry to the lookup table
         lookup_item = {
             "astPath": ast_path,
             "assistantId": assistant_id,
-            "public": True,  # Default to public for now
+            "public": is_public,  # Default to public for now
             "userId": current_user,
-            "createdAt": datetime.now().isoformat(),
-            "lastAccessed": datetime.now().isoformat(),
-            "lastAccessedBy": current_user
+            "createdAt": created_at,
+            "lastAccessed": created_at,
+            "pathHistory": path_history,
+            "accessTo": {
+                "amplifyGroups": amplify_groups,
+                "users": users,
+            }
+            
         }
         
         # Add the entry to the lookup table
@@ -1900,13 +1942,12 @@ def add_assistant_path(event, context, current_user, name, data):
         assistant_data = existing_assistant.get("data", {})
         if assistant_data is None:
             assistant_data = {}
-        
         # Update the path in the assistant data
         assistant_data["astPath"] = ast_path
         
         # Increment the version number
         new_version = assistant_version + 1
-        
+
         # Save the updated assistant
         new_item = save_assistant(
             assistants_table,
@@ -1925,7 +1966,7 @@ def add_assistant_path(event, context, current_user, name, data):
             assistant_id,
             False,
         )
-        
+       
         # Update permissions for the new version to ensure the user retains edit rights
         try:
             # Determine the principal type (user for non-system users)
@@ -1979,7 +2020,6 @@ def add_assistant_path(event, context, current_user, name, data):
             "data": {
                 "assistantId": assistant_id,
                 "astPath": ast_path,
-                "previousPath": previous_path,
                 "version": new_version
             }
         }
@@ -2026,6 +2066,7 @@ def add_assistant_path(event, context, current_user, name, data):
 )
 @validated(op="lookup")
 def lookup_assistant_path(event, context, current_user, name, data):
+    token = data['access_token']
     try:
         # Get the astPath from the request data
         ast_path = data.get("data", {}).get("astPath")
@@ -2069,15 +2110,6 @@ def lookup_assistant_path(event, context, current_user, name, data):
         if "Item" not in response:
             print(f"No item found for path: '{ast_path}'")
             
-            # Try to list all items with a similar path to help debug
-            try:
-                # Scan the table to find similar paths (for debugging)
-                scan_response = lookup_table.scan()
-                paths = [item.get("astPath") for item in scan_response.get("Items", [])]
-                print(f"Available paths in the table: {paths}")
-            except Exception as scan_error:
-                print(f"Error scanning table: {str(scan_error)}")
-            
             return {
                 "statusCode": 404,
                 "body": json.dumps(
@@ -2093,16 +2125,15 @@ def lookup_assistant_path(event, context, current_user, name, data):
         # Get the item from the response
         item = response["Item"]
         
-        # Update lastAccessed and lastAccessedBy columns
+        # Update lastAccessed 
         current_time = datetime.now().isoformat()
-        try:
+        try:    
             # Update the item with access tracking information
             lookup_table.update_item(
                 Key={"astPath": ast_path},
-                UpdateExpression="SET lastAccessed = :time, lastAccessedBy = :user",
+                UpdateExpression="SET lastAccessed = :time",
                 ExpressionAttributeValues={
-                    ":time": current_time,
-                    ":user": current_user
+                    ":time": current_time
                 }
             )
             print(f"Updated access tracking for path '{ast_path}': lastAccessed={current_time}, lastAccessedBy={current_user}")
@@ -2110,23 +2141,56 @@ def lookup_assistant_path(event, context, current_user, name, data):
             # Log the error but continue - don't fail the lookup just because tracking failed
             print(f"Error updating access tracking: {str(update_error)}")
         
+        # Initialize accessTo outside the conditional block
+        accessTo = item.get("accessTo", {})
+        
         # Check if the assistant is public or if the user has access
         if not item.get("public", False):
-            # Here we could implement additional permission checks
-            # For now, if it's not public, we just check if the current user is the owner
-            # This would need to be expanded based on your permissions model
-            pass
+            # check if user is listed in the entry or are part of the amplify groups
+            if (current_user != item.get("createdBy") and \
+                current_user not in accessTo.get("users", [])) and \
+                not verify_user_in_amp_group(token, accessTo.get("amplifyGroups", [])):
+                    return {"statusCode": 403,
+                            "body": json.dumps(
+                                {
+                                    "success": False,
+                                    "message": "User is not authorized to access this assistant",
+                                    "data": None,
+                                },
+                                cls=CombinedEncoder,
+                            )}
         
+
         # Get the assistant definition to include the astPath
         assistant_id = item.get("assistantId")
         assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
         assistant_definition = get_most_recent_assistant_version(assistants_table, assistant_id)
+
+        group_id = assistant_definition.get("data", {}).get("groupId", None)
+        if (group_id and group_id != current_user):
+            #check group membership for group ast admin group
+            print("Checking if user is a member of the ast group: ", group_id)
+            is_member = verify_member_of_ast_admin_group(token, group_id)
+            if (not is_member):
+                return {"statusCode": 403,
+                            "body": json.dumps(
+                                {
+                                    "success": False,
+                                    "message": "User is not authorized to access the group associated with this assistant",
+                                    "data": None,
+                                },
+                                cls=CombinedEncoder,
+                            )}
+            print("User is a member of the ast group: ", group_id)
+
+
         
         # Create response with path information from both lookup table and assistant definition
         response_data = {
             "assistantId": assistant_id,
             "astPath": ast_path,
-            "public": item.get("public", False)
+            "public": item.get("public", False),
+            "accessTo": accessTo
         }
         
         # Add path from assistant definition if available
