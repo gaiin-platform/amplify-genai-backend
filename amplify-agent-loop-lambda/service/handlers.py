@@ -291,7 +291,8 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
         print(f"Using model: {model}")
         llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id})
 
-        action_registry.filter_tools_by_relevance(llm, prompt, additional_goals)
+        if len(action_registry.actions.items()) > 3:
+            action_registry.filter_tools_by_relevance(llm, prompt, additional_goals)
 
         print("Registered actions in action registry:")
         for tool_name, action in action_registry.actions.items():

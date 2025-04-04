@@ -17,11 +17,11 @@ class PythonActionRegistry(ActionRegistry):
             if tool_name == "terminate":
                 self.terminate_tool = tool_desc
 
-            if tool_names and tool_name not in tool_names:
+            if tool_names is not None and tool_name not in tool_names:
                 continue
 
             tool_tags = tool_desc.get("tags", [])
-            if tags and not any(tag in tool_tags for tag in tags):
+            if tags is not None and not any(tag in tool_tags for tag in tags):
                 continue
             
             self.register(Action(

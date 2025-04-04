@@ -313,7 +313,7 @@ class Agent:
 
         send_event("agent/memory/update", {"response": response, "result": result})
 
-        result_summary_length_limit = 100000
+        result_summary_length_limit = 1000000
         result_summary = json.dumps(result)
         # Check if the result summary is longer than the limit
         if len(result_summary) > result_summary_length_limit and not result.get("complete_result", False):
@@ -321,8 +321,8 @@ class Agent:
                 **result,
                 f"result": result_summary[:result_summary_length_limit],
                 "complete_result": False,
-                "notes": "The result was too long to include in the response. "
-                         "This is an excerpt. The full result is available by reference."
+                "notes": f"The full result was too long to include in the response. "
+                         f"This is an excerpt of {result_summary_length_limit} chars. The full result is available by reference."
             }
             result_summary = json.dumps(result)
 
