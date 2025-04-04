@@ -82,13 +82,20 @@ add_assistant_path_schema = {
             "type": "string",
             "description": "The path to add to the assistant"
         },
-        "previousPath": {
-            "type": "string",
-            "description": "The previous path of the assistant (optional)",
-            "default": ""
-        }
+        "isPublic": {
+            "type": "boolean",
+            "description": "assistant is public to all amplify users"
+        },
+        "accessTo": {
+            "type": "object",
+            "description": "list of amplify groups and users that can access the assistant",
+            "properties": {
+                "amplifyGroups": {"type": "array", "items": {"type": "string"}},
+                "users": {"type": "array", "items": {"type": "string"}}
+            }
+        },
     },
-    "required": ["assistantId", "astPath"]
+    "required": ["assistantId", "astPath", "isPublic"]
 }
 
 create_assistant_schema = {
