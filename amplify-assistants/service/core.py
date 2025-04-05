@@ -249,8 +249,7 @@ def delete_assistant(event, context, current_user, name, data):
         
         # Delete each path entry
         for item in response.get("Items", []):
-            lookup_table.delete_item(Key={"astPath": item["astPath"]})
-            print(f"Deleted path '{item['astPath']}' associated with assistant {assistant_public_id}")
+            release_assistant_path(item["astPath"], assistant_public_id, current_user)
         
         # Now delete the assistant itself
         delete_assistant_by_public_id(assistants_table, assistant_public_id)
@@ -551,6 +550,7 @@ def create_assistant(event, context, current_user, name, data):
 
     # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
     return create_or_update_assistant(
+        current_user=current_user,
         access_token=data["access_token"],
         user_that_owns_the_assistant=current_user,
         assistant_name=assistant_name,
@@ -1059,6 +1059,7 @@ def delete_assistant_version(assistants_table, assistant_public_id, version):
 
 
 def create_or_update_assistant(
+    current_user,
     access_token,
     user_that_owns_the_assistant,
     assistant_name,
@@ -1119,6 +1120,12 @@ def create_or_update_assistant(
         assistant_version = existing_assistant[
             "version"
         ]  # Default to version 1 if not present
+
+        if (existing_assistant.get("data", {}).get("astPath") and \
+            not assistant_data.get("astPath")):
+            if assistant_data.get("astPathData"): 
+                del assistant_data["astPathData"]
+            release_assistant_path(existing_assistant["data"]["astPath"], assistant_public_id, current_user)
 
         # Increment the version number
         new_version = assistant_version + 1
@@ -1869,24 +1876,25 @@ def add_assistant_path(event, context, current_user, name, data):
         
         # Check if the new path already exists but belongs to a different assistant
         path_history = []
-        prevAstPath = None
+        prevAstPath = None #used to path history
         try:
             existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
             if "Item" in existing_path_response:
                 existing_item = existing_path_response["Item"]
-                if existing_item.get("assistantId") != assistant_id:
-                    return {
-                        "success": False,
-                        "message": f"Path '{ast_path}' is already in use by another assistant.",
-                    }
-                
-                prevAstPath = existing_item.get("astPath")
+                existing_assistant_id = existing_item.get("assistantId")
+                if existing_assistant_id:
+                    if (existing_assistant_id != assistant_id):
+                        return {
+                            "success": False,
+                            "message": f"Path '{ast_path}' is already in use by another assistant.",
+                        }
+                    prevAstPath = existing_item.get("astPath") 
                 path_history = existing_item.get("pathHistory", [])
+
         except Exception as e:
             print(f"Error checking for existing path: {str(e)}")
      
-        if (not prevAstPath):
-        # Now find any existing paths for this assistant to get the path history
+        if (not prevAstPath): #prevent losing path history when path is updated
             try:
             # Query for the current path entry for this assistant
                 response = lookup_table.query(
@@ -1909,7 +1917,9 @@ def add_assistant_path(event, context, current_user, name, data):
         created_at = datetime.now().isoformat()
         
         if path_history and len(path_history) > 1 and \
-           path_history[-1]["path"] == ast_path and path_history[-1]["changedBy"] == current_user:
+           path_history[-1]["path"] == ast_path and \
+           path_history[-1]["changedBy"] == current_user and \
+           path_history[-1]["assistant_id"] == assistant_id:
             path_history[-1]["changedAt"] = created_at
         else:
             # Otherwise append a new entry to the history
@@ -1920,7 +1930,7 @@ def add_assistant_path(event, context, current_user, name, data):
             "astPath": ast_path,
             "assistantId": assistant_id,
             "public": is_public,  # Default to public for now
-            "userId": current_user,
+            "createdBy": current_user,
             "createdAt": created_at,
             "lastAccessed": created_at,
             "pathHistory": path_history,
@@ -1998,18 +2008,17 @@ def add_assistant_path(event, context, current_user, name, data):
                 KeyConditionExpression=Key("assistantId").eq(assistant_id)
             )
             
-            paths_to_remove = []
+            paths_to_release = []
             for item in response.get("Items", []):
                 # Skip the new path we just added
                 if item["astPath"] != ast_path:
-                    paths_to_remove.append(item["astPath"])
+                    paths_to_release.append(item["astPath"])
             
             # Remove all old paths
-            for path_to_remove in paths_to_remove:
-                lookup_table.delete_item(Key={"astPath": path_to_remove})
-                print(f"Removed previous path '{path_to_remove}' from lookup table")
+            for path_to_release in paths_to_release:
+                release_assistant_path(path_to_release, assistant_id, current_user)
             
-            print(f"Removed {len(paths_to_remove)} previous path(s) associated with assistant {assistant_id}")
+            print(f"Removed {len(paths_to_release)} previous path(s) associated with assistant {assistant_id}")
         except Exception as e:
             print(f"Error removing previous paths: {str(e)}")
             # Continue anyway - we've already saved the new path successfully
@@ -2124,6 +2133,21 @@ def lookup_assistant_path(event, context, current_user, name, data):
         
         # Get the item from the response
         item = response["Item"]
+
+        assistant_id = item.get("assistantId")
+
+        if not assistant_id:
+            return {
+                "statusCode": 404,
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": f"Path is no longer associated with an assistant",
+                        "data": None,
+                    },
+                    cls=CombinedEncoder,
+                )
+            }
         
         # Update lastAccessed 
         current_time = datetime.now().isoformat()
@@ -2233,3 +2257,47 @@ def lookup_assistant_path(event, context, current_user, name, data):
                 cls=CombinedEncoder,
             )
         }
+
+def release_assistant_path(ast_path, assistant_id, current_user):
+    print(f"Attempting to release path '{ast_path}' for {assistant_id} from lookup table")
+    if (not ast_path or not assistant_id):
+        print("No ast_path or assistant_id provided... no action taken")
+        return
+    dynamodb = boto3.resource("dynamodb")
+    lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
+    
+    try:
+        print(f"Realeasing '{ast_path}' from lookup table")
+        existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
+        if "Item" in existing_path_response:
+            existing_item = existing_path_response["Item"]
+            
+            # verify data matches our records before releasing
+            if existing_item.get("assistantId") != assistant_id:
+                print(f"Path '{ast_path}' is not associated with assistant {assistant_id}... no action taken")
+                return
+            
+            path_history = existing_item.get("pathHistory", [])
+            path_history.append({"path": ast_path, "assistant_id": None, 
+                                 "changedAt": datetime.now().isoformat(), 
+                                 "changedBy": current_user})
+            
+            # Update the lookup table to REMOVE the assistantId attribute entirely
+            # This is better than setting to empty string which causes index issues
+            lookup_table.update_item(
+                Key={"astPath": ast_path},
+                UpdateExpression="REMOVE assistantId SET pathHistory = :history",
+                ExpressionAttributeValues={
+                    ":history": path_history
+                }
+            )
+                   
+            print(f"Path successfully released from lookup table")
+        else:
+            print(f"Path '{ast_path}' not found in lookup table... no action taken")
+    except Exception as e:
+        print(f"Error removing path '{ast_path}' from lookup table: {str(e)}")
+
+    
+    
+    
