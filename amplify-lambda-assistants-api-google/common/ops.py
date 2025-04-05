@@ -1,7 +1,7 @@
 
 from service.routes import route_data
 
-def op(tags=None, path="", name="", description="", params=None, method="POST", parameters=None):
+def op(tags=None, path="", name="", description="", params=None, method="POST", parameters=None, type="integration"):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -20,7 +20,7 @@ def op(tags=None, path="", name="", description="", params=None, method="POST", 
     return decorator
 
 
-def vop(tags=None, path="", name="", description="", params=None, schema=None):
+def vop(tags=None, path="", name="", description="", params=None, schema=None, type="integration"):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):

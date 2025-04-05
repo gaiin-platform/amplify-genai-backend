@@ -115,6 +115,7 @@ def route_request(event, context, current_user, name, data):
 
 @vop(
     path="/google/integrations/get_rows",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getSpreadsheetRows",
     description="Returns the rows from a Google Sheet as JSON.",
@@ -143,6 +144,7 @@ def get_rows_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_google_sheets_info",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getGoogleSheetsInfo",
     description="Returns information about Google Sheets, including sheet names and sample data.",
@@ -166,6 +168,7 @@ def get_google_sheets_info_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_sheet_names",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getSheetNames",
     description="Returns the list of sheet names in a Google Sheets document.",
@@ -189,6 +192,7 @@ def get_sheet_names_handler(current_user, data):
 
 @vop(
     path="/google/integrations/insert_rows",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="insertRows",
     description="Inserts multiple new rows into a Google Sheet.",
@@ -233,6 +237,7 @@ def insert_rows_handler(current_user, data):
 
 @vop(
     path="/google/integrations/delete_rows",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="deleteRows",
     description="Deletes a range of rows from a Google Sheet.",
@@ -271,6 +276,7 @@ def delete_rows_handler(current_user, data):
 
 @vop(
     path="/google/integrations/update_rows",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="updateRows",
     description="Updates specified rows in a Google Sheet.",
@@ -307,6 +313,7 @@ def update_rows_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_spreadsheet",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="createSpreadsheet",
     description="Creates a new Google Sheets spreadsheet.",
@@ -330,6 +337,7 @@ def create_spreadsheet_handler(current_user, data):
 
 @vop(
     path="/google/integrations/duplicate_sheet",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="duplicateSheet",
     description="Duplicates a sheet within a Google Sheets spreadsheet.",
@@ -363,6 +371,7 @@ def duplicate_sheet_handler(current_user, data):
 
 @vop(
     path="/google/integrations/rename_sheet",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="renameSheet",
     description="Renames a sheet in a Google Sheets spreadsheet.",
@@ -396,6 +405,7 @@ def rename_sheet_handler(current_user, data):
 
 @vop(
     path="/google/integrations/clear_range",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="clearRange",
     description="Clears a range of cells in a Google Sheets spreadsheet.",
@@ -424,6 +434,7 @@ def clear_range_handler(current_user, data):
 
 @vop(
     path="/google/integrations/apply_formatting",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="applyFormatting",
     description="Applies formatting to a range of cells in a Google Sheets spreadsheet.",
@@ -477,6 +488,7 @@ def apply_formatting_handler(current_user, data):
 
 @vop(
     path="/google/integrations/add_chart",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="addChart",
     description="Adds a chart to a Google Sheets spreadsheet.",
@@ -510,6 +522,7 @@ def add_chart_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_cell_formulas",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="getCellFormulas",
     description="Gets cell formulas for a range in a Google Sheets spreadsheet.",
@@ -538,6 +551,7 @@ def get_cell_formulas_handler(current_user, data):
 
 @vop(
     path="/google/integrations/find_replace",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="findReplace",
     description="Finds and replaces text in a Google Sheets spreadsheet.",
@@ -576,6 +590,7 @@ def find_replace_handler(current_user, data):
 
 @vop(
     path="/google/integrations/sort_range",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="sortRange",
     description="Sorts a range of data in a Google Sheets spreadsheet.",
@@ -629,6 +644,7 @@ def sort_range_handler(current_user, data):
 
 @vop(
     path="/google/integrations/apply_conditional_formatting",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
     name="applyConditionalFormatting",
     description="Applies conditional formatting to a range in a Google Sheets spreadsheet.",
@@ -688,6 +704,7 @@ def apply_conditional_formatting_handler(current_user, data):
 
 @vop(
     path="/google/integrations/execute_query",
+    type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
     name="executeQuery",
     description="Executes a SQL-like query on a Google Sheets spreadsheet.",
@@ -721,6 +738,7 @@ def execute_query_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_new_document",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="createNewDocument",
     description="Creates a new Google Docs document.",
@@ -744,6 +762,7 @@ def create_new_document_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_document_contents",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_read"],
     name="getDocumentContents",
     description="Retrieves the contents of a Google Docs document.",
@@ -767,6 +786,7 @@ def get_document_contents_handler(current_user, data):
 
 @vop(
     path="/google/integrations/insert_text",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="insertText",
     description="Inserts text at a specific location in a Google Docs document.",
@@ -800,6 +820,7 @@ def insert_text_handler(current_user, data):
 
 @vop(
     path="/google/integrations/append_text",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="appendText",
     description="Appends text to the end of a Google Docs document.",
@@ -828,6 +849,7 @@ def append_text_handler(current_user, data):
 
 @vop(
     path="/google/integrations/replace_text",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="replaceText",
     description="Replaces all occurrences of text in a Google Docs document.",
@@ -861,6 +883,7 @@ def replace_text_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_document_outline",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="createDocumentOutline",
     description="Creates an outline in a Google Docs document.",
@@ -903,6 +926,7 @@ def create_document_outline_handler(current_user, data):
 
 @vop(
     path="/google/integrations/export_document",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_read"],
     name="exportDocument",
     description="Exports a Google Docs document to a specified format.",
@@ -931,6 +955,7 @@ def export_document_handler(current_user, data):
 
 @vop(
     path="/google/integrations/share_document",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
     name="shareDocument",
     description="Shares a Google Docs document with another user.",
@@ -964,6 +989,7 @@ def share_document_handler(current_user, data):
 
 @vop(
     path="/google/integrations/find_text_indices",
+    type="integration",
     tags=["default", "integration", "google_docs", "google_docs_read"],
     name="findTextIndices",
     description="Finds the indices of a specific text in a Google Docs document.",
@@ -992,6 +1018,7 @@ def find_text_indices_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_events_between_dates",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventsBetweenDates",
     description="Retrieves events from Google Calendar between two specified dates.",
@@ -1038,6 +1065,7 @@ def get_events_between_dates_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_event",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="createEvent",
     description="Creates a new event in Google Calendar.",
@@ -1084,6 +1112,7 @@ def create_event_handler(current_user, data):
 
 @vop(
     path="/google/integrations/update_event",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="updateEvent",
     description="Updates an existing event in Google Calendar.",
@@ -1112,6 +1141,7 @@ def update_event_handler(current_user, data):
 
 @vop(
     path="/google/integrations/delete_event",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
     name="deleteEvent",
     description="Deletes an event from Google Calendar.",
@@ -1135,6 +1165,7 @@ def delete_event_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_event_details",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventDetails",
     description="Retrieves details of a specific event from Google Calendar.",
@@ -1158,6 +1189,7 @@ def get_event_details_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_events_for_date",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getEventsForDate",
     description="Retrieves events from Google Calendar for a specific date.",
@@ -1199,6 +1231,7 @@ def get_events_for_date_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_free_time_slots",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="getFreeTimeSlots",
     description="Finds free time slots in Google Calendar between two dates.",
@@ -1263,6 +1296,7 @@ def get_free_time_slots_handler(current_user, data):
 
 @vop(
     path="/google/integrations/check_event_conflicts",
+    type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="checkEventConflicts",
     description="Checks for conflicts with existing events in Google Calendar.",
@@ -1297,6 +1331,7 @@ def check_event_conflicts_handler(current_user, data):
 
 @vop(
     path="/google/integrations/list_files",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="listFiles",
     description="Lists files in a specific folder or root directory of Google Drive.",
@@ -1320,6 +1355,7 @@ def list_files_handler(current_user, data):
 
 @vop(
     path="/google/integrations/search_files",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="searchFiles",
     description="Searches for files in Google Drive based on a query. You should know that \"name contains '<query>'\" is added automatically to the query.",
@@ -1343,6 +1379,7 @@ def search_files_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_file_metadata",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileMetadata",
     description="Retrieves metadata for a specific file in Google Drive.",
@@ -1366,6 +1403,7 @@ def get_file_metadata_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_file_content",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileContent",
     description="Gets the content of a file in Google Drive as text.",
@@ -1389,6 +1427,7 @@ def get_file_content_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_file",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createFile",
     description="Creates a new file in Google Drive with the given content.",
@@ -1423,6 +1462,7 @@ def create_file_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_download_link",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getDownloadLink",
     description="Gets the download link for a file in Google Drive.",
@@ -1446,6 +1486,7 @@ def get_download_link_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_shared_link",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createSharedLink",
     description="Creates a shared link for a file in Google Drive with view or edit permissions.",
@@ -1474,6 +1515,7 @@ def create_shared_link_handler(current_user, data):
 
 @vop(
     path="/google/integrations/share_file",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="shareFile",
     description="Shares a file in Google Drive with multiple email addresses.",
@@ -1510,6 +1552,7 @@ def share_file_handler(current_user, data):
 
 @vop(
     path="/google/integrations/convert_file",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="convertFile",
     description="Converts a file in Google Drive to a specified format and returns its download link.",
@@ -1538,6 +1581,7 @@ def convert_file_handler(current_user, data):
 
 @vop(
     path="/google/integrations/list_folders",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="listFolders",
     description="Lists folders in Google Drive, optionally within a specific parent folder.",
@@ -1561,6 +1605,7 @@ def list_folders_handler(current_user, data):
 
 @vop(
     path="/google/integrations/move_item",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="moveItem",
     description="Moves a file or folder to a specified destination folder in Google Drive.",
@@ -1589,6 +1634,7 @@ def move_item_handler(current_user, data):
 
 @vop(
     path="/google/integrations/copy_item",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="copyItem",
     description="Copies a file or folder in Google Drive.",
@@ -1617,6 +1663,7 @@ def copy_item_handler(current_user, data):
 
 @vop(
     path="/google/integrations/rename_item",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="renameItem",
     description="Renames a file or folder in Google Drive.",
@@ -1647,6 +1694,7 @@ def rename_item_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_file_revisions",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getFileRevisions",
     description="Gets the revision history of a file in Google Drive.",
@@ -1671,6 +1719,7 @@ def get_file_revisions_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_folder",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="createFolder",
     description="Creates a new folder in Google Drive.",
@@ -1701,6 +1750,7 @@ def create_folder_handler(current_user, data):
 
 @vop(
     path="/google/integrations/delete_item_permanently",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
     name="deleteItemPermanently",
     description="Permanently deletes a file or folder from Google Drive.",
@@ -1725,6 +1775,7 @@ def delete_item_permanently_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_root_folder_ids",
+    type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
     name="getRootFolderIds",
     description="Retrieves the IDs of root-level folders in Google Drive.",
@@ -1742,6 +1793,7 @@ def get_root_folder_ids_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_form",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="createForm",
     description="Creates a new Google Form.",
@@ -1770,6 +1822,7 @@ def create_form_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_form_details",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getFormDetails",
     description="Retrieves details of a specific Google Form.",
@@ -1793,6 +1846,7 @@ def get_form_details_handler(current_user, data):
 
 @vop(
     path="/google/integrations/add_question",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="addQuestion",
     description="Adds a new question to a Google Form.",
@@ -1838,6 +1892,7 @@ def add_question_handler(current_user, data):
 
 @vop(
     path="/google/integrations/update_question",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="updateQuestion",
     description="Updates an existing question in a Google Form.",
@@ -1883,6 +1938,7 @@ def update_question_handler(current_user, data):
 
 @vop(
     path="/google/integrations/delete_question",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="deleteQuestion",
     description="Deletes a question from a Google Form.",
@@ -1911,6 +1967,7 @@ def delete_question_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_responses",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getResponses",
     description="Retrieves all responses for a Google Form.",
@@ -1934,6 +1991,7 @@ def get_responses_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_response",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getResponse",
     description="Retrieves a specific response from a Google Form.",
@@ -1962,6 +2020,7 @@ def get_response_handler(current_user, data):
 
 @vop(
     path="/google/integrations/set_form_settings",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="setFormSettings",
     description="Updates the settings of a Google Form.",
@@ -1990,6 +2049,7 @@ def set_form_settings_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_form_link",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="getFormLink",
     description="Retrieves the public link for a Google Form.",
@@ -2013,6 +2073,7 @@ def get_form_link_handler(current_user, data):
 
 @vop(
     path="/google/integrations/update_form_info",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
     name="updateFormInfo",
     description="Updates the title and/or description of a Google Form.",
@@ -2046,6 +2107,7 @@ def update_form_info_handler(current_user, data):
 
 @vop(
     path="/google/integrations/list_user_forms",
+    type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
     name="listUserForms",
     description="Lists all forms owned by the current user.",
@@ -2061,6 +2123,7 @@ def list_user_forms_handler(current_user, data):
 
 @vop(
     path="/google/integrations/compose_and_send_email",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="composeAndSendEmail",
     description="Composes and sends an email, with an option to schedule for future.",
@@ -2109,6 +2172,7 @@ def compose_and_send_email_handler(current_user, data):
 
 @vop(
     path="/google/integrations/compose_email_draft",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="composeEmailDraft",
     description="Composes an email draft.",
@@ -2152,6 +2216,7 @@ def compose_email_draft_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_messages_from_date",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getMessagesFromDate",
     description="Gets messages from a specific start date (optional label).",
@@ -2185,6 +2250,7 @@ def get_messages_from_date_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_recent_messages",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getRecentMessages",
     description="Gets the N most recent messages (optional label).",
@@ -2213,6 +2279,7 @@ def get_recent_messages_handler(current_user, data):
 
 @vop(
     path="/google/integrations/search_messages",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="searchMessages",
     description="Searches for messages using the Gmail search language.",
@@ -2236,6 +2303,7 @@ def search_messages_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_attachment_links",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getAttachmentLinks",
     description="Gets links to download attachments for a specific email.",
@@ -2259,6 +2327,7 @@ def get_attachment_links_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_attachment_content",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getAttachmentContent",
     description="Gets the content of a specific attachment.",
@@ -2287,6 +2356,7 @@ def get_attachment_content_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_filter",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createFilter",
     description="Creates a new email filter.",
@@ -2315,6 +2385,7 @@ def create_filter_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_label",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createLabel",
     description="Creates a new label.",
@@ -2338,6 +2409,7 @@ def create_label_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_auto_filter_label_rule",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="createAutoFilterLabelRule",
     description="Creates an auto-filter and label rule.",
@@ -2366,6 +2438,7 @@ def create_auto_filter_label_rule_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_message_details",
+    type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
     name="getMessageDetails",
     description="Gets detailed information, such as body, bcc, sent date, etc. for one or more Gmail messages.",
@@ -2396,6 +2469,7 @@ def get_message_details_handler(current_user, data):
 
 @vop(
     path="/google/integrations/search_contacts",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="searchContacts",
     description="Searches the user's Google Contacts.",
@@ -2425,6 +2499,7 @@ def search_contacts_handler(current_user, data):
 
 @vop(
     path="/google/integrations/get_contact_details",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="getContactDetails",
     description="Gets details for a specific contact.",
@@ -2448,6 +2523,7 @@ def get_contact_details_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_contact",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="createContact",
     description="Creates a new contact.",
@@ -2471,6 +2547,7 @@ def create_contact_handler(current_user, data):
 
 @vop(
     path="/google/integrations/update_contact",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="updateContact",
     description="Updates an existing contact.",
@@ -2499,6 +2576,7 @@ def update_contact_handler(current_user, data):
 
 @vop(
     path="/google/integrations/delete_contact",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="deleteContact",
     description="Deletes a contact.",
@@ -2522,6 +2600,7 @@ def delete_contact_handler(current_user, data):
 
 @vop(
     path="/google/integrations/list_contact_groups",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
     name="listContactGroups",
     description="Lists all contact groups.",
@@ -2537,6 +2616,7 @@ def list_contact_groups_handler(current_user, data):
 
 @vop(
     path="/google/integrations/create_contact_group",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="createContactGroup",
     description="Creates a new contact group.",
@@ -2560,6 +2640,7 @@ def create_contact_group_handler(current_user, data):
 
 @vop(
     path="/google/integrations/update_contact_group",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="updateContactGroup",
     description="Updates an existing contact group.",
@@ -2588,6 +2669,7 @@ def update_contact_group_handler(current_user, data):
 
 @vop(
     path="/google/integrations/delete_contact_group",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="deleteContactGroup",
     description="Deletes a contact group.",
@@ -2611,6 +2693,7 @@ def delete_contact_group_handler(current_user, data):
 
 @vop(
     path="/google/integrations/add_contacts_to_group",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="addContactsToGroup",
     description="Adds contacts to a group.",
@@ -2640,6 +2723,7 @@ def add_contacts_to_group_handler(current_user, data):
 
 @vop(
     path="/google/integrations/remove_contacts_from_group",
+    type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
     name="removeContactsFromGroup",
     description="Removes contacts from a group.",
