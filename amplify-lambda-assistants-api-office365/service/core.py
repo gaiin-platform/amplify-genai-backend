@@ -123,6 +123,7 @@ def route_request(event, context, current_user, name, data):
 ### drive ###
 @vop(
     path="/microsoft/integrations/list_drive_items",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
     name="listDriveItems",
     description="Lists items in the specified OneDrive folder.",
@@ -153,6 +154,7 @@ def list_drive_items_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/upload_file",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="uploadFile",
     description="Uploads a file to OneDrive.",
@@ -187,6 +189,7 @@ def upload_file_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/download_file",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
     name="downloadFile",
     description="Downloads a file from OneDrive.",
@@ -210,6 +213,7 @@ def download_file_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_item",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="deleteItem",
     description="Deletes a file or folder from OneDrive.",
@@ -233,6 +237,7 @@ def delete_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_drive_item",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
     name="getDriveItem",
     description="Retrieves metadata for a specific drive item.",
@@ -253,6 +258,7 @@ def get_drive_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_folder",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="createFolder",
     description="Creates a new folder in OneDrive.",
@@ -275,6 +281,7 @@ def create_folder_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_drive_item",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="updateDriveItem",
     description="Updates metadata for a specific drive item.",
@@ -296,6 +303,7 @@ def update_drive_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/copy_drive_item",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="copyDriveItem",
     description="Copies a drive item to a new location.",
@@ -320,6 +328,7 @@ def copy_drive_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/move_drive_item",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="moveDriveItem",
     description="Moves a drive item to a different folder.",
@@ -341,6 +350,7 @@ def move_drive_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_sharing_link",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
     name="createSharingLink",
     description="Creates a sharing link for a drive item.",
@@ -365,6 +375,7 @@ def create_sharing_link_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/invite_to_drive_item",
+    type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
     name="inviteToDriveItem",
     description="Invites users to access a drive item.",
@@ -398,6 +409,7 @@ def invite_to_drive_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_worksheets",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="listWorksheets",
     description="Lists worksheets in a workbook stored in OneDrive.",
@@ -421,6 +433,7 @@ def list_worksheets_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_tables",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="listTables",
     description="Lists tables in a workbook or specific worksheet.",
@@ -449,6 +462,7 @@ def list_tables_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/add_row_to_table",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="addRowToTable",
     description="Adds a row to a table in the workbook.",
@@ -482,6 +496,7 @@ def add_row_to_table_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/read_range",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="readRange",
     description="Reads a range in the given worksheet.",
@@ -515,6 +530,7 @@ def read_range_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_range",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="updateRange",
     description="Updates a range in the given worksheet.",
@@ -555,6 +571,7 @@ def update_range_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_messages",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="listMessages",
     description="Lists messages in a specified mail folder with pagination and filtering support.",
@@ -598,6 +615,7 @@ def list_messages_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_message_details",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="getMessageDetails",
     description="Gets detailed information about a specific message.",
@@ -627,6 +645,7 @@ def get_message_details_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/send_mail",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="sendMail",
     description="Sends an email with support for CC, BCC, and importance levels.",
@@ -681,6 +700,7 @@ def send_mail_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_message",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="deleteMessage",
     description="Deletes a message.",
@@ -704,6 +724,7 @@ def delete_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_attachments",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="getAttachments",
     description="Gets attachments for a specific message.",
@@ -728,6 +749,7 @@ def get_attachments_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_plans_in_group",
+    type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_read"],
     name="listPlansInGroup",
     description="Retrieves all Planner plans in a specific Microsoft 365 group.",
@@ -751,6 +773,7 @@ def list_plans_in_group_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_buckets_in_plan",
+    type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_read"],
     name="listBucketsInPlan",
     description="Lists all buckets in a plan.",
@@ -774,6 +797,7 @@ def list_buckets_in_plan_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_tasks_in_plan",
+    type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_read"],
     name="listTasksInPlan",
     description="Lists all tasks in a plan with optional detailed information.",
@@ -803,6 +827,7 @@ def list_tasks_in_plan_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_task",
+    type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_write"],
     name="createTask",
     description="Creates a new task in Planner.",
@@ -854,6 +879,7 @@ def create_task_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_task",
+    type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_write"],
     name="updateTask",
     description="Updates a task with ETag concurrency control.",
@@ -887,6 +913,7 @@ def update_task_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_task",
+    type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_write"],
     name="deleteTask",
     description="Deletes a task with ETag concurrency control.",
@@ -917,6 +944,7 @@ def delete_task_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_sites",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
     name="listSites",
     description="Lists SharePoint sites with search and pagination support.",
@@ -954,6 +982,7 @@ def list_sites_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_site_by_path",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
     name="getSiteByPath",
     description="Gets a site by its hostname and optional path.",
@@ -982,6 +1011,7 @@ def get_site_by_path_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_site_lists",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
     name="listSiteLists",
     description="Lists SharePoint lists in a site with pagination.",
@@ -1020,6 +1050,7 @@ def list_site_lists_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_list_items",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
     name="getListItems",
     description="Gets items from a SharePoint list with pagination and filtering.",
@@ -1075,6 +1106,7 @@ def get_list_items_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_list_item",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_write"],
     name="createListItem",
     description="Creates a new item in a SharePoint list.",
@@ -1108,6 +1140,7 @@ def create_list_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_list_item",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_write"],
     name="updateListItem",
     description="Updates an existing SharePoint list item.",
@@ -1147,6 +1180,7 @@ def update_list_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_list_item",
+    type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_write"],
     name="deleteListItem",
     description="Deletes an item from a SharePoint list.",
@@ -1182,6 +1216,7 @@ def delete_list_item_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_teams",
+    type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
     name="listTeams",
     description="Lists teams that the user is a member of.",
@@ -1194,6 +1229,7 @@ def list_teams_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_channels",
+    type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
     name="listChannels",
     description="Lists channels in a team.",
@@ -1217,6 +1253,7 @@ def list_channels_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_channel",
+    type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_write"],
     name="createChannel",
     description="Creates a new channel in a team.",
@@ -1250,6 +1287,7 @@ def create_channel_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/send_channel_message",
+    type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_write"],
     name="sendChannelMessage",
     description="Sends a message to a channel.",
@@ -1291,6 +1329,7 @@ def send_channel_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_chat_messages",
+    type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
     name="getChatMessages",
     description="Gets messages from a chat.",
@@ -1322,6 +1361,7 @@ def get_chat_messages_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/schedule_meeting",
+    type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_write"],
     name="scheduleMeeting",
     description="Schedules a Teams meeting.",
@@ -1370,6 +1410,7 @@ def schedule_meeting_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_users",
+    type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
     name="listUsers",
     description="Lists users with search, pagination and sorting support.",
@@ -1412,6 +1453,7 @@ def list_users_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_user_details",
+    type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
     name="getUserDetails",
     description="Gets detailed information about a specific user.",
@@ -1435,6 +1477,7 @@ def get_user_details_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_groups",
+    type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
     name="listGroups",
     description="Lists groups with filtering and pagination support.",
@@ -1478,6 +1521,7 @@ def list_groups_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_group_details",
+    type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
     name="getGroupDetails",
     description="Gets detailed information about a specific group.",
@@ -1501,6 +1545,7 @@ def get_group_details_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_group",
+    type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_write"],
     name="createGroup",
     description="Creates a new group.",
@@ -1555,6 +1600,7 @@ def create_group_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_group",
+    type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_write"],
     name="deleteGroup",
     description="Deletes a group.",
@@ -1581,6 +1627,7 @@ def delete_group_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_notebooks",
+    type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
     name="listNotebooks",
     description="Lists user's OneNote notebooks with pagination support.",
@@ -1606,6 +1653,7 @@ def list_notebooks_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_sections_in_notebook",
+    type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
     name="listSectionsInNotebook",
     description="Lists sections in a notebook.",
@@ -1629,6 +1677,7 @@ def list_sections_in_notebook_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_pages_in_section",
+    type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
     name="listPagesInSection",
     description="Lists pages in a section.",
@@ -1652,6 +1701,7 @@ def list_pages_in_section_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_page_in_section",
+    type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
     name="createPageInSection",
     description="Creates a new page in a section.",
@@ -1686,6 +1736,7 @@ def create_page_in_section_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_page_content",
+    type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
     name="getPageContent",
     description="Retrieves the HTML content of a page.",
@@ -1709,6 +1760,7 @@ def get_page_content_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_page_with_image_and_attachment",
+    type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
     name="createPageWithImageAndAttachment",
     description="Creates a page with embedded image and file attachment.",
@@ -1778,6 +1830,7 @@ def create_page_with_attachments_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_contacts",
+    type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_read"],
     name="listContacts",
     description="Retrieve a list of contacts with pagination support.",
@@ -1803,6 +1856,7 @@ def list_contacts_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_contact_details",
+    type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_read"],
     name="getContactDetails",
     description="Get details for a specific contact.",
@@ -1826,6 +1880,7 @@ def get_contact_details_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_contact",
+    type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_write"],
     name="createContact",
     description="Create a new contact.",
@@ -1861,6 +1916,7 @@ def create_contact_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_contact",
+    type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_write"],
     name="deleteContact",
     description="Delete a contact.",
@@ -1885,6 +1941,7 @@ def delete_contact_handler(current_user, data):
 ### calendar ###
 @vop(
     path="/microsoft/integrations/create_event",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="createEvent",
     description="Creates a new calendar event.",
@@ -1925,6 +1982,7 @@ def create_event_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_event",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="updateEvent",
     description="Updates an existing calendar event.",
@@ -1953,6 +2011,7 @@ def update_event_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_event",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="deleteEvent",
     description="Deletes a calendar event.",
@@ -1976,6 +2035,7 @@ def delete_event_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_event_details",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="getEventDetails",
     description="Gets details for a specific calendar event.",
@@ -1999,6 +2059,7 @@ def get_event_details_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_events_between_dates",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="getEventsBetweenDates",
     description="Retrieves events between two dates.",
@@ -2036,6 +2097,7 @@ def get_events_between_dates_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_message",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="updateMessage",
     description="Updates a specific message with provided changes.",
@@ -2057,6 +2119,7 @@ def update_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_draft",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="createDraft",
     description="Creates a draft email message.",
@@ -2086,6 +2149,7 @@ def create_draft_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/send_draft",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="sendDraft",
     description="Sends a draft email message.",
@@ -2105,6 +2169,7 @@ def send_draft_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/reply_to_message",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="replyToMessage",
     description="Replies to a specific message.",
@@ -2126,6 +2191,7 @@ def reply_to_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/reply_all_message",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="replyAllMessage",
     description="Replies to all recipients of a specific message.",
@@ -2147,6 +2213,7 @@ def reply_all_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/forward_message",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="forwardMessage",
     description="Forwards a specific message.",
@@ -2170,6 +2237,7 @@ def forward_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/move_message",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="moveMessage",
     description="Moves a specific message to a different folder.",
@@ -2191,6 +2259,7 @@ def move_message_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_folders",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="listFolders",
     # method="GET",
@@ -2202,6 +2271,7 @@ def list_folders_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_folder_details",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="getFolderDetails",
     description="Retrieves details of a specific mail folder.",
@@ -2221,6 +2291,7 @@ def get_folder_details_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/add_attachment",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="addAttachment",
     description="Adds an attachment to a specific message.",
@@ -2248,6 +2319,7 @@ def add_attachment_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_attachment",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
     name="deleteAttachment",
     description="Deletes an attachment from a message.",
@@ -2269,6 +2341,7 @@ def delete_attachment_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/search_messages",
+    type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="searchMessages",
     description="Searches messages for a given query string.",
@@ -2294,6 +2367,7 @@ def search_messages_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_calendar_events",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="listCalendarEvents",
     description="Lists events for a given calendar.",
@@ -2315,6 +2389,7 @@ def list_calendar_events_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_calendars",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="listCalendars",
     # method="GET",
@@ -2328,6 +2403,7 @@ def list_calendars_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_calendar",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="createCalendar",
     description="Creates a new calendar.",
@@ -2351,6 +2427,7 @@ def create_calendar_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_calendar",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="deleteCalendar",
     description="Deletes a calendar.",
@@ -2372,6 +2449,7 @@ def delete_calendar_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/respond_to_event",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="respondToEvent",
     description="Responds to an event invitation.",
@@ -2399,6 +2477,7 @@ def respond_to_event_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/find_meeting_times",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="findMeetingTimes",
     description="Finds available meeting times for a set of attendees.",
@@ -2426,6 +2505,7 @@ def find_meeting_times_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_recurring_event",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="createRecurringEvent",
     description="Creates a recurring calendar event.",
@@ -2455,6 +2535,7 @@ def create_recurring_event_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_recurring_event",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="updateRecurringEvent",
     description="Updates a recurring calendar event.",
@@ -2480,6 +2561,7 @@ def update_recurring_event_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/calendar_add_attachment",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="calendarAddAttachment",
     description="Adds an attachment to a calendar event.",
@@ -2507,6 +2589,7 @@ def calendar_add_attachment_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_event_attachments",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="getEventAttachments",
     description="Retrieves attachments for a calendar event.",
@@ -2528,6 +2611,7 @@ def get_event_attachments_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_event_attachment",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="deleteEventAttachment",
     description="Deletes an attachment from a calendar event.",
@@ -2551,6 +2635,7 @@ def delete_event_attachment_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_calendar_permissions",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="getCalendarPermissions",
     description="Gets sharing permissions for a calendar.",
@@ -2572,6 +2657,7 @@ def get_calendar_permissions_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/share_calendar",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="shareCalendar",
     description="Shares a calendar with another user.",
@@ -2597,6 +2683,7 @@ def share_calendar_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/remove_calendar_sharing",
+    type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="removeCalendarSharing",
     description="Removes sharing permissions from a calendar.",
@@ -2619,6 +2706,7 @@ def remove_calendar_sharing_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_worksheet",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="getWorksheet",
     description="Retrieves details of a specific worksheet.",
@@ -2640,6 +2728,7 @@ def get_worksheet_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_worksheet",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="createWorksheet",
     description="Creates a new worksheet in the workbook.",
@@ -2661,6 +2750,7 @@ def create_worksheet_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_worksheet",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="deleteWorksheet",
     description="Deletes an existing worksheet in the workbook.",
@@ -2682,6 +2772,7 @@ def delete_worksheet_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_table",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="createTable",
     description="Creates a new table in the specified worksheet.",
@@ -2707,6 +2798,7 @@ def create_table_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_table",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="deleteTable",
     description="Deletes an existing table from the workbook.",
@@ -2728,6 +2820,7 @@ def delete_table_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_table_range",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="getTableRange",
     description="Retrieves the data range of a specified table.",
@@ -2749,6 +2842,7 @@ def get_table_range_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_charts",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="listCharts",
     description="Lists all charts in a specified worksheet.",
@@ -2770,6 +2864,7 @@ def list_charts_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_chart",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
     name="getChart",
     description="Retrieves details for a specific chart.",
@@ -2793,6 +2888,7 @@ def get_chart_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_chart",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="createChart",
     description="Creates a new chart in a worksheet.",
@@ -2822,6 +2918,7 @@ def create_chart_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_chart",
+    type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
     name="deleteChart",
     description="Deletes a chart from a worksheet.",
@@ -2845,6 +2942,7 @@ def delete_chart_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/add_comment",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="addComment",
     description="Adds a comment to a specific range in a Word document.",
@@ -2868,6 +2966,7 @@ def add_comment_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_document_statistics",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="getDocumentStatistics",
     description="Gets document statistics including word count, page count, etc.",
@@ -2887,6 +2986,7 @@ def get_document_statistics_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/search_document",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="searchDocument",
     description="Searches for text within a document.",
@@ -2908,6 +3008,7 @@ def search_document_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/apply_formatting",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="applyFormatting",
     description="Applies formatting to a specific range in the document.",
@@ -2931,6 +3032,7 @@ def apply_formatting_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_document_sections",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="getDocumentSections",
     description="Gets all sections/paragraphs in a document.",
@@ -2950,6 +3052,7 @@ def get_document_sections_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/insert_section",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="insertSection",
     description="Inserts a new section/paragraph at a specific position in the document.",
@@ -2973,6 +3076,7 @@ def insert_section_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/replace_text",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="replaceText",
     description="Replaces all occurrences of text in a document.",
@@ -2996,6 +3100,7 @@ def replace_text_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_table",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="createTable",
     description="Inserts a new table into the document.",
@@ -3021,6 +3126,7 @@ def create_table_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_table_cell",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="updateTableCell",
     description="Updates content and formatting of a table cell.",
@@ -3050,6 +3156,7 @@ def update_table_cell_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_list",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="createList",
     description="Creates a bulleted or numbered list in the document.",
@@ -3075,6 +3182,7 @@ def create_list_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/insert_page_break",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="insertPageBreak",
     description="Inserts a page break at the specified position.",
@@ -3096,6 +3204,7 @@ def insert_page_break_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/set_header_footer",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="setHeaderFooter",
     description="Sets the header or footer content for the document.",
@@ -3119,6 +3228,7 @@ def set_header_footer_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/insert_image",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="insertImage",
     description="Inserts an image into the document.",
@@ -3144,6 +3254,7 @@ def insert_image_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_document_versions",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="getDocumentVersions",
     description="Gets version history of a document.",
@@ -3163,6 +3274,7 @@ def get_document_versions_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/restore_version",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="restoreVersion",
     description="Restores a previous version of a document.",
@@ -3184,6 +3296,7 @@ def restore_version_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/delete_document",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="deleteDocument",
     description="Deletes a Word document.",
@@ -3203,6 +3316,7 @@ def delete_document_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/list_documents",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="listDocuments",
     description="Lists Word documents in a folder or root.",
@@ -3221,6 +3335,7 @@ def list_documents_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/share_document",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="shareDocument",
     description="Shares a Word document with another user.",
@@ -3244,6 +3359,7 @@ def share_document_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_document_permissions",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="getDocumentPermissions",
     description="Gets sharing permissions for a document.",
@@ -3263,6 +3379,7 @@ def get_document_permissions_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/remove_permission",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="removePermission",
     description="Removes a sharing permission from a document.",
@@ -3284,6 +3401,7 @@ def remove_permission_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/get_document_content",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
     name="getDocumentContent",
     description="Gets the content of a Word document.",
@@ -3303,6 +3421,7 @@ def get_document_content_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/update_document_content",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="updateDocumentContent",
     description="Updates the content of a Word document.",
@@ -3324,6 +3443,7 @@ def update_document_content_handler(current_user, data):
 
 @vop(
     path="/microsoft/integrations/create_document",
+    type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
     name="createDocument",
     description="Creates a new Word document.",
