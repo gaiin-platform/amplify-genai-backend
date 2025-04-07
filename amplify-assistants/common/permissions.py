@@ -61,6 +61,9 @@ def can_get_group_conversations_data(user, data):
 def can_lookup_assistant(user, data):
     return True
 
+def can_share_assistant(user, data):
+    return True
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -73,7 +76,7 @@ permissions_by_state_type = {
     "/assistant/create": {"create": can_create_assistant},
     "/assistant/list": {"list": can_list_assistant},
     "/assistant/delete": {"delete": can_delete_assistant},
-    "/assistant/share": {"share_assistant": can_create_assistant},
+    "/assistant/share": {"share_assistant": can_share_assistant},
     "/assistant/openai/delete": {"delete": can_delete_assistant},
     "/assistant/openai/thread/delete": {"delete": can_delete_assistant},
     "/assistant/chat/codeinterpreter": {"chat": can_chat_with_code_interpreter},
@@ -100,5 +103,11 @@ permissions_by_state_type = {
     },
     "/assistant/add_path": {
         "add_assistant_path": can_create_assistant
+    },
+    "/assistant/request_access" : {
+        "share_assistant": can_share_assistant
+    },
+    "/assistant/validate/assistant_id" : {
+        "lookup": can_lookup_assistant
     }
 }
