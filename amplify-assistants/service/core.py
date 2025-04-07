@@ -636,12 +636,9 @@ def share_assistant_with(
         return {"success": False, "message": "Assistant not found"}
 
     data_sources = get_data_source_keys(assistant_entry["dataSources"])
-    print("DS: ", data_sources)
+    # print("DS: ", data_sources)
 
-    # Import the function locally to avoid name conflicts
-    from common.object_permissions import can_access_objects as check_access, update_object_permissions as update_permissions
-
-    if not check_access(
+    if not can_access_objects(
         access_token=access_token,
         data_sources=[{"id": assistant_key}],
         permission_level="owner",
@@ -653,7 +650,7 @@ def share_assistant_with(
 
     assistant_public_id = assistant_entry["assistantId"]
 
-    if not update_permissions(
+    if not update_object_permissions(
         access_token=access_token,
         shared_with_users=recipient_users,
         keys=[assistant_public_id],
@@ -668,7 +665,7 @@ def share_assistant_with(
         print(
             f"Update data sources object access permissions for users {recipient_users} for assistant {assistant_public_id}"
         )
-        update_permissions(
+        update_object_permissions(
             access_token=access_token,
             shared_with_users=recipient_users,
             keys=data_sources,
@@ -1149,9 +1146,7 @@ def create_or_update_assistant(
         )
         new_item["version"] = new_version
 
-        # Update permissions for the new assistant using the imported function
-        from common.object_permissions import update_object_permissions as update_permissions
-        if not update_permissions(
+        if not update_object_permissions(
             access_token,
             [user_that_owns_the_assistant],
             [new_item["id"]],
@@ -1215,9 +1210,7 @@ def create_or_update_assistant(
             is_group_sys_user,
         )
 
-        # Update the permissions for the new assistant using the imported function
-        from common.object_permissions import update_object_permissions as update_permissions
-        if not update_permissions(
+        if not update_object_permissions(
             access_token,
             [user_that_owns_the_assistant],
             [new_item["assistantId"], new_item["id"]],
@@ -2298,6 +2291,108 @@ def release_assistant_path(ast_path, assistant_id, current_user):
     except Exception as e:
         print(f"Error removing path '{ast_path}' from lookup table: {str(e)}")
 
+
+@validated(op="share_assistant")  
+def request_assistant_to_public_ast(event, context, current_user, name, data):
+    data = data['data']
+    assistant_id = data['assistantId']
+
+    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
     
+    try:
+        # First, find the current version of the assistant
+        print("Looking up assistant: ", assistant_id)
+        existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+        
+        if not existing_assistant:
+            return {
+                "success": False,
+                "message": f"Assistant not found: {assistant_id}",
+            }
+        
+        if (not existing_assistant.get("data", {}).get("availableOnRequest")):
+                print("Assistant is not available for public request: ", assistant_id)
+                return {
+                    "success": False,
+                    "message": f"Assistant is not available for public request: {assistant_id}",
+                }
     
+        print("Updating assistant permissions for user: ", current_user)
+        object_access_table.put_item(Item={
+                    'object_id': assistant_id,
+                    'principal_id': current_user,
+                    'principal_type':  'user',
+                    'object_type': 'assistant',
+                    'permission_level': 'read',  
+                    'policy': None
+            })
     
+            
+        data_sources = get_data_source_keys(existing_assistant["dataSources"])
+        print("Updating permissions for ast datasources")
+        
+        for ds in data_sources:
+            object_access_table.put_item(Item={
+                    'object_id': ds,
+                    'principal_id': current_user,
+                    'principal_type':  'user',
+                    'object_type': 'datasource',
+                    'permission_level': 'read',  
+                    'policy': None
+            })
+            
+        print(f"Creating alias for user {current_user} for assistant {assistant_id}")
+        create_assistant_alias(
+            current_user,
+            assistant_id,
+            existing_assistant["id"],
+            existing_assistant["version"],
+            "latest",
+            )
+        print(f"Successfully created alias for user {current_user}")
+
+        return {
+            "success": True,
+            "message": f"Assistant id is now available for chat requests via api access: {assistant_id}",
+        }
+            
+        
+    except Exception as e:
+        print(f"Error verifying assistant id: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error verifying assistant id: {str(e)}",
+        }
+
+
+@validated(op="lookup")
+def validate_assistant_id(event, context, current_user, name, data):
+    data = data['data']
+    assistant_id = data['assistantId']
+
+    dynamodb = boto3.resource("dynamodb")
+    assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+    
+    try:
+        # First, find the current version of the assistant
+        existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
+        
+        if not existing_assistant:
+            return {
+                "success": False,
+                "message": f"Assistant not found: {assistant_id}",
+            }
+        
+        return {
+            "success": True,
+            "message": f"Assistant id is a valid assistant: {assistant_id}",
+        }
+    except Exception as e:
+        print(f"Error verifying assistant id: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error verifying assistant id: {str(e)}",
+        }
+        

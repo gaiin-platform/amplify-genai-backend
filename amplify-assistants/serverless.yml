@@ -132,6 +132,24 @@ functions:
           method: post
           cors: true
 
+  request_access_to_astp:
+    handler: service/core.request_assistant_to_public_ast
+    timeout: 30
+    events:
+      - http:
+          path: assistant/request_access 
+          method: post
+          cors: true
+
+  validate_assistant_id:
+    handler: service/core.validate_assistant_id
+    timeout: 30
+    events:
+      - http:
+          path: assistant/validate/assistant_id
+          method: post
+          cors: true
+
   delete_assistant:
     handler: service/core.delete_assistant
     timeout: 30
