@@ -125,7 +125,7 @@ def route_request(event, context, current_user, name, data):
     path="/microsoft/integrations/list_drive_items",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
-    name="listDriveItems",
+    name="microsoftListDriveItems",
     description="Lists items in the specified OneDrive folder.",
     params={
         "folder_id": "ID of the folder to list (default: root) as string",
@@ -156,7 +156,7 @@ def list_drive_items_handler(current_user, data):
     path="/microsoft/integrations/upload_file",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="uploadFile",
+    name="microsoftUploadFile",
     description="Uploads a file to OneDrive.",
     params={
         "file_path": "Path where to store the file (including filename) as string",
@@ -191,7 +191,7 @@ def upload_file_handler(current_user, data):
     path="/microsoft/integrations/download_file",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
-    name="downloadFile",
+    name="microsoftDownloadFile",
     description="Downloads a file from OneDrive.",
     params={
         "item_id": "ID of the file to download as string"
@@ -215,7 +215,7 @@ def download_file_handler(current_user, data):
     path="/microsoft/integrations/delete_item",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="deleteItem",
+    name="microsoftDeleteItem",
     description="Deletes a file or folder from OneDrive.",
     params={
         "item_id": "ID of the item to delete as string"
@@ -239,7 +239,7 @@ def delete_item_handler(current_user, data):
     path="/microsoft/integrations/get_drive_item",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
-    name="getDriveItem",
+    name="microsoftGetDriveItem",
     description="Retrieves metadata for a specific drive item.",
     params={
         "item_id": "ID of the drive item as string"
@@ -260,7 +260,7 @@ def get_drive_item_handler(current_user, data):
     path="/microsoft/integrations/create_folder",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="createFolder",
+    name="microsoftCreateFolder",
     description="Creates a new folder in OneDrive.",
     params={
         "folder_name": "Name of the new folder as string",
@@ -283,7 +283,7 @@ def create_folder_handler(current_user, data):
     path="/microsoft/integrations/update_drive_item",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="updateDriveItem",
+    name="microsoftUpdateDriveItem",
     description="Updates metadata for a specific drive item.",
     params={
         "item_id": "ID of the drive item as string",
@@ -305,7 +305,7 @@ def update_drive_item_handler(current_user, data):
     path="/microsoft/integrations/copy_drive_item",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="copyDriveItem",
+    name="microsoftCopyDriveItem",
     description="Copies a drive item to a new location.",
     params={
         "item_id": "ID of the drive item to copy as string",
@@ -330,7 +330,7 @@ def copy_drive_item_handler(current_user, data):
     path="/microsoft/integrations/move_drive_item",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="moveDriveItem",
+    name="microsoftMoveDriveItem",
     description="Moves a drive item to a different folder.",
     params={
         "item_id": "ID of the drive item to move as string",
@@ -352,7 +352,7 @@ def move_drive_item_handler(current_user, data):
     path="/microsoft/integrations/create_sharing_link",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_read"],
-    name="createSharingLink",
+    name="microsoftCreateSharingLink",
     description="Creates a sharing link for a drive item.",
     params={
         "item_id": "ID of the drive item as string",
@@ -377,7 +377,7 @@ def create_sharing_link_handler(current_user, data):
     path="/microsoft/integrations/invite_to_drive_item",
     type="integration",
     tags=["default", "integration", "microsoft_drive", "microsoft_drive_write"],
-    name="inviteToDriveItem",
+    name="microsoftInviteToDriveItem",
     description="Invites users to access a drive item.",
     params={
         "item_id": "ID of the drive item as string",
@@ -411,7 +411,7 @@ def invite_to_drive_item_handler(current_user, data):
     path="/microsoft/integrations/list_worksheets",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="listWorksheets",
+    name="microsoftListWorksheets",
     description="Lists worksheets in a workbook stored in OneDrive.",
     params={
         "item_id": "OneDrive item ID of the workbook as string"
@@ -435,7 +435,7 @@ def list_worksheets_handler(current_user, data):
     path="/microsoft/integrations/list_tables",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="listTables",
+    name="microsoftListTables",
     description="Lists tables in a workbook or specific worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -464,7 +464,7 @@ def list_tables_handler(current_user, data):
     path="/microsoft/integrations/add_row_to_table",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="addRowToTable",
+    name="microsoftAddRowToTable",
     description="Adds a row to a table in the workbook.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -498,7 +498,7 @@ def add_row_to_table_handler(current_user, data):
     path="/microsoft/integrations/read_range",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="readRange",
+    name="microsoftReadRange",
     description="Reads a range in the given worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -532,7 +532,7 @@ def read_range_handler(current_user, data):
     path="/microsoft/integrations/update_range",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="updateRange",
+    name="microsoftUpdateRange",
     description="Updates a range in the given worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -573,7 +573,7 @@ def update_range_handler(current_user, data):
     path="/microsoft/integrations/list_messages",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
-    name="listMessages",
+    name="microsoftListMessages",
     description="Lists messages in a specified mail folder with pagination and filtering support.",
     params={
         "folder_id": "Folder ID or well-known name (default: Inbox) as string",
@@ -617,7 +617,7 @@ def list_messages_handler(current_user, data):
     path="/microsoft/integrations/get_message_details",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
-    name="getMessageDetails",
+    name="microsoftGetMessageDetails",
     description="Gets detailed information about a specific message.",
     params={
         "message_id": "Message ID as string",
@@ -647,7 +647,7 @@ def get_message_details_handler(current_user, data):
     path="/microsoft/integrations/send_mail",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="sendMail",
+    name="microsoftSendMail",
     description="Sends an email with support for CC, BCC, and importance levels.",
     params={
         "subject": "Email subject as string",
@@ -702,7 +702,7 @@ def send_mail_handler(current_user, data):
     path="/microsoft/integrations/delete_message",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="deleteMessage",
+    name="microsoftDeleteMessage",
     description="Deletes a message.",
     params={
         "message_id": "Message ID to delete as string"
@@ -726,7 +726,7 @@ def delete_message_handler(current_user, data):
     path="/microsoft/integrations/get_attachments",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
-    name="getAttachments",
+    name="microsoftGetAttachments",
     description="Gets attachments for a specific message.",
     params={
         "message_id": "Message ID as string"
@@ -751,7 +751,7 @@ def get_attachments_handler(current_user, data):
     path="/microsoft/integrations/list_plans_in_group",
     type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_read"],
-    name="listPlansInGroup",
+    name="microsoftListPlansInGroup",
     description="Retrieves all Planner plans in a specific Microsoft 365 group.",
     params={
         "group_id": "Microsoft 365 Group ID as string"
@@ -775,7 +775,7 @@ def list_plans_in_group_handler(current_user, data):
     path="/microsoft/integrations/list_buckets_in_plan",
     type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_read"],
-    name="listBucketsInPlan",
+    name="microsoftListBucketsInPlan",
     description="Lists all buckets in a plan.",
     params={
         "plan_id": "Plan ID as string"
@@ -799,7 +799,7 @@ def list_buckets_in_plan_handler(current_user, data):
     path="/microsoft/integrations/list_tasks_in_plan",
     type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_read"],
-    name="listTasksInPlan",
+    name="microsoftListTasksInPlan",
     description="Lists all tasks in a plan with optional detailed information.",
     params={
         "plan_id": "Plan ID as string",
@@ -829,7 +829,7 @@ def list_tasks_in_plan_handler(current_user, data):
     path="/microsoft/integrations/create_task",
     type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_write"],
-    name="createTask",
+    name="microsoftCreateTask",
     description="Creates a new task in Planner.",
     params={
         "plan_id": "Plan ID as string",
@@ -881,7 +881,7 @@ def create_task_handler(current_user, data):
     path="/microsoft/integrations/update_task",
     type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_write"],
-    name="updateTask",
+    name="microsoftUpdateTask",
     description="Updates a task with ETag concurrency control.",
     params={
         "task_id": "Task ID as string",
@@ -915,7 +915,7 @@ def update_task_handler(current_user, data):
     path="/microsoft/integrations/delete_task",
     type="integration",
     tags=["default", "integration", "microsoft_planner", "microsoft_planner_write"],
-    name="deleteTask",
+    name="microsoftDeleteTask",
     description="Deletes a task with ETag concurrency control.",
     params={
         "task_id": "Task ID as string",
@@ -946,7 +946,7 @@ def delete_task_handler(current_user, data):
     path="/microsoft/integrations/list_sites",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
-    name="listSites",
+    name="microsoftListSites",
     description="Lists SharePoint sites with search and pagination support.",
     params={
         "search_query": "Optional search term as string",
@@ -984,7 +984,7 @@ def list_sites_handler(current_user, data):
     path="/microsoft/integrations/get_site_by_path",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
-    name="getSiteByPath",
+    name="microsoftGetSiteByPath",
     description="Gets a site by its hostname and optional path.",
     params={
         "hostname": "SharePoint hostname as string",
@@ -1013,7 +1013,7 @@ def get_site_by_path_handler(current_user, data):
     path="/microsoft/integrations/list_site_lists",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
-    name="listSiteLists",
+    name="microsoftListSiteLists",
     description="Lists SharePoint lists in a site with pagination.",
     params={
         "site_id": "Site ID as string",
@@ -1052,7 +1052,7 @@ def list_site_lists_handler(current_user, data):
     path="/microsoft/integrations/get_list_items",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_read"],
-    name="getListItems",
+    name="microsoftGetListItems",
     description="Gets items from a SharePoint list with pagination and filtering.",
     params={
         "site_id": "Site ID as string",
@@ -1108,7 +1108,7 @@ def get_list_items_handler(current_user, data):
     path="/microsoft/integrations/create_list_item",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_write"],
-    name="createListItem",
+    name="microsoftCreateListItem",
     description="Creates a new item in a SharePoint list.",
     params={
         "site_id": "Site ID as string",
@@ -1142,7 +1142,7 @@ def create_list_item_handler(current_user, data):
     path="/microsoft/integrations/update_list_item",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_write"],
-    name="updateListItem",
+    name="microsoftUpdateListItem",
     description="Updates an existing SharePoint list item.",
     params={
         "site_id": "Site ID as string",
@@ -1182,7 +1182,7 @@ def update_list_item_handler(current_user, data):
     path="/microsoft/integrations/delete_list_item",
     type="integration",
     tags=["default", "integration", "microsoft_sharepoint", "microsoft_sharepoint_write"],
-    name="deleteListItem",
+    name="microsoftDeleteListItem",
     description="Deletes an item from a SharePoint list.",
     params={
         "site_id": "Site ID as string",
@@ -1218,7 +1218,7 @@ def delete_list_item_handler(current_user, data):
     path="/microsoft/integrations/list_teams",
     type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
-    name="listTeams",
+    name="microsoftListTeams",
     description="Lists teams that the user is a member of.",
     # method="GET",
     schema={}
@@ -1231,7 +1231,7 @@ def list_teams_handler(current_user, data):
     path="/microsoft/integrations/list_channels",
     type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
-    name="listChannels",
+    name="microsoftListChannels",
     description="Lists channels in a team.",
     params={
         "team_id": "Team ID as string"
@@ -1255,7 +1255,7 @@ def list_channels_handler(current_user, data):
     path="/microsoft/integrations/create_channel",
     type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_write"],
-    name="createChannel",
+    name="microsoftCreateChannel",
     description="Creates a new channel in a team.",
     params={
         "team_id": "Team ID as string",
@@ -1289,7 +1289,7 @@ def create_channel_handler(current_user, data):
     path="/microsoft/integrations/send_channel_message",
     type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_write"],
-    name="sendChannelMessage",
+    name="microsoftSendChannelMessage",
     description="Sends a message to a channel.",
     params={
         "team_id": "Team ID as string",
@@ -1331,7 +1331,7 @@ def send_channel_message_handler(current_user, data):
     path="/microsoft/integrations/get_chat_messages",
     type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
-    name="getChatMessages",
+    name="microsoftGetChatMessages",
     description="Gets messages from a chat.",
     params={
         "chat_id": "Chat ID as string",
@@ -1363,7 +1363,7 @@ def get_chat_messages_handler(current_user, data):
     path="/microsoft/integrations/schedule_meeting",
     type="integration",
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_write"],
-    name="scheduleMeeting",
+    name="microsoftScheduleMeeting",
     description="Schedules a Teams meeting.",
     params={
         "team_id": "Team ID as string",
@@ -1412,7 +1412,7 @@ def schedule_meeting_handler(current_user, data):
     path="/microsoft/integrations/list_users",
     type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
-    name="listUsers",
+    name="microsoftListUsers",
     description="Lists users with search, pagination and sorting support.",
     params={
         "search_query": "Optional search term as string",
@@ -1455,7 +1455,7 @@ def list_users_handler(current_user, data):
     path="/microsoft/integrations/get_user_details",
     type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
-    name="getUserDetails",
+    name="microsoftGetUserDetails",
     description="Gets detailed information about a specific user.",
     params={
         "user_id": "User ID as string"
@@ -1479,7 +1479,7 @@ def get_user_details_handler(current_user, data):
     path="/microsoft/integrations/list_groups",
     type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
-    name="listGroups",
+    name="microsoftListGroups",
     description="Lists groups with filtering and pagination support.",
     params={
         "search_query": "Optional search term as string",
@@ -1523,7 +1523,7 @@ def list_groups_handler(current_user, data):
     path="/microsoft/integrations/get_group_details",
     type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_read"],
-    name="getGroupDetails",
+    name="microsoftGetGroupDetails",
     description="Gets detailed information about a specific group.",
     params={
         "group_id": "Group ID as string"
@@ -1547,7 +1547,7 @@ def get_group_details_handler(current_user, data):
     path="/microsoft/integrations/create_group",
     type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_write"],
-    name="createGroup",
+    name="microsoftCreateGroup",
     description="Creates a new group.",
     params={
         "display_name": "Group display name as string",
@@ -1602,7 +1602,7 @@ def create_group_handler(current_user, data):
     path="/microsoft/integrations/delete_group",
     type="integration",
     tags=["default", "integration", "microsoft_user_groups", "microsoft_user_groups_write"],
-    name="deleteGroup",
+    name="microsoftDeleteGroup",
     description="Deletes a group.",
     params={
         "group_id": "Group ID to delete as string"
@@ -1629,7 +1629,7 @@ def delete_group_handler(current_user, data):
     path="/microsoft/integrations/list_notebooks",
     type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
-    name="listNotebooks",
+    name="microsoftListNotebooks",
     description="Lists user's OneNote notebooks with pagination support.",
     params={
         "top": "Maximum number of notebooks to retrieve as integer"
@@ -1655,7 +1655,7 @@ def list_notebooks_handler(current_user, data):
     path="/microsoft/integrations/list_sections_in_notebook",
     type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
-    name="listSectionsInNotebook",
+    name="microsoftListSectionsInNotebook",
     description="Lists sections in a notebook.",
     params={
         "notebook_id": "Notebook ID as string"
@@ -1679,7 +1679,7 @@ def list_sections_in_notebook_handler(current_user, data):
     path="/microsoft/integrations/list_pages_in_section",
     type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
-    name="listPagesInSection",
+    name="microsoftListPagesInSection",
     description="Lists pages in a section.",
     params={
         "section_id": "Section ID as string"
@@ -1703,7 +1703,7 @@ def list_pages_in_section_handler(current_user, data):
     path="/microsoft/integrations/create_page_in_section",
     type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
-    name="createPageInSection",
+    name="microsoftCreatePageInSection",
     description="Creates a new page in a section.",
     params={
         "section_id": "Section ID as string",
@@ -1738,7 +1738,7 @@ def create_page_in_section_handler(current_user, data):
     path="/microsoft/integrations/get_page_content",
     type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_read"],
-    name="getPageContent",
+    name="microsoftGetPageContent",
     description="Retrieves the HTML content of a page.",
     params={
         "page_id": "Page ID as string"
@@ -1762,7 +1762,7 @@ def get_page_content_handler(current_user, data):
     path="/microsoft/integrations/create_page_with_image_and_attachment",
     type="integration",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
-    name="createPageWithImageAndAttachment",
+    name="microsoftCreatePageWithImageAndAttachment",
     description="Creates a page with embedded image and file attachment.",
     params={
         "section_id": "Section ID as string",
@@ -1832,7 +1832,7 @@ def create_page_with_attachments_handler(current_user, data):
     path="/microsoft/integrations/list_contacts",
     type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_read"],
-    name="listContacts",
+    name="microsoftListContacts",
     description="Retrieve a list of contacts with pagination support.",
     params={
         "page_size": "Number of contacts to retrieve per page as integer"
@@ -1858,7 +1858,7 @@ def list_contacts_handler(current_user, data):
     path="/microsoft/integrations/get_contact_details",
     type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_read"],
-    name="getContactDetails",
+    name="microsoftGetContactDetails",
     description="Get details for a specific contact.",
     params={
         "contact_id": "Contact ID to retrieve as string"
@@ -1882,7 +1882,7 @@ def get_contact_details_handler(current_user, data):
     path="/microsoft/integrations/create_contact",
     type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_write"],
-    name="createContact",
+    name="microsoftCreateContact",
     description="Create a new contact.",
     params={
         "given_name": "Contact's first name as string",
@@ -1911,14 +1911,14 @@ def get_contact_details_handler(current_user, data):
 )
 # @validated("create_contact")
 def create_contact_handler(current_user, data):
-    return common_handler(create_contact, given_name="", surname="", 
+    return common_handler(create_contact, given_name="microsoft", surname="microsoft", 
                         email_addresses=None)(current_user, data)
 
 @vop(
     path="/microsoft/integrations/delete_contact",
     type="integration",
     tags=["default", "integration", "microsoft_contacts", "microsoft_contacts_write"],
-    name="deleteContact",
+    name="microsoftDeleteContact",
     description="Delete a contact.",
     params={
         "contact_id": "Contact ID to delete as string"
@@ -1943,7 +1943,7 @@ def delete_contact_handler(current_user, data):
     path="/microsoft/integrations/create_event",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="createEvent",
+    name="microsoftCreateEvent",
     description="Creates a new calendar event.",
     params={
         "title": "Event title as string",
@@ -1984,7 +1984,7 @@ def create_event_handler(current_user, data):
     path="/microsoft/integrations/update_event",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="updateEvent",
+    name="microsoftUpdateEvent",
     description="Updates an existing calendar event.",
     params={
         "event_id": "Event ID to update as string",
@@ -2013,7 +2013,7 @@ def update_event_handler(current_user, data):
     path="/microsoft/integrations/delete_event",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="deleteEvent",
+    name="microsoftDeleteEvent",
     description="Deletes a calendar event.",
     params={
         "event_id": "Event ID to delete as string"
@@ -2037,7 +2037,7 @@ def delete_event_handler(current_user, data):
     path="/microsoft/integrations/get_event_details",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="getEventDetails",
+    name="microsoftGetEventDetails",
     description="Gets details for a specific calendar event.",
     params={
         "event_id": "Event ID to retrieve as string"
@@ -2061,7 +2061,7 @@ def get_event_details_handler(current_user, data):
     path="/microsoft/integrations/get_events_between_dates",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="getEventsBetweenDates",
+    name="microsoftGetEventsBetweenDates",
     description="Retrieves events between two dates.",
     params={
         "start_dt": "Start datetime in ISO format as string",
@@ -2099,7 +2099,7 @@ def get_events_between_dates_handler(current_user, data):
     path="/microsoft/integrations/update_message",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="updateMessage",
+    name="microsoftUpdateMessage",
     description="Updates a specific message with provided changes.",
     params={
         "message_id": "ID of the message to update as string",
@@ -2121,7 +2121,7 @@ def update_message_handler(current_user, data):
     path="/microsoft/integrations/create_draft",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="createDraft",
+    name="microsoftCreateDraft",
     description="Creates a draft email message.",
     params={
         "subject": "Draft email subject as string",
@@ -2151,7 +2151,7 @@ def create_draft_handler(current_user, data):
     path="/microsoft/integrations/send_draft",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="sendDraft",
+    name="microsoftSendDraft",
     description="Sends a draft email message.",
     params={
         "message_id": "ID of the draft message to send as string"
@@ -2171,7 +2171,7 @@ def send_draft_handler(current_user, data):
     path="/microsoft/integrations/reply_to_message",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="replyToMessage",
+    name="microsoftReplyToMessage",
     description="Replies to a specific message.",
     params={
         "message_id": "ID of the message to reply to as string",
@@ -2193,7 +2193,7 @@ def reply_to_message_handler(current_user, data):
     path="/microsoft/integrations/reply_all_message",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="replyAllMessage",
+    name="microsoftReplyAllMessage",
     description="Replies to all recipients of a specific message.",
     params={
         "message_id": "ID of the message to reply to as string",
@@ -2215,7 +2215,7 @@ def reply_all_message_handler(current_user, data):
     path="/microsoft/integrations/forward_message",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="forwardMessage",
+    name="microsoftForwardMessage",
     description="Forwards a specific message.",
     params={
         "message_id": "ID of the message to forward as string",
@@ -2239,7 +2239,7 @@ def forward_message_handler(current_user, data):
     path="/microsoft/integrations/move_message",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="moveMessage",
+    name="microsoftMoveMessage",
     description="Moves a specific message to a different folder.",
     params={
         "message_id": "ID of the message to move as string",
@@ -2261,7 +2261,7 @@ def move_message_handler(current_user, data):
     path="/microsoft/integrations/list_folders",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
-    name="listFolders",
+    name="microsoftListFolders",
     # method="GET",
     description="Lists all mail folders.",
     schema={}
@@ -2273,7 +2273,7 @@ def list_folders_handler(current_user, data):
     path="/microsoft/integrations/get_folder_details",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
-    name="getFolderDetails",
+    name="microsoftGetFolderDetails",
     description="Retrieves details of a specific mail folder.",
     params={
         "folder_id": "Folder ID as string"
@@ -2293,7 +2293,7 @@ def get_folder_details_handler(current_user, data):
     path="/microsoft/integrations/add_attachment",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="addAttachment",
+    name="microsoftAddAttachment",
     description="Adds an attachment to a specific message.",
     params={
         "message_id": "Message ID as string",
@@ -2321,7 +2321,7 @@ def add_attachment_handler(current_user, data):
     path="/microsoft/integrations/delete_attachment",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_write"],
-    name="deleteAttachment",
+    name="microsoftDeleteAttachment",
     description="Deletes an attachment from a message.",
     params={
         "message_id": "Message ID as string",
@@ -2343,7 +2343,7 @@ def delete_attachment_handler(current_user, data):
     path="/microsoft/integrations/search_messages",
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
-    name="searchMessages",
+    name="microsoftSearchMessages",
     description="Searches messages for a given query string.",
     params={
         "search_query": "Query string to search messages as string",
@@ -2369,7 +2369,7 @@ def search_messages_handler(current_user, data):
     path="/microsoft/integrations/list_calendar_events",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="listCalendarEvents",
+    name="microsoftListCalendarEvents",
     description="Lists events for a given calendar.",
     params={
         "calendar_id": "ID of the calendar to list events from as string"
@@ -2391,7 +2391,7 @@ def list_calendar_events_handler(current_user, data):
     path="/microsoft/integrations/list_calendars",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="listCalendars",
+    name="microsoftListCalendars",
     # method="GET",
     description="Lists all calendars in the user's mailbox.",
     schema={}
@@ -2405,7 +2405,7 @@ def list_calendars_handler(current_user, data):
     path="/microsoft/integrations/create_calendar",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="createCalendar",
+    name="microsoftCreateCalendar",
     description="Creates a new calendar.",
     params={
         "name": "Name of the new calendar as string",
@@ -2429,7 +2429,7 @@ def create_calendar_handler(current_user, data):
     path="/microsoft/integrations/delete_calendar",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="deleteCalendar",
+    name="microsoftDeleteCalendar",
     description="Deletes a calendar.",
     params={
         "calendar_id": "ID of the calendar to delete as string"
@@ -2451,7 +2451,7 @@ def delete_calendar_handler(current_user, data):
     path="/microsoft/integrations/respond_to_event",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="respondToEvent",
+    name="microsoftRespondToEvent",
     description="Responds to an event invitation.",
     params={
         "event_id": "ID of the event as string",
@@ -2479,7 +2479,7 @@ def respond_to_event_handler(current_user, data):
     path="/microsoft/integrations/find_meeting_times",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="findMeetingTimes",
+    name="microsoftFindMeetingTimes",
     description="Finds available meeting times for a set of attendees.",
     params={
         "attendees": "List of attendee objects with email addresses as array",
@@ -2507,7 +2507,7 @@ def find_meeting_times_handler(current_user, data):
     path="/microsoft/integrations/create_recurring_event",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="createRecurringEvent",
+    name="microsoftCreateRecurringEvent",
     description="Creates a recurring calendar event.",
     params={
         "title": "Event title as string",
@@ -2537,7 +2537,7 @@ def create_recurring_event_handler(current_user, data):
     path="/microsoft/integrations/update_recurring_event",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="updateRecurringEvent",
+    name="microsoftUpdateRecurringEvent",
     description="Updates a recurring calendar event.",
     params={
         "event_id": "ID of the recurring event as string",
@@ -2563,7 +2563,7 @@ def update_recurring_event_handler(current_user, data):
     path="/microsoft/integrations/calendar_add_attachment",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="calendarAddAttachment",
+    name="microsoftCalendarAddAttachment",
     description="Adds an attachment to a calendar event.",
     params={
         "event_id": "Event ID as string",
@@ -2591,7 +2591,7 @@ def calendar_add_attachment_handler(current_user, data):
     path="/microsoft/integrations/get_event_attachments",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="getEventAttachments",
+    name="microsoftGetEventAttachments",
     description="Retrieves attachments for a calendar event.",
     params={
         "event_id": "Event ID as string"
@@ -2613,7 +2613,7 @@ def get_event_attachments_handler(current_user, data):
     path="/microsoft/integrations/delete_event_attachment",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="deleteEventAttachment",
+    name="microsoftDeleteEventAttachment",
     description="Deletes an attachment from a calendar event.",
     params={
         "event_id": "Event ID as string",
@@ -2637,7 +2637,7 @@ def delete_event_attachment_handler(current_user, data):
     path="/microsoft/integrations/get_calendar_permissions",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
-    name="getCalendarPermissions",
+    name="microsoftGetCalendarPermissions",
     description="Gets sharing permissions for a calendar.",
     params={
         "calendar_id": "Calendar ID as string"
@@ -2659,7 +2659,7 @@ def get_calendar_permissions_handler(current_user, data):
     path="/microsoft/integrations/share_calendar",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="shareCalendar",
+    name="microsoftShareCalendar",
     description="Shares a calendar with another user.",
     params={
         "calendar_id": "Calendar ID as string",
@@ -2685,7 +2685,7 @@ def share_calendar_handler(current_user, data):
     path="/microsoft/integrations/remove_calendar_sharing",
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
-    name="removeCalendarSharing",
+    name="microsoftRemoveCalendarSharing",
     description="Removes sharing permissions from a calendar.",
     params={
         "calendar_id": "Calendar ID as string",
@@ -2708,7 +2708,7 @@ def remove_calendar_sharing_handler(current_user, data):
     path="/microsoft/integrations/get_worksheet",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="getWorksheet",
+    name="microsoftGetWorksheet",
     description="Retrieves details of a specific worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2730,7 +2730,7 @@ def get_worksheet_handler(current_user, data):
     path="/microsoft/integrations/create_worksheet",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="createWorksheet",
+    name="microsoftCreateWorksheet",
     description="Creates a new worksheet in the workbook.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2752,7 +2752,7 @@ def create_worksheet_handler(current_user, data):
     path="/microsoft/integrations/delete_worksheet",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="deleteWorksheet",
+    name="microsoftDeleteWorksheet",
     description="Deletes an existing worksheet in the workbook.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2774,7 +2774,7 @@ def delete_worksheet_handler(current_user, data):
     path="/microsoft/integrations/create_table",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="createTable",
+    name="microsoftCreateTable",
     description="Creates a new table in the specified worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2800,7 +2800,7 @@ def create_table_handler(current_user, data):
     path="/microsoft/integrations/delete_table",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="deleteTable",
+    name="microsoftDeleteTable",
     description="Deletes an existing table from the workbook.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2822,7 +2822,7 @@ def delete_table_handler(current_user, data):
     path="/microsoft/integrations/get_table_range",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="getTableRange",
+    name="microsoftGetTableRange",
     description="Retrieves the data range of a specified table.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2844,7 +2844,7 @@ def get_table_range_handler(current_user, data):
     path="/microsoft/integrations/list_charts",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="listCharts",
+    name="microsoftListCharts",
     description="Lists all charts in a specified worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2866,7 +2866,7 @@ def list_charts_handler(current_user, data):
     path="/microsoft/integrations/get_chart",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_read"],
-    name="getChart",
+    name="microsoftGetChart",
     description="Retrieves details for a specific chart.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2890,7 +2890,7 @@ def get_chart_handler(current_user, data):
     path="/microsoft/integrations/create_chart",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="createChart",
+    name="microsoftCreateChart",
     description="Creates a new chart in a worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2920,7 +2920,7 @@ def create_chart_handler(current_user, data):
     path="/microsoft/integrations/delete_chart",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="deleteChart",
+    name="microsoftDeleteChart",
     description="Deletes a chart from a worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2944,7 +2944,7 @@ def delete_chart_handler(current_user, data):
     path="/microsoft/integrations/add_comment",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="addComment",
+    name="microsoftAddComment",
     description="Adds a comment to a specific range in a Word document.",
     params={
         "document_id": "Document ID as string",
@@ -2968,7 +2968,7 @@ def add_comment_handler(current_user, data):
     path="/microsoft/integrations/get_document_statistics",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="getDocumentStatistics",
+    name="microsoftGetDocumentStatistics",
     description="Gets document statistics including word count, page count, etc.",
     params={
         "document_id": "Document ID as string"
@@ -2988,7 +2988,7 @@ def get_document_statistics_handler(current_user, data):
     path="/microsoft/integrations/search_document",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="searchDocument",
+    name="microsoftSearchDocument",
     description="Searches for text within a document.",
     params={
         "document_id": "Document ID as string",
@@ -3010,7 +3010,7 @@ def search_document_handler(current_user, data):
     path="/microsoft/integrations/apply_formatting",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="applyFormatting",
+    name="microsoftApplyFormatting",
     description="Applies formatting to a specific range in the document.",
     params={
         "document_id": "Document ID as string",
@@ -3034,7 +3034,7 @@ def apply_formatting_handler(current_user, data):
     path="/microsoft/integrations/get_document_sections",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="getDocumentSections",
+    name="microsoftGetDocumentSections",
     description="Gets all sections/paragraphs in a document.",
     params={
         "document_id": "Document ID as string"
@@ -3054,7 +3054,7 @@ def get_document_sections_handler(current_user, data):
     path="/microsoft/integrations/insert_section",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="insertSection",
+    name="microsoftInsertSection",
     description="Inserts a new section/paragraph at a specific position in the document.",
     params={
         "document_id": "Document ID as string",
@@ -3078,7 +3078,7 @@ def insert_section_handler(current_user, data):
     path="/microsoft/integrations/replace_text",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="replaceText",
+    name="microsoftReplaceText",
     description="Replaces all occurrences of text in a document.",
     params={
         "document_id": "Document ID as string",
@@ -3102,7 +3102,7 @@ def replace_text_handler(current_user, data):
     path="/microsoft/integrations/create_table",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="createTable",
+    name="microsoftCreateTable",
     description="Inserts a new table into the document.",
     params={
         "document_id": "Document ID as string",
@@ -3128,7 +3128,7 @@ def create_table_handler(current_user, data):
     path="/microsoft/integrations/update_table_cell",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="updateTableCell",
+    name="microsoftUpdateTableCell",
     description="Updates content and formatting of a table cell.",
     params={
         "document_id": "Document ID as string",
@@ -3158,7 +3158,7 @@ def update_table_cell_handler(current_user, data):
     path="/microsoft/integrations/create_list",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="createList",
+    name="microsoftCreateList",
     description="Creates a bulleted or numbered list in the document.",
     params={
         "document_id": "Document ID as string",
@@ -3184,7 +3184,7 @@ def create_list_handler(current_user, data):
     path="/microsoft/integrations/insert_page_break",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="insertPageBreak",
+    name="microsoftInsertPageBreak",
     description="Inserts a page break at the specified position.",
     params={
         "document_id": "Document ID as string",
@@ -3206,7 +3206,7 @@ def insert_page_break_handler(current_user, data):
     path="/microsoft/integrations/set_header_footer",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="setHeaderFooter",
+    name="microsoftSetHeaderFooter",
     description="Sets the header or footer content for the document.",
     params={
         "document_id": "Document ID as string",
@@ -3230,7 +3230,7 @@ def set_header_footer_handler(current_user, data):
     path="/microsoft/integrations/insert_image",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="insertImage",
+    name="microsoftInsertImage",
     description="Inserts an image into the document.",
     params={
         "document_id": "Document ID as string",
@@ -3256,7 +3256,7 @@ def insert_image_handler(current_user, data):
     path="/microsoft/integrations/get_document_versions",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="getDocumentVersions",
+    name="microsoftGetDocumentVersions",
     description="Gets version history of a document.",
     params={
         "document_id": "Document ID as string"
@@ -3276,7 +3276,7 @@ def get_document_versions_handler(current_user, data):
     path="/microsoft/integrations/restore_version",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="restoreVersion",
+    name="microsoftRestoreVersion",
     description="Restores a previous version of a document.",
     params={
         "document_id": "Document ID as string",
@@ -3298,7 +3298,7 @@ def restore_version_handler(current_user, data):
     path="/microsoft/integrations/delete_document",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="deleteDocument",
+    name="microsoftDeleteDocument",
     description="Deletes a Word document.",
     params={
         "document_id": "Document ID as string"
@@ -3318,7 +3318,7 @@ def delete_document_handler(current_user, data):
     path="/microsoft/integrations/list_documents",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="listDocuments",
+    name="microsoftListDocuments",
     description="Lists Word documents in a folder or root.",
     params={
         "folder_path": "Folder path as string"
@@ -3337,7 +3337,7 @@ def list_documents_handler(current_user, data):
     path="/microsoft/integrations/share_document",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="shareDocument",
+    name="microsoftShareDocument",
     description="Shares a Word document with another user.",
     params={
         "document_id": "Document ID as string",
@@ -3361,7 +3361,7 @@ def share_document_handler(current_user, data):
     path="/microsoft/integrations/get_document_permissions",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="getDocumentPermissions",
+    name="microsoftGetDocumentPermissions",
     description="Gets sharing permissions for a document.",
     params={
         "document_id": "Document ID as string"
@@ -3381,7 +3381,7 @@ def get_document_permissions_handler(current_user, data):
     path="/microsoft/integrations/remove_permission",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="removePermission",
+    name="microsoftRemovePermission",
     description="Removes a sharing permission from a document.",
     params={
         "document_id": "Document ID as string",
@@ -3403,7 +3403,7 @@ def remove_permission_handler(current_user, data):
     path="/microsoft/integrations/get_document_content",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_read"],
-    name="getDocumentContent",
+    name="microsoftGetDocumentContent",
     description="Gets the content of a Word document.",
     params={
         "document_id": "Document ID as string"
@@ -3423,7 +3423,7 @@ def get_document_content_handler(current_user, data):
     path="/microsoft/integrations/update_document_content",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="updateDocumentContent",
+    name="microsoftUpdateDocumentContent",
     description="Updates the content of a Word document.",
     params={
         "document_id": "Document ID as string",
@@ -3445,7 +3445,7 @@ def update_document_content_handler(current_user, data):
     path="/microsoft/integrations/create_document",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="createDocument",
+    name="microsoftCreateDocument",
     description="Creates a new Word document.",
     params={
         "name": "Name of the document as string",
