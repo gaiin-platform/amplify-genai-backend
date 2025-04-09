@@ -117,7 +117,7 @@ def route_request(event, context, current_user, name, data):
     path="/google/integrations/get_rows",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
-    name="getSpreadsheetRows",
+    name="googleGetSpreadsheetRows",
     description="Returns the rows from a Google Sheet as JSON.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string",
@@ -146,7 +146,7 @@ def get_rows_handler(current_user, data):
     path="/google/integrations/get_google_sheets_info",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
-    name="getGoogleSheetsInfo",
+    name="googleGetGoogleSheetsInfo",
     description="Returns information about Google Sheets, including sheet names and sample data.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string"
@@ -170,7 +170,7 @@ def get_google_sheets_info_handler(current_user, data):
     path="/google/integrations/get_sheet_names",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
-    name="getSheetNames",
+    name="googleGetSheetNames",
     description="Returns the list of sheet names in a Google Sheets document.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string"
@@ -194,7 +194,7 @@ def get_sheet_names_handler(current_user, data):
     path="/google/integrations/insert_rows",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="insertRows",
+    name="googleInsertRows",
     description="Inserts multiple new rows into a Google Sheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string",
@@ -239,7 +239,7 @@ def insert_rows_handler(current_user, data):
     path="/google/integrations/delete_rows",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="deleteRows",
+    name="googleDeleteRows",
     description="Deletes a range of rows from a Google Sheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string",
@@ -278,7 +278,7 @@ def delete_rows_handler(current_user, data):
     path="/google/integrations/update_rows",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="updateRows",
+    name="googleUpdateRows",
     description="Updates specified rows in a Google Sheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet as a string",
@@ -315,7 +315,7 @@ def update_rows_handler(current_user, data):
     path="/google/integrations/create_spreadsheet",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="createSpreadsheet",
+    name="googleCreateSpreadsheet",
     description="Creates a new Google Sheets spreadsheet.",
     params={
         "title": "The title of the new spreadsheet"
@@ -339,7 +339,7 @@ def create_spreadsheet_handler(current_user, data):
     path="/google/integrations/duplicate_sheet",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="duplicateSheet",
+    name="googleDuplicateSheet",
     description="Duplicates a sheet within a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -373,7 +373,7 @@ def duplicate_sheet_handler(current_user, data):
     path="/google/integrations/rename_sheet",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="renameSheet",
+    name="googleRenameSheet",
     description="Renames a sheet in a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -407,7 +407,7 @@ def rename_sheet_handler(current_user, data):
     path="/google/integrations/clear_range",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="clearRange",
+    name="googleClearRange",
     description="Clears a range of cells in a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -436,7 +436,7 @@ def clear_range_handler(current_user, data):
     path="/google/integrations/apply_formatting",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="applyFormatting",
+    name="googleApplyFormatting",
     description="Applies formatting to a range of cells in a Google Sheets spreadsheet.",
     params={    
         "spreadsheetId": "The ID of the spreadsheet",
@@ -490,7 +490,7 @@ def apply_formatting_handler(current_user, data):
     path="/google/integrations/add_chart",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="addChart",
+    name="googleAddChart",
     description="Adds a chart to a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -524,7 +524,7 @@ def add_chart_handler(current_user, data):
     path="/google/integrations/get_cell_formulas",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
-    name="getCellFormulas",
+    name="googleGetCellFormulas",
     description="Gets cell formulas for a range in a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -553,7 +553,7 @@ def get_cell_formulas_handler(current_user, data):
     path="/google/integrations/find_replace",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="findReplace",
+    name="googleFindReplace",
     description="Finds and replaces text in a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -592,7 +592,7 @@ def find_replace_handler(current_user, data):
     path="/google/integrations/sort_range",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="sortRange",
+    name="googleSortRange",
     description="Sorts a range of data in a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -646,7 +646,7 @@ def sort_range_handler(current_user, data):
     path="/google/integrations/apply_conditional_formatting",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_write"],
-    name="applyConditionalFormatting",
+    name="googleApplyConditionalFormatting",
     description="Applies conditional formatting to a range in a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -706,7 +706,7 @@ def apply_conditional_formatting_handler(current_user, data):
     path="/google/integrations/execute_query",
     type="integration",
     tags=["default", "integration", "google_sheets", "google_sheets_read"],
-    name="executeQuery",
+    name="googleExecuteQuery",
     description="Executes a SQL-like query on a Google Sheets spreadsheet.",
     params={
         "spreadsheetId": "The ID of the spreadsheet",
@@ -740,7 +740,7 @@ def execute_query_handler(current_user, data):
     path="/google/integrations/create_new_document",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
-    name="createNewDocument",
+    name="googleCreateNewDocument",
     description="Creates a new Google Docs document.",
     params={
         "title": "The title of the new document"
@@ -764,7 +764,7 @@ def create_new_document_handler(current_user, data):
     path="/google/integrations/get_document_contents",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_read"],
-    name="getDocumentContents",
+    name="googleGetDocumentContents",
     description="Retrieves the contents of a Google Docs document.",
     params={
         "documentId": "The ID of the document"
@@ -788,7 +788,7 @@ def get_document_contents_handler(current_user, data):
     path="/google/integrations/insert_text",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
-    name="insertText",
+    name="googleInsertText",
     description="Inserts text at a specific location in a Google Docs document.",
     params={
         "documentId": "The ID of the document",
@@ -822,7 +822,7 @@ def insert_text_handler(current_user, data):
     path="/google/integrations/append_text",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
-    name="appendText",
+    name="googleAppendText",
     description="Appends text to the end of a Google Docs document.",
     params={
         "documentId": "The ID of the document",
@@ -851,7 +851,7 @@ def append_text_handler(current_user, data):
     path="/google/integrations/replace_text",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
-    name="replaceText",
+    name="googleReplaceText",
     description="Replaces all occurrences of text in a Google Docs document.",
     params={
         "documentId": "The ID of the document",
@@ -885,7 +885,7 @@ def replace_text_handler(current_user, data):
     path="/google/integrations/create_document_outline",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
-    name="createDocumentOutline",
+    name="googleCreateDocumentOutline",
     description="Creates an outline in a Google Docs document.",
     params={
         "documentId": "The ID of the document",
@@ -928,7 +928,7 @@ def create_document_outline_handler(current_user, data):
     path="/google/integrations/export_document",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_read"],
-    name="exportDocument",
+    name="googleExportDocument",
     description="Exports a Google Docs document to a specified format.",
     params={
         "documentId": "The ID of the document",
@@ -957,7 +957,7 @@ def export_document_handler(current_user, data):
     path="/google/integrations/share_document",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_write"],
-    name="shareDocument",
+    name="googleShareDocument",
     description="Shares a Google Docs document with another user.",
     params={
         "documentId": "The ID of the document",
@@ -991,7 +991,7 @@ def share_document_handler(current_user, data):
     path="/google/integrations/find_text_indices",
     type="integration",
     tags=["default", "integration", "google_docs", "google_docs_read"],
-    name="findTextIndices",
+    name="googleFindTextIndices",
     description="Finds the indices of a specific text in a Google Docs document.",
     params={
         "documentId": "The ID of the document",
@@ -1020,7 +1020,7 @@ def find_text_indices_handler(current_user, data):
     path="/google/integrations/get_events_between_dates",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
-    name="getEventsBetweenDates",
+    name="googleGetEventsBetweenDates",
     description="Retrieves events from Google Calendar between two specified dates.",
     params={
         "startDate": "The start date in ISO 8601 format (e.g., 2024-12-20T23:59:59Z)",
@@ -1067,7 +1067,7 @@ def get_events_between_dates_handler(current_user, data):
     path="/google/integrations/create_event",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
-    name="createEvent",
+    name="googleCreateEvent",
     description="Creates a new event in Google Calendar.",
     params={
         "title": "The title of the event",
@@ -1114,7 +1114,7 @@ def create_event_handler(current_user, data):
     path="/google/integrations/update_event",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
-    name="updateEvent",
+    name="googleUpdateEvent",
     description="Updates an existing event in Google Calendar.",
     params={
         "eventId": "The ID of the event to update",
@@ -1143,7 +1143,7 @@ def update_event_handler(current_user, data):
     path="/google/integrations/delete_event",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_write"],
-    name="deleteEvent",
+    name="googleDeleteEvent",
     description="Deletes an event from Google Calendar.",
     params={
         "eventId": "The ID of the event to delete"
@@ -1167,7 +1167,7 @@ def delete_event_handler(current_user, data):
     path="/google/integrations/get_event_details",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
-    name="getEventDetails",
+    name="googleGetEventDetails",
     description="Retrieves details of a specific event from Google Calendar.",
     params={
         "eventId": "The ID of the event to retrieve"
@@ -1191,7 +1191,7 @@ def get_event_details_handler(current_user, data):
     path="/google/integrations/get_events_for_date",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
-    name="getEventsForDate",
+    name="googleGetEventsForDate",
     description="Retrieves events from Google Calendar for a specific date.",
     params={
         "date": "The date in ISO 8601 format (YYYY-MM-DD)",
@@ -1233,7 +1233,7 @@ def get_events_for_date_handler(current_user, data):
     path="/google/integrations/get_free_time_slots",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
-    name="getFreeTimeSlots",
+    name="googleGetFreeTimeSlots",
     description="Finds free time slots in Google Calendar between two dates.",
     params={
         "startDate": "The start date in ISO 8601 format",
@@ -1298,7 +1298,7 @@ def get_free_time_slots_handler(current_user, data):
     path="/google/integrations/check_event_conflicts",
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
-    name="checkEventConflicts",
+    name="googleCheckEventConflicts",
     description="Checks for conflicts with existing events in Google Calendar.",
     params={
         "proposedStartTime": "The proposed start time in ISO 8601 format",
@@ -1333,7 +1333,7 @@ def check_event_conflicts_handler(current_user, data):
     path="/google/integrations/list_files",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="listFiles",
+    name="googleListFiles",
     description="Lists files in a specific folder or root directory of Google Drive.",
     params={
         "folderId": "The ID of the folder to list files from (optional)"
@@ -1357,7 +1357,7 @@ def list_files_handler(current_user, data):
     path="/google/integrations/search_files",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="searchFiles",
+    name="googleSearchFiles",
     description="Searches for files in Google Drive based on a query. You should know that \"name contains '<query>'\" is added automatically to the query.",
     params={
         "query": "The search query string"
@@ -1381,7 +1381,7 @@ def search_files_handler(current_user, data):
     path="/google/integrations/get_file_metadata",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="getFileMetadata",
+    name="googleGetFileMetadata",
     description="Retrieves metadata for a specific file in Google Drive.",
     params={
         "fileId": "The ID of the file"
@@ -1405,7 +1405,7 @@ def get_file_metadata_handler(current_user, data):
     path="/google/integrations/get_file_content",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="getFileContent",
+    name="googleGetFileContent",
     description="Gets the content of a file in Google Drive as text.",
     params={
         "fileId": "The ID of the file"
@@ -1429,7 +1429,7 @@ def get_file_content_handler(current_user, data):
     path="/google/integrations/create_file",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="createFile",
+    name="googleCreateFile",
     description="Creates a new file in Google Drive with the given content.",
     params={
         "fileName": "The name of the file to create",
@@ -1464,7 +1464,7 @@ def create_file_handler(current_user, data):
     path="/google/integrations/get_download_link",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="getDownloadLink",
+    name="googleGetDownloadLink",
     description="Gets the download link for a file in Google Drive.",
     params={
         "fileId": "The ID of the file"
@@ -1488,7 +1488,7 @@ def get_download_link_handler(current_user, data):
     path="/google/integrations/create_shared_link",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="createSharedLink",
+    name="googleCreateSharedLink",
     description="Creates a shared link for a file in Google Drive with view or edit permissions.",
     params={
         "fileId": "The ID of the file",
@@ -1517,7 +1517,7 @@ def create_shared_link_handler(current_user, data):
     path="/google/integrations/share_file",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="shareFile",
+    name="googleShareFile",
     description="Shares a file in Google Drive with multiple email addresses.",
     params={
         "fileId": "The ID of the file",
@@ -1554,7 +1554,7 @@ def share_file_handler(current_user, data):
     path="/google/integrations/convert_file",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="convertFile",
+    name="googleConvertFile",
     description="Converts a file in Google Drive to a specified format and returns its download link.",
     params={
         "fileId": "The ID of the file to convert",
@@ -1583,7 +1583,7 @@ def convert_file_handler(current_user, data):
     path="/google/integrations/list_folders",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="listFolders",
+    name="googleListFolders",
     description="Lists folders in Google Drive, optionally within a specific parent folder.",
     params={
         "parentFolderId": "The ID of the parent folder (optional)"
@@ -1607,7 +1607,7 @@ def list_folders_handler(current_user, data):
     path="/google/integrations/move_item",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="moveItem",
+    name="googleMoveItem",
     description="Moves a file or folder to a specified destination folder in Google Drive.",
     params={
         "itemId": "The ID of the file or folder to move",
@@ -1636,7 +1636,7 @@ def move_item_handler(current_user, data):
     path="/google/integrations/copy_item",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="copyItem",
+    name="googleCopyItem",
     description="Copies a file or folder in Google Drive.",
     params={
         "itemId": "The ID of the file or folder to copy",
@@ -1665,7 +1665,7 @@ def copy_item_handler(current_user, data):
     path="/google/integrations/rename_item",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="renameItem",
+    name="googleRenameItem",
     description="Renames a file or folder in Google Drive.",
     params={
         "itemId": "The ID of the file or folder to rename",
@@ -1696,7 +1696,7 @@ def rename_item_handler(current_user, data):
     path="/google/integrations/get_file_revisions",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="getFileRevisions",
+    name="googleGetFileRevisions",
     description="Gets the revision history of a file in Google Drive.",
     params={
         "fileId": "The ID of the file to get revisions for"
@@ -1721,7 +1721,7 @@ def get_file_revisions_handler(current_user, data):
     path="/google/integrations/create_folder",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="createFolder",
+    name="googleCreateFolder",
     description="Creates a new folder in Google Drive.",
     params={
         "folderName": "The name of the new folder",
@@ -1752,7 +1752,7 @@ def create_folder_handler(current_user, data):
     path="/google/integrations/delete_item_permanently",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_write"],
-    name="deleteItemPermanently",
+    name="googleDeleteItemPermanently",
     description="Permanently deletes a file or folder from Google Drive.",
     params={
         "itemId": "The ID of the file or folder to delete"
@@ -1777,7 +1777,7 @@ def delete_item_permanently_handler(current_user, data):
     path="/google/integrations/get_root_folder_ids",
     type="integration",
     tags=["default", "integration", "google_drive", "google_drive_read"],
-    name="getRootFolderIds",
+    name="googleGetRootFolderIds",
     description="Retrieves the IDs of root-level folders in Google Drive.",
     params={
     },
@@ -1795,7 +1795,7 @@ def get_root_folder_ids_handler(current_user, data):
     path="/google/integrations/create_form",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
-    name="createForm",
+    name="googleCreateForm",
     description="Creates a new Google Form.",
     params={
         "title": "The title of the new form",
@@ -1824,7 +1824,7 @@ def create_form_handler(current_user, data):
     path="/google/integrations/get_form_details",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
-    name="getFormDetails",
+    name="googleGetFormDetails",
     description="Retrieves details of a specific Google Form.",
     params={
         "formId": "The ID of the form to retrieve"
@@ -1848,7 +1848,7 @@ def get_form_details_handler(current_user, data):
     path="/google/integrations/add_question",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
-    name="addQuestion",
+    name="googleAddQuestion",
     description="Adds a new question to a Google Form.",
     params={
         "formId": "The ID of the form",
@@ -1894,7 +1894,7 @@ def add_question_handler(current_user, data):
     path="/google/integrations/update_question",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
-    name="updateQuestion",
+    name="googleUpdateQuestion",
     description="Updates an existing question in a Google Form.",
     params={
         "formId": "The ID of the form",
@@ -1940,7 +1940,7 @@ def update_question_handler(current_user, data):
     path="/google/integrations/delete_question",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
-    name="deleteQuestion",
+    name="googleDeleteQuestion",
     description="Deletes a question from a Google Form.",
     params={
         "formId": "The ID of the form",
@@ -1969,7 +1969,7 @@ def delete_question_handler(current_user, data):
     path="/google/integrations/get_responses",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
-    name="getResponses",
+    name="googleGetResponses",
     description="Retrieves all responses for a Google Form.",
     params={
         "formId": "The ID of the form"
@@ -1993,7 +1993,7 @@ def get_responses_handler(current_user, data):
     path="/google/integrations/get_response",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
-    name="getResponse",
+    name="googleGetResponse",
     description="Retrieves a specific response from a Google Form.",
     params={
         "formId": "The ID of the form",
@@ -2022,7 +2022,7 @@ def get_response_handler(current_user, data):
     path="/google/integrations/set_form_settings",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
-    name="setFormSettings",
+    name="googleSetFormSettings",
     description="Updates the settings of a Google Form.",
     params={
         "formId": "The ID of the form",
@@ -2051,7 +2051,7 @@ def set_form_settings_handler(current_user, data):
     path="/google/integrations/get_form_link",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
-    name="getFormLink",
+    name="googleGetFormLink",
     description="Retrieves the public link for a Google Form.",
     params={
         "formId": "The ID of the form"
@@ -2075,7 +2075,7 @@ def get_form_link_handler(current_user, data):
     path="/google/integrations/update_form_info",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_write"],
-    name="updateFormInfo",
+    name="googleUpdateFormInfo",
     description="Updates the title and/or description of a Google Form.",
     params={
         "formId": "The ID of the form",
@@ -2109,7 +2109,7 @@ def update_form_info_handler(current_user, data):
     path="/google/integrations/list_user_forms",
     type="integration",
     tags=["default", "integration", "google_forms", "google_forms_read"],
-    name="listUserForms",
+    name="googleListUserForms",
     description="Lists all forms owned by the current user.",
     params={},
     schema={
@@ -2125,7 +2125,7 @@ def list_user_forms_handler(current_user, data):
     path="/google/integrations/compose_and_send_email",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
-    name="composeAndSendEmail",
+    name="googleComposeAndSendEmail",
     description="Composes and sends an email, with an option to schedule for future.",
     params={
         "to": "Recipient email address(es) as a string, comma-separated for multiple recipients",
@@ -2174,7 +2174,7 @@ def compose_and_send_email_handler(current_user, data):
     path="/google/integrations/compose_email_draft",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
-    name="composeEmailDraft",
+    name="googleComposeEmailDraft",
     description="Composes an email draft.",
     params={
         "to": "Recipient email address(es) as a string, comma-separated for multiple recipients",
@@ -2218,7 +2218,7 @@ def compose_email_draft_handler(current_user, data):
     path="/google/integrations/get_messages_from_date",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
-    name="getMessagesFromDate",
+    name="googleGetMessagesFromDate",
     description="Gets messages from a specific start date (optional label).",
     params={
         "n": "Number of messages to retrieve",
@@ -2252,7 +2252,7 @@ def get_messages_from_date_handler(current_user, data):
     path="/google/integrations/get_recent_messages",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
-    name="getRecentMessages",
+    name="googleGetRecentMessages",
     description="Gets the N most recent messages (optional label).",
     params={
         "n": "Number of messages to retrieve (default 25)",
@@ -2281,7 +2281,7 @@ def get_recent_messages_handler(current_user, data):
     path="/google/integrations/search_messages",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
-    name="searchMessages",
+    name="googleSearchMessages",
     description="Searches for messages using the Gmail search language.",
     params={
         "query": "Search query string using Gmail search language"
@@ -2305,7 +2305,7 @@ def search_messages_handler(current_user, data):
     path="/google/integrations/get_attachment_links",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
-    name="getAttachmentLinks",
+    name="googleGetAttachmentLinks",
     description="Gets links to download attachments for a specific email.",
     params={
         "messageId": "ID of the email message"
@@ -2329,7 +2329,7 @@ def get_attachment_links_handler(current_user, data):
     path="/google/integrations/get_attachment_content",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
-    name="getAttachmentContent",
+    name="googleGetAttachmentContent",
     description="Gets the content of a specific attachment.",
     params={
         "messageId": "ID of the email message",
@@ -2358,7 +2358,7 @@ def get_attachment_content_handler(current_user, data):
     path="/google/integrations/create_filter",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
-    name="createFilter",
+    name="googleCreateFilter",
     description="Creates a new email filter.",
     params={
         "criteria": "Filter criteria as a dictionary",
@@ -2387,7 +2387,7 @@ def create_filter_handler(current_user, data):
     path="/google/integrations/create_label",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
-    name="createLabel",
+    name="googleCreateLabel",
     description="Creates a new label.",
     params={
         "name": "Name of the new label"
@@ -2411,7 +2411,7 @@ def create_label_handler(current_user, data):
     path="/google/integrations/create_auto_filter_label_rule",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
-    name="createAutoFilterLabelRule",
+    name="googleCreateAutoFilterLabelRule",
     description="Creates an auto-filter and label rule.",
     params={
         "criteria": "Filter criteria as a dictionary",
@@ -2440,7 +2440,7 @@ def create_auto_filter_label_rule_handler(current_user, data):
     path="/google/integrations/get_message_details",
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_read"],
-    name="getMessageDetails",
+    name="googleGetMessageDetails",
     description="Gets detailed information, such as body, bcc, sent date, etc. for one or more Gmail messages.",
     params={
         "message_id": "ID of the message to retrieve details for",
@@ -2471,7 +2471,7 @@ def get_message_details_handler(current_user, data):
     path="/google/integrations/search_contacts",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
-    name="searchContacts",
+    name="googleSearchContacts",
     description="Searches the user's Google Contacts.",
     params={
         "query": "Search query string",
@@ -2501,7 +2501,7 @@ def search_contacts_handler(current_user, data):
     path="/google/integrations/get_contact_details",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
-    name="getContactDetails",
+    name="googleGetContactDetails",
     description="Gets details for a specific contact.",
     params={
         "resource_name": "Resource name of the contact"
@@ -2525,7 +2525,7 @@ def get_contact_details_handler(current_user, data):
     path="/google/integrations/create_contact",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="createContact",
+    name="googleCreateContact",
     description="Creates a new contact.",
     params={
         "contact_info": "Contact information"
@@ -2549,7 +2549,7 @@ def create_contact_handler(current_user, data):
     path="/google/integrations/update_contact",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="updateContact",
+    name="googleUpdateContact",
     description="Updates an existing contact.",
     params={
         "resource_name": "Resource name of the contact",
@@ -2578,7 +2578,7 @@ def update_contact_handler(current_user, data):
     path="/google/integrations/delete_contact",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="deleteContact",
+    name="googleDeleteContact",
     description="Deletes a contact.",
     params={
         "resource_name": "Resource name of the contact to delete"
@@ -2602,7 +2602,7 @@ def delete_contact_handler(current_user, data):
     path="/google/integrations/list_contact_groups",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_read"],
-    name="listContactGroups",
+    name="googleListContactGroups",
     description="Lists all contact groups.",
     params={},
     schema={
@@ -2618,7 +2618,7 @@ def list_contact_groups_handler(current_user, data):
     path="/google/integrations/create_contact_group",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="createContactGroup",
+    name="googleCreateContactGroup",
     description="Creates a new contact group.",
     params={
         "group_name": "Name of the new contact group"
@@ -2642,7 +2642,7 @@ def create_contact_group_handler(current_user, data):
     path="/google/integrations/update_contact_group",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="updateContactGroup",
+    name="googleUpdateContactGroup",
     description="Updates an existing contact group.",
     params={
         "resource_name": "Resource name of the contact group",
@@ -2671,7 +2671,7 @@ def update_contact_group_handler(current_user, data):
     path="/google/integrations/delete_contact_group",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="deleteContactGroup",
+    name="googleDeleteContactGroup",
     description="Deletes a contact group.",
     params={
         "resource_name": "Resource name of the contact group to delete"
@@ -2695,7 +2695,7 @@ def delete_contact_group_handler(current_user, data):
     path="/google/integrations/add_contacts_to_group",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="addContactsToGroup",
+    name="googleAddContactsToGroup",
     description="Adds contacts to a group.",
     params={
         "group_resource_name": "Resource name of the contact group",
@@ -2725,7 +2725,7 @@ def add_contacts_to_group_handler(current_user, data):
     path="/google/integrations/remove_contacts_from_group",
     type="integration",
     tags=["default", "integration", "google_contacts", "google_contacts_write"],
-    name="removeContactsFromGroup",
+    name="googleRemoveContactsFromGroup",
     description="Removes contacts from a group.",
     params={
         "group_resource_name": "Resource name of the contact group",
