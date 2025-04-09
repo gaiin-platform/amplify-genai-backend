@@ -10,6 +10,7 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets
 
 custom:
   pythonRequirements:
