@@ -2,10 +2,11 @@ import inspect
 import json
 import uuid
 
-from common.ops import vop
+from common.ops import vop, op
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from common.validate import validated
+from agent.components.tool import tools
 import re
 
 from service.routes import route_data
@@ -105,3 +106,41 @@ def route(event, context, current_user, name, data):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+
+
+
+@op(
+    path="/vu-agent/tools",
+    tags=["default"],
+    method="GET",
+    name="agentBuiltInTools",
+    description="Get the list of built-in tools.",
+    params={},
+)
+@validated("get")
+def get_builtin_tools(event, context, current_user, name, data):
+    """
+    Returns a list of all available tools.
+    
+    Returns:
+        dict: A dictionary containing the tools, with success flag
+    """
+    try:
+        # Convert tools to a serializable format by removing the function reference
+        serializable_tools = {}
+        # print(f"Tools: {tools}")
+        for tool_name, tool_metadata in tools.items():
+            # Create a copy without the function reference
+            tool_info = {
+                "tool_name": tool_metadata["tool_name"],
+                "description": tool_metadata["description"],
+                "parameters": tool_metadata["parameters"],
+                "terminal": tool_metadata["terminal"],
+                "tags": tool_metadata["tags"]
+            }
+        
+            serializable_tools[tool_name] = tool_info
+        
+        return {"success": True, "data": serializable_tools}
+    except Exception as e:
+        return {"success": False, "error": str(e)} 

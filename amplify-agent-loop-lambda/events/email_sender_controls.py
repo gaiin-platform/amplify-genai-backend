@@ -82,14 +82,16 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
 
         allowed_senders = set(item.get('allowedSenders', []))
 
-        if sender not in allowed_senders:
+        if sender == "*":
+            allowed_senders = set()
+        elif sender not in allowed_senders:
             return {
                 "success": False,
                 "data": None,
                 "message": f"Sender '{sender}' was not found in the allowed list for tag '{tag}'. Nothing to remove."
             }
-
-        allowed_senders.remove(sender)
+        else:
+            allowed_senders.remove(sender)
 
         if not allowed_senders:
             email_settings_table.delete_item(Key={'email': user_email, 'tag': tag})
@@ -160,3 +162,36 @@ def is_allowed_sender(owner_email: str, user_email: str, tag: str, sender: str) 
         print(f"Error checking allowed sender: {e}")
         traceback.print_exc()
         return False
+
+
+def list_allowed_senders(user_email: str, tag: str):
+    """
+    Lists all allowed senders for a given user and tag.
+
+    Args:
+        user_email (str): The user's email (recipient).
+        tag (str): The tag associated with the recipient.
+
+    Returns:
+        dict: {success, data, message}
+    """
+    try:
+        response = email_settings_table.get_item(Key={'email': user_email, 'tag': tag})
+        item = response.get('Item', {})
+
+        allowed_senders = item.get('allowedSenders', [])
+
+        return {
+            "success": True,
+            "data": allowed_senders,
+            "message": f"Retrieved {len(allowed_senders)} allowed sender(s) for tag '{tag}'."
+        }
+
+    except ClientError as e:
+        print(f"Error listing allowed senders: {e}")
+        traceback.print_exc()
+        return {
+            "success": False,
+            "data": [],
+            "message": "Server error: Unable to list allowed senders. Please try again later."
+        }

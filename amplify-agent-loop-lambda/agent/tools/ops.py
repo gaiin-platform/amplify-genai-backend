@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 import boto3
+import requests
 
 from agent.components.tool import get_tool_metadata, register_tool
 from agent.core import ActionContext, Action, ActionRegistry
@@ -47,6 +48,33 @@ def ops_to_tools(apis):
 def get_ops_tools(action_context):
     apis = get_all_apis(action_context)
     return ops_to_tools(apis)
+
+
+def get_default_ops_as_tools(token):
+    api_base = os.environ.get("API_BASE_URL", None)
+    # make a call to API_BASE_URL + /ops/get with {data:{tag:default}} as the payload and the token as a
+    # a bearer token
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "data": {
+            "tag": "default"
+        }
+    }
+    try:
+        response = requests.post(f"{api_base}/ops/get", headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        result = response.json()
+
+        # print(f"Result: {result}")
+        # convert to dict
+        ops = result.get('data', [])
+        return ops_to_tools(ops)
+    except Exception as e:
+        print(f"Error getting default ops: {e}")
+        return []
 
 def op_to_tool(api):
     name = api['name']

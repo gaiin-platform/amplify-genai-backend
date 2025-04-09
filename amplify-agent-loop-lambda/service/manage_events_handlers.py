@@ -1,7 +1,7 @@
 import traceback
 
 from common.ops import vop
-from events.email_sender_controls import add_allowed_sender, remove_allowed_sender
+from events.email_sender_controls import add_allowed_sender, remove_allowed_sender, list_allowed_senders
 from events.event_templates import remove_event_template, get_event_template, list_event_templates_for_user, \
     add_event_template
 from events.mock import generate_ses_event
@@ -252,4 +252,32 @@ def test_send_email_notification(current_user, access_token, sender, receiver, s
             "success": False,
             "data": None,
             "message": f"Server error: Unable to generate email notification. Error: {str(e)}"
+        }
+
+
+@vop(
+    path="/vu-agent/list-allowed-senders",
+    tags=["email","default"],
+    name="listAllowedSenders",
+    description="List all allowed senders for a tag.",
+    params={
+        "tag": "The event tag."
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "tag": {"type": "string"}
+        },
+        "required": ["tag"]
+    }
+)
+def handle_list_allowed_senders(current_user, access_token, tag):
+    try:
+        return list_allowed_senders(current_user, tag)
+    except Exception:
+        traceback.print_exc()
+        return {
+            "success": False,
+            "data": [],
+            "message": "Server error: Unable to list allowed senders. Please try again later."
         }

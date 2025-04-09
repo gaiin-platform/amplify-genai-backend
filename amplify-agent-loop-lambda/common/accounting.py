@@ -1,7 +1,6 @@
 import os
 import uuid
 import boto3
-import logging
 from datetime import datetime
 
 

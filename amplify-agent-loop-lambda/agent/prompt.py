@@ -98,7 +98,10 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
             except:
                 print(f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}")
 
-        record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+        try:
+            record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+        except Exception as e:
+            print(f"Warning: Failed to record usage: {e}")
 
     except Exception as e:
         traceback.print_exc()

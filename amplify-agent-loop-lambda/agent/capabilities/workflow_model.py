@@ -18,14 +18,14 @@ class Step(CustomBaseModel):
     args: Optional[Dict[str, Any]] = None
     values: Optional[Dict[str, Any]] = None
     on_failure: Optional[Dict[str, Any]] = None
-    retries: Optional[conint(ge=0)] = None
-    timeout: Optional[conint(ge=0)] = None  # Timeout in seconds
+    retries: Optional[int] = Field(None, ge=0)
+    timeout: Optional[int] = Field(None, ge=0)  # Timeout in seconds
 
 class Limits(CustomBaseModel):
-    max_time: Optional[conint(ge=0)] = None      # Maximum time limit in seconds
-    max_cost: Optional[confloat(ge=0)] = None    # Maximum cost
-    max_steps: Optional[conint(ge=0)] = None     # Maximum number of steps
-    tool_budgets: Optional[Dict[str, conint(ge=0)]] = None # Budgets for each tool
+    max_time: Optional[int] = Field(None, ge=0)      # Maximum time limit in seconds
+    max_cost: Optional[float] = Field(None, ge=0)    # Maximum cost
+    max_steps: Optional[int] = Field(None, ge=0)     # Maximum number of steps
+    tool_budgets: Optional[Dict[str, int]] = None  # Budgets for each tool
 
 class Notification(CustomBaseModel):
     type: str  # Example types: email, sms, webhook
@@ -53,7 +53,7 @@ class Workflow(CustomBaseModel):
     steps: List[Step]
     parameters: Optional[Dict[str, Any]]
     limits: Limits
-    retries: Optional[conint(ge=0)] = None
+    retries: Optional[int] = Field(None, ge=0)
     notifications: Optional[Notifications] = None
     logging: Logging
 

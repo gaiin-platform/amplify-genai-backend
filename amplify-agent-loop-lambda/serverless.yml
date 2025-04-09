@@ -103,6 +103,15 @@ functions:
           arn: !GetAtt AgentQueue.Arn
           batchSize: 1
 
+  toolsEndpoint:
+    handler: service/core.get_builtin_tools
+    timeout: 30
+    events:
+      - http:
+          path: vu-agent/tools
+          method: get
+          cors: true
+
 resources:
   Resources:
     LambdaAPIIAMPolicy:
@@ -156,6 +165,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}/*"
+                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}"
+                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}/*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -281,11 +294,22 @@ resources:
             AttributeType: S
           - AttributeName: templateId
             AttributeType: S
+          - AttributeName: isPublic
+            AttributeType: N
         KeySchema:
           - AttributeName: user
             KeyType: HASH
           - AttributeName: templateId
             KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: TemplateIdPublicIndex
+            KeySchema:
+              - AttributeName: templateId
+                KeyType: HASH
+              - AttributeName: isPublic
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true

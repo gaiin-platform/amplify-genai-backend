@@ -8,7 +8,7 @@ from agent.prompt import Prompt
 
 
 class PythonActionRegistry(ActionRegistry):
-    def __init__(self, tags: List[str] = None, tool_names: List[str] = None):
+    def __init__(self, tags: List[str] = [], tool_names: List[str] = []):
         super().__init__()
 
         self.terminate_tool = None
@@ -17,12 +17,12 @@ class PythonActionRegistry(ActionRegistry):
             if tool_name == "terminate":
                 self.terminate_tool = tool_desc
 
-            if tool_names is not None and tool_name not in tool_names:
+            tool_tags = tool_desc.get("tags", [])
+            if tool_name not in tool_names and \
+               not any(tag in tool_tags for tag in tags):
                 continue
 
-            tool_tags = tool_desc.get("tags", [])
-            if tags is not None and not any(tag in tool_tags for tag in tags):
-                continue
+            print(f"-- Action Registry: Registering Initial Built-In Tool -- {tool_name}")
             
             self.register(Action(
                 name=tool_name,
@@ -45,7 +45,23 @@ class PythonActionRegistry(ActionRegistry):
             ))
         else:
             raise Exception("Terminate tool not found in tool registry")
-        
+    
+    def register_tool_by_name(self, tool_name):
+        if tool_name in tool.tools:
+            tool_desc = tool.tools[tool_name]
+            print(f"-- Action Registry: Registering Built-In Tool by Name -- {tool_name}")
+            self.register(Action(
+                name=tool_name,
+                function=tool_desc["function"],
+                description=tool_desc["description"],
+                parameters=tool_desc.get("parameters", {}),
+                output=tool_desc.get("output", {}),
+                terminal=tool_desc.get("terminal", False)
+            ))
+            return True
+        else:
+            print(f"Tool '{tool_name}' not found in tool registry")
+            return False
 
     def filter_tools_by_relevance(self, llm, user_input, goals=None, max_tools=10):
         """
