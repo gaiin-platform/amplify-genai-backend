@@ -3,7 +3,7 @@ from common.validate import validated
 from integrations.oauth import MissingCredentialsError
 
 from integrations.o365.onedrive import list_drive_items, upload_file, download_file, delete_item, get_drive_item, create_folder, update_drive_item, copy_drive_item, move_drive_item, create_sharing_link, invite_to_drive_item
-from integrations.o365.excel import list_worksheets, list_tables, add_row_to_table, read_range, update_range, get_worksheet, create_worksheet, delete_worksheet, create_table, delete_table, get_table_range, list_charts, get_chart, create_chart, delete_chart
+from integrations.o365.excel import list_worksheets, list_tables, add_row_to_table, read_range, update_range, get_worksheet, create_worksheet, delete_worksheet, create_table as create_table_excel, delete_table, get_table_range, list_charts, get_chart, create_chart, delete_chart
 from integrations.o365.outlook import list_messages, get_message_details, send_mail, delete_message, get_attachments, update_message, create_draft, send_draft, reply_to_message, reply_all_message, forward_message, move_message, list_folders, get_folder_details, add_attachment, delete_attachment, search_messages
 
 from integrations.o365.planner import list_plans_in_group, list_buckets_in_plan, list_tasks_in_plan, create_task, update_task, delete_task
@@ -22,7 +22,7 @@ from integrations.o365.calendar import create_event, update_event, delete_event,
 
 from integrations.o365.word_doc import (
     add_comment, get_document_statistics, search_document, apply_formatting, get_document_sections,
-    insert_section, replace_text, create_table, update_table_cell, create_list, insert_page_break,
+    insert_section, replace_text, create_table as create_table_word, update_table_cell, create_list, insert_page_break,
     set_header_footer, insert_image, get_document_versions, restore_version, delete_document,
     list_documents, share_document, get_document_permissions, remove_permission, get_document_content,
     update_document_content, create_document
@@ -2771,10 +2771,10 @@ def delete_worksheet_handler(current_user, data):
     return common_handler(delete_worksheet, item_id=None, worksheet_id=None)(current_user, data)
 
 @vop(
-    path="/microsoft/integrations/create_table",
+    path="/microsoft/integrations/create_table_excel",
     type="integration",
     tags=["default", "integration", "microsoft_excel", "microsoft_excel_write"],
-    name="microsoftCreateTable",
+    name="microsoftCreateTableExcel",
     description="Creates a new table in the specified worksheet.",
     params={
         "item_id": "OneDrive item ID of the workbook as string",
@@ -2793,8 +2793,8 @@ def delete_worksheet_handler(current_user, data):
         "required": ["item_id", "worksheet_id", "address"]
     }
 )
-def create_table_handler(current_user, data):
-    return common_handler(create_table, item_id=None, worksheet_id=None, address=None, has_headers=True)(current_user, data)
+def create_table_excel_handler(current_user, data):
+    return common_handler(create_table_excel, item_id=None, worksheet_id=None, address=None, has_headers=True)(current_user, data)
 
 @vop(
     path="/microsoft/integrations/delete_table",
@@ -3099,10 +3099,10 @@ def replace_text_handler(current_user, data):
     return common_handler(replace_text, document_id=None, search_text=None, replace_text=None)(current_user, data)
 
 @vop(
-    path="/microsoft/integrations/create_table",
+    path="/microsoft/integrations/create_table_word",
     type="integration",
     tags=["default", "integration", "microsoft_word", "microsoft_word_write"],
-    name="microsoftCreateTable",
+    name="microsoftCreateTableWord",
     description="Inserts a new table into the document.",
     params={
         "document_id": "Document ID as string",
@@ -3121,8 +3121,8 @@ def replace_text_handler(current_user, data):
         "required": ["document_id", "rows", "columns"]
     }
 )
-def create_table_handler(current_user, data):
-    return common_handler(create_table, document_id=None, rows=None, columns=None, position=None)(current_user, data)
+def create_table_word_handler(current_user, data):
+    return common_handler(create_table_word, document_id=None, rows=None, columns=None, position=None)(current_user, data)
 
 @vop(
     path="/microsoft/integrations/update_table_cell",
