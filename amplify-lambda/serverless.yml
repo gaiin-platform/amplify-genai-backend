@@ -396,7 +396,10 @@ functions:
       - s3:
           bucket: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
           event: s3:ObjectCreated:*
-          existing: true      
+          existing: true
+          rules:
+            - prefix: templates/
+            - suffix: .pptx 
       
 
 
@@ -983,17 +986,7 @@ resources:
             DestinationBucketName: 
               Ref: AccessLogsBucket
             LogFilePrefix: S3AccessLogs/ 
-          NotificationConfiguration:
-            LambdaConfigurations:
-              - Event: 's3:ObjectCreated:Put'
-                Filter:
-                  S3Key:
-                    Rules:
-                      - Name: prefix
-                        Value: 'templates/'
-                      - Name: suffix
-                        Value: '.pptx' 
-                Function: !GetAtt HandlePptxUploadLambdaFunction.Arn
+
 
 
     RagInputBucket:
