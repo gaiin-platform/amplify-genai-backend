@@ -350,7 +350,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             let blockTerminator = null;
 
-            if(assistant.data && assistant.data.opsLanguageVersion === "v4") {
+            if (assistant.data && assistant.data.opsLanguageVersion === "v4") {
 
                 const statusInfo = newStatus(
                     {
@@ -362,11 +362,14 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }
                 );
 
+                const workflowTemplateId = assistant.data?.workflowTemplateId ? 
+                                          {workflow: {templateId: assistant.data.workflowTemplateId}} : {};
+
                 const response = invokeAgent(
                     params.account.accessToken,
                     params.options.conversationId,
                     body.messages,
-                    {assistant, model: params.model.id}
+                    {assistant, model: params.model.id, ...workflowTemplateId} // built in 
                 );
                 llm.sendStatus(statusInfo);
                 llm.forceFlush();
