@@ -3,7 +3,7 @@ from common.validate import validated
 from integrations.google.forms import create_form, get_form_details, add_question, update_question, delete_question, \
     get_responses, get_response, set_form_settings, get_form_link, update_form_info, list_user_forms
 from integrations.google.calendar import get_events_between_dates, create_event, check_event_conflicts, \
-    get_free_time_slots, get_events_for_date, get_event_details, delete_event, update_event
+    get_free_time_slots, get_events_for_date, get_event_details, delete_event, update_event, list_calendars, create_calendar, delete_calendar, update_calendar_permissions, create_recurring_event, add_event_reminders, get_calendar_details, update_calendar
 from integrations.google.docs import find_text_indices, append_text
 from integrations.google.drive import convert_file, share_file, create_shared_link, get_download_link, create_file, \
     get_file_content, get_file_metadata, search_files, list_files, list_folders, move_item, copy_item, rename_item, \
@@ -1074,7 +1074,10 @@ def get_events_between_dates_handler(current_user, data):
         "startTime": "The start time of the event in ISO 8601 format",
         "endTime": "The end time of the event in ISO 8601 format",
         "description": "Optional: The description of the event",
-        "attendees": "Optional: List of attendees' email addresses"
+        "location": "Optional: The physical location for in-person meetings",
+        "attendees": "Optional: List of attendees' email addresses",
+        "calendarId": "Optional: The ID of the calendar to create the event on (default: 'primary')",
+        "conferenceData": "Optional: Information for virtual meeting (e.g., Google Meet)"
     },
     schema={
         "type": "object",
@@ -1095,12 +1098,24 @@ def get_events_between_dates_handler(current_user, data):
                 "type": "string",
                 "description": "Optional: The description of the event"
             },
+            "location": {
+                "type": "string",
+                "description": "Optional: The physical location for in-person meetings"
+            },
             "attendees": {
                 "type": "array",
                 "items": {
                     "type": "string"
                 },
                 "description": "Optional: List of attendees' email addresses"
+            },
+            "calendarId": {
+                "type": "string",
+                "description": "Optional: The ID of the calendar to create the event on (default: 'primary')"
+            },
+            "conferenceData": {
+                "type": "object",
+                "description": "Optional: Information for virtual meeting (e.g., Google Meet)"
             }
         },
         "required": ["title", "startTime", "endTime"]
@@ -1108,7 +1123,9 @@ def get_events_between_dates_handler(current_user, data):
 )
 # @validated("create_event")
 def create_event_handler(current_user, data):
-    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description', attendees=[])(current_user, data)
+    return common_handler(create_event, 'title', 'startTime', 'endTime', 'description', 
+                         location='location', attendees='attendees', calendar_id='calendarId', 
+                         conference_data='conferenceData')(current_user, data)
 
 @vop(
     path="/google/integrations/update_event",
@@ -1299,35 +1316,49 @@ def get_free_time_slots_handler(current_user, data):
     type="integration",
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="googleCheckEventConflicts",
-    description="Checks for conflicts with existing events in Google Calendar.",
+    description="Checks for scheduling conflicts within a time window across one or more calendars.",
     params={
-        "proposedStartTime": "The proposed start time in ISO 8601 format",
-        "proposedEndTime": "The proposed end time in ISO 8601 format",
-        "returnConflictingEvents": "Optional. Return details of conflicting events (default: false)"
+        "proposedStartTime": "The start time of the proposed event in ISO 8601 format",
+        "proposedEndTime": "The end time of the proposed event in ISO 8601 format",
+        "returnConflictingEvents": "Optional: Whether to include details of conflicting events",
+        "calendarIds": "Optional: List of calendar IDs to check",
+        "checkAllCalendars": "Optional: If true, checks all calendars the user has access to"
     },
     schema={
         "type": "object",
         "properties": {
             "proposedStartTime": {
                 "type": "string",
-                "description": "The proposed start time in ISO 8601 format"
+                "description": "The start time of the proposed event in ISO 8601 format"
             },
             "proposedEndTime": {
                 "type": "string",
-                "description": "The proposed end time in ISO 8601 format"
+                "description": "The end time of the proposed event in ISO 8601 format"
             },
-            'returnConflictingEvents': {
-                'type': ['boolean'],
-                'description': 'Optional. Return details of conflicting events (default: false)',
-                "default": False
+            "returnConflictingEvents": {
+                "type": "boolean",
+                "description": "Optional: Whether to include details of conflicting events"
+            },
+            "calendarIds": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "Optional: List of calendar IDs to check"
+            },
+            "checkAllCalendars": {
+                "type": "boolean",
+                "description": "Optional: If true, checks all calendars the user has access to"
             }
         },
-        'required': ['proposedStartTime', 'proposedEndTime']
+        "required": ["proposedStartTime", "proposedEndTime"]
     }
 )
 # @validated("check_event_conflicts")
 def check_event_conflicts_handler(current_user, data):
-    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime', returnConflictingEvents=False)(current_user, data)
+    return common_handler(check_event_conflicts, 'proposedStartTime', 'proposedEndTime', 
+                         return_conflicting_events='returnConflictingEvents',
+                         calendar_ids='calendarIds', check_all_calendars='checkAllCalendars')(current_user, data)
 
 @vop(
     path="/google/integrations/list_files",
@@ -2750,6 +2781,316 @@ def add_contacts_to_group_handler(current_user, data):
 # @validated("remove_contacts_from_group")
 def remove_contacts_from_group_handler(current_user, data):
     return common_handler(remove_contacts_from_group, group_resource_name=None, contact_resource_names=None)(current_user, data)
+
+@vop(
+    path="/google/integrations/list_calendars",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
+    name="googleListCalendars",
+    description="Lists all calendars the user has access to in Google Calendar.",
+    params={},
+    schema={
+        "type": "object",
+        "properties": {}
+    }
+)
+def list_calendars_handler(current_user, data):
+    return common_handler(list_calendars)(current_user, data)
+
+@vop(
+    path="/google/integrations/create_calendar",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
+    name="googleCreateCalendar",
+    description="Creates a new calendar in Google Calendar.",
+    params={
+        "name": "Name/summary of the calendar",
+        "description": "Optional description for the calendar",
+        "timezone": "Optional timezone for the calendar"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Name/summary of the calendar"
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional description for the calendar"
+            },
+            "timezone": {
+                "type": "string",
+                "description": "Optional timezone for the calendar"
+            }
+        },
+        "required": ["name"]
+    }
+)
+def create_calendar_handler(current_user, data):
+    return common_handler(create_calendar, 'name', description=None, timezone=None)(current_user, data)
+
+@vop(
+    path="/google/integrations/delete_calendar",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
+    name="googleDeleteCalendar",
+    description="Deletes a calendar from Google Calendar. Cannot delete primary calendar.",
+    params={
+        "calendarId": "The ID of the calendar to delete"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "calendarId": {
+                "type": "string",
+                "description": "The ID of the calendar to delete"
+            }
+        },
+        "required": ["calendarId"]
+    }
+)
+def delete_calendar_handler(current_user, data):
+    return common_handler(delete_calendar, 'calendarId')(current_user, data)
+
+@vop(
+    path="/google/integrations/update_calendar_permissions",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
+    name="googleUpdateCalendarPermissions",
+    description="Shares a calendar with another user by setting permissions.",
+    params={
+        "calendarId": "The ID of the calendar to share",
+        "email": "Email address of the user to share with",
+        "role": "Permission role ('none', 'freeBusyReader', 'reader', 'writer', 'owner')",
+        "sendNotification": "Whether to send notification email",
+        "notificationMessage": "Optional custom message for notification"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "calendarId": {
+                "type": "string",
+                "description": "The ID of the calendar to share"
+            },
+            "email": {
+                "type": "string",
+                "description": "Email address of the user to share with"
+            },
+            "role": {
+                "type": "string",
+                "enum": ["none", "freeBusyReader", "reader", "writer", "owner"],
+                "description": "Permission role",
+                "default": "reader"
+            },
+            "sendNotification": {
+                "type": "boolean",
+                "description": "Whether to send notification email",
+                "default": False
+            },
+            "notificationMessage": {
+                "type": "string",
+                "description": "Optional custom message for notification"
+            }
+        },
+        "required": ["calendarId", "email"]
+    }
+)
+def update_calendar_permissions_handler(current_user, data):
+    return common_handler(
+        update_calendar_permissions, 
+        'calendarId', 'email', 
+        role='reader', 
+        send_notification=False, 
+        notification_message=None
+    )(current_user, data)
+
+@vop(
+    path="/google/integrations/create_recurring_event",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
+    name="googleCreateRecurringEvent",
+    description="Creates a recurring event in Google Calendar.",
+    params={
+        "title": "The title of the event",
+        "startTime": "The start time of the first occurrence in ISO 8601 format",
+        "endTime": "The end time of the first occurrence in ISO 8601 format",
+        "description": "Optional: The description of the event",
+        "location": "Optional: The physical location for in-person meetings",
+        "attendees": "Optional: List of attendees' email addresses",
+        "recurrencePattern": "Optional: List of RRULE strings (e.g., ['RRULE:FREQ=WEEKLY;COUNT=10'])",
+        "calendarId": "Optional: The ID of the calendar to create the event on (default: 'primary')"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "The title of the event"
+            },
+            "startTime": {
+                "type": "string",
+                "description": "The start time of the first occurrence in ISO 8601 format"
+            },
+            "endTime": {
+                "type": "string",
+                "description": "The end time of the first occurrence in ISO 8601 format"
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional: The description of the event"
+            },
+            "location": {
+                "type": "string",
+                "description": "Optional: The physical location for in-person meetings"
+            },
+            "attendees": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "Optional: List of attendees' email addresses"
+            },
+            "recurrencePattern": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "Optional: List of RRULE strings (e.g., ['RRULE:FREQ=WEEKLY;COUNT=10'])"
+            },
+            "calendarId": {
+                "type": "string",
+                "description": "Optional: The ID of the calendar to create the event on (default: 'primary')"
+            }
+        },
+        "required": ["title", "startTime", "endTime"]
+    }
+)
+def create_recurring_event_handler(current_user, data):
+    return common_handler(create_recurring_event, 'title', 'startTime', 'endTime', 'description', 
+                         location='location', attendees='attendees', recurrence_pattern='recurrencePattern', 
+                         calendar_id='calendarId')(current_user, data)
+
+@vop(
+    path="/google/integrations/add_event_reminders",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
+    name="googleAddEventReminders",
+    description="Adds reminders to an existing calendar event.",
+    params={
+        "eventId": "ID of the event to update",
+        "reminders": "List of dictionaries with 'method' and 'minutes' keys (e.g., [{'method': 'email', 'minutes': 30}])",
+        "calendarId": "Calendar ID (defaults to primary)"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "eventId": {
+                "type": "string",
+                "description": "ID of the event to update"
+            },
+            "reminders": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "method": {
+                            "type": "string",
+                            "enum": ["email", "popup"],
+                            "description": "Reminder method (email or popup)"
+                        },
+                        "minutes": {
+                            "type": "integer",
+                            "description": "Minutes before event to send reminder"
+                        }
+                    },
+                    "required": ["method", "minutes"]
+                },
+                "description": "List of reminders to add to the event"
+            },
+            "calendarId": {
+                "type": "string",
+                "description": "Calendar ID (defaults to primary)",
+                "default": "primary"
+            }
+        },
+        "required": ["eventId"]
+    }
+)
+def add_event_reminders_handler(current_user, data):
+    return common_handler(
+        add_event_reminders, 
+        'eventId', 
+        reminders=None, 
+        calendar_id='primary'
+    )(current_user, data)
+
+@vop(
+    path="/google/integrations/get_calendar_details",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_read"],
+    name="googleGetCalendarDetails",
+    description="Retrieves detailed information about a specific calendar.",
+    params={
+        "calendarId": "The ID of the calendar to retrieve"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "calendarId": {
+                "type": "string",
+                "description": "The ID of the calendar to retrieve"
+            }
+        },
+        "required": ["calendarId"]
+    }
+)
+def get_calendar_details_handler(current_user, data):
+    return common_handler(get_calendar_details, 'calendarId')(current_user, data)
+
+@vop(
+    path="/google/integrations/update_calendar",
+    type="integration",
+    tags=["default", "integration", "google_calendar", "google_calendar_write"],
+    name="googleUpdateCalendar",
+    description="Updates an existing calendar's details.",
+    params={
+        "calendarId": "The ID of the calendar to update",
+        "name": "New name/summary for the calendar (optional)",
+        "description": "New description for the calendar (optional)",
+        "timezone": "New timezone for the calendar (optional)"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "calendarId": {
+                "type": "string",
+                "description": "The ID of the calendar to update"
+            },
+            "name": {
+                "type": ["string"],
+                "description": "New name/summary for the calendar (optional)"
+            },
+            "description": {
+                "type": ["string"],
+                "description": "New description for the calendar (optional)"
+            },
+            "timezone": {
+                "type": ["string"],
+                "description": "New timezone for the calendar (optional)"
+            }
+        },
+        "required": ["calendarId"]
+    }
+)
+def update_calendar_handler(current_user, data):
+    return common_handler(
+        update_calendar, 
+        'calendarId', 
+        name=None, 
+        description=None, 
+        timezone=None
+    )(current_user, data)
 
 
 
