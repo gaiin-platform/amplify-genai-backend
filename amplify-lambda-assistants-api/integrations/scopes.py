@@ -1,6 +1,6 @@
 scopes = {
     "google": {
-        "google_calendar": ["https://www.googleapis.com/auth/calendar.events"],
+        "google_calendar": ["https://www.googleapis.com/auth/calendar"],
         "google_sheets": ["https://www.googleapis.com/auth/spreadsheets"],
         "google_docs": ["https://www.googleapis.com/auth/documents"],
         "google_drive": ["https://www.googleapis.com/auth/drive"],
