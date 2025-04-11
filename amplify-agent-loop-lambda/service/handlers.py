@@ -644,7 +644,8 @@ def get_file_download_urls(current_user, access_token, session_id, files, versio
                                 "values": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "args": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "stepName": {"type": "string"},
-                                "actionSegment": {"type": "string"}
+                                "actionSegment": {"type": "string"},
+                                "editableArgs": {"type": "array", "items": {"type": "string"}}
                             },
                             "required": ["tool", "instructions"]
                         }
@@ -786,7 +787,8 @@ def list_workflow_templates_handler(current_user, access_token, filter_base_temp
                                 "values": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "args": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "stepName": {"type": "string"},
-                                "actionSegment": {"type": "string"}
+                                "actionSegment": {"type": "string"},
+                                "editableArgs": {"type": "array", "items": {"type": "string"}}
                             },
                             "required": ["tool", "instructions"]
                         }

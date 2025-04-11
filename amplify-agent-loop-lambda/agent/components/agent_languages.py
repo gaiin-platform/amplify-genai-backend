@@ -217,7 +217,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
 
         return mapped_items
 
-    def format_actions(self, actions: List[Action]) -> [List,List]:
+    def format_actions(self, actions: List[Action]) -> List[List[Any]]:
         """Generate response from language model"""
 
         tools = [

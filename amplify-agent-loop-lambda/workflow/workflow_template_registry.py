@@ -112,7 +112,9 @@ def get_workflow_template(current_user, template_id):  # Changed from template_u
             'inputSchema': deserialized_item['inputSchema'],  # Use camel case
             'outputSchema': deserialized_item['outputSchema'],  # Use camel case
             'templateId': template_id,  # Changed to templateId
-            'template': template
+            'template': template,
+            'isPublic': True if deserialized_item.get('isPublic') == 1 else False,
+            'isBaseTemplate': deserialized_item.get('isBaseTemplate', False),
         }
 
         # Remove s3Key

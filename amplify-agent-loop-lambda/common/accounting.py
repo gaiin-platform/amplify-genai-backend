@@ -81,6 +81,8 @@ def record_usage(account, request_id, model_id, input_tokens, output_tokens, cac
         cached_cost = (cached_tokens / 1000) * cached_cost_per_thousand_tokens
         total_cost = input_cost + output_cost + cached_cost
 
+        print(f"-- Total cost -- {total_cost}")
+
         now = datetime.now()
         current_hour = now.hour
 
