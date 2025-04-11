@@ -217,3 +217,19 @@ def get_messages_details(service, message_ids, fields=None):
         results.append(result)
 
     return results
+
+def send_draft_email(current_user, draft_id, access_token=None):
+    """
+    Sends an existing draft email by its ID.
+    
+    Args:
+        current_user: The user initiating the request
+        draft_id: The ID of the draft to send
+        access_token: Optional access token
+        
+    Returns:
+        JSON string containing the message_id of the sent email
+    """
+    service = get_gmail_service(current_user, access_token)
+    message = service.users().drafts().send(userId='me', body={'id': draft_id}).execute()
+    return json.dumps({"message_id": message['id']})

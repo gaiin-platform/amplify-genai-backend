@@ -53,7 +53,9 @@ def format_event(event, include_description=False, include_attendees=False, incl
 
 def create_event(current_user, title, start_time, end_time, description=None, 
                 location=None, attendees=None, calendar_id='primary', 
-                conference_data=None, recurrence_pattern=None, access_token=None):
+                conference_data=None, recurrence_pattern=None, reminders=None,
+                send_notifications=None, send_updates=None, access_token=None):
+    
     """
     Creates an event in the user's calendar (single or recurring).
     
@@ -68,6 +70,10 @@ def create_event(current_user, title, start_time, end_time, description=None,
         calendar_id: Calendar ID (defaults to primary)
         conference_data: Optional video conferencing details (for virtual meetings)
         recurrence_pattern: Optional list of RRULE strings for recurring events
+        reminders: Optional list of dictionaries with 'method' and 'minutes' keys
+                  (e.g., [{'method': 'email', 'minutes': 30}, {'method': 'popup', 'minutes': 10}])
+        sendNotifications: Whether to send notifications to attendees as boolean
+        send_updates: Optional string controlling notification behavior ('all', 'externalOnly', or 'none')
         access_token: Optional access token
         
     Returns:
@@ -100,29 +106,28 @@ def create_event(current_user, title, start_time, end_time, description=None,
     
     if conference_data:
         event['conferenceData'] = conference_data
-        
-    # For Google Meet integration specifically:
-    # Use conferenceDataVersion=1 to enable creating Google Meet conferences
-    created_event = service.events().insert(
-        calendarId=calendar_id, 
-        body=event,
-        conferenceDataVersion=1 if conference_data else 0
-    ).execute()
     
-    result = {
-        'id': created_event['id'],
-        'title': created_event['summary'],
-    }
-    
-    if recurrence_pattern:
-        result['recurring'] = True
-        result['recurrence_pattern'] = recurrence_pattern
-        
+    # Add reminders if provided
+    if reminders:
+        event['reminders'] = {
+            'useDefault': False,
+            'overrides': reminders
+        }
+    if not calendar_id: 
+        calendar_id = 'primary'
+    # Create the event with the sendUpdates parameter (if provided)
+    kwargs = {'calendarId': calendar_id, 'body': event}
     if conference_data:
-        result['virtual'] = True
-        result['conference_data'] = created_event.get('conferenceData', {})
-        
-    return result
+        kwargs['conferenceDataVersion'] = 1
+
+    if send_notifications:
+        kwargs['sendUpdates'] = send_updates if send_updates else 'all'
+    else:
+         kwargs['sendUpdates'] = "none"
+    
+    event_result = service.events().insert(**kwargs).execute()
+    
+    return event_result
 
 def update_event(current_user, event_id, updated_fields, access_token=None):
     service = get_calendar_service(current_user, access_token)
@@ -613,6 +618,8 @@ def update_calendar_permissions(current_user, calendar_id, email, role='reader',
         },
         'role': role
     }
+    if not calendar_id: 
+        calendar_id = 'primary'
     
     acl = service.acl().insert(
         calendarId=calendar_id, 
@@ -697,7 +704,9 @@ def add_event_reminders(current_user, event_id, reminders=None, calendar_id='pri
         'useDefault': False,
         'overrides': reminders
     }
-    
+    if not calendar_id: 
+        calendar_id = 'primary'
+
     updated_event = service.events().update(
         calendarId=calendar_id, 
         eventId=event_id, 
@@ -731,6 +740,9 @@ def update_calendar(current_user, calendar_id, name=None, description=None, time
         Dictionary containing the updated calendar details
     """
     service = get_calendar_service(current_user, access_token)
+
+    if not calendar_id: 
+        calendar_id = 'primary'
     
     # First get the existing calendar
     calendar = service.calendars().get(calendarId=calendar_id).execute()
@@ -768,6 +780,9 @@ def get_calendar_details(current_user, calendar_id, access_token=None):
         Dictionary containing the calendar details
     """
     service = get_calendar_service(current_user, access_token)
+
+    if not calendar_id: 
+        calendar_id = 'primary'
     
     try:
         calendar = service.calendars().get(calendarId=calendar_id).execute()
