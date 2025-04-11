@@ -436,7 +436,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 llm.forceFlush();
 
                 if (result.success) {
-                    let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
+                    let responseFromAssistant = result.data.result?.findLast(msg => msg.role === 'assistant')?.content;
 
                     if(responseFromAssistant) {
                         if (responseFromAssistant.args && responseFromAssistant.args.message) {
