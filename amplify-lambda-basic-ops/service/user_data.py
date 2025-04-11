@@ -76,8 +76,9 @@ def common_handler(operation, func_schema, **optional_params):
             print("Invoking operation")
             response = operation(**args)
 
-            print("Returning response")
-            return {"success": True, "data": response}
+            success = response.get('success', True)
+            print(f"Returning response success: {True}")
+            return {"success": success, "data": response}
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
             return {"success": False, "error": "Unexpected error."}
