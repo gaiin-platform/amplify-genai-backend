@@ -362,12 +362,17 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }
                 );
 
-                const workflowTemplateId = assistant.data?.workflowTemplateId ? 
+                let workflowTemplateId = assistant.data?.workflowTemplateId ? 
                                           {workflow: {templateId: assistant.data.workflowTemplateId}} : {};
+
+                if (!workflowTemplateId.workflow && assistant.data.baseWorkflowTemplateId) { // backup
+                    workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
+                }
 
                 const response = invokeAgent(
                     params.account.accessToken,
                     params.options.conversationId,
+                    params.options.requestId,
                     body.messages,
                     {assistant, model: params.model.id, ...workflowTemplateId} // built in 
                 );
