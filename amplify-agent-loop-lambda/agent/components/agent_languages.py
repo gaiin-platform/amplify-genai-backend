@@ -16,6 +16,9 @@ def to_json_memory_messages_format(items):
         if item["type"] == "prompt":
             continue
         if item["type"] == "assistant":
+            if "skipped" in content:
+                skip_reason = content.get("skipped", "No reason provided")
+                content = f"Skipped step: '{content.get('tool', 'Unknown tool')}' \nSkipped reason: {skip_reason}"
             mapped_items.append({"role": "assistant", "content": content})
         elif item["type"] == "system":
             mapped_items.append({"role": "system", "content": content})

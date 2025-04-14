@@ -116,6 +116,13 @@ class WorkflowCapability(Capability):
         if self.remaining_steps:
             next_step: Optional[Step] = self.remaining_steps.pop()
             if next_step:
+                # skip logic
+                should_skip = self._should_skip_step(next_step, action_context)
+                if should_skip:
+                    print(f"-- skipping step in workflow -- {next_step.tool}")
+                    # Recursively call start_agent_loop to process the next step
+                    return self.start_agent_loop(agent, action_context)
+                
                 self.action_registry.parameterize_actions([self._convert_step_to_action(next_step)])
         return True
 
@@ -158,6 +165,7 @@ class WorkflowCapability(Capability):
         return {}
 
     def _convert_step_to_action(self, step: Step) -> dict:
+        print("-- next step -- ", step.tool)
         return {
             "tool": step.tool,
             "args": step.args,
@@ -167,3 +175,71 @@ class WorkflowCapability(Capability):
 
     def _format_step(self, step: Step) -> str:
         return f"{step.instructions}\nTool: {step.tool}\nArgs: {step.args}"
+    
+
+
+    def _should_skip_step(self, step: Step, action_context: ActionContext) -> bool:
+        if step.tool == "terminate":
+            return False
+
+        memory = action_context.get("memory", None)
+        if not memory:
+            return False
+        
+        memories = memory.get_memories()
+
+        prompt = f"""You are a workflow step evaluator tasked with determining if step '{step.tool}' can be safely skipped.
+
+INSTRUCTIONS:
+1. Carefully analyze the step instructions: '{step.instructions}'
+2. Review the conversation history and current context in the provided memories
+3. Evaluate whether this step has ALREADY been completed or is COMPLETELY UNNECESSARY based on:
+   - Information needed from this step is already available in the conversation history
+   - The step's purpose is irrelevant to the current users request
+   - The prerequisites for this step are not met and cannot be met
+   - Simply the step does not need to be performed
+
+   
+Conversation history and current context:
+{json.dumps(memories)}
+
+Respond with either YES or NO in all caps. Then write a short explanation (1-2 sentences) for your reasoning on the next line."""
+
+        # llm call to determine if the step should be skipped
+        sys_prompt = """You're task is to determine if the step {step.tool} should be skipped.  
+        Use the following threshold to determine if the step should be skipped:
+        CONFIDENCE THRESHOLD:
+        - If you have ANY doubt (even 5%) about whether skipping is safe, respond with "NO"
+        - Only respond with "YES" if you are 100 confident this step can be safely skipped without affecting the workflow outcome
+
+        YOUR RESPONSE MUST BE EXACTLY ONLY  YES   or   NO  in all caps. Followed by a new line and short explanation explaing your decision"""
+        f"Should we skip the step {step.tool}? {step.instructions}"
+        response = prompt_llm_with_messages(action_context=action_context, prompt=[
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": prompt}
+        ])
+
+        if (response and "YES" in response and "NO" not in response):
+            skip_reason = response.split("\n", 1)[1] if "\n" in response else "No reason provided"
+            
+            send_event = action_context.incremental_event()
+            # Send event about skipped step
+            send_event("agent/workflow/skip_step", {
+                "step": step.tool,
+                "reason": skip_reason
+            })
+
+            new_memory = {
+                "type": "assistant",
+                "content": {"tool": step.tool,
+                            "skipped" : skip_reason,
+                            }
+            }
+            
+            memory.add_memory(new_memory)
+
+            send_event("agent/memory/new_memories", {"memories": [new_memory]})
+            return True
+        
+        return False
+    
