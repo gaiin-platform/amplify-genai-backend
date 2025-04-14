@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import reduce
 from typing import List, Callable, Dict, Any
 from agent.prompt import Prompt
+from common.requestState import request_killed
 
 
 class UnknownActionError(Exception):
@@ -288,6 +289,13 @@ class Agent:
         return result
 
     def should_terminate(self, action_context: ActionContext, response: str) -> bool:
+        request_id = action_context.get("request_id")
+        if request_id and request_killed(action_context.get("current_user"), request_id):
+            print(f"Request {request_id} killed, terminating agent loop")
+            return True
+        elif (not request_id):
+            print(f"Request {request_id} not provided, continuing...")
+
         action_def, action = self.get_action(response)
         capability_decision = reduce(lambda a, c: c.should_terminate(self, action_context, response), self.capabilities, False)
         return action_def.terminal or capability_decision

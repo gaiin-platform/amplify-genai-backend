@@ -178,6 +178,7 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
         "type": "object",
         "properties": {
             "sessionId": {"type": "string"},
+            "requestId": {"type": "string"},
             "prompt": {
                 "type": "array",
                 "items": {
@@ -195,7 +196,7 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
         "required": ["prompt", "sessionId"],
     }
 )
-def handle_event(current_user, access_token, session_id, prompt, metadata=None, account_id="general_account"):
+def handle_event(current_user, access_token, session_id, prompt, request_id=None, metadata=None, account_id="general_account"):
 
     try:
         work_directory = get_working_directory(session_id)
@@ -369,6 +370,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
 
         action_context_props={
             'current_user': current_user,
+            'request_id': request_id,
             'access_token': access_token,
             'account_id': account_id,   
             'session_id': session_id,
