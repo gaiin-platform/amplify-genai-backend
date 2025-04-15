@@ -18,7 +18,7 @@ from integrations.o365.onenote import list_notebooks, list_sections_in_notebook,
 
 from integrations.o365.contacts import list_contacts, get_contact_details, create_contact, delete_contact
 
-from integrations.o365.calendar import create_event, update_event, delete_event, get_event_details, get_events_between_dates, list_calendar_events, list_calendars, create_calendar, delete_calendar, respond_to_event, find_meeting_times, create_recurring_event, update_recurring_event, add_attachment, get_attachments, delete_attachment, get_calendar_permissions, share_calendar, remove_calendar_sharing
+from integrations.o365.calendar import create_event, update_event, delete_event, get_event_details, get_events_between_dates, list_calendar_events, list_calendars, create_calendar, delete_calendar, respond_to_event, find_meeting_times, create_recurring_event, update_recurring_event, add_attachment, get_attachments, delete_attachment, get_calendar_permissions, share_calendar, remove_calendar_sharing, check_event_conflicts
 
 from integrations.o365.word_doc import (
     add_comment, get_document_statistics, search_document, apply_formatting, get_document_sections,
@@ -120,7 +120,7 @@ def route_request(event, context, current_user, name, data):
 
 
 
-### drive ###
+# ### drive ###
 @vop(
     path="/microsoft/integrations/list_drive_items",
     type="integration",
@@ -1111,24 +1111,24 @@ def get_list_items_handler(current_user, data):
     name="microsoftCreateListItem",
     description="Creates a new item in a SharePoint list.",
     params={
-        "site_id": "Site ID as string",
-        "list_id": "List ID as string",
-        "fields_dict": "Dictionary of field names and values as object"
+        "site_id": "(Required) Site ID as string",
+        "list_id": "(Required) List ID as string",
+        "fields_dict": "(Required) Dictionary of field names and values as object"
     },
     schema={
         "type": "object",
         "properties": {
             "site_id": {
                 "type": "string",
-                "description": "Site ID"
+                "description": "Site ID (required)"
             },
             "list_id": {
                 "type": "string",
-                "description": "List ID"
+                "description": "List ID (required)"
             },
             "fields_dict": {
                 "type": "object",
-                "description": "Dictionary of field names and values"
+                "description": "Dictionary of field names and values (required)"
             }
         },
         "required": ["site_id", "list_id", "fields_dict"]
@@ -1145,29 +1145,29 @@ def create_list_item_handler(current_user, data):
     name="microsoftUpdateListItem",
     description="Updates an existing SharePoint list item.",
     params={
-        "site_id": "Site ID as string",
-        "list_id": "List ID as string",
-        "item_id": "Item ID as string",
-        "fields_dict": "Dictionary of field names and values to update as object"
+        "site_id": "(Required) Site ID as string",
+        "list_id": "(Required) List ID as string",
+        "item_id": "(Required) Item ID as string",
+        "fields_dict": "(Required) Dictionary of field names and values to update as object"
     },
     schema={
         "type": "object",
         "properties": {
             "site_id": {
                 "type": "string",
-                "description": "Site ID"
+                "description": "Site ID (required)"
             },
             "list_id": {
                 "type": "string",
-                "description": "List ID"
+                "description": "List ID (required)"
             },
             "item_id": {
                 "type": "string",
-                "description": "Item ID"
+                "description": "Item ID (required)"
             },
             "fields_dict": {
                 "type": "object",
-                "description": "Dictionary of field names and values to update"
+                "description": "Dictionary of field names and values to update (required)"
             }
         },
         "required": ["site_id", "list_id", "item_id", "fields_dict"]
@@ -1185,24 +1185,24 @@ def update_list_item_handler(current_user, data):
     name="microsoftDeleteListItem",
     description="Deletes an item from a SharePoint list.",
     params={
-        "site_id": "Site ID as string",
-        "list_id": "List ID as string",
-        "item_id": "Item ID as string"
+        "site_id": "(Required) Site ID as string",
+        "list_id": "(Required) List ID as string",
+        "item_id": "(Required) Item ID as string"
     },
     schema={
         "type": "object",
         "properties": {
             "site_id": {
                 "type": "string",
-                "description": "Site ID"
+                "description": "Site ID (required)"
             },
             "list_id": {
                 "type": "string",
-                "description": "List ID"
+                "description": "List ID (required)"
             },
             "item_id": {
                 "type": "string",
-                "description": "Item ID"
+                "description": "Item ID (required)"
             }
         },
         "required": ["site_id", "list_id", "item_id"]
@@ -1220,7 +1220,7 @@ def delete_list_item_handler(current_user, data):
     tags=["default", "integration", "microsoft_teams", "microsoft_teams_read"],
     name="microsoftListTeams",
     description="Lists teams that the user is a member of.",
-    # method="GET",
+    params={},
     schema={}
 )
 # @validated("list_teams")
@@ -1234,14 +1234,14 @@ def list_teams_handler(current_user, data):
     name="microsoftListChannels",
     description="Lists channels in a team.",
     params={
-        "team_id": "Team ID as string"
+        "team_id": "(Required) Team ID as string"
     },
     schema={
         "type": "object",
         "properties": {
             "team_id": {
                 "type": "string",
-                "description": "Team ID"
+                "description": "Team ID (required)"
             }
         },
         "required": ["team_id"]
@@ -1258,24 +1258,24 @@ def list_channels_handler(current_user, data):
     name="microsoftCreateChannel",
     description="Creates a new channel in a team.",
     params={
-        "team_id": "Team ID as string",
-        "name": "Channel name as string",
-        "description": "Channel description (optional) as string"
+        "team_id": "(Required) Team ID as string",
+        "name": "(Required) Channel name as string",
+        "description": "(Optional) Channel description as string"
     },
     schema={
         "type": "object",
         "properties": {
             "team_id": {
                 "type": "string",
-                "description": "Team ID"
+                "description": "Team ID (required)"
             },
             "name": {
                 "type": "string",
-                "description": "Channel name"
+                "description": "Channel name (required)"
             },
             "description": {
                 "type": "string",
-                "description": "Channel description"
+                "description": "Channel description (optional)"
             }
         },
         "required": ["team_id", "name"]
@@ -1292,30 +1292,30 @@ def create_channel_handler(current_user, data):
     name="microsoftSendChannelMessage",
     description="Sends a message to a channel.",
     params={
-        "team_id": "Team ID as string",
-        "channel_id": "Channel ID as string",
-        "message": "Message content (can include basic HTML) as string",
-        "importance": "Message importance (normal, high, urgent) as string"
+        "team_id": "(Required) Team ID as string",
+        "channel_id": "(Required) Channel ID as string",
+        "message": "(Required) Message content (can include basic HTML) as string",
+        "importance": "(Optional) Message importance (normal, high, urgent) as string"
     },
     schema={
         "type": "object",
         "properties": {
             "team_id": {
                 "type": "string",
-                "description": "Team ID"
+                "description": "Team ID (required)"
             },
             "channel_id": {
                 "type": "string",
-                "description": "Channel ID"
+                "description": "Channel ID (required)"
             },
             "message": {
                 "type": "string",
-                "description": "Message content (can include basic HTML)"
+                "description": "Message content (can include basic HTML) (required)"
             },
             "importance": {
                 "type": "string",
                 "enum": ["normal", "high", "urgent"],
-                "description": "Message importance",
+                "description": "Message importance (optional)",
                 "default": "normal"
             }
         },
@@ -1334,21 +1334,21 @@ def send_channel_message_handler(current_user, data):
     name="microsoftGetChatMessages",
     description="Gets messages from a chat.",
     params={
-        "chat_id": "Chat ID as string",
-        "top": "Maximum number of messages to retrieve as integer"
+        "chat_id": "(Required) Chat ID as string",
+        "top": "(Optional) Maximum number of messages to retrieve as integer"
     },
     schema={
         "type": "object",
         "properties": {
             "chat_id": {
                 "type": "string",
-                "description": "Chat ID"
+                "description": "Chat ID (required)"
             },
             "top": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 50,
-                "description": "Maximum number of messages to retrieve",
+                "description": "Maximum number of messages to retrieve (optional)",
                 "default": 50
             }
         },
@@ -1366,35 +1366,35 @@ def get_chat_messages_handler(current_user, data):
     name="microsoftScheduleMeeting",
     description="Schedules a Teams meeting.",
     params={
-        "team_id": "Team ID as string",
-        "subject": "Meeting subject as string",
-        "start_time": "Start time in ISO format as string",
-        "end_time": "End time in ISO format as string",
-        "attendees": "List of attendee email addresses as array"
+        "team_id": "(Required) Team ID as string",
+        "subject": "(Required) Meeting subject as string",
+        "start_time": "(Required) Start time in ISO format as string",
+        "end_time": "(Required) End time in ISO format as string",
+        "attendees": "(Optional) List of attendee email addresses as array"
     },
     schema={
         "type": "object",
         "properties": {
             "team_id": {
                 "type": "string",
-                "description": "Team ID"
+                "description": "Team ID (required)"
             },
             "subject": {
                 "type": "string",
-                "description": "Meeting subject"
+                "description": "Meeting subject (required)"
             },
             "start_time": {
                 "type": "string",
-                "description": "Start time in ISO format"
+                "description": "Start time in ISO format (required)"
             },
             "end_time": {
                 "type": "string",
-                "description": "End time in ISO format"
+                "description": "End time in ISO format (required)"
             },
             "attendees": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of attendee email addresses"
+                "description": "List of attendee email addresses (optional)"
             }
         },
         "required": ["team_id", "subject", "start_time", "end_time"]
@@ -1415,10 +1415,10 @@ def schedule_meeting_handler(current_user, data):
     name="microsoftListUsers",
     description="Lists users with search, pagination and sorting support.",
     params={
-        "search_query": "Optional search term as string",
-        "top": "Maximum number of users to retrieve as integer",
-        "skip": "Number of users to skip as integer",
-        "order_by": "Property to sort by (e.g., 'displayName', 'userPrincipalName') as string"
+        "search_query": "(Optional) Search term as string",
+        "top": "(Optional) Maximum number of users to retrieve as integer",
+        "skip": "(Optional) Number of users to skip as integer",
+        "order_by": "(Optional) Property to sort by (e.g., 'displayName', 'userPrincipalName') as string"
     },
     schema={
         "type": "object",
@@ -1945,40 +1945,53 @@ def delete_contact_handler(current_user, data):
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="microsoftCreateEvent",
     description="Creates a new calendar event.",
-    params={
-        "title": "Event title as string",
-        "start_time": "Start time in ISO format as string",
-        "end_time": "End time in ISO format as string",
-        "description": "Event description as string"
+     params={
+        "title": "(Required) Event title as string",
+        "start_time": "(Required) Start time in ISO format as string",
+        "end_time": "(Required) End time in ISO format as string",
+        "description": "(Optional) Event description as string",
+        "location": "(Optional) Physical location for the meeting as string",
+        "attendees": "(Optional) List of attendee objects with email addresses as array",
+        "calendar_id": "(Optional) ID of calendar to create event in (default: primary calendar) as string",
+        "is_online_meeting": "(Optional) Whether to create as an online Teams meeting as boolean",
+        "reminder_minutes_before_start": "(Optional) Set reminder in minutes before event start as integer",
+        "send_invitations": "(Optional) Whether to send invitations: 'auto', 'send', 'none' as string",
+        "time_zone": "(Optional) Time zone for the event (Windows format) as string"
     },
     schema={
         "type": "object",
         "properties": {
-            "title": {
-                "type": "string",
-                "description": "Event title"
-            },
-            "start_time": {
-                "type": "string",
-                "description": "Start time in ISO format"
-            },
-            "end_time": {
-                "type": "string",
-                "description": "End time in ISO format"
-            },
-            "description": {
-                "type": "string",
-                "description": "Event description",
-                "default": ""
-            }
+            "title": {"type": "string", "description": "Event title (required)"},
+            "start_time": {"type": "string", "description": "Start time (required)"},
+            "end_time": {"type": "string", "description": "End time (required)"},
+            "description": {"type": "string", "description": "Event description (optional)", "default": ""},
+            "location": {"type": "string", "description": "Physical location (optional)"},
+            "attendees": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}, "type": {"type": "string", "enum": ["required", "optional"], "default": "required"}}}, "description": "List of attendees (optional)"},
+            "calendar_id": {"type": "string", "description": "Calendar ID (optional)"},
+            "is_online_meeting": {"type": "boolean", "description": "Create Teams meeting (optional)", "default": False},
+            "reminder_minutes_before_start": {"type": "integer", "description": "Reminder time in minutes (optional)"},
+            "send_invitations": {"type": "string", "description": "Invitation sending behavior (optional)", "enum": ["auto", "send", "none"], "default": "auto"},
+            "time_zone": {"type": "string", "description": "Time zone in Windows format (optional)", "default": "Central Standard Time"}
         },
         "required": ["title", "start_time", "end_time"]
     }
 )
 # @validated("create_event")
 def create_event_handler(current_user, data):
-    return common_handler(create_event, title=None, start_time=None, 
-                        end_time=None, description="")(current_user, data)
+    return common_handler(
+        create_event, 
+        title=None, 
+        start_time=None, 
+        end_time=None, 
+        description="", 
+        location=None,
+        attendees=None,
+        calendar_id=None,
+        is_online_meeting=False,
+        reminder_minutes_before_start=None,
+        send_invitations="auto",
+        time_zone="Central Standard Time"
+    )(current_user, data)
 
 @vop(
     path="/microsoft/integrations/update_event",
@@ -2064,26 +2077,26 @@ def get_event_details_handler(current_user, data):
     name="microsoftGetEventsBetweenDates",
     description="Retrieves events between two dates.",
     params={
-        "start_dt": "Start datetime in ISO format as string",
-        "end_dt": "End datetime in ISO format as string",
-        "page_size": "Maximum number of events to retrieve per page as integer"
+        "start_dt": "(Required) Start datetime in ISO format as string",
+        "end_dt": "(Required) End datetime in ISO format as string",
+        "page_size": "(Optional) Maximum number of events to retrieve per page as integer"
     },
     schema={
         "type": "object",
         "properties": {
             "start_dt": {
                 "type": "string",
-                "description": "Start datetime in ISO format"
+                "description": "Start datetime in ISO format (required)"
             },
             "end_dt": {
                 "type": "string",
-                "description": "End datetime in ISO format"
+                "description": "End datetime in ISO format (required)"
             },
             "page_size": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 50,
-                "description": "Maximum number of events to retrieve per page",
+                "description": "Maximum number of events to retrieve per page (optional)",
                 "default": 50
             }
         },
@@ -2124,22 +2137,22 @@ def update_message_handler(current_user, data):
     name="microsoftCreateDraft",
     description="Creates a draft email message.",
     params={
-        "subject": "Draft email subject as string",
-        "body": "Draft email body content as string",
-        "to_recipients": "Optional list of recipient email addresses as array",
-        "cc_recipients": "Optional list of CC recipient email addresses as array",
-        "bcc_recipients": "Optional list of BCC recipient email addresses as array",
-        "importance": "Email importance (low, normal, high) as string"
+        "subject": "(Required) Draft email subject as string",
+        "body": "(Required) Draft email body content as string",
+        "to_recipients": "(Optional) List of recipient email addresses as array",
+        "cc_recipients": "(Optional) List of CC recipient email addresses as array",
+        "bcc_recipients": "(Optional) List of BCC recipient email addresses as array",
+        "importance": "(Optional) Email importance (low, normal, high) as string"
     },
     schema={
         "type": "object",
         "properties": {
-            "subject": {"type": "string", "description": "Draft email subject"},
-            "body": {"type": "string", "description": "Draft email body content"},
-            "to_recipients": {"type": "array", "items": {"type": "string"}, "description": "List of recipient email addresses"},
-            "cc_recipients": {"type": "array", "items": {"type": "string"}, "description": "List of CC email addresses"},
-            "bcc_recipients": {"type": "array", "items": {"type": "string"}, "description": "List of BCC email addresses"},
-            "importance": {"type": "string", "enum": ["low", "normal", "high"], "default": "normal", "description": "Email importance"}
+            "subject": {"type": "string", "description": "Draft email subject (required)"},
+            "body": {"type": "string", "description": "Draft email body content (required)"},
+            "to_recipients": {"type": "array", "items": {"type": "string"}, "description": "List of recipient email addresses (optional)"},
+            "cc_recipients": {"type": "array", "items": {"type": "string"}, "description": "List of CC email addresses (optional)"},
+            "bcc_recipients": {"type": "array", "items": {"type": "string"}, "description": "List of BCC email addresses (optional)"},
+            "importance": {"type": "string", "enum": ["low", "normal", "high"], "default": "normal", "description": "Email importance (optional)"}
         },
         "required": ["subject", "body"]
     }
@@ -2154,7 +2167,7 @@ def create_draft_handler(current_user, data):
     name="microsoftSendDraft",
     description="Sends a draft email message.",
     params={
-        "message_id": "ID of the draft message to send as string"
+        "message_id": "ID of the draft message to send as string (required)"
     },
     schema={
         "type": "object",
@@ -2262,7 +2275,7 @@ def move_message_handler(current_user, data):
     type="integration",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftListFolders",
-    # method="GET",
+    params={},
     description="Lists all mail folders.",
     schema={}
 )
@@ -2392,7 +2405,7 @@ def list_calendar_events_handler(current_user, data):
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="microsoftListCalendars",
-    # method="GET",
+    params={},
     description="Lists all calendars in the user's mailbox.",
     schema={}
 )
@@ -2480,12 +2493,19 @@ def respond_to_event_handler(current_user, data):
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="microsoftFindMeetingTimes",
-    description="Finds available meeting times for a set of attendees.",
+    description="Finds available meeting times for a set of attendees based on their calendar availability.",
     params={
-        "attendees": "List of attendee objects with email addresses as array",
-        "duration_minutes": "Duration of meeting in minutes as integer",
-        "start_time": "Optional start time boundary as string",
-        "end_time": "Optional end time boundary as string"
+        "attendees": "List of attendee objects with email addresses (all attendees if not separating required/optional)",
+        "duration_minutes": "Duration of meeting in minutes (default: 30)",
+        "start_time": "Optional start time boundary in ISO format (default: now)",
+        "end_time": "Optional end time boundary in ISO format (default: 7 days from now)",
+        "time_zone": "Time zone for the meeting in Windows format (e.g., 'Central Standard Time', default: 'Central Standard Time')",
+        "required_attendees": "Optional list of required attendee objects with email addresses",
+        "optional_attendees": "Optional list of optional attendee objects with email addresses",
+        "working_hours_start": "Start of working hours in 24-hour format (default: '09:00')",
+        "working_hours_end": "End of working hours in 24-hour format (default: '17:00')",
+        "include_weekends": "Whether to include weekends in suggestions (default: false)",
+        "availability_view_interval": "Interval in minutes for checking availability (default: 30)"
     },
     schema={
         "type": "object",
@@ -2493,14 +2513,34 @@ def respond_to_event_handler(current_user, data):
             "attendees": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}}, "required": ["email"]}, "description": "List of attendees"},
             "duration_minutes": {"type": "integer", "description": "Meeting duration", "default": 30},
             "start_time": {"type": "string", "description": "Start time boundary"},
-            "end_time": {"type": "string", "description": "End time boundary"}
+            "end_time": {"type": "string", "description": "End time boundary"},
+            "time_zone": {"type": "string", "description": "Time zone in Windows format", "default": "Central Standard Time"},
+            "required_attendees": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}}, "required": ["email"]}, "description": "Required attendees"},
+            "optional_attendees": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}}, "required": ["email"]}, "description": "Optional attendees"},
+            "working_hours_start": {"type": "string", "description": "Start of working hours (HH:MM)", "default": "09:00"},
+            "working_hours_end": {"type": "string", "description": "End of working hours (HH:MM)", "default": "17:00"},
+            "include_weekends": {"type": "boolean", "description": "Include weekends in suggestions", "default": False},
+            "availability_view_interval": {"type": "integer", "description": "Interval in minutes for availability", "default": 30}
         },
         "required": ["attendees"]
     }
 )
 # @validated("find_meeting_times")
 def find_meeting_times_handler(current_user, data):
-    return common_handler(find_meeting_times, attendees=None, duration_minutes=30, start_time=None, end_time=None)(current_user, data)
+    return common_handler(
+        find_meeting_times, 
+        attendees=None, 
+        duration_minutes=30, 
+        start_time=None, 
+        end_time=None,
+        time_zone="Central Standard Time",
+        required_attendees=None,
+        optional_attendees=None,
+        working_hours_start="09:00",
+        working_hours_end="17:00",
+        include_weekends=False,
+        availability_view_interval=30
+    )(current_user, data)
 
 
 @vop(
@@ -2514,7 +2554,8 @@ def find_meeting_times_handler(current_user, data):
         "start_time": "Start time in ISO format as string",
         "end_time": "End time in ISO format as string",
         "description": "Event description as string",
-        "recurrence_pattern": "Recurrence pattern object as object"
+        "recurrence_pattern": "Recurrence pattern object as object",
+        "time_zone": "Time zone for the event (Windows format, e.g., 'Central Standard Time') as string"
     },
     schema={
         "type": "object",
@@ -2523,14 +2564,23 @@ def find_meeting_times_handler(current_user, data):
             "start_time": {"type": "string", "description": "Start time"},
             "end_time": {"type": "string", "description": "End time"},
             "description": {"type": "string", "description": "Event description"},
-            "recurrence_pattern": {"type": "object", "description": "Recurrence pattern"}
+            "recurrence_pattern": {"type": "object", "description": "Recurrence pattern"},
+            "time_zone": {"type": "string", "description": "Time zone in Windows format", "default": "Central Standard Time"}
         },
         "required": ["title", "start_time", "end_time", "description", "recurrence_pattern"]
     }
 )
 # @validated("create_recurring_event")
 def create_recurring_event_handler(current_user, data):
-    return common_handler(create_recurring_event, title=None, start_time=None, end_time=None, description=None, recurrence_pattern=None)(current_user, data)
+    return common_handler(
+        create_recurring_event, 
+        title=None, 
+        start_time=None, 
+        end_time=None, 
+        description=None, 
+        recurrence_pattern=None,
+        time_zone="Central Standard Time"
+    )(current_user, data)
 
 
 @vop(
@@ -2703,6 +2753,39 @@ def share_calendar_handler(current_user, data):
 # @validated("remove_calendar_sharing")
 def remove_calendar_sharing_handler(current_user, data):
     return common_handler(remove_calendar_sharing, calendar_id=None, permission_id=None)(current_user, data)
+
+@vop(
+    path="/microsoft/integrations/check_event_conflicts",
+    type="integration",
+    tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
+    name="microsoftCheckEventConflicts",
+    description="Checks for scheduling conflicts within a time window across one or more calendars.",
+    params={
+        "proposed_start_time": "(Required) Start time of the proposed event in ISO format as string",
+        "proposed_end_time": "(Required) End time of the proposed event in ISO format as string",
+        "return_conflicting_events": "(Optional) Whether to include details of conflicting events as boolean",
+        "calendar_ids": "(Optional) List of calendar IDs to check as array",
+        "check_all_calendars": "(Optional) If true, checks all calendars the user has access to as boolean",
+        "time_zone": "(Optional) Time zone for the event times (Windows format) as string"
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "proposed_start_time": {"type": "string", "description": "Start time in ISO format (required)"},
+            "proposed_end_time": {"type": "string", "description": "End time in ISO format (required)"},
+            "return_conflicting_events": {"type": "boolean", "description": "Include conflict details (optional)", "default": False},
+            "calendar_ids": {"type": "array", "items": {"type": "string"}, "description": "Calendar IDs to check (optional)"},
+            "check_all_calendars": {"type": "boolean", "description": "Check all available calendars (optional)", "default": False},
+            "time_zone": {"type": "string", "description": "Time zone in Windows format (optional)", "default": "Central Standard Time"}
+        },
+        "required": ["proposed_start_time", "proposed_end_time"]
+    }
+)
+def check_event_conflicts_handler(current_user, data):
+    return common_handler(check_event_conflicts,  proposed_start_time=None, proposed_end_time=None,
+                          return_conflicting_events=False, calendar_ids=None, check_all_calendars=False,
+                          time_zone="Central Standard Time")(current_user, data)
+
 
 @vop(
     path="/microsoft/integrations/get_worksheet",

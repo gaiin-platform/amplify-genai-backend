@@ -377,7 +377,11 @@ def create_draft(current_user: str, subject: str, body: str,
         response = session.post(url, json=payload)
         if not response.ok:
             handle_graph_error(response)
-        return response.json()
+
+        response_data = response.json()
+        return {
+            "message_id": response_data.get("id"),
+        }
     except requests.RequestException as e:
         raise OutlookError(f"Network error while creating draft: {str(e)}")
 

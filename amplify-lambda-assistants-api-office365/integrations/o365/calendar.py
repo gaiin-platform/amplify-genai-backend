@@ -30,9 +30,36 @@ def handle_graph_error(response: requests.Response) -> None:
 
 
 def create_event(current_user: str, title: str, start_time: str, 
-                end_time: str, description: str, access_token: str) -> Dict:
+                end_time: str, description: str = "", access_token: str = None, 
+                location: str = None, attendees: List[Dict] = None, 
+                calendar_id: str = None, is_online_meeting: bool = False,
+                reminder_minutes_before_start: int = None,
+                send_invitations: str = "auto", 
+                time_zone: str = "Central Standard Time") -> Dict:
+    """
+    Create a calendar event with specified details.
+    
+    Args:
+        current_user: The user's identifier
+        title: Event title/subject
+        start_time: Start time in ISO format
+        end_time: End time in ISO format
+        description: Event description/content
+        access_token: Optional access token
+        location: Physical location for the meeting
+        attendees: List of attendee objects with email addresses
+        calendar_id: ID of calendar to create event in (default: primary calendar)
+        is_online_meeting: Whether to create as an online Teams meeting
+        reminder_minutes_before_start: Set reminder in minutes before event start
+        send_invitations: Whether to send invitations: "auto", "send", "none"
+        time_zone: Time zone for the event times (Windows format)
+        
+    Returns:
+        Created event details
+    """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
+        
         # Validate datetime formats
         for dt in [start_time, end_time]:
             try:
@@ -40,8 +67,7 @@ def create_event(current_user: str, title: str, start_time: str,
             except ValueError:
                 raise CalendarError(f"Invalid datetime format: {dt}")
 
-        # Graph expects dateTime/timeZone in ISO8601 format. If you're passing
-        # '2025-01-30T10:00:00Z', specify timeZone = 'UTC' or the user's zone.
+        # Build the event body
         event_body = {
             "subject": title,
             "body": {
@@ -50,24 +76,63 @@ def create_event(current_user: str, title: str, start_time: str,
             },
             "start": {
                 "dateTime": start_time,
-                "timeZone": "UTC"
+                "timeZone": time_zone
             },
             "end": {
                 "dateTime": end_time,
-                "timeZone": "UTC"
+                "timeZone": time_zone
             }
         }
-
-        url = f"{GRAPH_ENDPOINT}/me/events"
-        response = session.post(url, data=json.dumps(event_body))
-
+        
+        # Add location if provided
+        if location:
+            event_body["location"] = {
+                "displayName": location
+            }
+        
+        # Add attendees if provided
+        if attendees:
+            event_body["attendees"] = [
+                {
+                    "emailAddress": {
+                        "address": attendee.get("email")
+                    },
+                    "type": attendee.get("type", "required")
+                }
+                for attendee in attendees
+            ]
+        
+        # Enable online meeting if requested
+        if is_online_meeting:
+            event_body["isOnlineMeeting"] = True
+            event_body["onlineMeetingProvider"] = "teamsForBusiness"
+        
+        # Set reminder if provided
+        if reminder_minutes_before_start is not None:
+            event_body["reminderMinutesBeforeStart"] = reminder_minutes_before_start
+        
+        # Configure send invitation behavior
+        if send_invitations:
+            if send_invitations not in ["auto", "send", "none"]:
+                send_invitations = "auto"
+                
+        # Determine the endpoint based on calendar_id
+        if calendar_id:
+            url = f"{GRAPH_ENDPOINT}/me/calendars/{calendar_id}/events"
+        else:
+            url = f"{GRAPH_ENDPOINT}/me/events"
+        
+        # Add header for invitation sending preference
+        headers = {'Prefer': f'outlook.sending-invitations={send_invitations}'}
+        
+        response = session.post(url, json=event_body, headers=headers)
+        
         if not response.ok:
             handle_graph_error(response)
             
-        response.raise_for_status()
         created_event = response.json()
-
         return format_event(created_event)
+        
     except requests.RequestException as e:
         raise CalendarError(f"Network error while creating event: {str(e)}")
 
@@ -309,21 +374,38 @@ def respond_to_event(current_user: str, event_id: str, response_type: str,
     except requests.RequestException as e:
         raise CalendarError(f"Network error while responding to event: {str(e)}")
 
-def find_meeting_times(current_user: str, attendees: List[Dict], 
+def find_meeting_times(current_user: str, 
+                      attendees: List[Dict], 
                       duration_minutes: int = 30,
                       start_time: Optional[str] = None,
                       end_time: Optional[str] = None,
+                      time_zone: str = "Central Standard Time",  # Use Windows time zone format
+                      required_attendees: Optional[List[Dict]] = None,
+                      optional_attendees: Optional[List[Dict]] = None,
+                      working_hours_start: Optional[str] = "09:00",
+                      working_hours_end: Optional[str] = "17:00",
+                      include_weekends: bool = False,
+                      availability_view_interval: int = 30,
                       access_token: str = None) -> Dict:
     """
     Find available meeting times for a group of attendees.
     
     Args:
         current_user: The user's identifier
-        attendees: List of attendee dictionaries with 'email' key
-        duration_minutes: Length of the meeting in minutes
-        start_time: Optional start time boundary (ISO format)
-        end_time: Optional end time boundary (ISO format)
-        
+        attendees: List of attendee dictionaries with 'email' key (all attendees if not separating required/optional)
+        duration_minutes: Length of the meeting in minutes (default: 30)
+        start_time: Optional start time boundary (ISO format, default: now)
+        end_time: Optional end time boundary (ISO format, default: 7 days from now)
+        time_zone: Time zone for the meeting times (Windows format, e.g., 'Central Standard Time')
+                  Common values: 'Pacific Standard Time', 'Eastern Standard Time', 'UTC'
+        required_attendees: List of required attendee dictionaries with 'email' key
+        optional_attendees: List of optional attendee dictionaries with 'email' key
+        working_hours_start: Start of working hours in 24-hour format (HH:MM)
+        working_hours_end: End of working hours in 24-hour format (HH:MM)
+        include_weekends: Whether to include weekends in suggestions
+        availability_view_interval: Interval in minutes for checking availability
+        access_token: Optional access token
+    
     Returns:
         Dictionary containing suggested meeting times
     """
@@ -331,39 +413,132 @@ def find_meeting_times(current_user: str, attendees: List[Dict],
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/users/{current_user}/findMeetingTimes"
         
-        # Prepare attendees format
-        formatted_attendees = [{"emailAddress": {"address": a["email"]}} for a in attendees]
+        # Default times if not provided
+        if not start_time:
+            start_time = datetime.now().isoformat()
+        if not end_time:
+            end_time = (datetime.now() + timedelta(days=7)).isoformat()
+            
+        # Prepare attendees based on required/optional distinction
+        formatted_attendees = []
         
+        if required_attendees or optional_attendees:
+            if required_attendees:
+                for attendee in required_attendees:
+                    formatted_attendees.append({
+                        "emailAddress": {"address": attendee["email"]},
+                        "type": "required"
+                    })
+            if optional_attendees:
+                for attendee in optional_attendees:
+                    formatted_attendees.append({
+                        "emailAddress": {"address": attendee["email"]},
+                        "type": "optional"
+                    })
+        else:
+            # Use the general attendees list if no required/optional distinction
+            formatted_attendees = [{"emailAddress": {"address": a["email"]}} for a in attendees]
+        
+        # Build request body
         meeting_body = {
             "attendees": formatted_attendees,
             "timeConstraint": {
                 "timeslots": [{
                     "start": {
-                        "dateTime": start_time or datetime.now().isoformat(),
-                        "timeZone": "UTC"
+                        "dateTime": start_time,
+                        "timeZone": time_zone
                     },
                     "end": {
-                        "dateTime": end_time or (datetime.now() + timedelta(days=7)).isoformat(),
-                        "timeZone": "UTC"
+                        "dateTime": end_time,
+                        "timeZone": time_zone
                     }
                 }]
             },
             "meetingDuration": f"PT{duration_minutes}M",
             "returnSuggestionReasons": True,
-            "minimumAttendeePercentage": 100
+            "availabilityViewInterval": availability_view_interval
         }
+        
+        # Add working hours constraints
+        if working_hours_start and working_hours_end:
+            meeting_body["locationConstraint"] = {
+                "isRequired": False,
+                "suggestLocation": False
+            }
+            meeting_body["timeConstraint"]["activityDomain"] = "work"
+            
+            # Convert working hours to proper format
+            work_hours = []
+            days = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+            if include_weekends:
+                days.extend(["saturday", "sunday"])
+                
+            for day in days:
+                work_hours.append({
+                    "day": day,
+                    "timeSlots": [
+                        {
+                            "start": working_hours_start,
+                            "end": working_hours_end
+                        }
+                    ]
+                })
+                
+            meeting_body["isOrganizerOptional"] = False
+            meeting_body["meetingTimeSlot"] = {
+                "start": {
+                    "dateTime": start_time,
+                    "timeZone": time_zone
+                },
+                "end": {
+                    "dateTime": end_time,
+                    "timeZone": time_zone
+                }
+            }
+            
+            meeting_body["workingHours"] = {
+                "daysOfWeek": days,
+                "startTime": working_hours_start,
+                "endTime": working_hours_end,
+                "timeZone": {
+                    "name": time_zone
+                }
+            }
         
         response = session.post(url, json=meeting_body)
         if not response.ok:
             handle_graph_error(response)
             
-        return response.json()
+        result = response.json()
+        
+        # Format the result for easier consumption
+        formatted_result = {
+            "meetingTimeSuggestions": []
+        }
+        
+        for suggestion in result.get("meetingTimeSuggestions", []):
+            formatted_suggestion = {
+                "confidence": suggestion.get("confidence"),
+                "organizerAvailability": suggestion.get("organizerAvailability"),
+                "attendeeAvailability": suggestion.get("attendeeAvailability", []),
+                "locations": suggestion.get("locations", []),
+                "suggestionReason": suggestion.get("suggestionReason", ""),
+                "meetingTimeSlot": {
+                    "start": suggestion.get("meetingTimeSlot", {}).get("start", {}).get("dateTime", ""),
+                    "end": suggestion.get("meetingTimeSlot", {}).get("end", {}).get("dateTime", ""),
+                    "timeZone": suggestion.get("meetingTimeSlot", {}).get("start", {}).get("timeZone", time_zone)
+                }
+            }
+            formatted_result["meetingTimeSuggestions"].append(formatted_suggestion)
+        
+        return formatted_result
         
     except requests.RequestException as e:
         raise CalendarError(f"Network error while finding meeting times: {str(e)}")
 
 def create_recurring_event(current_user: str, title: str, start_time: str,
-                         end_time: str, description: str, recurrence_pattern: Dict, access_token: str = None) -> Dict:
+                         end_time: str, description: str, recurrence_pattern: Dict, 
+                         access_token: str = None, time_zone: str = "Central Standard Time") -> Dict:
     """
     Create a recurring event with specified pattern.
     
@@ -386,6 +561,7 @@ def create_recurring_event(current_user: str, title: str, start_time: str,
                     "endDate": "2024-12-31"
                 }
             }
+        time_zone: Time zone for the event times (Windows format, e.g., 'Central Standard Time')
     
     Returns:
         Created recurring event details
@@ -401,11 +577,11 @@ def create_recurring_event(current_user: str, title: str, start_time: str,
             },
             "start": {
                 "dateTime": start_time,
-                "timeZone": "UTC"
+                "timeZone": time_zone
             },
             "end": {
                 "dateTime": end_time,
-                "timeZone": "UTC"
+                "timeZone": time_zone
             },
             "recurrence": recurrence_pattern
         }
@@ -667,3 +843,119 @@ def list_calendar_events(current_user: str, calendar_id: str, access_token: str)
         return all_events
     except requests.RequestException as e:
         raise CalendarError(f"Network error while fetching calendar events: {str(e)}")
+
+def check_event_conflicts(current_user: str, proposed_start_time: str, proposed_end_time: str, 
+                         return_conflicting_events: bool = False, calendar_ids: List[str] = None, 
+                         check_all_calendars: bool = False, time_zone: str = "Central Standard Time",
+                         access_token: str = None) -> Dict:
+    """
+    Checks for scheduling conflicts within a time window across one or more calendars.
+    
+    Args:
+        current_user: The current user making the request
+        proposed_start_time: Start time of the proposed event (ISO format)
+        proposed_end_time: End time of the proposed event (ISO format)
+        return_conflicting_events: Whether to include details of conflicting events
+        calendar_ids: Optional list of calendar IDs to check (default: uses default calendar)
+        check_all_calendars: If True, checks all calendars the user has access to
+        time_zone: Time zone for the event times (Windows format, e.g., 'Central Standard Time')
+        access_token: Optional access token
+        
+    Returns:
+        Dictionary with conflict status and optional conflicting event details
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        
+        # Determine which calendars to check
+        calendars_to_check = []
+        if check_all_calendars:
+            # Get all calendars the user has access to
+            url = f"{GRAPH_ENDPOINT}/me/calendars"
+            response = session.get(url)
+            if not response.ok:
+                handle_graph_error(response)
+                
+            calendars_data = response.json()
+            calendars_to_check = [cal['id'] for cal in calendars_data.get('value', [])]
+        elif calendar_ids:
+            calendars_to_check = calendar_ids
+        else:
+            # Default to primary calendar
+            url = f"{GRAPH_ENDPOINT}/me/calendar"
+            response = session.get(url)
+            if not response.ok:
+                handle_graph_error(response)
+                
+            calendars_to_check = [response.json().get('id')]
+        
+        all_conflicts = []
+        conflicts_by_calendar = {}
+        
+        # Check each calendar for conflicts
+        for calendar_id in calendars_to_check:
+            try:
+                # Use calendarView to get events in the time range
+                url = (f"{GRAPH_ENDPOINT}/me/calendars/{calendar_id}/calendarView?"
+                      f"startDateTime={proposed_start_time}&endDateTime={proposed_end_time}")
+                
+                response = session.get(url)
+                if not response.ok:
+                    handle_graph_error(response)
+                    
+                events_data = response.json()
+                conflicts = events_data.get('value', [])
+                
+                if conflicts:
+                    # Get calendar name for better reporting
+                    try:
+                        cal_url = f"{GRAPH_ENDPOINT}/me/calendars/{calendar_id}"
+                        cal_response = session.get(cal_url)
+                        if cal_response.ok:
+                            cal_info = cal_response.json()
+                            calendar_name = cal_info.get('name', calendar_id)
+                        else:
+                            calendar_name = calendar_id
+                    except:
+                        calendar_name = calendar_id
+                    
+                    formatted_conflicts = [
+                        {
+                            'id': event['id'],
+                            'title': event.get('subject', 'Untitled Event'),
+                            'start': event.get('start', {}).get('dateTime', ''),
+                            'end': event.get('end', {}).get('dateTime', ''),
+                            'calendar_id': calendar_id,
+                            'calendar_name': calendar_name
+                        }
+                        for event in conflicts
+                    ]
+                    
+                    all_conflicts.extend(formatted_conflicts)
+                    conflicts_by_calendar[calendar_id] = {
+                        'calendar_name': calendar_name,
+                        'conflicts': formatted_conflicts
+                    }
+            except Exception as e:
+                # If we can't access a calendar, skip it but log the error
+                print(f"Error checking calendar {calendar_id}: {str(e)}")
+                continue
+        
+        has_conflict = len(all_conflicts) > 0
+        
+        result = {
+            'conflict': has_conflict,
+            'calendars_checked': len(calendars_to_check)
+        }
+        
+        if has_conflict:
+            result['conflict_count'] = len(all_conflicts)
+            
+            if return_conflicting_events:
+                result['conflicting_events'] = all_conflicts
+                result['conflicts_by_calendar'] = conflicts_by_calendar
+        
+        return result
+        
+    except requests.RequestException as e:
+        raise CalendarError(f"Network error while checking event conflicts: {str(e)}")
