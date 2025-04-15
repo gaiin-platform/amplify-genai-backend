@@ -1282,37 +1282,37 @@ def get_events_for_date_handler(current_user, data):
     name="googleGetFreeTimeSlots",
     description="Finds free time slots in Google Calendar between two dates.",
     params={
-        "startDate": "The start date in ISO 8601 format",
-        "endDate": "The end date in ISO 8601 format",
-        "duration": "The minimum duration of free time slots in minutes",
-        'userTimeZone': "Optional. The time zone of the user (default: 'America/Chicago')",
-        'includeWeekends': "Optional. Whether to include weekends (default: false)",
-        'allowedTimeWindows': "Optional. List of time windows in format ['HH:MM-HH:MM']",
-        'excludeDates': "Optional. List of dates to exclude in ISO 8601 format"
+        "startDate": "(Required) The start date in ISO 8601 format",
+        "endDate": "(Required) The end date in ISO 8601 format",
+        "duration": "(Required) The minimum duration of free time slots in minutes",
+        'userTimeZone': "(Optional) The time zone of the user (default: 'America/Chicago')",
+        'includeWeekends': "(Optional) Whether to include weekends (default: false)",
+        'allowedTimeWindows': "(Optional) List of time windows in format ['HH:MM-HH:MM']",
+        'excludeDates': "(Optional) List of dates to exclude in ISO 8601 format"
     },
     schema={
         "type": "object",
         "properties": {
             "startDate": {
                 "type": "string",
-                "description": "The start date in ISO 8601 format"
+                "description": "The start date in ISO 8601 format (required)"
             },
             "endDate": {
                 "type": "string",
-                "description": "The end date in ISO 8601 format"
+                "description": "The end date in ISO 8601 format (required)"
             },
             "duration": {
                 "type": "integer",
-                "description": "The minimum duration of free time slots in minutes"
+                "description": "The minimum duration of free time slots in minutes (required)"
             },
             'userTimeZone': {
                 'type': "string",
-                'description': 'Optional. The time zone of the user (default: \'America/Chicago\')',
+                'description': 'The time zone of the user (optional)',
                 "default": "America/Chicago"
             },
             'includeWeekends': {
                 'type': "boolean",
-                'description': 'Optional. Whether to include weekends',
+                'description': 'Whether to include weekends (optional)',
                 "default": False
             },
             'allowedTimeWindows': {
@@ -1321,7 +1321,7 @@ def get_events_for_date_handler(current_user, data):
                     'type': "string",
                     'pattern': "^([0-1][0-9]|2[0-3]):[0-5][0-9]-([0-1][0-9]|2[0-3]):[0-5][0-9]$"
                 },
-                'description': 'Optional. List of time windows in format ["HH:MM-HH:MM"]'
+                'description': 'List of time windows in format ["HH:MM-HH:MM"] (optional)'
             },
             'excludeDates': {
                 'type': "array",
@@ -1329,7 +1329,7 @@ def get_events_for_date_handler(current_user, data):
                     'type': "string",
                     'format': "date"
                 },
-                'description': 'Optional. List of dates to exclude in ISO 8601 format'
+                'description': 'List of dates to exclude in ISO 8601 format (optional)'
             }
         },
         'required': ['startDate', 'endDate', 'duration']
@@ -1347,37 +1347,39 @@ def get_free_time_slots_handler(current_user, data):
     name="googleCheckEventConflicts",
     description="Checks for scheduling conflicts within a time window across one or more calendars.",
     params={
-        "proposedStartTime": "The start time of the proposed event in ISO 8601 format",
-        "proposedEndTime": "The end time of the proposed event in ISO 8601 format",
-        "returnConflictingEvents": "Optional: Whether to include details of conflicting events",
-        "calendarIds": "Optional: List of calendar IDs to check",
-        "checkAllCalendars": "Optional: If true, checks all calendars the user has access to"
+        "proposedStartTime": "(Required) The start time of the proposed event in ISO 8601 format",
+        "proposedEndTime": "(Required) The end time of the proposed event in ISO 8601 format",
+        "returnConflictingEvents": "(Optional) Whether to include details of conflicting events",
+        "calendarIds": "(Optional) List of calendar IDs to check",
+        "checkAllCalendars": "(Optional) If true, checks all calendars the user has access to"
     },
     schema={
         "type": "object",
         "properties": {
             "proposedStartTime": {
                 "type": "string",
-                "description": "The start time of the proposed event in ISO 8601 format"
+                "description": "The start time of the proposed event in ISO 8601 format (required)"
             },
             "proposedEndTime": {
                 "type": "string",
-                "description": "The end time of the proposed event in ISO 8601 format"
+                "description": "The end time of the proposed event in ISO 8601 format (required)"
             },
             "returnConflictingEvents": {
                 "type": "boolean",
-                "description": "Optional: Whether to include details of conflicting events"
+                "description": "Whether to include details of conflicting events (optional)",
+                "default": False
             },
             "calendarIds": {
                 "type": "array",
                 "items": {
                     "type": "string"
                 },
-                "description": "Optional: List of calendar IDs to check"
+                "description": "List of calendar IDs to check (optional)"
             },
             "checkAllCalendars": {
                 "type": "boolean",
-                "description": "Optional: If true, checks all calendars the user has access to"
+                "description": "If true, checks all calendars the user has access to (optional)",
+                "default": False
             }
         },
         "required": ["proposedStartTime", "proposedEndTime"]
@@ -2550,13 +2552,15 @@ def compose_and_send_email_handler(current_user, data):
     type="integration",
     tags=["default", "integration", "google_gmail", "google_gmail_write"],
     name="googleComposeEmailDraft",
-    description="Composes an email draft.",
+    description="Composes a new email draft in Gmail.",
     params={
-        "to": "Recipient email address(es) as a string, comma-separated for multiple recipients",
-        "subject": "Email subject",
-        "body": "Email body content",
-        "cc": "Optional: CC recipient(s) email address(es)",
-        "bcc": "Optional: BCC recipient(s) email address(es)"
+        "to": "(Required) Recipient email address(es) as string or array",
+        "subject": "(Required) Email subject line",
+        "body": "(Required) Email body content",
+        "cc": "(Optional) CC recipient(s) as string or array",
+        "bcc": "(Optional) BCC recipient(s) as string or array",
+        "bodyType": "(Optional) Body content type ('plain' or 'html', default: 'plain')",
+        "attachments": "(Optional) Array of attachment objects with name and content properties"
     },
     schema={
         "type": "object",
