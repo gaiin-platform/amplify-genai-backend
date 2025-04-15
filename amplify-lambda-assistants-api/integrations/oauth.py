@@ -648,6 +648,7 @@ def refresh_credentials(current_user, integration, credentials):
     print("Refreshing token for integration: ", integration)
     response = requests.post(token_uri, data=data)
     if response.status_code != 200:
+        print(f"Failed to refresh token: {response.text}")
         return {"success": False, "message": f"Failed to refresh token: {response.text}"}
     
     print("Extracting refresh token response")
