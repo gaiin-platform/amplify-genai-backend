@@ -745,7 +745,8 @@ def get_workflow_template_handler(current_user, access_token, template_id):
             "filterBaseTemplates": {"type": "boolean"}
         },
         "required": []
-    }
+    },
+    params={"filterBaseTemplates": "Optional boolean to filter for base templates only"}
 )
 def list_workflow_templates_handler(current_user, access_token, filter_base_templates=False):
     try:
