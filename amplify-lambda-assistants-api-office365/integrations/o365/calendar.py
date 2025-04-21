@@ -375,7 +375,7 @@ def respond_to_event(current_user: str, event_id: str, response_type: str,
         raise CalendarError(f"Network error while responding to event: {str(e)}")
 
 def find_meeting_times(current_user: str, 
-                      attendees: List[Dict], 
+                      attendees: List[Dict] = None, 
                       duration_minutes: int = 30,
                       start_time: Optional[str] = None,
                       end_time: Optional[str] = None,
@@ -437,7 +437,11 @@ def find_meeting_times(current_user: str,
                     })
         else:
             # Use the general attendees list if no required/optional distinction
-            formatted_attendees = [{"emailAddress": {"address": a["email"]}} for a in attendees]
+            # Check if attendees is None or empty, default to using current_user's email
+            if not attendees:
+                formatted_attendees = [{"emailAddress": {"address": current_user}}]
+            else:
+                formatted_attendees = [{"emailAddress": {"address": a["email"]}} for a in attendees]
         
         # Build request body
         meeting_body = {

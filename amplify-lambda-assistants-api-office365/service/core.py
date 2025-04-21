@@ -41,17 +41,27 @@ def camel_to_snake(name):
 
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
+        print("Input Data: ", data['data'])
         try:
             params = {camel_to_snake(param): data['data'][param] for param in required_params}
-            params.update({camel_to_snake(param): data['data'].get(param) for param in optional_params})
+            for param in optional_params:
+                snake_param = camel_to_snake(param)
+                if param in data['data']:
+                    params[snake_param] = data['data'][param]
+
             params['access_token'] = data['access_token']
             response = operation(current_user, **params)
+            # print("Integration Response: ", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
+            print("Missing Credentials Error: ", str(me))
             return {"success": False, "error": str(me)}
         except Exception as e:
+            print("Error: ", str(e))
             return {"success": False, "error": str(e)}
     return handler
+
+
 
 
 @validated("route")
@@ -650,9 +660,9 @@ def get_message_details_handler(current_user, data):
     name="microsoftSendMail",
     description="Sends an email with support for CC, BCC, and importance levels.",
     params={
-        "subject": "Email subject as string",
-        "body": "Email body content as string",
-        "to_recipients": "List of primary recipient email addresses as array",
+        "subject": "Email subject as string (required)",
+        "body": "Email body content as string (required)",
+        "to_recipients": "List of primary recipient email addresses as array (required)",
         "cc_recipients": "Optional list of CC recipient email addresses as array",
         "bcc_recipients": "Optional list of BCC recipient email addresses as array",
         "importance": "Message importance (low, normal, high) as string"
@@ -2504,7 +2514,7 @@ def respond_to_event_handler(current_user, data):
         "optional_attendees": "Optional list of optional attendee objects with email addresses",
         "working_hours_start": "Start of working hours in 24-hour format (default: '09:00')",
         "working_hours_end": "End of working hours in 24-hour format (default: '17:00')",
-        "include_weekends": "Whether to include weekends in suggestions (default: false)",
+        "include_weekends": "Whether to include weekends in suggestions Boolean (default: False)",
         "availability_view_interval": "Interval in minutes for checking availability (default: 30)"
     },
     schema={
@@ -2519,10 +2529,10 @@ def respond_to_event_handler(current_user, data):
             "optional_attendees": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}}, "required": ["email"]}, "description": "Optional attendees"},
             "working_hours_start": {"type": "string", "description": "Start of working hours (HH:MM)", "default": "09:00"},
             "working_hours_end": {"type": "string", "description": "End of working hours (HH:MM)", "default": "17:00"},
-            "include_weekends": {"type": "boolean", "description": "Include weekends in suggestions", "default": False},
+            "include_weekends": {"type": "boolean", "description": "Include weekends in suggestions (optional)", "default": False},
             "availability_view_interval": {"type": "integer", "description": "Interval in minutes for availability", "default": 30}
         },
-        "required": ["attendees"]
+        "required": []
     }
 )
 # @validated("find_meeting_times")
