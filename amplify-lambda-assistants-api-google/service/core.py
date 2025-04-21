@@ -33,15 +33,22 @@ def camel_to_snake(name):
 
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
+        print("Input Data: ", data['data'])
         try:
             params = {camel_to_snake(param): data['data'][param] for param in required_params}
-            params.update({camel_to_snake(param): data['data'].get(param) for param in optional_params})
+            for param in optional_params:
+                snake_param = camel_to_snake(param)
+                if param in data['data']:
+                    params[snake_param] = data['data'][param]
             params['access_token'] = data['access_token']
             response = operation(current_user, **params)
+            # print("Integration Response: ", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
+            print("Missing Credentials Error: ", str(me))
             return {"success": False, "error": str(me)}
         except Exception as e:
+            print("Error: ", str(e))
             return {"success": False, "error": str(e)}
     return handler
 
