@@ -5,7 +5,7 @@ from agent.capabilities.common_capabilities import PassResultsCapability, TimeAw
 from agent.capabilities.workflow_capability import WorkflowCapability
 from agent.capabilities.workflow_model import Workflow
 from agent.components.common_goals import BE_DIRECT, LARGE_RESULTS, PREFER_WORKFLOWS, \
-    USE_RESULT_REFERENCES_IN_RESPONSES, \
+    USE_RESULT_REFERENCES_IN_RESPONSES, CAREFUL_ARGUMENT_SELECTION, \
     PASS_RESULT_REFERENCES_TO_TOOLS, BAIL_OUT_ON_MANY_ERRORS, STOP_WHEN_STUCK
 from agent.components.agent_languages import AgentFunctionCallingActionLanguage, AgentJsonActionLanguage
 from agent.components.python_action_registry import PythonActionRegistry
@@ -156,6 +156,7 @@ def build_clean(environment: Environment, action_registry: ActionRegistry, gener
             name="REQUIRED",
             description="YOU ARE REQUIRED TO CALL A TOOL EVERY TIME!"
         ),
+        CAREFUL_ARGUMENT_SELECTION,
         *additional_goals
     ]
 

@@ -15,6 +15,8 @@ class Step(CustomBaseModel):
     stepName: Optional[str] = None
     instructions: Optional[str] = None
     tool: str
+    description: Optional[str] = None
+    actionSegment: Optional[str] = None
     args: Optional[Dict[str, Any]] = None
     values: Optional[Dict[str, Any]] = None
     on_failure: Optional[Dict[str, Any]] = None

@@ -123,3 +123,8 @@ BE_DIRECT = Goal(
                 perform the task directly after acquiring the necessary information.
                 """
 )
+
+CAREFUL_ARGUMENT_SELECTION = Goal(
+    name="Argument selection",
+    description="PAY CLOSE ATTENTION to ALL available arguments for each tool. CAREFULLY consider which arguments apply in the current context and would be beneficial to include. ALWAYS strive to be as COMPLETE and THOROUGH as possible when providing values for arguments. Leaving a field blank is only when 100% confident that the arg is not needed."
+)
