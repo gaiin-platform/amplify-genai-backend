@@ -28,6 +28,7 @@ class OperationModel(BaseModel):
     type: str
     url: str
     parameters: Optional[dict] = None
+    schema: dict = None
 
     @field_validator('method')
     def validate_method(cls, v):
@@ -36,6 +37,45 @@ class OperationModel(BaseModel):
             raise ValueError(f"Method must be one of {allowed_methods}")
         return v.upper()
 
+def extract_complex_dict(ast_node):
+    """Extract nested dictionary structures from AST Dict node."""
+    result = {}
+    for key, value in zip(ast_node.keys, ast_node.values):
+        if isinstance(value, ast.Dict):
+            result[key.s] = extract_complex_dict(value)
+        elif isinstance(value, ast.List):
+            result[key.s] = extract_list(value)
+        elif isinstance(value, ast.Constant):
+            result[key.s] = value.value
+        elif isinstance(value, ast.Str):
+            result[key.s] = value.s
+        else:
+            # Try to get a literal value or default to string representation
+            try:
+                result[key.s] = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                result[key.s] = str(value)
+    return result
+
+def extract_list(ast_node):
+    """Extract list from AST List node."""
+    result = []
+    for item in ast_node.elts:
+        if isinstance(item, ast.Dict):
+            result.append(extract_complex_dict(item))
+        elif isinstance(item, ast.List):
+            result.append(extract_list(item))
+        elif isinstance(item, ast.Constant):
+            result.append(item.value)
+        elif isinstance(item, ast.Str):
+            result.append(item.s)
+        else:
+            # Try to get a literal value or default to string representation
+            try:
+                result.append(ast.literal_eval(item))
+            except (ValueError, SyntaxError):
+                result.append(str(item))
+    return result
 
 def integration_config_trigger(event, context):
     """
@@ -139,13 +179,19 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
                     for decorator in node.decorator_list:
                         if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
                             op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
-                            if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and ('params' in op_kwargs or 'parameters' in op_kwargs):
+                            if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and ('params' in op_kwargs or 'parameters' in op_kwargs or 'schema' in op_kwargs):
 
                                 params_dict = extract_dict( op_kwargs.get('params', ast.Dict(keys=[], values=[])) )
 
 
                                 params = [ParamModel(description=desc, name=name) for name, desc in params_dict.items()] if 'params' in op_kwargs else []
                                 parameters = extract_dict_from_ast(op_kwargs.get('parameters', ast.Dict(keys=[], values=[])))
+
+                                # Extract schema if available
+                                schema = None
+                                if 'schema' in op_kwargs:
+                                    schema = extract_complex_dict(op_kwargs['schema'])
+                                    
                                 try:
                                     operation = OperationModel(
                                         description=op_kwargs['description'].s,
@@ -157,7 +203,8 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
                                         type="custom",  # Assuming custom type
                                         url=op_kwargs['path'].s,
                                         tags=extract_tags(op_kwargs),
-                                        parameters=parameters
+                                        parameters=parameters,
+                                        schema=schema
                                     )
                                     ops_found.append(operation)
                                 except ValidationError as ve:
