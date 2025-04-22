@@ -34,7 +34,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
             response = completion(
                 model=model,
                 messages=messages,
-                max_tokens=1024
+                max_completion_tokens=1024,
             )
             result = response.choices[0].message.content
         else:
@@ -43,7 +43,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
                 model=model,
                 messages=messages,
                 tools=tools,
-                max_tokens=1024
+                max_completion_tokens=1024,
             )
 
             if response.choices[0].message.tool_calls:

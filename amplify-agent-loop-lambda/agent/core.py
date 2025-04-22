@@ -78,7 +78,7 @@ class ActionRegistry:
     def register(self, action: Action):
         self.actions[action.name] = action
 
-    def get_action(self, name: str) -> [Action,None]:
+    def get_action(self, name: str) -> Action | None:
         return self.actions.get(name, None)
 
     def get_actions(self) -> List[Action]:
@@ -351,7 +351,7 @@ class Agent:
         return result
 
 
-    def prompt_llm_for_action(self, action_context: ActionContext, full_prompt: Prompt) -> [str,None]:
+    def prompt_llm_for_action(self, action_context: ActionContext, full_prompt: Prompt) -> str | None:
         # Try up to 3 times
         send_event = action_context.incremental_event()
         response = None

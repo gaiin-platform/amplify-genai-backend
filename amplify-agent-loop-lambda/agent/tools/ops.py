@@ -75,33 +75,79 @@ def get_default_ops_as_tools(token):
     except Exception as e:
         print(f"Error getting default ops: {e}")
         return []
+    
+
+def build_schema_from_params(params):
+    schema = {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+
+    # Base case: return minimal schema if params is empty
+    if not params:
+        return schema
+    
+    for param in params:
+        param_name = param["name"]
+        description = param["description"]
+        
+        param_schema = {
+            "description": description
+        }
+        
+        # Set type based on description
+        description_lower = description.lower()
+        if "boolean" in description_lower:
+            param_schema["type"] = "boolean"
+        elif any(type_str in description_lower for type_str in ["str", "string"]):
+            param_schema["type"] = "string"
+        elif any(type_str in description_lower for type_str in ["int", "integer", "number"]):
+            param_schema["type"] = "number"
+        elif "array" in description_lower or "list" in description_lower:
+            param_schema["type"] = "array"
+        elif "object" in description_lower or "dict" in description_lower:
+            param_schema["type"] = "object"
+        
+        # Check if parameter is required
+        if "required" in description_lower:
+            schema["required"].append(param_name)
+        
+        schema["properties"][param_name] = param_schema
+    
+    return schema
 
 def op_to_tool(api):
     name = api['name']
     id = api['id']
     tags = api.get('tags', [])
     desc = api.get('description', "")
-    params = api.get('params', [])
-    parameters = api.get('parameters', {})
+    
+  
+    parameters = api.get('parameters', {}) # Preference for schema
+    schema = api.get('schema', {}) # backup schema
+    params = api.get('params', []) # backup backup schema
 
     def api_func_invoke(action_context: ActionContext, **kwargs) -> dict:
         return call_api(action_context=action_context, name=name, payload=kwargs)
 
     api_func = api_func_invoke
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "payload": {
-                "type": "object",
-                "description": f"The payload should contain the following keys: {json.dumps(params)}"
-            }
-        },
-        "required": ["payload"]
-    }
+    # schema = {
+    #     "type": "object",
+    #     "properties": {
+    #         "payload": {
+    #             "type": "object",
+    #             "description": f"The payload should contain the following keys: {json.dumps(params)}"
+    #         }
+    #     },
+    #     "required": ["payload"]
+    # }
+    
+    op_schema = parameters or schema or build_schema_from_params(params)
 
     tool_metadata = get_tool_metadata(
-        func=api_func, tool_name=id, description=desc, parameters_override=parameters or schema, terminal=False, tags=tags
+        func=api_func, tool_name=id, description=desc, parameters_override=op_schema, terminal=False, tags=tags
     )
 
     return tool_metadata
