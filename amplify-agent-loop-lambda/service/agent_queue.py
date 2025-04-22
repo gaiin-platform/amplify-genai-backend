@@ -74,14 +74,22 @@ def process_and_invoke_agent(event: dict):
         dict: The response from `handlers.handle_event`.
     """
     try:
+
+        print("Processing event metadata: ", event.get("metadata"))
         # Extract required fields
         current_user = event.get("currentUser")
         session_id = event.get("sessionId")
         prompt = event.get("prompt", [])
         metadata = event.get("metadata", {})
 
+        if not prompt:
+            prompt = [{
+                "role": "user",
+                "content": "I have received an email from ${sender} at ${timestamp}. The subject of the email is: '${subject}'. The email was sent to: ${recipients}. The contents of the email are:\n\n'''${contents}'''"
+            }]
+
         # Validate required fields
-        if not current_user or not session_id or not prompt:
+        if not current_user or not session_id:
             raise ValueError("Missing required fields: currentUser, sessionId, or prompt")
 
         # Invoke the event handler

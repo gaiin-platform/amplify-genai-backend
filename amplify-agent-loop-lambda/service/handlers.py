@@ -220,12 +220,13 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         if metadata:
 
             built_in_operations = metadata.get('builtInOperations', [])
-            assistant_built_in_operations = metadata.get('assistant', {}).get('data',{}).get('builtInOperations', [])
+            assistant_data = metadata.get('assistant', {}).get('data',{})
+            assistant_built_in_operations = assistant_data.get('builtInOperations', [])
             all_built_in_operations = built_in_operations + assistant_built_in_operations
 
-            if 'workflow' in metadata:
-                print(f"Workflow metadata: {metadata['workflow']}")
-                templateId = metadata.get("workflow",{}).get("templateId", None)
+            if 'workflow' in metadata or 'workflowTemplateId' in assistant_data:
+                templateId = metadata.get("workflow",{}).get("templateId") or assistant_data.get("workflowTemplateId")
+                print(f"Workflow templateId: {templateId}")
                 if templateId:
                     print(f"Loading workflow template: {templateId}")
                     workflow_definition = get_workflow_template(current_user, templateId)

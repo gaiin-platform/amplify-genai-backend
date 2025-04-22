@@ -256,7 +256,7 @@ def process_email(event, context):
             print(f"Source Email: {source_email}")
 
             # Use is_allowed_sender function
-            if is_allowed_sender(owner_email, target_email_lookup, tag, source_email):
+            if is_allowed_sender(owner_email, tag, source_email):
                 print(f"Sender {source_email} is allowed.")
                 return to_agent_event(email, source_email, ses_notification)
 

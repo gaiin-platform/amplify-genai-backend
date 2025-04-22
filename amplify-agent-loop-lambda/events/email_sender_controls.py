@@ -118,7 +118,7 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         }
 
 
-def is_allowed_sender(owner_email: str, user_email: str, tag: str, sender: str) -> bool:
+def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
     """
     Checks if a sender is allowed to send emails to a specific user and tag.
 
@@ -132,12 +132,12 @@ def is_allowed_sender(owner_email: str, user_email: str, tag: str, sender: str) 
         bool: True if the sender is allowed, False otherwise.
     """
     try:
-        print(f"Checking allowed sender for user '{user_email}', tag '{tag}', sender '{sender}'")
+        print(f"Checking allowed sender for user '{owner_email}', tag '{tag}', sender '{sender}'")
 
         if sender == owner_email:
             return True  # Owner is always allowed
 
-        response = email_settings_table.get_item(Key={'email': user_email, 'tag': tag})
+        response = email_settings_table.get_item(Key={'email': owner_email, 'tag': tag})
         item = response.get('Item', {})
 
         allowed_senders = item.get('allowedSenders', [])
