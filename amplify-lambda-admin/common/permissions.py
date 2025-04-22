@@ -53,7 +53,7 @@ permissions_by_state_type = {
     "/amplifymin/amplify_groups/list" : {
         "read": can_read
     },
-    "/amplifymin/support_email": {
+    "/amplifymin/user_app_configs": {
         "read": can_read
     },
 }
