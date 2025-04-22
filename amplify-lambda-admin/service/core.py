@@ -36,6 +36,7 @@ class AdminConfigTypes(Enum):
     OPS = 'ops'
     INTEGRATIONS = 'integrations'
     EMAIL_SUPPORT = 'emailSupport'
+    DEFAULT_CONVERSATION_STORAGE = 'defaultConversationStorage'
 
 # Map config_type to the corresponding secret name in Secrets Manager
 secret_name_map = {
@@ -87,7 +88,7 @@ def handle_update_config(config_type, update_data, token):
     match config_type:
         case (AdminConfigTypes.ADMINS | AdminConfigTypes.FEATURE_FLAGS | AdminConfigTypes.RATE_LIMIT | 
               AdminConfigTypes.PROMPT_COST_ALERT | AdminConfigTypes.AMPLIFY_GROUPS | AdminConfigTypes.INTEGRATIONS |
-              AdminConfigTypes.EMAIL_SUPPORT):
+              AdminConfigTypes.EMAIL_SUPPORT | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE):
             return update_admin_config_data(config_type.value, update_data)
 
         case AdminConfigTypes.AVAILABLE_MODELS:
@@ -232,7 +233,7 @@ def get_configs(event, context, current_user, name, data):
         print("Loading admin table configs only")
         dynamo_config_types = [AdminConfigTypes.FEATURE_FLAGS, AdminConfigTypes.ADMINS, AdminConfigTypes.PPTX_TEMPLATES, 
                                AdminConfigTypes.AMPLIFY_GROUPS, AdminConfigTypes.RATE_LIMIT, AdminConfigTypes.PROMPT_COST_ALERT,
-                               AdminConfigTypes.INTEGRATIONS, AdminConfigTypes.EMAIL_SUPPORT]
+                               AdminConfigTypes.INTEGRATIONS, AdminConfigTypes.EMAIL_SUPPORT, AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE]
         
         for config_type in dynamo_config_types:
             try:
@@ -355,6 +356,8 @@ def initialize_config(config_type):
         item['data'] =  { 'isActive' : False, 'cost': 5,
                           'alertMessage': 'This request will cost an estimated $<totalCost> (the actual cost may be more) and require <prompts> prompt(s).', 
                         }
+    elif config_type == AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE:
+        item['data'] = 'future-local'
     elif config_type == AdminConfigTypes.EMAIL_SUPPORT:
         item['data'] = { 'isActive' : False, 'email': '' }
     elif config_type == AdminConfigTypes.INTEGRATIONS:
@@ -372,15 +375,20 @@ def initialize_config(config_type):
 
 
 @validated(op='read')
-def get_support_email_data(event, context, current_user, name, data):
-    try:
-        response = admin_table.get_item(Key={'config_id': AdminConfigTypes.EMAIL_SUPPORT.value})
-        if 'Item' in response:
-            return {"success": True, "data": response['Item']['data']}
-        else:
-            return {"success": False, "message": "No Email Support Data Found"}
-    except Exception as e:
-        return {"success": False, "message": f"Error retrieving Email Support Data: {str(e)}"}
+def get_user_app_configs(event, context, current_user, name, data):
+    app_configs = [AdminConfigTypes.EMAIL_SUPPORT, AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE]
+    configs = {}
+    for config_type in app_configs:   
+        try:
+            response = admin_table.get_item(Key={'config_id': config_type.value})
+            if 'Item' in response:
+                configs[config_type.value] = response['Item']['data']
+            else:
+                print(f"No {config_type.value} Data Found, skipping...")
+        except Exception as e:
+            return {"success": False, "message": f"Error retrieving {config_type.value} Data: {str(e)}"}
+
+    return {"success": True, "data": configs}
 
 
 @validated(op='read')

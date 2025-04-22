@@ -428,6 +428,22 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                     {
+                        # Configuration for 'defaultConversationStorage'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultConversationStorage"
+                            },
+                            "data": {
+                                "type": "string",
+                                "enum": ["future-local", "future-cloud"],
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                                 
                     {
                         # Configuration for 'rateLimit'
@@ -575,7 +591,7 @@ validators = {
     "/amplifymin/amplify_groups/list" : {
         "read": {}
     },
-    "/amplifymin/support_email": {
+    "/amplifymin/user_app_configs": {
         "read": {}
     }
     
