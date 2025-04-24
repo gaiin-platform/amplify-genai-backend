@@ -362,7 +362,7 @@ def create_draft(current_user: str, subject: str, body: str,
         payload = {
             "subject": subject,
             "body": {
-                "contentType": "HTML",
+                "contentType": "text",
                 "content": body
             },
             "importance": importance
