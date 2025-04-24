@@ -173,32 +173,7 @@ def save_email_to_s3(current_user, email_details, tags):
         print(f"Saved attachment to s3://{attach_bucket_name}/{attach_body_key}")
 
 
-def index_email(parsed_destination_email, source_email, ses_notification):
-    print(f"Indexing email from {source_email} to {parsed_destination_email}")
-
-    mail_data = ses_notification['mail']
-    receipt_data = ses_notification['receipt']
-
-    # Prepare the returned dictionary
-    email_details = {
-        'sender': source_email,
-        'timestamp': mail_data['timestamp'],
-        'subject': mail_data.get('commonHeaders', {}).get('subject', 'No Subject'),
-        'recipients': mail_data['destination'],  # Extract recipients
-        'contents': ses_notification['content']  # This assumes 'contents' refers to the email subject
-    }
-
-    # Create a hash of the ses_notification
-    serialized_data = json.dumps(email_details).encode('utf-8')
-    email_id = hashlib.sha256(serialized_data).hexdigest()
-    # We wait to put the received time in so that we can detect duplicate emails based on
-    # the same sender/recipients and contents.
-    email_details['received_time'] = mail_data['timestamp']
-    parsed_email = extract_email_body_and_attachments(ses_notification)
-    email_details['contents'] = parsed_email
-
-    user_email = f"{parsed_destination_email['user']}@{organization_email_domain}"
-    project_tag = parsed_destination_email['tag'] if parsed_destination_email['tag'] else 'email'
+def index_email(user_email, project_tag, email_id, email_details):
 
     print(f"Email ID: {email_id}")
     s3_key = get_target_s3_key_base(user_email, project_tag, email_id)
@@ -233,6 +208,9 @@ def process_email(event, context):
     else:
 
         source_email = ses_notification['mail']['source']
+        if isinstance(source_email, str):
+            source_email = source_email.lower()
+
         destination_emails = ses_notification['mail']['destination']
 
         print(f"Source Email: {source_email}")
@@ -392,8 +370,6 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
     Returns:
         dict: Formatted event for the agent, or None if no event match is found.
     """
-    dynamodb = boto3.resource('dynamodb')
-    event_table = dynamodb.Table(os.getenv("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE"))
 
     print(f"Routing email from {source_email} to {parsed_destination_email}")
 
@@ -444,7 +420,10 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
             break  # Stop searching once a match is found
 
     if not event_data:
-        print("No matching event found in DynamoDB.")
+        print("No matching event found in DynamoDB. Indexing email...")
+        # reset to full contents of email
+        email_details['contents'] = parsed_email
+        index_email(user, project_tag, email_id, email_details)
         return None
 
     # Fill in the event template using email details, including full body text
@@ -474,6 +453,7 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
             "source": "SES",
             "eventId": email_id,
             "timestamp": email_details['received_time'],
+            "requestContent": email_details['contents'],
             "assistant": event_data.get("assistant", {}),
             "files": [] #extract_file_metadata(parsed_email.get("attachments", []))
         }

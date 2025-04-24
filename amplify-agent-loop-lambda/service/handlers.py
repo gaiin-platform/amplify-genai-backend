@@ -476,7 +476,7 @@ def build_response(
     response = {
         "session": session_id,
         "handled": True,
-        "result": processed_result
+        "result": [item for item in processed_result if item['role'] != 'prompt']
     }
 
     if session_files:

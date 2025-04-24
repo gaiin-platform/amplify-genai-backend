@@ -36,6 +36,7 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         item = response.get('Item', {})
 
         allowed_senders = set(item.get('allowedSenders', []))
+        sender = sender.lower()
 
         if sender in allowed_senders:
             return {
@@ -84,14 +85,15 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
 
         if sender == "*":
             allowed_senders = set()
-        elif sender not in allowed_senders:
+        elif sender not in allowed_senders and sender.lower() not in allowed_senders:
             return {
                 "success": False,
                 "data": None,
                 "message": f"Sender '{sender}' was not found in the allowed list for tag '{tag}'. Nothing to remove."
             }
         else:
-            allowed_senders.remove(sender)
+            allowed_senders.discard(sender)
+            allowed_senders.discard(sender.lower())
 
         if not allowed_senders:
             email_settings_table.delete_item(Key={'email': user_email, 'tag': tag})
