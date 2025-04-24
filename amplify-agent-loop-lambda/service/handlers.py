@@ -414,6 +414,15 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
              "content": load_memory_content(item)
              }
             for item in result.items]
+        
+        total_token_cost = llm.get_total_cost()
+
+        print(f"Total token cost: {total_token_cost}")
+
+        processed_result.append({
+            "role": "environment",
+            "content": { "total_token_cost": total_token_cost }
+        })
 
         # Save conversation state to S3 and update DynamoDB
         save_result = save_conversation_state(current_user, session_id, processed_result)

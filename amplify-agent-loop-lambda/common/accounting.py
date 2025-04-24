@@ -17,15 +17,15 @@ def record_usage(account, request_id, model_id, input_tokens, output_tokens, cac
     """
     if not dynamoTableName:
         print("CHAT_USAGE_DYNAMO_TABLE table is not provided in the environment variables.")
-        return False
+        return 0.0
 
     if not costDynamoTableName:
         print("COST_CALCULATIONS_DYNAMO_TABLE table is not provided in the environment variables.")
-        return False
+        return 0.0
 
     if not modelRateDynamoTable:
         print("MODEL_RATE_TABLE table is not provided in the environment variables.")
-        return False
+        return 0.0
 
     try:
         account_id = account.get('accountId', 'general_account')
@@ -56,8 +56,8 @@ def record_usage(account, request_id, model_id, input_tokens, output_tokens, cac
 
     except Exception as e:
         print(f"Error recording usage: {e}")
-        return False
-
+        return 0.0
+    
     try:
         model_rate_response = dynamodb.query(
             TableName=modelRateDynamoTable,
@@ -69,7 +69,7 @@ def record_usage(account, request_id, model_id, input_tokens, output_tokens, cac
 
         if not model_rate_response.get('Items') or len(model_rate_response['Items']) == 0:
             print(f"No model rate found for ModelID: {model_id}")
-            return False
+            return 0.0
 
         model_rate = model_rate_response['Items'][0]
         input_cost_per_thousand_tokens = float(model_rate['InputCostPerThousandTokens']['N'])
@@ -120,9 +120,9 @@ def record_usage(account, request_id, model_id, input_tokens, output_tokens, cac
             }
         )
         print(f"Updated dailyCost and hourlyCost")
-        
+        return total_cost
     except Exception as e:
         print(f"Error calculating or updating cost: {e}")
-        return False
+    return 0.0
 
-    return True
+    

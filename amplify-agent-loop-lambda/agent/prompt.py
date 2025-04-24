@@ -24,7 +24,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
 
     messages = prompt.messages
     tools = prompt.tools
-
+    token_cost = 0.0
     result = None
 
     try:
@@ -99,7 +99,8 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
                 print(f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}")
 
         try:
-            record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+            token_cost = record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+
         except Exception as e:
             print(f"Warning: Failed to record usage: {e}")
 
@@ -117,7 +118,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
 
         raise e
 
-    return result
+    return result, token_cost
 
 def is_openai_model(model):
     return any(id in model for id in ["gpt", "o1", "o3"])
@@ -158,7 +159,14 @@ def create_llm(access_token, model, current_user = "Agent", account_id = "genera
         "accountId": account_id,
         "accessToken": access_token,
     }
+
+    total_cost = 0.0
     
     def llm(prompt):
-            return generate_response(f"{provider_prefix}/{model}", prompt, account_details, details)
+        nonlocal total_cost
+        result, token_cost = generate_response(f"{provider_prefix}/{model}", prompt, account_details, details)
+        total_cost += token_cost
+        return result
+    
+    llm.get_total_cost = lambda: total_cost
     return llm
