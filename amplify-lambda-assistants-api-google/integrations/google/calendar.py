@@ -54,7 +54,7 @@ def format_event(event, include_description=False, include_attendees=False, incl
 def create_event(current_user, title, start_time, end_time, description=None, 
                 location=None, attendees=None, calendar_id='primary', 
                 conference_data=None, recurrence_pattern=None, reminders=None,
-                send_notifications=None, send_updates=None, access_token=None):
+                send_notifications=True, send_updates=None, access_token=None):
     
     """
     Creates an event in the user's calendar (single or recurring).
@@ -79,10 +79,6 @@ def create_event(current_user, title, start_time, end_time, description=None,
     Returns:
         Dictionary containing the created event details
     """
-    # Validate attendees if present
-    if attendees:
-        for email in attendees:
-            validate_email(email)
 
     service = get_calendar_service(current_user, access_token)
     event = {
@@ -99,7 +95,7 @@ def create_event(current_user, title, start_time, end_time, description=None,
         event['location'] = location
         
     if attendees:
-        event['attendees'] = [{'email': email} for email in attendees]
+        event['attendees'] = [{'email': email} for email in attendees if validate_email(email)]
     
     if recurrence_pattern:
         event['recurrence'] = recurrence_pattern
@@ -113,6 +109,7 @@ def create_event(current_user, title, start_time, end_time, description=None,
             'useDefault': False,
             'overrides': reminders
         }
+
     if not calendar_id: 
         calendar_id = 'primary'
     # Create the event with the sendUpdates parameter (if provided)
@@ -121,7 +118,7 @@ def create_event(current_user, title, start_time, end_time, description=None,
         kwargs['conferenceDataVersion'] = 1
 
     if send_notifications:
-        kwargs['sendUpdates'] = send_updates if send_updates else 'all'
+        kwargs['sendUpdates'] = send_updates or 'all'
     else:
          kwargs['sendUpdates'] = "none"
     
