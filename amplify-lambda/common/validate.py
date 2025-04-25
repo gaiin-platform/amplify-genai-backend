@@ -602,8 +602,7 @@ register_conversation_schema = {
                 "type": "object",
                 "properties": {
                     "role": {
-                        "type": "string",
-                        "enum": ["system", "user", "assistant"] 
+                        "type": "string"
                     },
                     "content": {
                         "type": "string"

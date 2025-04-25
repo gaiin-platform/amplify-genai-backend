@@ -13,15 +13,19 @@ import chardet
 import urllib.parse
 from datetime import datetime
 import re
+import traceback
+from cryptography.fernet import Fernet
+
 from rag.handlers.commaseparatedvalues import CSVHandler
 from rag.handlers.excel import ExcelHandler
 from rag.handlers.pdf import PDFHandler
 from rag.handlers.powerpoint import PPTXHandler
 from rag.handlers.word import DOCXHandler
 from rag.handlers.text import TextHandler
+from rag.handlers.markdown import MarkDownHandler
+from rag.handlers.markitdown_extractor import MarkItDownExtractor
 from rag.util import get_text_content_location, get_text_metadata_location, get_text_hash_content_location
-import traceback
-from cryptography.fernet import Fernet
+
 
 s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
@@ -75,6 +79,8 @@ def get_text_extraction_handler(key):
         return ExcelHandler()
     elif key.endswith('.csv'):
         return CSVHandler()
+    elif key.endswith('.md'):
+        return MarkDownHandler()
     else:
         return TextHandler()
 
@@ -95,7 +101,25 @@ def get_file_extension(file_name, mime_type):
 
 
 # Extract text from file and return an array of chunks
-def extract_text_from_file(key, file_content):
+def extract_text_from_file(key, file_content):    
+    # First we will try with markitdown extractor,
+    # if that fails then we will proceed as before 
+    try:
+        markitdown_extractor = MarkItDownExtractor()
+        markitdown_result = markitdown_extractor.extract_from_content(file_content, key)
+        if markitdown_result and "text" in markitdown_result:
+            md_text = markitdown_result['text']
+            print(f"MarkItDown text: {md_text}")
+            md_bytes = md_text.encode('utf-8')
+            print(f"MarkItDown bytes: {md_bytes}")
+            print(f"MarkItDown extraction successful for {key}")
+            return MarkDownHandler().extract_text(md_bytes, key)
+             
+    except Exception as e:
+        print(f"Unable to extract text from {key} using markitdown extractor: {str(e)}\n continuing with default handler logic...")
+
+    print("Default Handler")
+
     # Get the appropriate handler and split parameters for the file type
     handler = get_text_extraction_handler(key)
 
