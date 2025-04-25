@@ -132,7 +132,7 @@ Available Tools: {json.dumps(action_descriptions, indent=4)}
 When you are done, terminate the conversation by using the "terminate" tool and I will 
 provide the results to the user.
 
-Important!!! Every response MUST have an action.
+Important!!! Every response MUST have an 'action' which is defined by outputting an  ```action block containing valid json.
 You must ALWAYS respond in this format:
 
 {AgentJsonActionLanguage.action_format}
@@ -285,4 +285,13 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                 }
             else:
                 print(f"Agent language failed to parse response: {response}")
+                # Added Exit logic 
+                if isinstance(response, str):
+                    if "EXIT_AGENT_LOOP" in response:
+                        print("Agent loop terminated early")
+                        return {
+                            "tool": "terminate",
+                            "args": {"message": response.replace("EXIT_AGENT_LOOP", "").strip()},
+                            "error": "Agent Loop Terminated Early"
+                        }
                 raise ValueError(f"The agent did not respond with a valid tool invocation: {str(e)}")

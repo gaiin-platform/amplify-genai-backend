@@ -109,6 +109,7 @@ class WorkflowCapability(Capability):
         self.current_step = None
         self.retry_count = {}  # Track retries for each step
         self.max_retries = 2  # Maximum number of retries per step
+        self.terminate_early = False
 
     def init(self, agent, action_context: ActionContext) -> dict:
         self.action_registry = ParameterizedActionRegistry(agent.actions)
@@ -118,8 +119,6 @@ class WorkflowCapability(Capability):
     def start_agent_loop(self, agent, action_context: ActionContext) -> bool:
         if self.remaining_steps:
             next_step: Optional[Step] = self.remaining_steps.pop()
-            print("REMAINING STEPS: ", [step.tool for step in self.remaining_steps[::-1]])
-
             if next_step:
                 step_id = self._construct_step_id(next_step)
                 step_attempted_before = step_id in self.retry_count
@@ -136,6 +135,7 @@ class WorkflowCapability(Capability):
                     self.retry_count[step_id] = 0
                     
                 self.action_registry.parameterize_actions([self._convert_step_to_action(next_step)])
+            print("-- remaining steps -- ", [step.tool for step in self.remaining_steps[::-1]])
         return True
 
     def end_agent_loop(self, agent, action_context: ActionContext):
@@ -157,9 +157,13 @@ class WorkflowCapability(Capability):
         return response
 
     def process_result(self, agent, action_context: ActionContext, response: str, action_def: Action, action: dict, result: any) -> any:
+        if isinstance(action, dict) and action.get("error", None):
+            print("Terminating Workflow: ", action.get("error"))
+            self.terminate_early = True
+            return result
         # Enhanced error detection covering multiple error scenarios
-        is_error = (isinstance(result, dict) and ("error" in result or
-                    ("result" in result and isinstance(result["result"], dict) and (
+        is_error = (isinstance(result, dict) and result.get('tool', "") != "terminate" and
+                    ("error" in result or ("result" in result and isinstance(result["result"], dict) and (
                         ("success" in result["result"] and not result["result"]["success"]) or 
                         "traceback" in result["result"] or 
                         ("message" in result["result"] and 
@@ -187,7 +191,8 @@ class WorkflowCapability(Capability):
 
                 send_event = action_context.incremental_event()
                 # Send an event about the retry
-                send_event("agent/workflow/retry_step", {
+                send_event("workflow/step/retry", {
+                    "workflow": self.workflow,
                     "step": self.current_step.tool,
                     "retry_count": self.retry_count[step_id],
                     "max_retries": self.max_retries,
@@ -208,7 +213,7 @@ class WorkflowCapability(Capability):
         return prompt
 
     def should_terminate(self, agent, action_context: ActionContext, response: str) -> bool:
-        return not bool(self.remaining_steps)
+        return not bool(self.remaining_steps) or self.terminate_early
 
     def terminate(self, agent, action_context: ActionContext) -> dict:
         return {}
@@ -281,7 +286,8 @@ Respond with either YES or NO in all caps. Then write a short explanation (1-2 s
             
             send_event = action_context.incremental_event()
             # Send event about skipped step
-            send_event("agent/workflow/skip_step", {
+            send_event("workflow/step/skip", {
+                "workflow": self.workflow,
                 "step": step.tool,
                 "reason": skip_reason
             })

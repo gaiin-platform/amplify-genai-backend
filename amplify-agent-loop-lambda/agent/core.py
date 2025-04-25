@@ -285,7 +285,10 @@ class Agent:
         result = self.environment.execute_action(self, action_context, action_def, action["args"])
 
         result = reduce(lambda r, c: c.process_result(self, action_context, response, action_def, action, r), self.capabilities, result)
-
+        
+        if isinstance(action, dict) and action.get("error", None):
+            error = f"{result.get('error', '')} {action['error']}"
+            result["error"] = error
         return result
 
     def should_terminate(self, action_context: ActionContext, response: str) -> bool:
