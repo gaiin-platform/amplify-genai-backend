@@ -14,6 +14,14 @@ plugins:
   - serverless-domain-manager
   - serverless-cloudformation-changesets  
 
+layers:
+  markitdown:
+    path: markitdown
+    name: ${self:service}-${sls:stage}-markitdown
+    description: Markitdown layer
+    compatibleRuntimes:
+      - python3.11
+      
 custom:
   pythonRequirements:
     dockerizePip: true
@@ -399,12 +407,10 @@ functions:
             - prefix: templates/
             - suffix: .pptx 
       
-
-
   queue_document_for_rag:
     handler: rag/core.queue_document_for_rag
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
@@ -417,7 +423,7 @@ functions:
   process_document_for_rag:
     handler: rag/core.process_document_for_rag
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -433,7 +439,7 @@ functions:
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
@@ -446,7 +452,7 @@ functions:
   process_document_for_chunking:
     handler: rag/core.chunk_document_for_rag
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     timeout: 300
     events:
         - sqs:
