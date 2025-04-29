@@ -2,6 +2,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {chat} from "../azure/openai.js";
+import {chat as geminiChat} from "../gemini/gemini.js";
 import { chatBedrock } from "../bedrock/bedrock.js";
 import {getLLMConfig} from "../common/secrets.js";
 
@@ -56,6 +57,8 @@ export const getChatFn = (model, body, writable, context) => {
         return chat(getLLMConfig, body, writable, context);
     } else if (model.provider === 'Bedrock') {
         return chatBedrock(body, writable, context);
+    } else if (isGeminiModel(model.id)) {
+        return geminiChat(getLLMConfig, body, writable, context);
     } else {
         console.log(`Error: Model ${model} does not have a corresponding chatFn`)
         return null;
@@ -65,4 +68,8 @@ export const getChatFn = (model, body, writable, context) => {
 
 export const isOpenAIModel = (modelId) => {
     return ["gpt", "o1", "o3"].some(id => modelId.includes(id));
+}
+
+export const isGeminiModel = (modelId) => {
+    return modelId && modelId.includes("gemini");
 }

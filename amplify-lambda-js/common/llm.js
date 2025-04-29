@@ -12,14 +12,15 @@ import {
 } from "./streams.js";
 import {chat} from "../azure/openai.js";
 import {transform} from "./chat/events/openaifn.js";
+import {geminiTransform} from "./chat/events/gemini.js";
 import {parseValue} from "./incrementalJsonParser.js";
-import {setModel, setUser} from "./params.js";
+import {setModel, setUser, isGeminiModel, getChatFn} from "./params.js";
 import {getLLMConfig} from "./secrets.js";
 
 
 export const getDefaultLLM = async (model, stream = null, user = "default") => {
     const chatFn = async (body, writable, context) => {
-        return await chat(getLLMConfig, body, writable, context);
+        return await getChatFn(model, body, writable, context);
     }
 
     let params = {
@@ -201,7 +202,15 @@ export class LLM {
         };
 
         const resultCollector = new StreamResultCollector();
-        resultCollector.addTransformer(transform);
+        
+        // Select appropriate transformer based on model type
+        const model = this.params.options.model;
+        if (model && isGeminiModel(model.id)) {
+            resultCollector.addTransformer(geminiTransform);
+        } else {
+            resultCollector.addTransformer(transform);
+        }
+        
         resultCollector.addOutputStream(targetStream);
 
         await this.prompt(updatedChatBody, dataSources, resultCollector);
@@ -225,6 +234,7 @@ export class LLM {
         resultCollector.addTransformer((chunk) => {
             try {
                 chunk = JSON.parse(chunk);
+                // Handle OpenAI format
                 if (chunk.tool_calls && chunk.tool_calls.length > 0 && chunk.tool_calls[0].arguments) {
                     return chunk.tool_calls[0].arguments;
                 } else if (chunk.tool_calls &&
@@ -233,6 +243,10 @@ export class LLM {
                     chunk.tool_calls[0].function.arguments
                 ) {
                     return chunk.tool_calls[0].function.arguments;
+                }
+                // Handle Gemini format
+                else if (chunk.functionCall && chunk.functionCall.arguments) {
+                    return chunk.functionCall.arguments;
                 }
             } catch (e) {
                 console.log(e);
@@ -390,7 +404,14 @@ You ALWAYS output a \`\`\`data code block.
         };
 
         const resultCollector = new StreamResultCollector();
-        resultCollector.addTransformer(transform);
+        
+        // Select appropriate transformer based on model type, just like in promptForFunctionCallStreaming
+        const model = this.params.options.model;
+        if (model && isGeminiModel(model.id)) {
+            resultCollector.addTransformer(geminiTransform);
+        } else {
+            resultCollector.addTransformer(transform);
+        }
 
         await this.prompt(updatedChatBody, dataSources, resultCollector);
 
