@@ -222,9 +222,6 @@ update_admin_config_schema = {
                                             "isBuiltIn": {
                                                 "type": "boolean"
                                             },
-                                             "isDefault": {
-                                                "type": "boolean"
-                                            },
                                             "systemPrompt": {
                                                 "type": "string"
                                             },
@@ -235,18 +232,6 @@ update_admin_config_schema = {
                                                 "type": "boolean"
                                             },
                                             "supportsReasoning": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultCheapestModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultAdvancedModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultEmbeddingsModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultQAModel": {
                                                 "type": "boolean"
                                             },
                                              "inputContextWindow": {
@@ -271,12 +256,36 @@ update_admin_config_schema = {
                                                 }
                                             }
                                         },
-                                        "required": ["id","name", "provider", "description", "isAvailable", 
+                                        "required": ["id","name", "provider", "description", "isAvailable",  "isBuiltIn",
                                                      "supportsImages", "supportsReasoning", "supportsSystemPrompts", "systemPrompt",
-                                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
-                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost", "exclusiveGroupAvailability"],
+                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", 
+                                                     "cachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }
+                                },
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'defaultModels'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultModels"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "user": {"type": ["string", "null"]},
+                                    "advanced": {"type": ["string", "null"]},
+                                    "cheapest": {"type": ["string", "null"]},
+                                    "agent": {"type": ["string", "null"]},
+                                    "embeddings": {"type": ["string", "null"]},
+                                    "qa": {"type": ["string", "null"]}
                                 },
                                 "additionalProperties": False
                             }
