@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 import os
 import boto3
@@ -8,6 +9,7 @@ from common.auth_admin import verify_user_as_admin
 from common.ops import op
 dynamodb = boto3.resource('dynamodb')
 COST_FIELDS = ['OutputCostPerThousandTokens', 'InputCostPerThousandTokens', 'CachedCostPerThousandTokens']
+DEFAULT_MODELS = 'defaultModels'
 
 @op(
     path="/available_models",
@@ -61,22 +63,97 @@ def get_user_available_models(event, context, current_user, name, data):
     ]
     print("Available user models:" ,available_models)
 
+    default_results = get_admin_default_models()
+    # setting as None if not found
     default_model = None
     advanced_model = None
     cheapest_model = None
-    for model_id, model_data in supported_models:
-        if model_data.get("isDefault", False): default_model = extract_data(model_id, model_data)
-        if model_data.get("defaultAdvancedModel", False): advanced_model = extract_data(model_id, model_data)
-        if model_data.get("defaultCheapestModel", False): cheapest_model = extract_data(model_id, model_data)
-
-    # print(advanced_model)
-
+    # print("default_results: ", default_results)
+    if not default_results or len(default_results.keys()) == 0:
+        default_model, advanced_model, cheapest_model, _, _ = extract_and_update_default_models()
+    else:
+        default_model_types = {"user": None, "advanced": None, "cheapest": None}
+        available_models_by_id = {model["id"]: model for model in available_models}
+    
+        # Process all default model types in a loop
+        for model_type in default_model_types.keys():
+            model_id = default_results.get(model_type)
+            if model_id and model_id in available_models_by_id:
+                default_model_types[model_type] = available_models_by_id[model_id]
+            print(f"{model_type}_model: {default_model_types[model_type]}")
+        
+        # Assign variables from the dictionary
+        default_model = default_model_types["user"]
+        advanced_model = default_model_types["advanced"]
+        cheapest_model = default_model_types["cheapest"]
 
     return {"success": True, "data": { "models": available_models,
                                        "default": default_model,
                                        "advanced": advanced_model,
                                        "cheapest": cheapest_model,
                                     }}
+
+# to seamlessly update to the new form of saving default models - over time this will not be needed
+def extract_and_update_default_models():
+    print("Directly querying for default models in table")
+    model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
+    
+    # Map DB fields to result types
+    field_mappings = {
+        'UsersDefault': 'user',
+        'DefaultAdvancedModel': 'advanced',
+        'DefaultCheapestModel': 'cheapest',
+        'DefaultEmbeddingsModel': 'embeddings',
+        'DefaultQAModel': 'qa',
+        'DefaultAgentModel': 'agent',
+    }
+    
+    results = {model_type: None for model_type in field_mappings.values()}
+
+    try:
+        # Query each default model type
+        for db_field, model_type in field_mappings.items():
+            # Scan with filter for each default type
+            response = model_rate_table.scan(
+                FilterExpression=f"attribute_exists({db_field}) AND {db_field} = :true_val",
+                ExpressionAttributeValues={':true_val': True}
+            )
+            
+            # Get the first matching model (should be only one)
+            items = response.get('Items', [])
+            if items:
+                model_data = items[0]
+                model_id = model_data.get('ModelID')
+               
+                # Transform to our internal format and extract data
+                transformed_model = model_transform_db_to_internal(model_data)
+                results[model_type] = extract_data(model_id, transformed_model)
+                print(f"Found {model_type} model: {model_id}")
+        
+        # Update the admin table with the found defaults
+        if any(model is not None for model in results.values()):
+            print("Updating default models in admin table")
+            admin_table = dynamodb.Table(os.environ['AMPLIFY_ADMIN_DYNAMODB_TABLE'])
+            
+            default_models_data = {
+                model_type: results[model_type].get("id") if results[model_type] else None
+                for model_type in results
+            }
+            
+            # Put the data in the admin table
+            admin_table.put_item(Item = {
+                'config_id': DEFAULT_MODELS,
+                'data': default_models_data,
+                'last_updated': datetime.now(timezone.utc).isoformat()
+            })
+            
+    except Exception as e:
+        print(f"Error querying/updating default models: {str(e)}")
+        raise e
+
+    return (results["user"], results["advanced"], results["cheapest"], 
+            results["embeddings"], results["qa"])
+
 
 def extract_data(model_id, model_data):
     return {
@@ -254,11 +331,6 @@ dynamodb_to_internal_field_map = {
     'ExclusiveGroupAvailability': 'exclusiveGroupAvailability',
     'SupportsImages': 'supportsImages',
     'SupportsReasoning': 'supportsReasoning',
-    'DefaultCheapestModel': 'defaultCheapestModel',
-    'DefaultAdvancedModel': 'defaultAdvancedModel',
-    'DefaultEmbeddingsModel': 'defaultEmbeddingsModel',
-    'DefaultQAModel': 'defaultQAModel',
-    'UsersDefault': 'isDefault',
     'Available': 'isAvailable',
     'Built-In': 'isBuiltIn',
     'SupportsSystemPrompts': 'supportsSystemPrompts',
@@ -310,3 +382,32 @@ def models_are_equal(existing_model, new_model):
             if existing_value != new_value:
                 return False
     return True
+
+
+@validated(op='read')
+def get_default_models(event, context, current_user, name, data):
+    default_models_result = get_admin_default_models()
+
+    if default_models_result:
+        # Filter out models with null values
+        filtered_models = {k: v for k, v in default_models_result.items() if v is not None}
+        return {"success": True, "data": filtered_models}
+    else:
+        return {"success": False, "message": "Error retrieving default models"}
+  
+
+def get_admin_default_models():
+    admin_table = dynamodb.Table(os.environ['AMPLIFY_ADMIN_DYNAMODB_TABLE'])
+    try:
+        print("Getting default model ids from admin table")
+        response = admin_table.get_item(Key={'config_id': DEFAULT_MODELS})
+        if 'Item' in response:
+            return response['Item']['data']
+        else:
+            print(f"No Default Models Data Found")
+            return {}
+    except Exception as e:
+        print(f"Error retrieving default models: {str(e)}")
+    return None 
+   
+    

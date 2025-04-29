@@ -79,9 +79,6 @@ update_models_schema = {
                         "isBuiltIn": {
                             "type": "boolean"
                         },
-                            "isDefault": {
-                            "type": "boolean"
-                        },
                             "systemPrompt": {
                             "type": "string"
                         },
@@ -92,18 +89,6 @@ update_models_schema = {
                             "type": "boolean"
                         },
                             "supportsReasoning": {
-                            "type": "boolean"
-                        },
-                            "defaultCheapestModel": {
-                            "type": "boolean"
-                        },
-                            "defaultAdvancedModel": {
-                            "type": "boolean"
-                        },
-                            "defaultEmbeddingsModel": {
-                            "type": "boolean"
-                        },
-                            "defaultQAModel": {
                             "type": "boolean"
                         },
                             "inputContextWindow": {
@@ -128,10 +113,9 @@ update_models_schema = {
                             }
                         }
                     },
-                    "required": ["id","name", "provider", "description", "isAvailable", "isDefault", "supportsImages", "supportsReasoning",
-                                    "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn",
-                                    "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost",
-                                    "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts"],
+                    "required": ["id","name", "provider", "description", "isAvailable", "supportsImages", "supportsReasoning",
+                                 "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost",
+                                 "exclusiveGroupAvailability", "systemPrompt", "supportsSystemPrompts","isBuiltIn"],
                     "additionalProperties": False
                 }
             },
@@ -152,6 +136,9 @@ validators = {
     },
     "/supported_models/get": {
         "read": {}
+    },
+    "/default_models": {
+        "read": {}
     }
 }
 
@@ -159,6 +146,9 @@ api_validators = {
     "/available_models": {
         "read": {}
     },
+    "/default_models": {
+        "read": {}
+    }
 }
 
 
