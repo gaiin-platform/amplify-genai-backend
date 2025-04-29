@@ -16,3 +16,5 @@ urllib3==2.3.0
     # via
     #   botocore
     #   requests
+nltk==3.8.1
+    # via -r requirements.in
