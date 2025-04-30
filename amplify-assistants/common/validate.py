@@ -386,6 +386,30 @@ get_group_conversations_data_schema = {
     "required": ["conversationId", "assistantId"],
 }
 
+scrape_website_schema = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "description": "The URL to scrape"},
+        "isSitemap": {"type": "boolean", "description": "Whether the URL is a sitemap"},
+        "maxPages": {
+            "type": "integer",
+            "description": "Maximum pages to scrape from sitemap",
+        },
+    },
+    "required": ["url"],
+}
+
+rescan_websites_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The ID of the assistant to update",
+        },
+    },
+    "required": ["assistantId"],
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -417,12 +441,10 @@ validators = {
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
     },
-    "/assistant/lookup": {
-        "lookup": lookup_assistant_schema
-    },
-    "/assistant/add_path": {
-        "add_assistant_path": add_assistant_path_schema
-    }
+    "/assistant/lookup": {"lookup": lookup_assistant_schema},
+    "/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
+    "/assistant/scrape_website": {"scrape_website": scrape_website_schema},
+    "/assistant/rescan_websites": {"rescan_websites": rescan_websites_schema},
 }
 
 api_validators = {
@@ -447,24 +469,16 @@ api_validators = {
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
     },
-    "/assistant/save_user_rating": {
-        "save_user_rating": save_user_rating_schema
-    },
+    "/assistant/save_user_rating": {"save_user_rating": save_user_rating_schema},
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
     },
-    "/assistant/lookup": {
-        "lookup": lookup_assistant_schema
-    },
-    "/assistant/add_path": {
-        "add_assistant_path": add_assistant_path_schema
-    },
-    "/assistant/request_access" : {
-        "share_assistant": assistant_id_schema
-    },
-    "/assistant/validate/assistant_id" : {
-        "lookup": assistant_id_schema
-    }
+    "/assistant/lookup": {"lookup": lookup_assistant_schema},
+    "/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
+    "/assistant/request_access": {"share_assistant": assistant_id_schema},
+    "/assistant/validate/assistant_id": {"lookup": assistant_id_schema},
+    "/assistant/scrape_website": {"scrape_website": scrape_website_schema},
+    "/assistant/rescan_websites": {"rescan_websites": rescan_websites_schema},
 }
 
 

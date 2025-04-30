@@ -11,8 +11,18 @@ import json
 import uuid
 import csv
 import io
+import requests
+import xmltodict
+from bs4 import BeautifulSoup
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
+from common.validate import validated
+from common.ops import op
+from common.encoders import CombinedEncoder
+
+# Initialize AWS services
+dynamodb = boto3.resource("dynamodb")
+s3 = boto3.client("s3")
 
 from common.data_sources import (
     get_data_source_keys,
@@ -30,7 +40,10 @@ from common.ops import op
 
 from decimal import Decimal
 
-from common.amplify_groups import verify_member_of_ast_admin_group, verify_user_in_amp_group
+from common.amplify_groups import (
+    verify_member_of_ast_admin_group,
+    verify_user_in_amp_group,
+)
 
 
 SYSTEM_TAG = "amplify:system"
@@ -513,17 +526,99 @@ def create_assistant(event, context, current_user, name, data):
     provider = extracted_data.get("provider", "amplify")
     is_group_sys_user = data["is_group_sys_user"]
 
-    # datasource permission are handled in groups update assistant logic.
+    # Identify and store website URLs
+    website_data_sources = []
+    standard_data_sources = []
+
+    for source in data_sources:
+        if (
+            source.get("type") == "website/url"
+            or source.get("type") == "website/sitemap"
+        ):
+            website_data_sources.append(source)
+        else:
+            standard_data_sources.append(source)
+
+    # Process website URLs for future scraping
+    scraped_data_sources = []
+    if website_data_sources:
+        for website_source in website_data_sources:
+            # Extract URL and metadata
+            url = website_source.get("id", "")
+            is_sitemap = website_source.get("type") == "website/sitemap"
+            scan_frequency = website_source.get("metadata", {}).get("scanFrequency", 7)
+
+            # Store in assistant_data for future use
+            if "websiteUrls" not in assistant_data:
+                assistant_data["websiteUrls"] = []
+
+            assistant_data["websiteUrls"].append(
+                {
+                    "url": url,
+                    "isSitemap": is_sitemap,
+                    "scanFrequency": scan_frequency,
+                    "lastScanned": None,
+                }
+            )
+
+            try:
+                # Attempt immediate scraping
+                scraped_data = scrape_website_content(url, is_sitemap, current_user)
+                if scraped_data.get("success") and scraped_data.get("data", {}).get(
+                    "dataSourceKey"
+                ):
+                    scraped_key = scraped_data["data"]["dataSourceKey"]
+
+                    # Add scraped content as a data source
+                    scraped_data_source = {
+                        "id": scraped_key,  # This is now the content_key
+                        "name": f"Scraped content from {url}",
+                        "type": "application/json",
+                        "metadata": {
+                            "sourceUrl": url,
+                            "isSitemap": is_sitemap,
+                            "scrapedAt": datetime.now().isoformat(),
+                            "scanFrequency": scan_frequency,
+                            "isScrapedContent": True,
+                        },
+                    }
+                    scraped_data_sources.append(scraped_data_source)
+
+                    # Set permissions for the scraped content immediately after creating it
+                    try:
+                        update_object_permissions(
+                            access_token=data["access_token"],
+                            shared_with_users=[current_user],
+                            keys=[scraped_key],
+                            object_type="datasource",
+                            principal_type="user",
+                            permission_level="owner",
+                            policy="",
+                        )
+                        print(
+                            f"Set owner permissions for scraped content: {scraped_key}"
+                        )
+                    except Exception as perm_error:
+                        print(
+                            f"Error setting permissions for scraped content: {perm_error}"
+                        )
+            except Exception as e:
+                print(f"Error initially scraping website {url}: {str(e)}")
+
+    # Permissions handling for non-group users
     if not is_group_sys_user:
+        # Process standard data sources (excluding website URLs which don't need permission checks)
         filtered_ds = []
         tag_data_sources = []
-        for source in data_sources:
+
+        for source in standard_data_sources:
             if source["id"].startswith("tag://"):
                 tag_data_sources.append(source)
             else:
                 filtered_ds.append(source)
 
         print(f"Tag Data sources: {tag_data_sources}")
+        print(f"Website Data sources: {website_data_sources}")
 
         if len(filtered_ds) > 0:
             print(f"Data sources before translation: {filtered_ds}")
@@ -531,7 +626,7 @@ def create_assistant(event, context, current_user, name, data):
             for i in range(len(filtered_ds)):
                 source = filtered_ds[i]
                 if "://" not in source["id"]:
-                    filtered_ds[i]["id"] = source["key"]
+                    filtered_ds[i]["id"] = source.get("key", source["id"])
 
             print(f"Final data sources before translation: {filtered_ds}")
 
@@ -539,16 +634,26 @@ def create_assistant(event, context, current_user, name, data):
 
             print(f"Data sources after translation and extraction: {filtered_ds}")
 
-            data_sources = filtered_ds + tag_data_sources
-
-            # Auth check: need to update to new permissions endpoint
-            if not can_access_objects(data["access_token"], data_sources):
+            # Only check permissions on standard data sources
+            if filtered_ds and not can_access_objects(
+                data["access_token"], filtered_ds
+            ):
                 return {
                     "success": False,
                     "message": "You are not authorized to access the referenced files",
                 }
 
-    # Assuming get_openai_client and file_keys_to_file_ids functions are defined elsewhere
+        # Combine all types of data sources for the final assistant
+        final_data_sources = (
+            filtered_ds + tag_data_sources + scraped_data_sources
+        )
+    else:
+        # For group system users, use all data sources as-is
+        final_data_sources = (
+            standard_data_sources + scraped_data_sources
+        )
+
+    # Create or update the assistant with the final data sources
     return create_or_update_assistant(
         current_user=current_user,
         access_token=data["access_token"],
@@ -559,7 +664,7 @@ def create_assistant(event, context, current_user, name, data):
         assistant_data=assistant_data,
         disclaimer=disclaimer,
         tags=tags,
-        data_sources=data_sources,
+        data_sources=final_data_sources,
         tools=tools,
         provider=provider,
         uri=uri,
@@ -1146,10 +1251,24 @@ def create_or_update_assistant(
         )
         new_item["version"] = new_version
 
+        # Collect all data source keys, including scraped content
+        all_data_source_keys = []
+        scraped_data_source_keys = []
+
+        # Process all data sources to collect their keys
+        for source in data_sources:
+            if "id" in source:
+                all_data_source_keys.append(source["id"])
+                if source.get("metadata", {}).get(
+                    "isScrapedContent", False
+                ) or source.get("metadata", {}).get("sourceUrl"):
+                    scraped_data_source_keys.append(source["id"])
+
+        # Set permissions for the assistant
         if not update_object_permissions(
             access_token,
             [user_that_owns_the_assistant],
-            [new_item["id"]],
+            [new_item["id"], new_item["assistantId"]],
             "assistant",
             principal_type,
             "owner",
@@ -1157,6 +1276,25 @@ def create_or_update_assistant(
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
+
+        # Set permissions for all data sources, including scraped content
+        if all_data_source_keys:
+            update_result = update_object_permissions(
+                access_token,
+                [user_that_owns_the_assistant],
+                all_data_source_keys,
+                "datasource",
+                principal_type,
+                "owner",
+            )
+            if not update_result:
+                print(
+                    f"Error updating permissions for data sources: {all_data_source_keys}"
+                )
+            else:
+                print(
+                    f"Successfully updated permissions for data sources: {all_data_source_keys}"
+                )
 
         # Update permissions for the new version to ensure the user retains edit rights
         try:
@@ -1210,6 +1348,17 @@ def create_or_update_assistant(
             is_group_sys_user,
         )
 
+        # Set permissions for all data sources, including scraped content
+        all_data_source_keys = []
+        scraped_sources = []
+
+        # Collect all data source keys
+        for data_source in data_sources:
+            if "id" in data_source:
+                all_data_source_keys.append(data_source["id"])
+                if data_source.get("metadata", {}).get("sourceUrls"):
+                    scraped_sources.append(data_source)
+
         if not update_object_permissions(
             access_token,
             [user_that_owns_the_assistant],
@@ -1221,6 +1370,35 @@ def create_or_update_assistant(
             print(f"Error updating permissions for assistant {new_item['id']}")
         else:
             print(f"Successfully updated permissions for assistant {new_item['id']}")
+
+        # Set permissions for all data sources
+        if all_data_source_keys:
+            update_object_permissions(
+                access_token,
+                [user_that_owns_the_assistant],
+                all_data_source_keys,
+                "datasource",
+                principal_type,
+                "owner",
+            )
+
+        # Special handling for scraped content
+        for scraped_source in scraped_sources:
+            scraped_key = scraped_source["id"]
+            try:
+                # Ensure owner permissions for scraped content
+                update_object_permissions(
+                    access_token=access_token,
+                    shared_with_users=[user_that_owns_the_assistant],
+                    keys=[scraped_key],
+                    object_type="datasource",
+                    principal_type=principal_type,
+                    permission_level="owner",
+                    policy="",
+                )
+                print(f"Set owner permissions for scraped content: {scraped_key}")
+            except Exception as perm_error:
+                print(f"Error setting permissions for scraped content: {perm_error}")
 
         # Also add direct permissions in DynamoDB
         try:
@@ -2395,4 +2573,685 @@ def validate_assistant_id(event, context, current_user, name, data):
             "success": False,
             "message": f"Error verifying assistant id: {str(e)}",
         }
-        
+
+
+def scrape_website_content(url, is_sitemap=False, user_id=None, max_pages=10):
+    """Helper function to scrape a website and return the data source key"""
+    try:
+        print(f"Attempting to scrape {'sitemap' if is_sitemap else 'website'}: {url}")
+
+        # Determine if single URL or sitemap
+        urls_to_scrape = []
+        if is_sitemap:
+            urls_to_scrape = extract_urls_from_sitemap(url, max_pages)
+            print(f"Extracted {len(urls_to_scrape)} URLs from sitemap")
+            if not urls_to_scrape:
+                return {
+                    "success": False,
+                    "message": f"Could not extract any URLs from sitemap at {url}",
+                    "error": "Empty sitemap or parsing error",
+                }
+        else:
+            urls_to_scrape = [url]
+            print(f"Set up to scrape single URL: {url}")
+
+        # Scrape content from URLs
+        scraped_data = []
+        for url in urls_to_scrape:
+            print(f"Fetching and parsing URL: {url}")
+            content = fetch_and_parse_url(url)
+            if content:
+                print(f"Successfully parsed content from {url}")
+                scraped_data.append(
+                    {
+                        "url": url,
+                        "content": content,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+            else:
+                print(f"Failed to parse content from {url}")
+
+        # Check if any URLs were successfully scraped
+        if not scraped_data:
+            print("No content was successfully scraped from any URL")
+            return {
+                "success": False,
+                "message": "Failed to scrape any content from the provided URLs",
+                "error": "All URL requests failed or returned no content",
+            }
+
+        print(f"Successfully scraped {len(scraped_data)} URLs, saving content")
+
+        # Create data source
+        try:
+            data_source_key = save_scraped_content(scraped_data, user_id)
+            print(f"Saved scraped content with key: {data_source_key}")
+
+            return {
+                "success": True,
+                "message": f"Successfully scraped {len(scraped_data)} URLs",
+                "data": {
+                    "dataSourceKey": data_source_key,  # This is now file_key
+                    "urlsScraped": len(scraped_data),
+                    "scrapedUrls": [item["url"] for item in scraped_data],
+                },
+            }
+        except Exception as save_error:
+            print(f"Error saving scraped content: {save_error}")
+            return {
+                "success": False,
+                "message": f"Error saving scraped content: {str(save_error)}",
+                "error": str(save_error),
+            }
+
+    except Exception as e:
+        print(f"Error scraping website: {e}")
+        return {
+            "success": False,
+            "message": f"Failed to scrape website: {str(e)}",
+            "error": str(e),
+        }
+
+
+def extract_urls_from_sitemap(sitemap_url, max_pages=10):
+    """Extract URLs from a sitemap XML file."""
+    try:
+        response = requests.get(sitemap_url, timeout=30)
+        response.raise_for_status()
+
+        sitemap_content = response.content
+        sitemap_dict = xmltodict.parse(sitemap_content)
+
+        # Handle nested sitemaps
+        if "sitemapindex" in sitemap_dict:
+            all_urls = []
+            for sitemap in sitemap_dict["sitemapindex"]["sitemap"][:max_pages]:
+                sitemap_loc = sitemap["loc"]
+                sub_urls = extract_urls_from_sitemap(sitemap_loc, max_pages)
+                all_urls.extend(sub_urls)
+                if len(all_urls) >= max_pages:
+                    return all_urls[:max_pages]
+            return all_urls
+
+        # Extract URLs from urlset
+        urls = []
+        if "urlset" in sitemap_dict and "url" in sitemap_dict["urlset"]:
+            url_entries = sitemap_dict["urlset"]["url"]
+            # Handle single URL case
+            if isinstance(url_entries, dict):
+                urls.append(url_entries["loc"])
+            else:
+                for url_entry in url_entries[:max_pages]:
+                    urls.append(url_entry["loc"])
+
+        return urls[:max_pages]
+
+    except Exception as e:
+        print(f"Error extracting URLs from sitemap: {e}")
+        return []
+
+
+def fetch_and_parse_url(url):
+    """Fetch and parse content from a URL."""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+
+        # Handle HTTP errors explicitly
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            print(f"Error fetching URL {url}: {e}")
+            return None
+
+        # Check if content is HTML
+        content_type = response.headers.get("Content-Type", "")
+        if (
+            "text/html" not in content_type
+            and "application/xhtml+xml" not in content_type
+        ):
+            print(f"URL {url} returned non-HTML content: {content_type}")
+
+            # For non-HTML content like PDFs, handle differently
+            if "application/pdf" in content_type:
+                return {
+                    "metadata": {
+                        "title": url.split("/")[-1],
+                        "url": url,
+                        "contentType": content_type,
+                        "scrapedAt": datetime.now().isoformat(),
+                    },
+                    "text": f"[PDF Content from {url}]",
+                }
+
+            # Generic handling for other types
+            return {
+                "metadata": {
+                    "title": url.split("/")[-1],
+                    "url": url,
+                    "contentType": content_type,
+                    "scrapedAt": datetime.now().isoformat(),
+                },
+                "text": f"[Content from {url} with type {content_type}]",
+            }
+
+        # Parse HTML
+        soup = BeautifulSoup(response.content, "lxml")
+
+        # Remove script, style, and other non-content elements
+        for element in soup(["script", "style", "meta", "noscript", "iframe"]):
+            element.decompose()
+
+        # Extract title
+        title = soup.title.string if soup.title else url.split("/")[-1]
+
+        # Build a more structured extraction of content
+        main_content = ""
+
+        # Try to find main content containers
+        main_elements = soup.find_all(["main", "article", "div", "section"])
+        if main_elements:
+            for element in main_elements:
+                if len(element.get_text(strip=True)) > 200:  # Only substantial blocks
+                    main_content += element.get_text(separator=" ", strip=True) + "\n\n"
+
+        # If no main content found, just get the body text
+        if not main_content:
+            main_content = soup.get_text(separator=" ", strip=True)
+
+        # Clean up whitespace
+        main_content = re.sub(r"\s+", " ", main_content).strip()
+
+        # Add a headline with the title
+        formatted_text = f"# {title}\n\n{main_content}"
+
+        # Extract metadata
+        metadata = {
+            "title": title,
+            "url": url,
+            "contentType": "text/html",
+            "scrapedAt": datetime.now().isoformat(),
+        }
+
+        # Return structured content
+        return {
+            "metadata": metadata,
+            "text": formatted_text,
+        }
+
+    except Exception as e:
+        print(f"Error processing URL {url}: {e}")
+        return None
+
+
+def save_scraped_content(scraped_data, user_id):
+    """Save scraped content to S3 and create entry in DynamoDB."""
+    # Generate unique ID
+    timestamp = datetime.now().strftime("%Y-%m-%d")
+    unique_id = str(uuid.uuid4())
+
+    # Original file key for the raw data
+    file_key = f"{user_id}/{timestamp}/{unique_id}.json"
+
+    # Content key for the processed chunks data
+    content_key = f"{user_id}/{timestamp}/{unique_id}.content.json"
+
+    # Save to S3
+    bucket_name = os.environ["ASSISTANTS_FILES_BUCKET_NAME"]
+
+    # Create metadata with account information
+    account_data = {
+        "user": user_id,
+        "account": "general_account",  # Default account
+        "api_key": None,
+    }
+
+    # Get encryption key and encrypt metadata
+    encrypted_metadata = ""
+    try:
+        ssm_client = boto3.client("ssm")
+        parameter_name = os.environ.get("FILE_UPLOAD_ENCRYPTION_PARAMETER")
+        if parameter_name:
+            response = ssm_client.get_parameter(
+                Name=parameter_name, WithDecryption=True
+            )
+            key = response["Parameter"]["Value"].encode()
+            from cryptography.fernet import Fernet
+            import base64
+
+            fernet = Fernet(key)
+            data_str = json.dumps(account_data)
+            encrypted_data = fernet.encrypt(data_str.encode())
+            encrypted_metadata = base64.b64encode(encrypted_data).decode("utf-8")
+    except Exception as e:
+        print(f"Warning: Error encrypting metadata: {e}")
+
+    # Save raw data to S3 - FIXED: Use CombinedEncoder directly
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=file_key,
+        Body=json.dumps(scraped_data, cls=CombinedEncoder),  # Use CombinedEncoder here
+        ContentType="application/json",
+        Metadata={"encrypted_metadata": encrypted_metadata},
+    )
+    print(f"Raw data saved to S3: {bucket_name}/{file_key}")
+
+    # Format scraped content for the RAG system
+    formatted_content = {"chunks": [], "src": file_key}
+
+    for i, item in enumerate(scraped_data):
+        content_text = ""
+        if isinstance(item["content"], dict) and "text" in item["content"]:
+            content_text = item["content"]["text"]
+        elif isinstance(item["content"], str):
+            content_text = item["content"]
+        else:
+            content_text = str(item["content"])
+
+        formatted_content["chunks"].append(
+            {
+                "content": content_text,
+                "locations": [{"url": item["url"], "scrapedAt": item["timestamp"]}],
+                "indexes": [i],
+                "char_index": 0,
+            }
+        )
+
+    # Save the RAG-formatted content to S3 - FIXED: Use CombinedEncoder here too
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=content_key,
+        Body=json.dumps(
+            formatted_content, cls=CombinedEncoder
+        ),  # Use CombinedEncoder here
+        ContentType="application/json",
+        Metadata={"encrypted_metadata": encrypted_metadata},
+    )
+    print(f"Formatted content saved to S3: {bucket_name}/{content_key}")
+
+    # Create hash entry - CRITICAL for RAG pipeline
+    hash_files_table = dynamodb.Table(os.environ["HASH_FILES_DYNAMO_TABLE"])
+    hash_entry = {
+        "id": unique_id,
+        "user": user_id,
+        "originalKey": file_key,
+        "textLocationKey": content_key,
+        "createdAt": int(time.time() * 1000),
+        "content_type": "application/json",
+        "filename": f"scraped_websites_{timestamp}.json",
+        "metadata": {
+            "scrapedUrls": [item["url"] for item in scraped_data],
+            "scrapedAt": datetime.now().isoformat(),
+            # "urlCount": int(len(scraped_data)),
+        },
+    }
+    hash_files_table.put_item(Item=hash_entry)
+    print(f"Hash entry created pointing {unique_id} → {content_key}")
+
+    # Create entry in FILES_DYNAMO_TABLE - this is critical for the RAG system to find the file
+    files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
+    file_metadata = {
+        "id": file_key,  # CRITICAL: Use file_key, not content_key for this entry
+        "name": f"scraped_websites_{timestamp}.json",
+        "type": "application/json",
+        "tags": ["website", "scraped"],
+        "data": {
+            "sourceUrls": [item["url"] for item in scraped_data],
+            "scrapedAt": datetime.now().isoformat(),
+            # "urlCount": int(len(scraped_data)),
+        },
+        "knowledgeBase": "default",
+        "createdAt": datetime.now().isoformat(),
+        "updatedAt": datetime.now().isoformat(),
+        "createdBy": user_id,
+        "updatedBy": user_id,
+    }
+
+    # Always create the FILES_DYNAMO_TABLE entry and fail if it doesn't work
+    files_table.put_item(Item=file_metadata)
+    print(f"Files table entry created for {file_key}")
+
+    # Return the file_key that should be used as the data source ID
+    return file_key  # IMPORTANT: Return file_key, not content_key
+
+
+@op(
+    path="/assistant/rescan_websites",
+    name="rescanWebsites",
+    method="POST",
+    tags=["apiDocumentation"],
+    description="""Rescan websites associated with an assistant.
+
+    Example request:
+    {
+        "data": {
+            "assistantId": "ast/38940562397049823"
+        }
+    }
+    """,
+    params={
+        "assistantId": "String. Required. ID of the assistant to update website content for."
+    },
+)
+@validated(op="rescan_websites")
+def rescan_websites(event, context, current_user, name, data=None):
+    """
+    Lambda function to rescan websites associated with assistants.
+    If data is provided, only rescan websites for the specified assistant.
+    If no data, scan all assistants that are due for update.
+    """
+    try:
+        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+
+        # If assistantId is provided, rescan that specific assistant
+        if data and "data" in data and "assistantId" in data["data"]:
+            assistant_id = data["data"]["assistantId"]
+            response = assistants_table.get_item(Key={"id": assistant_id})
+
+            if "Item" not in response:
+                return {"success": False, "message": "Assistant not found"}
+
+            assistant = response["Item"]
+            result = process_assistant_websites(assistant, current_user)
+
+            return {
+                "success": result["success"],
+                "message": result["message"],
+                "data": result.get("data", {}),
+            }
+
+        # Otherwise, scan all assistants that are due for update
+        else:
+            # Query for assistants with websiteUrls
+            response = assistants_table.scan(
+                FilterExpression="attribute_exists(websiteUrls)"
+            )
+
+            assistants = response["Items"]
+            results = []
+
+            for assistant in assistants:
+                # Check if due for update
+                last_scan = assistant.get("lastWebsiteScan")
+                frequency = assistant.get("websiteScanFrequency", 7)  # Default: 7 days
+
+                if last_scan:
+                    last_scan_date = datetime.fromisoformat(last_scan)
+                    if datetime.now() - last_scan_date < timedelta(days=frequency):
+                        # Not due for update
+                        continue
+
+                # Process websites for this assistant
+                result = process_assistant_websites(assistant, assistant["user"])
+                results.append({"assistantId": assistant["id"], "result": result})
+
+            return {
+                "success": True,
+                "message": f"Processed {len(results)} assistants",
+                "data": {"results": results},
+            }
+
+    except Exception as e:
+        print(f"Error rescanning websites: {e}")
+        return {"success": False, "message": f"Failed to rescan websites: {str(e)}"}
+
+
+def process_assistant_websites(assistant, user_id):
+    """Process websites for an assistant and update data sources."""
+    try:
+        website_urls = assistant.get("websiteUrls", [])
+        if not website_urls and not assistant.get("data", {}).get("websiteUrls", []):
+            if assistant.get("data", {}) and "websiteUrls" in assistant["data"]:
+                website_urls = assistant["data"]["websiteUrls"]
+            else:
+                return {
+                    "success": True,
+                    "message": "No websites to process for this assistant",
+                }
+
+        # Scrape content from URLs
+        scraped_data = []
+        for website_data in website_urls:
+            url = website_data.get("url", "")
+            is_sitemap = website_data.get("isSitemap", False)
+            max_pages = website_data.get("maxPages", 10)
+
+            if is_sitemap:
+                urls = extract_urls_from_sitemap(url, max_pages)
+                for sub_url in urls:
+                    content = fetch_and_parse_url(sub_url)
+                    if content:
+                        scraped_data.append(
+                            {
+                                "url": sub_url,
+                                "content": content,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                        )
+            else:
+                content = fetch_and_parse_url(url)
+                if content:
+                    scraped_data.append(
+                        {
+                            "url": url,
+                            "content": content,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
+        if not scraped_data:
+            return {
+                "success": False,
+                "message": "Failed to scrape any content from the websites",
+            }
+
+        # Create data source
+        data_source_key = save_scraped_content(scraped_data, user_id)
+
+        # Update file metadata in FILES_DYNAMO_TABLE
+        files_table = dynamodb.Table(os.environ.get("FILES_DYNAMO_TABLE"))
+
+        timestamp = datetime.now().strftime("%Y-%m-%d")
+        files_table.put_item(
+            Item={
+                "id": data_source_key,
+                "name": f"scraped_websites_{timestamp}.json",
+                "type": "application/json",
+                "tags": ["website", "scraped"],
+                "data": {
+                    "sourceUrls": [item["url"] for item in scraped_data],
+                    "scrapedAt": datetime.now().isoformat(),
+                    # "urlCount": int(len(scraped_data)),
+                },
+                "knowledgeBase": "default",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+                "createdBy": user_id,
+                "updatedBy": user_id,
+            }
+        )
+
+        # Update assistant with the new data source
+        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+
+        # Get the most recent version
+        assistant_id = assistant["id"]
+        assistant_public_id = assistant.get("assistantId")
+
+        if assistant_public_id:
+            from service.core import get_most_recent_assistant_version
+
+            latest_assistant = get_most_recent_assistant_version(
+                assistants_table, assistant_public_id
+            )
+
+            if latest_assistant:
+                # Create a new version with updated dataSources
+                data_sources = latest_assistant.get("dataSources", [])
+
+                # Add new scraped content
+                data_sources.append(
+                    {
+                        "id": data_source_key,  # This is the file_key now, not content_key
+                        "name": f"Scraped content from {len(scraped_data)} URLs",
+                        "type": "application/json",
+                        "metadata": {
+                            "sourceUrls": [item["url"] for item in scraped_data],
+                            "scrapedAt": datetime.now().isoformat(),
+                            # "urlCount": int(len(scraped_data)),
+                            "isScrapedContent": True,
+                        },
+                    }
+                )
+
+                # Update lastWebsiteScan timestamp
+                assistants_table.update_item(
+                    Key={"id": latest_assistant["id"]},
+                    UpdateExpression="set lastWebsiteScan = :scan, dataSources = :ds",
+                    ExpressionAttributeValues={
+                        ":scan": datetime.now().isoformat(),
+                        ":ds": data_sources,
+                    },
+                )
+
+                return {
+                    "success": True,
+                    "message": f"Successfully updated assistant with scraped content from {len(scraped_data)} URLs",
+                    "data": {
+                        "dataSourceKey": data_source_key,
+                        "urlsScraped": len(scraped_data),
+                    },
+                }
+
+        return {
+            "success": False,
+            "message": "Failed to update assistant with scraped content",
+        }
+
+    except Exception as e:
+        print(f"Error processing assistant websites: {e}")
+        return {
+            "success": False,
+            "message": f"Failed to process assistant websites: {str(e)}",
+        }
+
+
+def process_assistant_websites(assistant, user_id):
+    """Process websites for an assistant and update data sources."""
+    try:
+        website_urls = assistant.get("websiteUrls", [])
+        if not website_urls:
+            return {
+                "success": True,
+                "message": "No websites to process for this assistant",
+            }
+
+        # Scrape content from URLs
+        scraped_data = []
+        for url in website_urls:
+            is_sitemap = url.endswith(".xml") or "sitemap" in url.lower()
+
+            if is_sitemap:
+                urls = extract_urls_from_sitemap(url)
+                for sub_url in urls:
+                    content = fetch_and_parse_url(sub_url)
+                    if content:
+                        scraped_data.append(
+                            {
+                                "url": sub_url,
+                                "content": content,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                        )
+            else:
+                content = fetch_and_parse_url(url)
+                if content:
+                    scraped_data.append(
+                        {
+                            "url": url,
+                            "content": content,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
+        if not scraped_data:
+            return {
+                "success": False,
+                "message": "Failed to scrape any content from the websites",
+            }
+
+        # Create data source
+        data_source_key = save_scraped_content(scraped_data, user_id)
+
+        # Update assistant with the new data source
+        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
+
+        # Get the most recent version
+        assistant_id = assistant["id"]
+        assistant_public_id = assistant.get("assistantId")
+
+        if assistant_public_id:
+            from service.core import get_most_recent_assistant_version
+
+            latest_assistant = get_most_recent_assistant_version(
+                assistants_table, assistant_public_id
+            )
+
+            if latest_assistant:
+                # Create a new version with updated dataSources
+                data_sources = latest_assistant.get("dataSources", [])
+
+                # Add new scraped content
+                data_sources.append(
+                    {
+                        "id": data_source_key,
+                        "name": "Scraped Websites",
+                        "type": "application/json",
+                    }
+                )
+
+                # Update lastWebsiteScan timestamp
+                assistants_table.update_item(
+                    Key={"id": latest_assistant["id"]},
+                    UpdateExpression="set lastWebsiteScan = :scan, dataSources = :ds",
+                    ExpressionAttributeValues={
+                        ":scan": datetime.now().isoformat(),
+                        ":ds": data_sources,
+                    },
+                )
+
+                return {
+                    "success": True,
+                    "message": f"Successfully updated assistant with scraped content from {len(scraped_data)} URLs",
+                    "data": {
+                        "dataSourceKey": data_source_key,
+                        "urlsScraped": len(scraped_data),
+                    },
+                }
+
+        return {
+            "success": False,
+            "message": "Failed to update assistant with scraped content",
+        }
+
+    except Exception as e:
+        print(f"Error processing assistant websites: {e}")
+        return {
+            "success": False,
+            "message": f"Failed to process assistant websites: {str(e)}",
+        }
+
+
+@validated(op="scrape_website")
+def scrape_website(event, context, current_user, name, data):
+    """
+    Lambda function to scrape a website and create a data source.
+    """
+    url = data["data"]["url"]
+    is_sitemap = data["data"].get("isSitemap", False)
+    max_pages = data["data"].get("maxPages", 10)
+
+    return scrape_website_content(url, is_sitemap, current_user, max_pages)
