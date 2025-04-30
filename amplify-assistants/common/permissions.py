@@ -1,5 +1,6 @@
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+# Copyright (c) 2024 Vanderbilt University
+# Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
 
 def get_permission_checker(user, ptype, op, data):
     print(
@@ -55,14 +56,26 @@ def can_get_group_assistant_dashboards(user, data):
 def can_save_user_rating(user, data):
     return True
 
+
 def can_get_group_conversations_data(user, data):
     return True
+
 
 def can_lookup_assistant(user, data):
     return True
 
+
 def can_share_assistant(user, data):
     return True
+
+
+def can_scrape_website(user, data):
+    return True
+
+
+def can_rescan_websites(user, data):
+    return True
+
 
 """
 Every service must define the permissions for each operation
@@ -92,22 +105,14 @@ permissions_by_state_type = {
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": can_get_group_assistant_dashboards
     },
-    "/assistant/save_user_rating": {
-        "save_user_rating": can_save_user_rating
-    },
+    "/assistant/save_user_rating": {"save_user_rating": can_save_user_rating},
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": can_get_group_conversations_data
     },
-    "/assistant/lookup": {
-        "lookup": can_lookup_assistant
-    },
-    "/assistant/add_path": {
-        "add_assistant_path": can_create_assistant
-    },
-    "/assistant/request_access" : {
-        "share_assistant": can_share_assistant
-    },
-    "/assistant/validate/assistant_id" : {
-        "lookup": can_lookup_assistant
-    }
+    "/assistant/lookup": {"lookup": can_lookup_assistant},
+    "/assistant/add_path": {"add_assistant_path": can_create_assistant},
+    "/assistant/request_access": {"share_assistant": can_share_assistant},
+    "/assistant/validate/assistant_id": {"lookup": can_lookup_assistant},
+    "/assistant/scrape_website": {"scrape_website": can_scrape_website},
+    "/assistant/rescan_websites": {"rescan_websites": can_rescan_websites},
 }

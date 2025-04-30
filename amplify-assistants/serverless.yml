@@ -60,6 +60,7 @@ provider:
     OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY} #When using the OpenAI API, you need to provide the ARN of the secret that contains the API key, the secret should be named OPENAI_API_KEY.
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
+    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE:  amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}
     ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
@@ -86,6 +87,8 @@ provider:
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
+    EMBEDDING_CHUNKS_INDEX_QUEUE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-queue
+    FILE_UPLOAD_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-lambda/${sls:stage}/s3/metadata/encryption #must start with /
 
 
   iam:
@@ -273,6 +276,27 @@ functions:
           path: assistant/add_path
           method: post
           cors: true
+
+  scrape_website:
+    handler: service/core.scrape_website
+    timeout: 300
+    events:
+      - http:
+          path: assistant/scrape_website
+          method: post
+          cors: true
+
+  rescan_websites:
+    handler: service/core.rescan_websites
+    timeout: 300
+    events:
+      - http:
+          path: assistant/rescan_websites
+          method: post
+          cors: true
+      - schedule: 
+          rate: cron(0 0 * * ? *) # Daily at midnight
+          enabled: true
 
 resources:
   Resources:
