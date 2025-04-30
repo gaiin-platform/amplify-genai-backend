@@ -336,6 +336,17 @@ export const findResult = (result) => {
 
 
 export const sendErrorMessage = (writable, errorMessage = "Error retrieving response. Please try again.") => {
-    sendDeltaToStream(writable, "answer", {delta: {text: errorMessage}});
-    writable.end();
+    if (!writable || writable.writableEnded) {
+        console.log('Stream already ended, cannot send error message');
+        return;
+    }
+    
+    try {
+        sendDeltaToStream(writable, "answer", {delta: {text: errorMessage}});
+        if (!writable.writableEnded) {
+            writable.end();
+        }
+    } catch (err) {
+        console.error('Error while sending error message:', err);
+    }
 }
