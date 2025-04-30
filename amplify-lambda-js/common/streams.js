@@ -336,6 +336,10 @@ export const findResult = (result) => {
 
 
 export const sendErrorMessage = (writable, statusCode, code=null) => {
+    if (!writable || writable.writableEnded) {
+        console.log('Stream already ended, cannot send error message');
+        return;
+    }
     console.log("-- Error Message Response Status -- ", statusCode);
     console.log("-- Error Message Response Code -- ", code);
 
@@ -352,6 +356,13 @@ export const sendErrorMessage = (writable, statusCode, code=null) => {
         errorMessage = "Request Entity Too Large: The request body is too large. Please try again with a smaller request.";
     }
 
-    sendDeltaToStream(writable, "answer", {delta: {text: errorMessage}});
-    writable.end();
+    
+    try {
+        sendDeltaToStream(writable, "answer", {delta: {text: errorMessage}});
+        if (!writable.writableEnded) {
+            writable.end();
+        }
+    } catch (err) {
+        console.error('Error while sending error message:', err);
+    }
 }

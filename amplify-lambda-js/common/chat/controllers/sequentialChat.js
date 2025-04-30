@@ -86,32 +86,37 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
 
 
         // Capture data as it's written to the streamReceiver for AI analysis
-        streamReceiver.on('data', (chunk) => {
-            const chunkStr = chunk.toString();
-            const jsonStrings = chunkStr.split('\n').filter(str => str.startsWith('data: ')).map(str => str.replace('data: ', ''));
+        // PassThrough streams should support event listeners, but let's add a check just in case
+        if (typeof streamReceiver.on === 'function') {
+            streamReceiver.on('data', (chunk) => {
+                const chunkStr = chunk.toString();
+                const jsonStrings = chunkStr.split('\n').filter(str => str.startsWith('data: ')).map(str => str.replace('data: ', ''));
 
-            for (const jsonStr of jsonStrings) {
-                if (jsonStr === '[DONE]') {
-                    continue;
-                }
-
-                try {
-                    const chunkObj = JSON.parse(jsonStr);
-                    if (chunkObj?.d?.delta?.text) { // for bedrock
-                        llmResponse += chunkObj.d.delta.text;              
-                    } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.delta?.content) {// for openai models
-                        llmResponse += chunkObj.choices[0].delta.content;
-                    } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.message?.content) { // for o1 models
-                        llmResponse += chunkObj.choices[0].message.content;
+                for (const jsonStr of jsonStrings) {
+                    if (jsonStr === '[DONE]') {
+                        continue;
                     }
-                    
-                } catch (e) {
-                    // Log the error and the problematic chunk, but don't throw
-                    logger.debug(`Warning: Error parsing chunk: ${e.message}`);
-                    logger.debug(`Problematic chunk: ${jsonStr}`);
+
+                    try {
+                        const chunkObj = JSON.parse(jsonStr);
+                        if (chunkObj?.d?.delta?.text) { // for bedrock
+                            llmResponse += chunkObj.d.delta.text;              
+                        } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.delta?.content) {// for openai models
+                            llmResponse += chunkObj.choices[0].delta.content;
+                        } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.message?.content) { // for o1 models
+                            llmResponse += chunkObj.choices[0].message.content;
+                        }
+                        
+                    } catch (e) {
+                        // Log the error and the problematic chunk, but don't throw
+                        logger.debug(`Warning: Error parsing chunk: ${e.message}`);
+                        logger.debug(`Problematic chunk: ${jsonStr}`);
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            logger.warn('Stream receiver does not support event listeners, response capture will be disabled');
+        }
 
         multiplexer.addSource(streamReceiver, context.id, eventTransformer);
 

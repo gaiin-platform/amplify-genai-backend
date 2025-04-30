@@ -9,9 +9,10 @@ import {handleChat as parallelChat} from "./chat/controllers/parallelChat.js";
 import {getSourceMetadata, sendSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {defaultSource} from "./sources.js";
 import {openAiTransform, openaiUsageTransform} from "./chat/events/openai.js";
+import {geminiTransform, geminiUsageTransform } from "./chat/events/gemini.js";
 import {bedrockConverseTransform, bedrockTokenUsageTransform} from "./chat/events/bedrock.js";
 import {getLogger} from "./logging.js";
-import {getMaxTokens, isOpenAIModel} from "./params.js";
+import {getMaxTokens, isOpenAIModel, isGeminiModel} from "./params.js";
 import {createTokenCounter} from "../azure/tokens.js";
 import {recordUsage} from "./accounting.js";
 import { v4 as uuidv4 } from 'uuid';
@@ -296,6 +297,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, 0, details);
             }
             result = bedrockConverseTransform(event);
+        } else if (isGeminiModel(model.id)) {            
+            result = geminiTransform(event);
+            const usage = geminiUsageTransform(event);
+            if (usage) {
+                recordUsage(account, requestId, model, usage.prompt_tokens, usage.completion_tokens, 
+                            usage.prompt_tokens_details?.cached_tokens ?? 0,
+                           {...details, reasoning_tokens: usage.completion_tokens_details?.reasoning_tokens,
+                            prompt_tokens_details: usage.prompt_tokens_details,
+                           });
+            }
         }
  
         if(result && result.d){
