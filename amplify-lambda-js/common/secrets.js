@@ -53,15 +53,34 @@ const getEndpointData = (parsed_data, model_name) => {
 
     const endpoint_data = parsed_data.models.find((model) => model.hasOwnProperty(model_name));
     if (!endpoint_data) {
-        throw new Error("Model name not found in the secret data");
+        // If the exact model is not found, try to find a generic fallback based on model family
+        // For example, if gemini-2.0-flash isn't found, fall back to gemini-pro
+        let fallback_model_name = null;
+        
+        if(model_name.startsWith("gemini-")) {
+            fallback_model_name = "gemini-pro";
+        }
+        
+        if(fallback_model_name) {
+            console.log(`Model ${model_name} not found, using fallback ${fallback_model_name}`);
+            const fallback_data = parsed_data.models.find((model) => model.hasOwnProperty(fallback_model_name));
+            if (fallback_data) {
+                return getEndpointDataFromModel(fallback_data[fallback_model_name]);
+            }
+        }
+        
+        throw new Error(`Model name ${model_name} not found in the secret data and no suitable fallback available`);
     }
 
+    return getEndpointDataFromModel(endpoint_data[model_name]);
+};
+
+const getEndpointDataFromModel = (modelConfig) => {
     // Randomly choose one of the endpoints
-    const endpoint_info = endpoint_data[model_name].endpoints[Math.floor(Math.random() * endpoint_data[model_name].endpoints.length)];
+    const endpoint_info = modelConfig.endpoints[Math.floor(Math.random() * modelConfig.endpoints.length)];
     const { url, key } = endpoint_info;
     return { key, url };
 };
-
 
 const secret_name = process.env.LLM_ENDPOINTS_SECRETS_NAME;
 const secret_data = await getSecret(secret_name);
