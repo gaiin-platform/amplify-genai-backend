@@ -29,7 +29,7 @@ from botocore.exceptions import ClientError
 from service.session_files import create_file_tracker, get_presigned_url_by_id
 from workflow.workflow_template_registry import list_workflow_templates, get_workflow_template, \
     register_workflow_template, delete_workflow_template, update_workflow_template
-
+from service.models import get_default_models
 
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -258,7 +258,7 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
 
         action_registry.register_terminate_tool() # We always include terminate
 
-        model = metadata.get('model', os.getenv("AGENT_MODEL"))
+        model = metadata.get('model')
 
         if 'assistant' in metadata:
             assistant = metadata['assistant']
@@ -290,8 +290,16 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
             if ("data" in assistant and "model" in assistant["data"]):
                 model = assistant["data"]["model"]
 
+
+        default_models = get_default_models(access_token)
         print(f"Using model: {model}")
-        llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id})
+        if not model:
+            print(f"Default models: {default_models}")
+            if not default_models.get("agent_model"):
+                raise Exception("No model selected and no default model found")
+            model = default_models.get("agent_model")
+
+        llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id}, default_models.get("advanced_model"))
 
         if len(action_registry.actions.items()) > 3:
             action_registry.filter_tools_by_relevance(llm, prompt, additional_goals)
@@ -657,7 +665,8 @@ def get_file_download_urls(current_user, access_token, session_id, files, versio
                                 "args": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "stepName": {"type": "string"},
                                 "actionSegment": {"type": "string"},
-                                "editableArgs": {"type": "array", "items": {"type": "string"}}
+                                "editableArgs": {"type": "array", "items": {"type": "string"}},
+                                "useAdvancedReasoning": {"type": "boolean"}
                             },
                             "required": ["tool", "instructions"]
                         }
@@ -801,7 +810,8 @@ def list_workflow_templates_handler(current_user, access_token, filter_base_temp
                                 "args": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "stepName": {"type": "string"},
                                 "actionSegment": {"type": "string"},
-                                "editableArgs": {"type": "array", "items": {"type": "string"}}
+                                "editableArgs": {"type": "array", "items": {"type": "string"}},
+                                "useAdvancedReasoning": {"type": "boolean"}
                             },
                             "required": ["tool", "instructions"]
                         }

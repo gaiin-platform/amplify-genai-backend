@@ -17,6 +17,7 @@ class Step(CustomBaseModel):
     tool: str
     description: Optional[str] = None
     actionSegment: Optional[str] = None
+    useAdvancedReasoning: Optional[bool] = False
     args: Optional[Dict[str, Any]] = None
     values: Optional[Dict[str, Any]] = None
     on_failure: Optional[Dict[str, Any]] = None

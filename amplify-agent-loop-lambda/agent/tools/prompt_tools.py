@@ -8,7 +8,7 @@ import functools
 import json
 
 @register_tool(tags=["prompts"])
-def prompt_llm_with_messages(action_context: ActionContext, prompt: [dict]):
+def prompt_llm_with_messages(action_context: ActionContext, prompt: dict):
     """
     Generate a response to a prompt using the LLM model.
     The LLM cannot see the conversation history, so make sure to include all necessary context in the prompt.

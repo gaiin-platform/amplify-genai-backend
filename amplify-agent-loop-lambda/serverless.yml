@@ -38,7 +38,6 @@ provider:
 
 
   environment:
-    AGENT_MODEL: "gpt-4.1-mini"
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}

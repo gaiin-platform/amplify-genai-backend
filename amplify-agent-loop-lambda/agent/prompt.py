@@ -128,7 +128,7 @@ def is_bedrock_model(model):
     return any(provider in model for provider in ["anthropic", "claude", "amazon", "titan", "ai21", "cohere", "meta", "deepseek"])
 
 
-def create_llm(access_token, model, current_user = "Agent", account_id = "general_account", details: dict = {}):
+def litellm_model_str(model):
     provider_prefix = ""
     if is_openai_model(model):
         key, uri = get_llm_config(model)
@@ -153,7 +153,19 @@ def create_llm(access_token, model, current_user = "Agent", account_id = "genera
         provider_prefix = "bedrock"
     else:
         raise ValueError(f"Unsupported model: {model}")
+    return f"{provider_prefix}/{model}"
+        
+
+def create_llm(access_token, model, current_user = "Agent", account_id = "general_account", details: dict = {}, advanced_model = None):
+    agent_model_str = litellm_model_str(model)
+    advanced_model_str = agent_model_str
+    try:
+        if advanced_model:
+            advanced_model_str = litellm_model_str(advanced_model)
+    except Exception as e:
+        print(f"Error creating advanced model: {e}, using agent model as advanced model...")
     
+
     account_details = {
         "user": current_user,
         "accountId": account_id,
@@ -164,7 +176,12 @@ def create_llm(access_token, model, current_user = "Agent", account_id = "genera
     
     def llm(prompt):
         nonlocal total_cost
-        result, token_cost = generate_response(f"{provider_prefix}/{model}", prompt, account_details, details)
+        model_str = agent_model_str
+        if isinstance(prompt.metadata, dict) and prompt.metadata.get("advanced_reasoning", False):
+            print("Prompting using advanced model: ", advanced_model_str)
+            model_str = advanced_model_str
+
+        result, token_cost = generate_response(model_str, prompt, account_details, details)
         total_cost += token_cost
         return result
     

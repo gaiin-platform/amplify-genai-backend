@@ -202,11 +202,24 @@ class WorkflowCapability(Capability):
         return result
 
     def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response: str, result: Any, memories: List[dict]) -> List[dict]:
-        if self.remaining_steps and self.remaining_steps[-1].tool != "think":
+        if self.remaining_steps and self.remaining_steps[-1].tool != "think" and not self.terminate_early:
             memories = memories + [{
                 "type": "user",
                 "content": f"Next, you will need to complete this step:\n{self._format_step(self.remaining_steps[-1])}"
             }]
+
+        if self.current_step.useAdvancedReasoning:
+            for m in memories:
+                if m.get("type") == "assistant":
+                    content = m.get("content")
+                    if not isinstance(content, dict):
+                        try:
+                            content = json.loads(content)
+                        except:
+                            pass
+                    if isinstance(content, dict):
+                        content["advanced_reasoning"] = True
+                        m["content"] = json.dumps(content)
         return memories
 
     def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:

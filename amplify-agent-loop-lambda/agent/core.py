@@ -377,6 +377,10 @@ class Agent:
 
                 if action_def and action:
                     return response
+                
+                print("No action_def or action found in response, returning None")
+                print("action_def: ", action_def)
+                print("action: ", action)
 
             except Exception as e:
                 traceback_str = traceback.format_exc()
