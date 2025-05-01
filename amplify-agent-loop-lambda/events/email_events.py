@@ -375,11 +375,14 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
 
     # Extract email metadata
     mail_data = ses_notification['mail']
+    common_headers = mail_data.get('commonHeaders', {})
     email_details = {
         'sender': source_email,
         'timestamp': mail_data['timestamp'],
-        'subject': mail_data.get('commonHeaders', {}).get('subject', 'No Subject'),
-        'recipients': mail_data['destination']
+        'subject': common_headers.get('subject', 'No Subject'),
+        'recipients': mail_data['destination'],
+        'cc': common_headers.get('cc', "No CC'd emails"),
+        'bcc': common_headers.get('bcc', "No BCC'd emails"),
     }
 
     # Extract email body and attachments
@@ -428,7 +431,11 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
 
     # Fill in the event template using email details, including full body text
     formatted_prompt = []
-    for entry in event_data.get('prompt', []):
+    prompts = event_data.get('prompt', [{
+                "role": "user",
+                "content": "I have received an email from ${sender} at ${timestamp}. The subject of the email is: '${subject}'. The email was sent to: ${recipients}. The contents of the email are:\n\n'''${contents}'''"
+              }])
+    for entry in prompts:
         content_template = entry.get('content', '')
 
         try:
@@ -442,7 +449,7 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
             "role": entry["role"],
             "content": formatted_content
         })
-
+    print(f"Formatted Prompt: {formatted_prompt}")
     # Construct final event to pass to the agent
     event_payload = {
         "currentUser": user,
