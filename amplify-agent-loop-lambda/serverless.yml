@@ -40,6 +40,7 @@ provider:
   environment:
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
@@ -181,7 +182,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
                 
-                
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -189,6 +189,7 @@ resources:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
+                - 'arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*'
             - Effect: Allow
               Action:
                 - sqs:ChangeMessageVisibility

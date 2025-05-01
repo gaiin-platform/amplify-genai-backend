@@ -11,6 +11,7 @@ from common.secrets import get_llm_config
 from common.accounting import record_usage
 import boto3
 from botocore.config import Config
+from common.secrets import get_secret
 
 @dataclass
 class Prompt:
@@ -127,6 +128,8 @@ def is_bedrock_model(model):
     # Common Bedrock models include anthropic.claude, amazon.titan, ai21, etc.
     return any(provider in model for provider in ["anthropic", "claude", "amazon", "titan", "ai21", "cohere", "meta", "deepseek"])
 
+def is_gemini_model(model):
+    return model and "gemini" in model
 
 def litellm_model_str(model):
     provider_prefix = ""
@@ -151,6 +154,14 @@ def litellm_model_str(model):
             "client": bedrock_client
         }
         provider_prefix = "bedrock"
+    elif is_gemini_model(model):
+        secret_name = os.environ.get("SECRETS_ARN_NAME")
+        secret_data = get_secret(secret_name)
+        parsed_secret = json.loads(secret_data)
+        gemini_api_key = parsed_secret.get("GEMINI_API_KEY")
+        os.environ["GEMINI_API_KEY"] = gemini_api_key
+        provider_prefix = "gemini"
+
     else:
         raise ValueError(f"Unsupported model: {model}")
     return f"{provider_prefix}/{model}"
