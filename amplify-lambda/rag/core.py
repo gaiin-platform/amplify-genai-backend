@@ -107,12 +107,10 @@ def extract_text_from_file(key, file_content):
     try:
         markitdown_extractor = MarkItDownExtractor()
         markitdown_result = markitdown_extractor.extract_from_content(file_content, key)
-        if markitdown_result and "text" in markitdown_result:
-            md_text = markitdown_result['text']
-            print(f"MarkItDown text: {md_text}")
-            md_bytes = md_text.encode('utf-8')
-            print(f"MarkItDown bytes: {md_bytes}")
+        if markitdown_result:
+            md_bytes = markitdown_result.encode('utf-8')
             print(f"MarkItDown extraction successful for {key}")
+            print(f"Markdown Extracted text: {md_bytes}")
             return MarkDownHandler().extract_text(md_bytes, key)
              
     except Exception as e:
