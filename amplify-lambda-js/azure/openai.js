@@ -119,19 +119,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data = {max_completion_tokens: model.outputTokenLimit,
                 messages: data.messages, model: modelId, stream: true
                 }
-
-        // was working previously and now isnt?
-        // if (modelId.includes("o3")) {
-            // Convert messages to O3 format and handle system->developer role
-            // data.messages = data.messages.map(msg => ({
-            //     role: msg.role === 'system' ? 'developer' : msg.role,
-            //     content: [
-            //         {   type: "text",
-            //             text: msg.content
-            //         }
-            //     ]
-            // }));
-        // }
     }
     if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
     
