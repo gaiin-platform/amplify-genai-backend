@@ -31,7 +31,7 @@ class MarkDownHandler(TextExtractionHandler):
             # Apply markdown cleaning operations
             cleaned_text = self._clean_markdown(text)
 
-            print(f"Extract md Cleaned text: {cleaned_text}")
+            print(f"\nMarkdown extracted text: \n\n{cleaned_text}")
             
             # Split into paragraphs (blank line separation)
             paragraphs = [p.strip() for p in re.split(r'\n\s*\n', cleaned_text) if p.strip()]
@@ -155,14 +155,13 @@ class MarkDownHandler(TextExtractionHandler):
                 if re.match(r'^\s*\|.*\|\s*$', line) and '|' in line[1:]:
                     if not in_table:
                         in_table = True
-                        new_lines.append("TABLE:")  # Clearly mark the start of a table
+                        new_lines.append("\n")
                     
                     # Skip separator rows (e.g., |---|---|)
                     if re.match(r'^\s*\|?\s*[-:]+[-| :]+\s*\|?\s*$', line):
                         continue
                     
                     # Process cells
-                    cells = []
                     # Split by pipe character and remove leading/trailing pipes
                     row_cells = line.strip().split('|')
                     if row_cells[0].strip() == '':
@@ -176,23 +175,30 @@ class MarkDownHandler(TextExtractionHandler):
                     # If this is the first row and we haven't processed a header yet, 
                     # treat it as the header row
                     if not header_processed:
-                        header_row = cells
-                        new_lines.append("HEADER: " + " | ".join(header_row))
+                        # Strip out "Unnamed: X" placeholders from headers
+                        header_row = []
+                        for cell in cells:
+                            # Check if the cell matches the "Unnamed: X" pattern and replace with empty string
+                            if re.match(r'^Unnamed:\s*\d+$', cell):
+                                header_row.append("")
+                            else:
+                                header_row.append(cell)
+                        
+                        # Format header as CSV
+                        csv_header = ','.join([self._escape_csv_cell(cell) for cell in header_row])
+                        new_lines.append(csv_header)
                         header_processed = True
                         continue
                     
-                    # For data rows, create structured key-value pairs for each cell
+                    # Format data rows as CSV
                     row_data = []
-                    for i, cell in enumerate(cells):
-                        if i < len(header_row):
-                            column_name = header_row[i]
-                            if column_name and cell:  # Only add if both column name and cell value exist
-                                row_data.append(f"{column_name}: {cell}")
+                    for i in range(len(header_row)):
+                        if i < len(cells):
+                            row_data.append(self._escape_csv_cell(cells[i]))
+                        else:
+                            row_data.append('')  # Empty value for missing cells
                     
-                    # Format the row output
-                    if row_data:
-                        new_lines.append("ROW: " + "; ".join(row_data))
-                    
+                    new_lines.append(','.join(row_data))
                     current_table.append(cells)
                 else:
                     # When we exit a table, add a marker
@@ -200,14 +206,14 @@ class MarkDownHandler(TextExtractionHandler):
                         in_table = False
                         header_processed = False
                         current_table = []
-                        new_lines.append("END_TABLE")
+                        new_lines.append("\n\n")
                     
                     # Add non-table line
                     new_lines.append(line)
             
             # If we were still in a table at the end, close it
             if in_table:
-                new_lines.append("END_TABLE")
+                new_lines.append("\n\n")
             
             # Replace the text with our processed version
             text = '\n'.join(new_lines)
@@ -248,3 +254,25 @@ class MarkDownHandler(TextExtractionHandler):
         text = text.strip()
         
         return text
+
+    def _escape_csv_cell(self, cell):
+        """
+        Properly escape a cell value for CSV format.
+        
+        Args:
+            cell: The cell content to escape
+            
+        Returns:
+            Properly escaped cell value for CSV
+        """
+        if cell is None:
+            return ''
+            
+        # Replace double quotes with two double quotes (CSV escaping)
+        cell = str(cell).replace('"', '""')
+        
+        # If the cell contains commas, quotes, or newlines, wrap in quotes
+        if any(char in cell for char in ',"\n\r'):
+            return f'"{cell}"'
+        
+        return cell
