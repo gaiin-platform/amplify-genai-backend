@@ -58,7 +58,7 @@ export const getChatFn = (model, body, writable, context) => {
     } else if (model.provider === 'Bedrock') {
         return chatBedrock(body, writable, context);
     } else if (isGeminiModel(model.id)) {
-        return geminiChat(getLLMConfig, body, writable, context);
+        return geminiChat(body, writable, context);
     } else {
         console.log(`Error: Model ${model} does not have a corresponding chatFn`)
         return null;
