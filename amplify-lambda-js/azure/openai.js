@@ -119,25 +119,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data = {max_completion_tokens: model.outputTokenLimit,
                 messages: data.messages
                 }
-
-        if (modelId.includes("o3")) {
-            // Convert messages to O3 format and handle system->developer role
-            data.messages = data.messages.map(msg => ({
-                role: msg.role === 'system' ? 'developer' : msg.role,
-                content: [
-                    {   type: "text",
-                        text: msg.content
-                    }
-                ]
-            }));
-
-            // Extract reasoning effort from model ID
-            const effortMatch = modelId.match(/o3-mini-(low|medium|high)/);
-            if (effortMatch) {
-                data.reasoning_effort = effortMatch[1];
-            }
-        }
     }
+    if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
     
     if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
 
