@@ -428,13 +428,14 @@ class Agent:
         # The Agent Loop
         # ========================
         while True:
-
-            can_start_loop = reduce(lambda a, c: c.start_agent_loop(self, action_context), self.capabilities, len(self.capabilities) == 0)
-            if not can_start_loop:
-                break
+            iterations = iterations + 1
 
             if iterations > self.max_iterations:
                 self.update_memory(action_context, memory, "Agent stopped. Max iterations reached.", {})
+                break
+
+            can_start_loop = reduce(lambda a, c: c.start_agent_loop(self, action_context), self.capabilities, len(self.capabilities) == 0)
+            if not can_start_loop:
                 break
 
             if time.time() - start_time > self.max_duration_seconds:
