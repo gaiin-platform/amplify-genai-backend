@@ -21,6 +21,8 @@ custom:
     - dev
     - staging
     - prod
+  cf-changesets:
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
 
     
 provider:
@@ -35,9 +37,12 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+  
+  
 
 
   environment:
+
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
@@ -46,7 +51,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
     API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
@@ -75,9 +80,9 @@ provider:
   iam:
     role:
       managedPolicies:
-        - !Ref LambdaAPIIAMPolicy
+        - !Ref LambdaAgentLoopIAMPolicy
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - Fn::ImportValue: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-BedrockIAMPolicyArn
+        #- Fn::ImportValue: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-BedrockIAMPolicyArn
 
 
 functions:
@@ -115,10 +120,10 @@ functions:
 
 resources:
   Resources:
-    LambdaAPIIAMPolicy:
+    LambdaAgentLoopIAMPolicy:
       Type: AWS::IAM::ManagedPolicy
       Properties:
-        ManagedPolicyName: ${self:provider.environment.LAMBDA_API_IAM_POLICY_NAME}
+        ManagedPolicyName: ${self:provider.environment.LAMBDA_AGENT_LOOP_IAM_POLICY_NAME}
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -197,6 +202,13 @@ resources:
               Resource:
                 - !GetAtt AgentQueue.Arn
                 
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                - arn:aws:bedrock:*::foundation-model/*
+                - arn:aws:bedrock:*:654654422653:inference-profile/*
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
