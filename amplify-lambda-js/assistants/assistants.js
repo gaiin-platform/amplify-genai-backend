@@ -307,10 +307,16 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
                 customName = tool.customName;
             }
 
+            let customDescription = tool.operation.description;
+            if(tool.customDescription && tool.customDescription.length > 0) {
+                customDescription = tool.customDescription;
+            }
+
             return {
                 ...tool.operation,
                 name: tool.operation.name,
                 customName: customName,
+                customDescription: customDescription,
                 bindings: filteredParams,
             }
         });
