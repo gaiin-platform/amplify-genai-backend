@@ -4,6 +4,7 @@ frameworkVersion: '3'
 plugins:
   - serverless-offline
   - serverless-prune-plugin 
+  - serverless-cloudformation-changesets
 
 custom:
   serverless-offline: 
@@ -41,7 +42,7 @@ provider:
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
+    DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
     OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
 
     #Combined Vars:
@@ -72,7 +73,10 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    DEP_REGION: ${self:custom.stageVars.DEP_REGION}
+    DEP_REGION: ${self:custom.stageVars.DEP_REGION} 
+    AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
+    AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
+
     
     
 
