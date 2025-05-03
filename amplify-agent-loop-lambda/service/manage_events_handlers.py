@@ -3,7 +3,7 @@ import traceback
 from common.ops import vop
 from events.email_sender_controls import add_allowed_sender, remove_allowed_sender, list_allowed_senders
 from events.event_templates import remove_event_template, get_event_template, list_event_templates_for_user, \
-    add_event_template
+    add_event_template, is_event_template_tag_available
 from events.mock import generate_ses_event
 from service.agent_queue import route_queue_event
 
@@ -280,4 +280,34 @@ def handle_list_allowed_senders(current_user, access_token, tag):
             "success": False,
             "data": [],
             "message": "Server error: Unable to list allowed senders. Please try again later."
+        }
+
+
+@vop(
+    path="/vu-agent/is-event-template-tag-available",
+    tags=["events", "default"],
+    name="isEventTemplateTagAvailable",
+    description="Check if an event template tag is available for the current user and assistant.",
+    params={
+        "tag": "The event tag to check.",
+        "assistantId": "The assistant ID (optional)."
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "tag": {"type": "string"},
+            "assistantId": {"type": "string"}
+        },
+        "required": ["tag"]
+    }
+)
+def handle_is_event_template_tag_available(current_user, access_token, tag, assistant_id=None):
+    try:
+        return is_event_template_tag_available(current_user, tag, assistant_id)
+    except Exception:
+        traceback.print_exc()
+        return {
+            "success": False,
+            "data": False,
+            "message": "Server error: Unable to check tag availability. Please try again later."
         }

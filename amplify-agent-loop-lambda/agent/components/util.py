@@ -10,7 +10,7 @@ def event_printer(event_id: str, event: Dict[str, Any]):
         context_id_prefix = f"{context_id_prefix}/{correlation_id}"
 
     if event_id == "agent/prompt/action/raw_result":
-        print("  Agent Response:")
+        print("Raw Agent Response:")
         print(event["response"])
     elif event_id == "tools/code_exec/execute/error":
         print("Code Execution Error:")

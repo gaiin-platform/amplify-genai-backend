@@ -36,6 +36,7 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         item = response.get('Item', {})
 
         allowed_senders = set(item.get('allowedSenders', []))
+        sender = sender.lower()
 
         if sender in allowed_senders:
             return {
@@ -84,14 +85,15 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
 
         if sender == "*":
             allowed_senders = set()
-        elif sender not in allowed_senders:
+        elif sender not in allowed_senders and sender.lower() not in allowed_senders:
             return {
                 "success": False,
                 "data": None,
                 "message": f"Sender '{sender}' was not found in the allowed list for tag '{tag}'. Nothing to remove."
             }
         else:
-            allowed_senders.remove(sender)
+            allowed_senders.discard(sender)
+            allowed_senders.discard(sender.lower())
 
         if not allowed_senders:
             email_settings_table.delete_item(Key={'email': user_email, 'tag': tag})
@@ -118,7 +120,7 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         }
 
 
-def is_allowed_sender(owner_email: str, user_email: str, tag: str, sender: str) -> bool:
+def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
     """
     Checks if a sender is allowed to send emails to a specific user and tag.
 
@@ -132,12 +134,12 @@ def is_allowed_sender(owner_email: str, user_email: str, tag: str, sender: str) 
         bool: True if the sender is allowed, False otherwise.
     """
     try:
-        print(f"Checking allowed sender for user '{user_email}', tag '{tag}', sender '{sender}'")
+        print(f"Checking allowed sender for user '{owner_email}', tag '{tag}', sender '{sender}'")
 
         if sender == owner_email:
             return True  # Owner is always allowed
 
-        response = email_settings_table.get_item(Key={'email': user_email, 'tag': tag})
+        response = email_settings_table.get_item(Key={'email': owner_email, 'tag': tag})
         item = response.get('Item', {})
 
         allowed_senders = item.get('allowedSenders', [])

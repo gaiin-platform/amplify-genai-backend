@@ -71,7 +71,7 @@ class PythonEnvironment(Environment):
         self.current_iteration += 1
         return result_dict
 
-    def get_result_by_id(self, result_id: str) -> [dict, None]:
+    def get_result_by_id(self, result_id: str) -> dict | None:
         """Retrieve a specific result"""
         for result in self.result_history:
             if result["id"] == result_id:

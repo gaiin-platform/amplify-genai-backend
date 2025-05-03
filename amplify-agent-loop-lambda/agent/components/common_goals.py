@@ -123,3 +123,33 @@ BE_DIRECT = Goal(
                 perform the task directly after acquiring the necessary information.
                 """
 )
+
+CAREFUL_ARGUMENT_SELECTION = Goal(
+    name="Argument selection",
+    description="PAY CLOSE ATTENTION to ALL available arguments for each tool. CAREFULLY consider which arguments apply in the current context and would be beneficial to include. ALWAYS strive to be as COMPLETE and THOROUGH as possible when providing values for arguments. Leaving a field blank is only when 100% confident that the arg is not needed."
+)
+
+
+ALLOW_EARLY_EXIT_AGENT_LOOP = Goal(
+    name="Exit Agent Loop Early",
+    description="""
+IMPORTANT: This is a last resort measure. Only exit the agent loop when a situation is absolutely irremediable.
+
+You should exit the agent loop in these specific situations:
+1. Authentication/credential failures that cannot be resolved (e.g., "API key expired", "Invalid credentials", "Access denied", "Unable to refresh credentials", "Integration is not currently available")
+2. Critical resource limitations (e.g., "Rate limit exceeded" with no reasonable way to proceed)
+3. When you've attempted multiple approaches to solve a problem and ALL have failed with the SAME underlying issue
+4. When execution is fundamentally blocked by technical constraints that cannot be overcome
+
+DO NOT exit the agent loop for:
+- Simple errors that can be fixed with retries or adjustments
+- Expected failures during normal operation
+- Temporary issues that might resolve with time or different approaches
+
+When you determine that exit is absolutely necessary, format your response (text after EXIT_AGENT_LOOP will be used as the termination message to the user) EXACTLY as:
+
+EXIT_AGENT_LOOP 
+Agent Loop Early Termination: [detailed explanation of why exit is necessary, including what was tried and why it cannot be fixed]
+
+"""
+)

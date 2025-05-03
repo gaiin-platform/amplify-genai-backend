@@ -16,6 +16,9 @@ def to_json_memory_messages_format(items):
         if item["type"] == "prompt":
             continue
         if item["type"] == "assistant":
+            if "skipped" in content:
+                skip_reason = content.get("skipped", "No reason provided")
+                content = f"Skipped step: '{content.get('tool', 'Unknown tool')}' \nSkipped reason: {skip_reason}"
             mapped_items.append({"role": "assistant", "content": content})
         elif item["type"] == "system":
             mapped_items.append({"role": "system", "content": content})
@@ -129,7 +132,7 @@ Available Tools: {json.dumps(action_descriptions, indent=4)}
 When you are done, terminate the conversation by using the "terminate" tool and I will 
 provide the results to the user.
 
-Important!!! Every response MUST have an action.
+Important!!! Every response MUST have an 'action' which is defined by outputting an  ```action block containing valid json.
 You must ALWAYS respond in this format:
 
 {AgentJsonActionLanguage.action_format}
@@ -217,7 +220,7 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
 
         return mapped_items
 
-    def format_actions(self, actions: List[Action]) -> [List,List]:
+    def format_actions(self, actions: List[Action]) -> List[List[Any]]:
         """Generate response from language model"""
 
         tools = [
@@ -282,4 +285,13 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                 }
             else:
                 print(f"Agent language failed to parse response: {response}")
+                # Added Exit logic 
+                if isinstance(response, str):
+                    if "EXIT_AGENT_LOOP" in response:
+                        print("Agent loop terminated early")
+                        return {
+                            "tool": "terminate",
+                            "args": {"message": response.replace("EXIT_AGENT_LOOP", "").strip()},
+                            "error": "Agent Loop Terminated Early"
+                        }
                 raise ValueError(f"The agent did not respond with a valid tool invocation: {str(e)}")

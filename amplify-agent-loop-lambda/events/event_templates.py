@@ -261,3 +261,44 @@ def list_event_templates_for_user(user):
             "success": False,
             "message": "Server error: Unable to list event templates. Please try again later."
         }
+
+def is_event_template_tag_available(user, tag, assistant_id=None):
+    """
+    Checks if an event template tag is available for a given user and assistant.
+    
+    Args:
+        user (str): The user to check for.
+        tag (str): The tag to check availability for.
+        assistant_id (str, optional): If provided, checks if this assistant can use this tag.
+        
+    Returns:
+        dict: {success, data, message} where data is a boolean indicating availability
+    """
+    try:
+        # Check if a template with this user-tag combo exists
+        response = event_table.get_item(Key={"user": user, "tag": tag})
+        
+        # If no item found, the tag is available
+        if "Item" not in response:
+            return { "success": True,
+                     "data": {"available": True}
+                    }
+        # If tag exists but no assistant_id was provided, it's not available
+        if not assistant_id:
+            return { "success": True,
+                     "data": {"available": False}
+                    }
+        
+        # If assistant_id was provided, check if it matches the one in the record
+        existing_assistant_id = response["Item"].get("assistantId")
+        return { "success": True,
+                 "data": {"available": existing_assistant_id == assistant_id}
+                }
+            
+    except ClientError as e:
+        print(f"Error checking event template tag availability: {e}")
+        return {
+            "success": False,
+            "data": False,
+            "message": "Server error: Unable to check tag availability. Please try again later."
+        }

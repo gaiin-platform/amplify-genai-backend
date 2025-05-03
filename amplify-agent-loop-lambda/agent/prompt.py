@@ -11,6 +11,7 @@ from common.secrets import get_llm_config
 from common.accounting import record_usage
 import boto3
 from botocore.config import Config
+from common.secrets import get_secret
 
 @dataclass
 class Prompt:
@@ -24,7 +25,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
 
     messages = prompt.messages
     tools = prompt.tools
-
+    token_cost = 0.0
     result = None
 
     try:
@@ -34,7 +35,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
             response = completion(
                 model=model,
                 messages=messages,
-                max_tokens=1024
+                max_completion_tokens=1024,
             )
             result = response.choices[0].message.content
         else:
@@ -43,7 +44,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
                 model=model,
                 messages=messages,
                 tools=tools,
-                max_tokens=1024
+                max_completion_tokens=1024,
             )
 
             if response.choices[0].message.tool_calls:
@@ -99,7 +100,8 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
                 print(f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}")
 
         try:
-            record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+            token_cost = record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+
         except Exception as e:
             print(f"Warning: Failed to record usage: {e}")
 
@@ -117,7 +119,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
 
         raise e
 
-    return result
+    return result, token_cost
 
 def is_openai_model(model):
     return any(id in model for id in ["gpt", "o1", "o3"])
@@ -126,8 +128,10 @@ def is_bedrock_model(model):
     # Common Bedrock models include anthropic.claude, amazon.titan, ai21, etc.
     return any(provider in model for provider in ["anthropic", "claude", "amazon", "titan", "ai21", "cohere", "meta", "deepseek"])
 
+def is_gemini_model(model):
+    return model and "gemini" in model
 
-def create_llm(access_token, model, current_user = "Agent", account_id = "general_account", details: dict = {}):
+def litellm_model_str(model):
     provider_prefix = ""
     if is_openai_model(model):
         key, uri = get_llm_config(model)
@@ -150,15 +154,47 @@ def create_llm(access_token, model, current_user = "Agent", account_id = "genera
             "client": bedrock_client
         }
         provider_prefix = "bedrock"
+    elif is_gemini_model(model):
+        secret_name = os.environ.get("SECRETS_ARN_NAME")
+        secret_data = get_secret(secret_name)
+        parsed_secret = json.loads(secret_data)
+        gemini_api_key = parsed_secret.get("GEMINI_API_KEY")
+        os.environ["GEMINI_API_KEY"] = gemini_api_key
+        provider_prefix = "gemini"
+
     else:
         raise ValueError(f"Unsupported model: {model}")
+    return f"{provider_prefix}/{model}"
+        
+
+def create_llm(access_token, model, current_user = "Agent", account_id = "general_account", details: dict = {}, advanced_model = None):
+    agent_model_str = litellm_model_str(model)
+    advanced_model_str = agent_model_str
+    try:
+        if advanced_model:
+            advanced_model_str = litellm_model_str(advanced_model)
+    except Exception as e:
+        print(f"Error creating advanced model: {e}, using agent model as advanced model...")
     
+
     account_details = {
         "user": current_user,
         "accountId": account_id,
         "accessToken": access_token,
     }
+
+    total_cost = 0.0
     
     def llm(prompt):
-            return generate_response(f"{provider_prefix}/{model}", prompt, account_details, details)
+        nonlocal total_cost
+        model_str = agent_model_str
+        if isinstance(prompt.metadata, dict) and prompt.metadata.get("advanced_reasoning", False):
+            print("Prompting using advanced model: ", advanced_model_str)
+            model_str = advanced_model_str
+
+        result, token_cost = generate_response(model_str, prompt, account_details, details)
+        total_cost += token_cost
+        return result
+    
+    llm.get_total_cost = lambda: total_cost
     return llm

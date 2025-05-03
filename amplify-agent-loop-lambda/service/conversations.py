@@ -1,13 +1,23 @@
 import os
 import json
 import uuid
+import decimal
+from decimal import Decimal
 
 import requests
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 
-def register_agent_conversation(access_token, input, memory, name=None, session_id=None, tags=None, date=None,
+# Custom JSON encoder to handle Decimal objects
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
+
+
+def register_agent_conversation(access_token, input, result, name=None, session_id=None, tags=None, date=None,
                                 data=None):
     api_base = os.getenv("API_BASE_URL")
 
@@ -19,36 +29,37 @@ def register_agent_conversation(access_token, input, memory, name=None, session_
         raise Exception("API_BASE_URL is not set in the environment")
 
     url = f"{api_base}/state/conversation/register"
+    
+    final_message = "No Agent Response"
+    for m in result[::-1]:
+        content = m["content"]
+        if ("total_token_cost" not in content):
+            final_message = content
+            try:
+                if isinstance(final_message, str):
+                    final_message = json.loads(final_message)
+            except:
+                pass
+            
+            if "result" in final_message:
+                final_message = final_message["result"]
+                if "message" in final_message:
+                    final_message = final_message["message"]
 
-    def make_valid_message(msg):
-        if not "role" in msg:
-            msg["role"] = "user"
-        if not "data" in msg:
-            msg["data"] = {}
-        return msg
+            if not isinstance(final_message, str):
+                final_message = json.dumps(final_message)
+            break
 
-    final_message = memory.get_memories()[-1]["content"]
-    try:
-        final_message = json.loads(final_message)
-        if "result" in final_message:
-            final_message = final_message["result"]
-            if "message" in final_message:
-                final_message = final_message["message"]
-    except:
-        pass
+    message_body = "Content Unavailable."
+    if (input.get("metadata") and "requestContent" in input["metadata"]):
+        message_body = input["metadata"]["requestContent"]
 
-    def get_message(memory):
-
-        role = memory["type"] if memory.get("type") in ["assistant", "user", "environment"] else "user"
-
-        try:
-            return {"role":role, "content":json.loads(memory["content"])}
-        except:
-            return {"role":role, "content":memory["content"]}
+    ast_name = input.get("metadata", {}).get("assistant", {}).get("name")
+    user_message = f"{message_body}" + (f"\n\nAssistant: {ast_name}" if ast_name else "")
 
     messages = [
-        {"role": "user", "content": input, "data": {}},
-        {"role": "assistant", "content": final_message,
+        {"role": "user", "content": user_message, "data": {}},
+        {"role": "assistant", "content": final_message + (f"\n\n{date}"),
          "data": {
              "state": {
                  "agentLog": {
@@ -56,13 +67,12 @@ def register_agent_conversation(access_token, input, memory, name=None, session_
                          {
                              "session": session_id,
                              "handled": True,
-                             "result": [get_message(m) for m in memory.get_memories()]
+                             "result": result
                          }
                  }
 
              }
-         }
-         }
+         }}
     ]
 
     # Ensure the token is properly formatted
@@ -73,13 +83,13 @@ def register_agent_conversation(access_token, input, memory, name=None, session_
         "Content-Type": "application/json"
     }
 
-    # Get current date in "America/Chicago" timezone
-    chicago_tz = ZoneInfo("America/Chicago")
-    now_chicago = datetime.now(chicago_tz)
+
+    friendly_date = datetime.now(timezone.utc).strftime('%b, %d, %Y')
+    conversation_name = name or ast_name or "Conversation"
 
     payload = {
         "id": session_id,  # Optional
-        "name": name or "Agent Conversation "+date,  # Required
+        "name": f"Agent: {conversation_name} {friendly_date}",  # Required
         "messages": messages,  # Required
         "tags": tags or [],  # Optional, defaults to None
         "date": date,
@@ -87,26 +97,14 @@ def register_agent_conversation(access_token, input, memory, name=None, session_
     }
 
     try:
-        response = requests.put(url, headers=headers, data=json.dumps({"data": payload}))
+        response = requests.post(url, headers=headers, data=json.dumps({"data": payload}, cls=DecimalEncoder))
         response.raise_for_status()
-        return response.json()  # Return response data if successful
+        response_content = response.json()
+        if response_content.get("success", False):
+            print("Successfully registered conversation")
+
+        return response_content  # Return response data if successful
 
     except requests.exceptions.RequestException as e:
         raise Exception(
             f"Failed to register conversation: {e}, Response: {response.text if response else 'No response'}")  # Return response data
-
-# os.environ["API_BASE_URL"] = "https://dev-api.vanderbilt.ai"
-# access_token = os.getenv("ACCESS_TOKEN")
-# result = register_agent_conversation(access_token, {
-#     "name": "Test Conversation",
-#     "messages": [
-#         {
-#             "role": "user",
-#             "content": "Hello"
-#         },
-#         {
-#             "role": "assistant",
-#             "content": "Yo!"
-#         }
-#     ]
-# })

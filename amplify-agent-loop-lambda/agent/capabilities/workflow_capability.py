@@ -106,6 +106,10 @@ class WorkflowCapability(Capability):
         self.action_registry = None
         self.workflow = workflow
         self.remaining_steps = list(reversed(self.workflow.steps))
+        self.current_step = None
+        self.retry_count = {}  # Track retries for each step
+        self.max_retries = 2  # Maximum number of retries per step
+        self.terminate_early = False
 
     def init(self, agent, action_context: ActionContext) -> dict:
         self.action_registry = ParameterizedActionRegistry(agent.actions)
@@ -116,7 +120,22 @@ class WorkflowCapability(Capability):
         if self.remaining_steps:
             next_step: Optional[Step] = self.remaining_steps.pop()
             if next_step:
+                step_id = self._construct_step_id(next_step)
+                step_attempted_before = step_id in self.retry_count
+                # skip logic - dont skip failed steps
+                should_skip = False if step_attempted_before else \
+                                       self._should_skip_step(next_step, action_context)
+                if should_skip:
+                    print(f"-- skipping step in workflow -- {next_step.tool}")
+                    # Recursively call start_agent_loop to process the next step
+                    return self.start_agent_loop(agent, action_context)
+                
+                self.current_step = next_step
+                if not step_attempted_before:
+                    self.retry_count[step_id] = 0
+                    
                 self.action_registry.parameterize_actions([self._convert_step_to_action(next_step)])
+            print("-- remaining steps -- ", [step.tool for step in self.remaining_steps[::-1]])
         return True
 
     def end_agent_loop(self, agent, action_context: ActionContext):
@@ -127,37 +146,93 @@ class WorkflowCapability(Capability):
             values = action_def.metadata.get("values")
             for key, value in values.items():
                 args = action.get("args", {})
+                if isinstance(value, str) and value.lower() in ["true", "false"]:
+                    value = True if value.lower() == "true" else False
+                    
                 args[key] = value
-
 
         return action
 
     def process_response(self, agent, action_context: ActionContext, response: str) -> str:
         return response
 
-    def process_result(self, agent, action_context: ActionContext, response: str,  action_def: Action, action: dict, result: any) -> any:
-        is_error = isinstance(result, dict) and "error" in result
+    def process_result(self, agent, action_context: ActionContext, response: str, action_def: Action, action: dict, result: any) -> any:
+        if isinstance(action, dict) and action.get("error", None):
+            print("Terminating Workflow: ", action.get("error"))
+            self.terminate_early = True
+            return result
+        # Enhanced error detection covering multiple error scenarios
+        is_error = (isinstance(result, dict) and result.get('tool', "") != "terminate" and
+                    ("error" in result or ("result" in result and isinstance(result["result"], dict) and (
+                        ("success" in result["result"] and not result["result"]["success"]) or 
+                        "traceback" in result["result"] or 
+                        ("message" in result["result"] and 
+                         any(x in result["result"].get("message", "").lower() for x in ["error", "failed", "invalid", "exception"]))
+                    ))))
+
+        if is_error and self.current_step:
+            step_id = self._construct_step_id(self.current_step)
+            error_message = "Unknown error"
+            
+            if self.retry_count[step_id] < self.max_retries:            
+                print(f"-- Retrying step {self.current_step.tool} ({self.retry_count[step_id]}/{self.max_retries}) due to error --")
+                self.retry_count[step_id] += 1
+                self.remaining_steps.append(self.current_step)
+                
+                # Log retry information in memory
+                memory = action_context.get("memory")
+                if memory:
+                    
+                    if isinstance(result, dict):
+                        if "error" in result:
+                            error_message = result["error"]
+                        elif "result" in result and  isinstance(result["result"], dict) and "message" in result["result"]:
+                            error_message = result["result"]["message"]
+
+                send_event = action_context.incremental_event()
+                # Send an event about the retry
+                send_event("workflow/step/retry", {
+                    "workflow": self.workflow,
+                    "step": self.current_step.tool,
+                    "retry_count": self.retry_count[step_id],
+                    "max_retries": self.max_retries,
+                    "error": error_message
+                })
 
         return result
 
     def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response: str, result: Any, memories: List[dict]) -> List[dict]:
-        if self.remaining_steps and self.remaining_steps[-1].tool != "think":
+        if self.remaining_steps and self.remaining_steps[-1].tool != "think" and not self.terminate_early:
             memories = memories + [{
                 "type": "user",
                 "content": f"Next, you will need to complete this step:\n{self._format_step(self.remaining_steps[-1])}"
             }]
+
+        if self.current_step.useAdvancedReasoning:
+            for m in memories:
+                if m.get("type") == "assistant":
+                    content = m.get("content")
+                    if not isinstance(content, dict):
+                        try:
+                            content = json.loads(content)
+                        except:
+                            pass
+                    if isinstance(content, dict):
+                        content["advanced_reasoning"] = True
+                        m["content"] = json.dumps(content)
         return memories
 
     def process_prompt(self, agent, action_context: ActionContext, prompt: Prompt) -> Prompt:
         return prompt
 
     def should_terminate(self, agent, action_context: ActionContext, response: str) -> bool:
-        return not bool(self.remaining_steps)
+        return not bool(self.remaining_steps) or self.terminate_early
 
     def terminate(self, agent, action_context: ActionContext) -> dict:
         return {}
 
     def _convert_step_to_action(self, step: Step) -> dict:
+        print("-- next step -- ", step.tool)
         return {
             "tool": step.tool,
             "args": step.args,
@@ -167,3 +242,88 @@ class WorkflowCapability(Capability):
 
     def _format_step(self, step: Step) -> str:
         return f"{step.instructions}\nTool: {step.tool}\nArgs: {step.args}"
+    
+
+
+    def _should_skip_step(self, step: Step, action_context: ActionContext) -> bool:
+        if step.tool in ["terminate", "think" ]:
+            return False
+
+        memory = action_context.get("memory", None)
+        if not memory:
+            return False
+        
+        memories = memory.get_memories()
+        
+        filtered_memories = [msg for msg in memories if \
+                             msg["type"] not in [ "system", "prompt"]]
+        
+
+        prompt = f"""You are a workflow step evaluator tasked with determining if step '{step.tool}' can be safely skipped.
+
+INSTRUCTIONS:
+1. Carefully analyze the step instructions: '{step.instructions}'
+2. Review the conversation history and current context in the provided memories
+3. Evaluate whether this step has ALREADY been completed or is COMPLETELY UNNECESSARY based on:
+   - Information needed from this step is already available in the conversation history
+   - The step's purpose is irrelevant to the current users request
+   - The prerequisites for this step are not met and cannot be met
+   - Simply the step does not need to be performed
+Tips: ALWAYS double check you have all required information needed to perform the step otherwise SKIP the step.
+
+RESPONSE Meaning Clarification:
+- YES: Skip this step 
+- NO: Do NOT Skip this step
+
+Conversation history and current context:
+{json.dumps(filtered_memories)}
+
+Respond with either YES or NO in all caps. Then write a short explanation (1-2 sentences) for your reasoning on the next line."""
+
+        # llm call to determine if the step should be skipped
+        sys_prompt = """You're task is to determine if the step {step.tool} should be skipped.  
+        Use the following threshold to determine if the step should be skipped:
+        CONFIDENCE THRESHOLD:
+        - If you have ANY doubt (even 5%) about whether skipping is safe, respond with "NO"
+        - Only respond with "YES" if you are 100 confident this step can be safely skipped without affecting the workflow outcome
+
+        YOUR RESPONSE MUST BE EXACTLY ONLY  YES   or   NO  in all caps. Followed by a new line and short explanation explaing your decision"""
+        f"Should we skip the step {step.tool}? {step.instructions}"
+        response = prompt_llm_with_messages(action_context=action_context, prompt=[
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": prompt}
+        ])
+
+        if (response and "YES" in response and "NO" not in response):
+            skip_reason = response.split("\n", 1)[1] if "\n" in response else "No reason provided"
+            
+            send_event = action_context.incremental_event()
+            # Send event about skipped step
+            send_event("workflow/step/skip", {
+                "workflow": self.workflow,
+                "step": step.tool,
+                "reason": skip_reason
+            })
+
+            new_memory = {
+                "type": "assistant",
+                "content": {"tool": step.tool,
+                            "skipped" : skip_reason,
+                            }
+            }
+            
+            memory.add_memory(new_memory)
+
+            send_event("agent/memory/new_memories", {"memories": [new_memory]})
+            return True
+        
+        return False
+    
+    def _construct_step_id(self, step: Step) -> str:
+        description_hash = hash(step.description) if step.description else "_"
+        args_hash = len(step.args.items()) if step.args else 0
+        instructions_hash = hash(step.instructions) if step.instructions else "_"
+        action_segment = step.actionSegment if step.actionSegment else "0"
+        step_name = step.stepName if step.stepName else "0"
+
+        return f"{step.tool}-{step_name}-{action_segment}_{args_hash}_{instructions_hash}_{description_hash}"

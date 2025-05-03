@@ -38,9 +38,9 @@ provider:
 
 
   environment:
-    AGENT_MODEL: "gpt-4o-mini"
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
@@ -56,7 +56,7 @@ provider:
     AGENT_QUEUE_URL: !Ref AgentQueue
     FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
-    EMAIL_SETTINGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-email-settings
+    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
     ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
     S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
     S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
@@ -69,6 +69,7 @@ provider:
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
     MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
+    REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
     #AWS_REGION optional for /chat/service.py 
 
   iam:
@@ -159,6 +160,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
                 - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
@@ -169,6 +174,14 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}"
                 - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
+                
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -176,6 +189,14 @@ resources:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - 'arn:aws:secretsmanager:${self:provider.region}:*:secret:${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
+                - 'arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*'
+            - Effect: Allow
+              Action:
+                - sqs:ChangeMessageVisibility
+                - sqs:DeleteMessage
+              Resource:
+                - !GetAtt AgentQueue.Arn
+                
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
@@ -313,6 +334,28 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
+        
+    EmailSendersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false          
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+          -
+            AttributeName: tag
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+          - AttributeName: tag
+            KeyType: RANGE
+        TableName: ${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}
 
     WorkflowTemplatesBucket:
       Type: AWS::S3::Bucket

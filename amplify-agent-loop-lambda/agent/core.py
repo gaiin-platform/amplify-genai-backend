@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import reduce
 from typing import List, Callable, Dict, Any
 from agent.prompt import Prompt
+from common.requestState import request_killed
 
 
 class UnknownActionError(Exception):
@@ -77,7 +78,7 @@ class ActionRegistry:
     def register(self, action: Action):
         self.actions[action.name] = action
 
-    def get_action(self, name: str) -> [Action,None]:
+    def get_action(self, name: str) -> Action | None:
         return self.actions.get(name, None)
 
     def get_actions(self) -> List[Action]:
@@ -284,10 +285,20 @@ class Agent:
         result = self.environment.execute_action(self, action_context, action_def, action["args"])
 
         result = reduce(lambda r, c: c.process_result(self, action_context, response, action_def, action, r), self.capabilities, result)
-
+        
+        if isinstance(action, dict) and action.get("error", None):
+            error = f"{result.get('error', '')} {action['error']}"
+            result["error"] = error
         return result
 
     def should_terminate(self, action_context: ActionContext, response: str) -> bool:
+        request_id = action_context.get("request_id")
+        if request_id and request_killed(action_context.get("current_user"), request_id):
+            print(f"Request {request_id} killed, terminating agent loop")
+            return True
+        elif (not request_id):
+            print(f"Request {request_id} not provided, continuing...")
+
         action_def, action = self.get_action(response)
         capability_decision = reduce(lambda a, c: c.should_terminate(self, action_context, response), self.capabilities, False)
         return action_def.terminal or capability_decision
@@ -343,7 +354,7 @@ class Agent:
         return result
 
 
-    def prompt_llm_for_action(self, action_context: ActionContext, full_prompt: Prompt) -> [str,None]:
+    def prompt_llm_for_action(self, action_context: ActionContext, full_prompt: Prompt) -> str | None:
         # Try up to 3 times
         send_event = action_context.incremental_event()
         response = None
@@ -366,6 +377,10 @@ class Agent:
 
                 if action_def and action:
                     return response
+                
+                print("No action_def or action found in response, returning None")
+                print("action_def: ", action_def)
+                print("action: ", action)
 
             except Exception as e:
                 traceback_str = traceback.format_exc()

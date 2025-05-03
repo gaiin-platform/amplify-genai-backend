@@ -1,14 +1,16 @@
 import json
-
-from agent.core import Memory
+import os
 from events.event_handler import MessageHandler
 from service.conversations import register_agent_conversation
 from service.handlers import handle_event
-
+import boto3
 
 from typing import Dict, Any, List
 
 from events.email_events import SESMessageHandler
+
+sqs = boto3.client('sqs')
+agent_queue = os.environ['AGENT_QUEUE_URL']
 
 _handlers: List[MessageHandler] = []
 
@@ -21,6 +23,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     print(f"Processing SQS event: {json.dumps(event)}")
 
     for record in event.get('Records', []):
+        receipt_handle = record.get('receiptHandle')
         try:
             message_body = json.loads(record.get('body', '{}'))
 
@@ -35,27 +38,46 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         response = process_and_invoke_agent(agent_input_event)
                         print("Agent response:", response)
 
+
                         if response.get("handled"):
-                            result = response.get("data",{}).get("result")
+                            #delete record from sqs 
+                            if isinstance(handler, SESMessageHandler):
+                                try:
+                                    sqs.delete_message(
+                                        QueueUrl=agent_queue,
+                                        ReceiptHandle=receipt_handle
+                                    )
+                                except Exception as e:
+                                    print(f"Error deleting message: {e}, continuing...")
+
+                                        
+                            result = response.get("result")
                             if not result:
                                 print(f"Agent response missing")
-                                memory = Memory()
-                                memory.add_memory({"type":"environment", "content":"Failed to run the agent."})
-
-
+                                result = [{"role":"environment", "content":"Failed to run the agent."}]
+                      
                             print(f"Registering agent conversation")
-                            register_agent_conversation(
+                            register_agent_conversation( 
                                 access_token=agent_input_event.get("metadata", {}).get("accessToken"),
                                 input=agent_input_event,
-                                memory=result)
-
-
+                                result=result)
                     else:
                         print(f"Ignoring event per handler instructions (e.g., return None)")
 
         except Exception as e:
             print(f"Error processing message: {e}")
+            if isinstance(handler, SESMessageHandler):
+                try:
+                    sqs.change_message_visibility(
+                        QueueUrl=agent_queue,
+                        ReceiptHandle=receipt_handle,
+                        VisibilityTimeout=0
+                    )
+                except Exception as e:
+                    print(f"Error changing message visibility: {e}, continuing...")
             raise
+        
+        
 
     return {
         'statusCode': 200,
@@ -74,6 +96,8 @@ def process_and_invoke_agent(event: dict):
         dict: The response from `handlers.handle_event`.
     """
     try:
+        print("Processing event prompt: ", event.get("prompt"))
+        print("Processing event metadata: ", event.get("metadata"))
         # Extract required fields
         current_user = event.get("currentUser")
         session_id = event.get("sessionId")
@@ -81,7 +105,7 @@ def process_and_invoke_agent(event: dict):
         metadata = event.get("metadata", {})
 
         # Validate required fields
-        if not current_user or not session_id or not prompt:
+        if not current_user or not session_id:
             raise ValueError("Missing required fields: currentUser, sessionId, or prompt")
 
         # Invoke the event handler

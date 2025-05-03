@@ -29,7 +29,7 @@ from botocore.exceptions import ClientError
 from service.session_files import create_file_tracker, get_presigned_url_by_id
 from workflow.workflow_template_registry import list_workflow_templates, get_workflow_template, \
     register_workflow_template, delete_workflow_template, update_workflow_template
-
+from service.models import get_default_models
 
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -178,6 +178,7 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
         "type": "object",
         "properties": {
             "sessionId": {"type": "string"},
+            "requestId": {"type": "string"},
             "prompt": {
                 "type": "array",
                 "items": {
@@ -195,7 +196,7 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
         "required": ["prompt", "sessionId"],
     }
 )
-def handle_event(current_user, access_token, session_id, prompt, metadata=None, account_id="general_account"):
+def handle_event(current_user, access_token, session_id, prompt, request_id=None, metadata=None, account_id="general_account"):
 
     print(f"Handling Agent event for session {session_id} with prompt: {prompt}")
 
@@ -221,12 +222,13 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
         if metadata:
 
             built_in_operations = metadata.get('builtInOperations', [])
-            assistant_built_in_operations = metadata.get('assistant', {}).get('data',{}).get('builtInOperations', [])
+            assistant_data = metadata.get('assistant', {}).get('data',{})
+            assistant_built_in_operations = assistant_data.get('builtInOperations', [])
             all_built_in_operations = built_in_operations + assistant_built_in_operations
 
-            if 'workflow' in metadata:
-                print(f"Workflow metadata: {metadata['workflow']}")
-                templateId = metadata.get("workflow",{}).get("templateId", None)
+            if 'workflow' in metadata or 'workflowTemplateId' in assistant_data:
+                templateId = metadata.get("workflow",{}).get("templateId") or assistant_data.get("workflowTemplateId")
+                print(f"Workflow templateId: {templateId}")
                 if templateId:
                     print(f"Loading workflow template: {templateId}")
                     workflow_definition = get_workflow_template(current_user, templateId)
@@ -258,7 +260,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
 
         action_registry.register_terminate_tool() # We always include terminate
 
-        model = metadata.get('model', os.getenv("AGENT_MODEL"))
+        model = metadata.get('model')
 
         if 'assistant' in metadata:
             assistant = metadata['assistant']
@@ -290,8 +292,16 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
             if ("data" in assistant and "model" in assistant["data"]):
                 model = assistant["data"]["model"]
 
+
+        default_models = get_default_models(access_token)
         print(f"Using model: {model}")
-        llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id})
+        if not model:
+            print(f"Default models: {default_models}")
+            if not default_models.get("agent_model"):
+                raise Exception("No model selected and no default model found")
+            model = default_models.get("agent_model")
+
+        llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id}, default_models.get("advanced_model"))
 
         if len(action_registry.actions.items()) > 3:
             action_registry.filter_tools_by_relevance(llm, prompt, additional_goals)
@@ -371,6 +381,7 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
 
         action_context_props={
             'current_user': current_user,
+            'request_id': request_id,
             'access_token': access_token,
             'account_id': account_id,   
             'session_id': session_id,
@@ -413,6 +424,15 @@ def handle_event(current_user, access_token, session_id, prompt, metadata=None, 
              "content": load_memory_content(item)
              }
             for item in result.items]
+        
+        total_token_cost = llm.get_total_cost()
+
+        print(f"Total token cost: {total_token_cost}")
+
+        processed_result.append({
+            "role": "environment",
+            "content": { "total_token_cost": total_token_cost }
+        })
 
         # Save conversation state to S3 and update DynamoDB
         save_result = save_conversation_state(current_user, session_id, processed_result)
@@ -475,7 +495,7 @@ def build_response(
     response = {
         "session": session_id,
         "handled": True,
-        "result": processed_result
+        "result": [item for item in processed_result if item['role'] != 'prompt']
     }
 
     if session_files:
@@ -646,7 +666,9 @@ def get_file_download_urls(current_user, access_token, session_id, files, versio
                                 "values": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "args": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "stepName": {"type": "string"},
-                                "actionSegment": {"type": "string"}
+                                "actionSegment": {"type": "string"},
+                                "editableArgs": {"type": "array", "items": {"type": "string"}},
+                                "useAdvancedReasoning": {"type": "boolean"}
                             },
                             "required": ["tool", "instructions"]
                         }
@@ -744,7 +766,8 @@ def get_workflow_template_handler(current_user, access_token, template_id):
             "filterBaseTemplates": {"type": "boolean"}
         },
         "required": []
-    }
+    },
+    params={"filterBaseTemplates": "Optional boolean to filter for base templates only"}
 )
 def list_workflow_templates_handler(current_user, access_token, filter_base_templates=False):
     try:
@@ -788,7 +811,9 @@ def list_workflow_templates_handler(current_user, access_token, filter_base_temp
                                 "values": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "args": {"type": "object", "additionalProperties": {"type": "string"}},
                                 "stepName": {"type": "string"},
-                                "actionSegment": {"type": "string"}
+                                "actionSegment": {"type": "string"},
+                                "editableArgs": {"type": "array", "items": {"type": "string"}},
+                                "useAdvancedReasoning": {"type": "boolean"}
                             },
                             "required": ["tool", "instructions"]
                         }
