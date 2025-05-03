@@ -6,26 +6,27 @@ import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
-import {extractKey} from "../datasource/datasources.js";
+import {getSecret} from "../common/secrets.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
 
 const logger = getLogger("gemini");
 
-export const translateModelToGemini = (modelId) => {
-    const geminiModels = {
-        "gemini-pro": "gemini-pro",
-        "gemini-pro-vision": "gemini-pro-vision",
-        "gemini-2.0-flash": "gemini-2.0-flash",
-        "gemini-2.0-pro": "gemini-2.0-pro"
-    };
-    return geminiModels[modelId] || modelId;
+const constructGeminiUrl = () => {
+    return `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
 }
 
-const isGeminiEndpoint = (url) => {
-    return url.includes("generativelanguage.googleapis.com");
+const getGeminiApiKey = async () => {
+    const secret = await getSecret(process.env.SECRETS_ARN_NAME);
+    try {
+        const apiKey = JSON.parse(secret).GEMINI_API_KEY;
+        return apiKey;
+    } catch (error) {
+        logger.error("Error getting Gemini API key:", error);
+        return null;
+    }
 }
 
-export const chat = async (endpointProvider, chatBody, writable) => {
+export const chat = async (chatBody, writable) => {
     try {
         let body = {...chatBody};
         const options = {...body.options};
@@ -85,48 +86,41 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         }
 
         if (data.imageSources) delete data.imageSources;
-        const config = await endpointProvider(modelId);
-        const url = config.url;
-        const isGeminiApiEndpoint = isGeminiEndpoint(url);
         
-        // Ensure proper content formatting for OpenAI compatibility mode
-        if (isGeminiApiEndpoint) {
-            // Format messages to ensure they have correct structure
-            data.messages = data.messages.map(msg => {
-                // If content is a string, convert to proper format for Gemini
-                if (typeof msg.content === 'string') {
-                    return {
-                        role: msg.role === 'system' ? 'user' : msg.role,
-                        content: [
-                            { 
-                                type: "text", 
-                                text: msg.content 
-                            }
-                        ]
-                    };
-                }
-                // If content is already array (multimodal), ensure structure is correct
-                else if (Array.isArray(msg.content)) {
-                    // Make sure all text parts have proper structure
-                    const formattedContent = msg.content.map(item => {
-                        if (item.type === "text") {
-                            return { 
-                                type: "text", 
-                                text: item.text || "..." 
-                            };
+        data.messages = data.messages.map(msg => {
+            // If content is a string, convert to proper format for Gemini
+            if (typeof msg.content === 'string') {
+                return {
+                    role: msg.role === 'system' ? 'user' : msg.role,
+                    content: [
+                        { 
+                            type: "text", 
+                            text: msg.content 
                         }
-                        return item;
-                    });
-                    
-                    return {
-                        role: msg.role === 'system' ? 'user' : msg.role,
-                        content: formattedContent
-                    };
-                }
+                    ]
+                };
+            }
+            // If content is already array (multimodal), ensure structure is correct
+            else if (Array.isArray(msg.content)) {
+                // Make sure all text parts have proper structure
+                const formattedContent = msg.content.map(item => {
+                    if (item.type === "text") {
+                        return { 
+                            type: "text", 
+                            text: item.text || "..." 
+                        };
+                    }
+                    return item;
+                });
                 
-                return msg;
-            });
-        }
+                return {
+                    role: msg.role === 'system' ? 'user' : msg.role,
+                    content: formattedContent
+                };
+            }
+            
+            return msg;
+        });
 
         // Validate messages to prevent empty text parameter error
         if (data.messages && Array.isArray(data.messages)) {
@@ -164,8 +158,10 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
         const headers = {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + config.key
+            'Authorization': 'Bearer ' + await getGeminiApiKey()
         };
+
+        const url = constructGeminiUrl();
 
         logger.debug("Calling Gemini API with url: "+url);
         trace(options.requestId, ["chat","gemini"], {modelId, url, data});
