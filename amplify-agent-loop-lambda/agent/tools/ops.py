@@ -122,7 +122,22 @@ def op_to_tool(api):
     id = api['id']
     tags = api.get('tags', [])
     desc = api.get('description', "")
-    
+    custom_description = api.get('customDescription', None)
+    if custom_description and custom_description.strip():
+        desc = custom_description.strip()
+    custom_name = api.get('customName', None)
+
+    # The bindings are in the format:
+    # { "param_name": { "value": "value", "mode": "ai|manual" }, ... }
+    # When mode is "ai", the value is a string that will be used to update the
+    # the description of the parameter in the schema.
+    #
+    # If the mode is "manual", the value is the value that will be used in the API call.
+    # However, we also remove manually bound parameters from the schema.
+    #
+    # Only parameters with bindings need to be updated. Otherwise, the schema and
+    # invocation parameters will be used as is.
+    bindings = api.get('bindings', {})
   
     parameters = api.get('parameters', {}) # Preference for schema
     schema = api.get('schema', {}) # backup schema
@@ -130,7 +145,16 @@ def op_to_tool(api):
 
     print("Building tool for API: ", api)
 
+    print("Bindings: ", bindings)
+
     def api_func_invoke(action_context: ActionContext, **kwargs) -> dict:
+        print("Invoking API: ", id)
+        # Ensure all manual bindings are present in kwargs
+        for param_name, binding in bindings.items():
+            if binding.get('mode') == 'manual':
+                print("Inserting manual binding for param: ", param_name)
+                kwargs[param_name] = binding['value']
+
         return call_api(action_context=action_context, name=id, payload=kwargs)
 
     api_func = api_func_invoke
@@ -147,6 +171,28 @@ def op_to_tool(api):
     # }
     
     op_schema = parameters or schema or build_schema_from_params(params)
+
+    # Update schema parameter descriptions based on AI bindings
+    for param_name, binding_info in bindings.items():
+        if binding_info.get('mode') == 'ai':
+            new_description = binding_info.get('value')
+            if new_description and 'properties' in op_schema and param_name in op_schema['properties']:
+                print("Updating description for param: ", param_name)
+                op_schema['properties'][param_name]['description'] = new_description
+
+    # Remove parameters from schema if they have manual bindings
+    if 'properties' in op_schema:
+        for param_name in list(op_schema['properties'].keys()):
+            if param_name in bindings and bindings[param_name].get('mode') == 'manual':
+                print("Removing manually bound param from schema: ", param_name)
+                op_schema['properties'].pop(param_name)
+                if param_name in op_schema.get('required', []):
+                    op_schema['required'].remove(param_name)
+
+
+    tool_name = custom_name.strip() if custom_name and custom_name.strip() else id
+
+    print("Final tool name, description, and schema: ", tool_name, desc, op_schema)
 
     tool_metadata = get_tool_metadata(
         func=api_func, tool_name=id, description=desc, parameters_override=op_schema, terminal=False, tags=tags
