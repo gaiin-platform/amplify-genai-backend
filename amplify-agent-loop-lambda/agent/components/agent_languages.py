@@ -197,7 +197,7 @@ You must ALWAYS respond in this format:
 
 class AgentFunctionCallingActionLanguage(AgentLanguage):
 
-    def __init__(self, allow_non_tool_output=False):
+    def __init__(self, allow_non_tool_output=True):
         super().__init__()
         self.allow_non_tool_output = allow_non_tool_output
 
