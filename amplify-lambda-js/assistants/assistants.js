@@ -302,9 +302,15 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
                 Object.entries(tool.parameters || {}).filter(([_, val]) => val.value !== "")
             );
 
+            let customName = tool.operation.name;
+            if(tool.customName && tool.customName.length > 0) {
+                customName = tool.customName;
+            }
+
             return {
                 ...tool.operation,
-                name: tool.customName,
+                name: tool.operation.name,
+                customName: customName,
                 bindings: filteredParams,
             }
         });
