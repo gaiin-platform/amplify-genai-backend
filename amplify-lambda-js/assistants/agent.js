@@ -56,6 +56,8 @@ export const invokeAgent = async function(accessToken, sessionId, prompt, metada
     // const someData = await fetchSomeData();
     const endpoint = process.env.AGENT_ENDPOINT;
 
+    console.log("Invoking agent with sessionId:", sessionId);
+
     const response = await axios.post(
         endpoint,
         {
