@@ -197,6 +197,8 @@ def event_printer(event_id: str, event: Dict[str, Any], current_user: str, sessi
 )
 def handle_event(current_user, access_token, session_id, prompt, metadata=None, account_id="general_account"):
 
+    print(f"Handling Agent event for session {session_id} with prompt: {prompt}")
+
     try:
         work_directory = get_working_directory(session_id)
 

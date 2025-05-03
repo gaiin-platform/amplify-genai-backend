@@ -66,10 +66,13 @@ class PlanFirstCapability(Capability):
                         _memory=action_context.get_memory(),
                         action_registry=action_context.get_action_registry())
 
-            action_context.get_memory().add_memory({
-                "type": self.plan_memory_type,
-                "content": "You must follow these instructions carefully to complete the task:\n" + plan
-            })
+            if plan:
+                action_context.get_memory().add_memory({
+                    "type": self.plan_memory_type,
+                    "content": "You must follow these instructions carefully to complete the task:\n" + plan
+                })
+            else:
+                print("Plan was empty, not adding to memory")
 
     def process_new_memories(self, agent, action_context: ActionContext, memory: Memory, response, result, memories: List[dict]):
         if self.track_progress:

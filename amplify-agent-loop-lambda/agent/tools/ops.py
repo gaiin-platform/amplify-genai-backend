@@ -84,8 +84,10 @@ def op_to_tool(api):
     params = api.get('params', [])
     parameters = api.get('parameters', {})
 
+    print("Building tool for API: ", api)
+
     def api_func_invoke(action_context: ActionContext, **kwargs) -> dict:
-        return call_api(action_context=action_context, name=name, payload=kwargs)
+        return call_api(action_context=action_context, name=id, payload=kwargs)
 
     api_func = api_func_invoke
 
@@ -121,6 +123,11 @@ def call_api(action_context: ActionContext, name: str, payload: dict) -> dict:
         'assistant_id': action_context.get('agent_id', str(uuid4())),
         'message_id': action_context.get('message_id', str(uuid4()))
     }
+
+    # Check if the payload is empty
+    print("============================================")
+    print(f"Calling API: {name} ")
+    print("============================================")
 
     return execute_api_call(
         name=name,

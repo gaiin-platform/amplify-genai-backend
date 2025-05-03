@@ -51,7 +51,9 @@ def common_handler(operation, func_schema, **optional_params):
             print("Validating request")
             try:
                 validate(data, wrapper_schema)
+                print("Request is valid")
             except ValidationError as e:
+                print(f"Validation error: {str(e)}")
                 raise ValueError(f"Invalid request: {str(e)}")
 
             print("Converting parameters to snake case")
