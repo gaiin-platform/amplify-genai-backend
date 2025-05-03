@@ -246,10 +246,11 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
             tags, tool_names = None, None
         else:
             for operation in all_built_in_operations:
-                if operation.startswith('tag:'):
-                    tags.append(operation.replace('tag:', ''))
-                else:
-                    tool_names.append(operation)
+                if isinstance(operation, str):
+                    if operation.startswith('tag:'):
+                        tags.append(operation.replace('tag:', ''))
+                    else:
+                        tool_names.append(operation)
 
         print(f"Builtin operations: {all_built_in_operations}")
         print(f"Tags: {tags}")
@@ -257,6 +258,11 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
 
         environment = PythonEnvironment()
         action_registry = PythonActionRegistry(tags=tags, tool_names=tool_names)
+
+        for operation in all_built_in_operations:
+            if isinstance(operation, dict):
+                print("Registering built-in bound operation: ", operation)
+                action_registry.register_bound_tool_by_name(operation)
 
         action_registry.register_terminate_tool() # We always include terminate
 

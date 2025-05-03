@@ -76,6 +76,9 @@ def exec_code(action_context: ActionContext, code: str):
 
     Avoid using any libraries that are not built-in unless you are told they are available.
 
+    This is an AWS lambda environment, so only attempt to write to directory returned from the get_writeable_directory()
+    tool.
+
     ALWAYS HAVE THE LAST LINE OF THE CODE assign the result to the variable 'result'. There MUST be a result.
 
     Returns:
