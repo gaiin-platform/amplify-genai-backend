@@ -76,10 +76,10 @@ def common_handler(operation, func_schema, **optional_params):
             print("Invoking operation")
             response = operation(**args)
 
-            success = response.get('success', True)
-            print(f"Returning response success: {True}")
-            return {"success": success, "data": response}
+            return {"success": True, "data": response}
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Unexpected error: {str(e)}")
             return {"success": False, "error": "Unexpected error."}
     return handler
@@ -105,6 +105,8 @@ def route(event, context, current_user, name, data):
 
         return common_handler(handler_func, func_schema)(event, context, current_user, name, data)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 
