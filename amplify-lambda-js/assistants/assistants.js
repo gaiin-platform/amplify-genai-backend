@@ -294,8 +294,15 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
         const tools = lastMessage.configuredTools;
 
-        const assistantOps = tools.map((tool) => {
+        const builtIns = tools.filter(tool => {
+            return tool && tool.operation && tool.operation.type && tool.operation.type === "builtIn";
+        })
 
+        const ops = tools.filter(tool => {
+            return tool && tool.operation && !(tool.operation.type || tool.operation.type === "builtIn");
+        })
+
+        const makeTool = (tool => {
             // Filter out empty parameters that are not needed and will
             // be assigned by AI
             const filteredParams = Object.fromEntries(
@@ -320,6 +327,9 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
                 bindings: filteredParams,
             }
         });
+
+        const assistantOps = ops.map(makeTool);
+        const assistantBuiltIns = builtIns.map(makeTool);
 
         selectedAssistant = fillInAssistant(
             {
@@ -424,7 +434,8 @@ Remember that your goal is to augment your capabilities through judicious use of
                 description: "Amplify Automation",
                 data: {
                     opsLanguageVersion: "v4",
-                    operations: assistantOps
+                    operations: assistantOps,
+                    builtInOperations: builtIns
                 }
             },
             defaultAssistant
