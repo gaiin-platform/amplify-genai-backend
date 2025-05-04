@@ -58,7 +58,7 @@ provider:
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
     CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
-    REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-request-state
+    REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
     TRACE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-traces
     TRACING_ENABLED: false
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
@@ -209,7 +209,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
                 - 'arn:aws:bedrock:*::foundation-model/*'
-                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+                - "arn:aws:bedrock:*:${aws:accountId}:inference-profile/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -218,6 +218,7 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
