@@ -204,6 +204,10 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         work_directory = get_working_directory(session_id)
 
         tracker = create_file_tracker(current_user, session_id, work_directory)
+        
+        # Extract data sources from messages
+        data_sources = extract_data_sources_from_messages(prompt)
+        print(f"Data sources referenced in messages: {data_sources}")
 
         metadata = metadata or {}
         agent_id = "default"
@@ -856,3 +860,27 @@ def update_workflow_template_handler(current_user, access_token, template_id, te
     except Exception as e:
         print(f"Error updating workflow template: {e}")
         raise RuntimeError(f"Failed to update workflow template: {str(e)}")
+
+
+def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[str]:
+    """
+    Extracts all data sources from a list of messages.
+    
+    Args:
+        messages: A list of message dictionaries that may contain data sources
+        
+    Returns:
+        A list of data source identifiers
+    """
+    data_sources = []
+    
+    for message in messages:
+        # Check if message has data and dataSources fields
+        message_data_sources = message.get('data', {}).get('dataSources', [])
+        
+        # Add all data sources to our list
+        if message_data_sources:
+            data_sources.extend(message_data_sources)
+    
+    # Return unique data sources
+    return list(set(data_sources))
