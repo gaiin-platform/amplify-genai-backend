@@ -10,6 +10,64 @@ import ast
 import importlib
 import sys
 
+
+@register_tool(tags=["code_exec"])
+def get_installed_python_modules():
+    """
+    Returns a list of installed Python packages with versions.
+    Falls back to sys.modules if pkg_resources is not available.
+    Returns an empty string if any errors occur.
+    """
+    try:
+        # First try using pkg_resources (preferred method)
+        try:
+            import pkg_resources
+            installed_packages = sorted([f'{dist.project_name}=={dist.version}'
+                                         for dist in pkg_resources.working_set])
+            return '\n'.join(installed_packages)
+        except (ImportError, Exception):
+            # Fall back to sys.modules if pkg_resources is not available
+            import sys
+            import os
+
+            result = []
+
+            # Get modules that are currently imported
+            for module_name, module in sys.modules.items():
+                # Skip internal/private modules
+                if not module_name or module_name.startswith('_') or '.' in module_name:
+                    continue
+
+                # Try to get the version
+                try:
+                    version = getattr(module, '__version__', 'unknown')
+                    result.append(f"{module_name}=={version}")
+                except Exception:
+                    pass
+
+            # Try to get additional packages from site-packages directories
+            try:
+                import site
+                from importlib.metadata import distribution, distributions
+
+                # Get packages using importlib.metadata (Python 3.8+)
+                for dist in distributions():
+                    try:
+                        name = dist.metadata['Name']
+                        version = dist.version
+                        result.append(f"{name}=={version}")
+                    except Exception:
+                        pass
+            except (ImportError, Exception):
+                pass
+
+            return '\n'.join(sorted(list(set(result))))
+
+    except Exception:
+        # Return empty string if anything goes wrong
+        return ""
+
+
 def get_imports_from_code(code_string):
     """Extract modules and specific imports from Python code."""
     required_imports = {}
@@ -74,7 +132,8 @@ def exec_code(action_context: ActionContext, code: str):
     Write a very robust python code that catches all exceptions and returns a dictionary with the key 'error' and
     the value as the error message if there is a problem.
 
-    Avoid using any libraries that are not built-in unless you are told they are available.
+    Avoid using any libraries that are not built-in unless you are told they are available. If you need some libraries,
+    you can use the get_installed_python_modules() tool to get a list of installed packages that are available to you.
 
     This is an AWS lambda environment, so only attempt to write to directory returned from the get_writeable_directory()
     tool.

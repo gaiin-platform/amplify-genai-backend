@@ -54,6 +54,7 @@ class PythonActionRegistry(ActionRegistry):
         if tool_name in tool.tools:
             tool_desc = tool.tools[tool_name]
             print(f"-- Action Registry: Registering Built-In Tool by Name -- {tool_name}")
+            print(f"         Tool description: {tool_desc}")
             self.register(Action(
                 name=tool_name,
                 function=tool_desc["function"],

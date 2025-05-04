@@ -109,31 +109,36 @@ class TimeAwareCapability(Capability):
         return prompt
 
     def init(self, agent, action_context: ActionContext) -> dict:
-        # Define timezone
-        time_zone_name = action_context.get("time_zone", "America/Chicago")
-        chicago_tz = ZoneInfo(time_zone_name)
+        try:
+            # Define timezone
+            time_zone_name = action_context.get("time_zone", "America/Chicago")
+            chicago_tz = ZoneInfo(time_zone_name)
 
-        # Get current time in the specified timezone
-        now_chicago = datetime.now(chicago_tz)
+            # Get current time in the specified timezone
+            now_chicago = datetime.now(chicago_tz)
 
-        # Format the date
-        iso_time = now_chicago.strftime("%Y-%m-%dT%H:%M:%S%z")  # ISO format with timezone offset
-        formatted_date = now_chicago.strftime("%H:%M %A, %B %d, %Y")  # Desired format
+            # Format the date
+            iso_time = now_chicago.strftime("%Y-%m-%dT%H:%M:%S%z")  # ISO format with timezone offset
+            formatted_date = now_chicago.strftime("%H:%M %A, %B %d, %Y")  # Desired format
 
-        print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
-        print(f"Formatted Date: {formatted_date}")  # Example: 01:11 Friday, February 9, 2025
+            print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
+            print(f"Formatted Date: {formatted_date}")  # Example: 01:11 Friday, February 9, 2025
 
-        print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
-        print(f"Formatted Date: {formatted_date}")  # Example: 01:11 Friday, February 9, 2025
+            print(f"ISO Time: {iso_time}")  # Example: 2025-02-09T01:11:00-0600
+            print(f"Formatted Date: {formatted_date}")  # Example: 01:11 Friday, February 9, 2025
 
-        memory = action_context.get_memory()
+            memory = action_context.get_memory()
 
-        memory.add_memory({
-            "type": "system",
-            "content": f"Right now, it is {formatted_date} (ISO: {iso_time}). "
-                       f"You are in the {time_zone_name} timezone. "
-                       f"Please consider the day/time, if relevant, when responding."
-        })
+            memory.add_memory({
+                "type": "system",
+                "content": f"Right now, it is {formatted_date} (ISO: {iso_time}). "
+                           f"You are in the {time_zone_name} timezone. "
+                           f"Please consider the day/time, if relevant, when responding."
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print("Error getting time zone, disabling time aware capability", e)
 
 
 class PassResultsCapability(Capability):
