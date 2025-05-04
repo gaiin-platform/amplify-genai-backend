@@ -298,9 +298,10 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
             return tool && tool.operation && tool.operation.type && tool.operation.type === "builtIn";
         })
 
+        // Anything that isn't a builtIn is an op
         const ops = tools.filter(tool => {
-            return tool && tool.operation && !(tool.operation.type || tool.operation.type === "builtIn");
-        })
+            return tool && tool.operation && (!tool.operation.type || tool.operation.type !== "builtIn");
+        });
 
         const makeTool = (tool => {
             // Filter out empty parameters that are not needed and will
@@ -435,7 +436,7 @@ Remember that your goal is to augment your capabilities through judicious use of
                 data: {
                     opsLanguageVersion: "v4",
                     operations: assistantOps,
-                    builtInOperations: builtIns
+                    builtInOperations: assistantBuiltIns
                 }
             },
             defaultAssistant
