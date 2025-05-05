@@ -15,10 +15,9 @@ from boto3.dynamodb.conditions import Key
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
 from common.object_permissions import can_access_objects
 from common.amplify_groups import verify_member_of_ast_admin_group
+from images.image_types import IMAGE_FILE_TYPES
 
 dynamodb = boto3.resource('dynamodb')
-
-IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @op(
@@ -62,19 +61,56 @@ def get_presigned_download_url(event, context, current_user, name, data):
         # User doesn't match or item doesn't exist
         print(f"File not found for user {current_user}: {response}")
         return {'success': False, 'message': 'File not found'}
-    print("Item found: ", response['Item'])
-    if response['Item']['createdBy'] == group_id:
+    item = response['Item']
+    print("Item found: ", item)
+    access_result = can_access_file(item, current_user, key, group_id, access_token)
+    
+    if not access_result['success']:
+        return access_result
+    
+    download_filename = item['name']
+    is_file_type = item['Item']['type'] in IMAGE_FILE_TYPES
+    response_headers = {
+        'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
+    } if download_filename and not is_file_type else {}
+
+    bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME'] if is_file_type  else os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    # If the user matches, generate a presigned URL for downloading the file from S3
+    try:
+        presigned_url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': key,
+                **response_headers
+            },
+            ExpiresIn=3600  # Expiration time for the presigned URL, in seconds
+        )
+    except ClientError as e:
+        print(f"Error generating presigned download URL: {e}")
+        return {'success': False, 'message': "File not found"}
+
+    if presigned_url:
+        return {'success': True, 'downloadUrl': presigned_url}
+    else:
+        return {'success': False, 'message': 'File not found'}
+
+def can_access_file(table_item, current_user, key, group_id, access_token):
+    print(f"Checking if user {current_user} can access file {key} with groupId {group_id}")
+    created_by = table_item['createdBy']
+    if created_by == current_user:
+        return {'success': True}
+    elif group_id and created_by == group_id:
         # ensure the user/system user has access to the group by either
         print("Checking if user is a member of the group: ", group_id)
         is_member = verify_member_of_ast_admin_group(access_token, group_id)
         if (not is_member):
             return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
         print("User is a member of the group: ", group_id)
-
-    elif response['Item']['createdBy'] != current_user:
+    else:
         translated_ds = None
         try:# need global 
-            translated_ds = translate_user_data_sources_to_hash_data_sources([{"id" : key, 'type': response['Item']['type']}])
+            translated_ds = translate_user_data_sources_to_hash_data_sources([{"id" : key, 'type': table_item['type']}])
         except:
             print("Datasource translation failed")
 
@@ -121,35 +157,98 @@ def get_presigned_download_url(event, context, current_user, name, data):
                 return {'success': False, 'message': 'GroupId does not have access to the data source'} 
             
         elif (not can_access_objects(access_token, translated_ds)): # checks can access on the user 
-            print(f"User {current_user} does not have acces to download: {response['Item']}")
+            print(f"User {current_user} does not have acces to download: {table_item}")
             return {'success': False, 'message': 'User does not have access to the data source'}
+# due to lambda layer requirements in rag.core, we have to define this function here
+@validated(op="upload")
+def reprocess_document_for_rag(event, context, current_user, name, data):
+    """
+    Reprocess a document that has already been processed.
+    This function deletes the hash entry and then queues the document for processing again,
+    while preserving the original metadata.
+    """
+    s3 = boto3.client('s3')
+    access_token = data['access_token']
+    data = data['data']
+    key = data['key']
+    group_id = data.get('groupId')
+    bucket = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+
+    if not bucket or not key:
+        return {
+            'success': False,
+            'message': 'Missing required parameters: bucket and key'
+        }
+   
+    print(f"Reprocessing document: {bucket}/{key}")
     
-    download_filename = response['Item']['name']
-    is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES
-    response_headers = {
-        'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
-    } if download_filename and not is_file_type else {}
-
-    bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME'] if is_file_type  else os.environ['S3_RAG_INPUT_BUCKET_NAME']
-    # If the user matches, generate a presigned URL for downloading the file from S3
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    # verify this is not an image file
     try:
-        presigned_url = s3.generate_presigned_url(
-            ClientMethod='get_object',
-            Params={
-                'Bucket': bucket_name,
-                'Key': key,
-                **response_headers
-            },
-            ExpiresIn=3600  # Expiration time for the presigned URL, in seconds
-        )
+        response = files_table.get_item(Key={'id': key})
+        if 'Item' not in response:
+            # User doesn't match or item doesn't exist
+            print(f"File not found for user {current_user}: {response}")
+            return {'success': False, 'message': 'File not found'}
+        item = response['Item']
+        file_type = item.get('type')
+        if file_type and file_type in IMAGE_FILE_TYPES:
+            print(f"File {key} is an image file, not supported for reprocessing")
+            return {'success': False, 'message': 'Image files are not supported for reprocessing'}
+        access_result = can_access_file(item, current_user, key, group_id, access_token)
+        if not access_result['success']:
+            return access_result
+        
     except ClientError as e:
-        print(f"Error generating presigned download URL: {e}")
-        return {'success': False, 'message': "File not found"}
-
-    if presigned_url:
-        return {'success': True, 'downloadUrl': presigned_url}
-    else:
-        return {'success': False, 'message': 'File not found'}
+        print(f"Error getting file metadata from DynamoDB: {e}")
+        error_message = e.response['Error']['Message']
+        return {
+                'success': False,
+                'message': error_message
+            }
+    try:
+        
+        # First, verify the file exists and get its metadata
+        try:
+            s3.head_object(Bucket=bucket, Key=key)
+        except Exception as e:
+            print(f"Error checking S3 object: {str(e)}")
+            return {
+                'success': False,
+                'message': f'File not found or not accessible: {bucket}/{key}'
+            }
+                   
+        # Create a synthetic S3 event to trigger processing
+        record = {
+                    'force_reprocess': True,  # This will be included in the JSON sent to SQS
+                    's3': {
+                        'bucket': {
+                            'name': bucket
+                        },
+                        'object': {
+                            'key': key
+                        }
+                    },
+                }
+        # Queue the document for processing
+        queue_url = os.environ['rag_process_document_queue_url']
+        message_body = json.dumps(record)
+        print(f"Sending message to queue: {message_body}")
+        sqs = boto3.client('sqs')
+        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
+        print(f"Message sent to queue: {message_body}")
+        
+        return {
+            'success': True,
+            'message': 'Document queued for reprocessing'
+        }
+    
+    except Exception as e:
+        print(f"Error reprocessing document: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error reprocessing document: {str(e)}'
+        }
 
 
 def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):

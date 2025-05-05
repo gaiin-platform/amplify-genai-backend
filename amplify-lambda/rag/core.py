@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -15,6 +14,7 @@ from datetime import datetime
 import re
 import traceback
 from cryptography.fernet import Fernet
+from boto3.dynamodb.conditions import Key
 
 from rag.handlers.commaseparatedvalues import CSVHandler
 from rag.handlers.excel import ExcelHandler
@@ -334,7 +334,6 @@ def queue_document_for_rag(event, context):
     queue_url = os.environ['rag_process_document_queue_url']
 
     print(f"Received event: {event}")
-    print(f"{event}")
     for record in event['Records']:
         # Send the S3 object data as a message to the SQS queue
         message_body = json.dumps(record)
@@ -413,6 +412,7 @@ def update_object_permissions(current_user, data):
 
 
 def decrypt_account_data(encrypted_data_b64):
+    """Decrypt account data from base64-encoded encrypted data."""
     ssm_client = boto3.client('ssm')
     parameter_name = os.getenv('FILE_UPLOAD_ENCRYPTION_PARAMETER')
     print("Enter decrypt account data")
@@ -463,6 +463,9 @@ def process_document_for_rag(event, context):
             # Assuming the message body is a JSON string, parse it
             s3_info = json.loads(record['body'])
             print(f"Message body: {s3_info}")
+            # Check if this is a force reprocessing request
+            force_reprocess = s3_info.get('force_reprocess', False)
+            
             s3_info = s3_info["s3"]
 
             # Get the bucket and object key from the event
@@ -574,7 +577,8 @@ def process_document_for_rag(event, context):
                     # object_type = data.get('objectType')
 
                     text = None
-                    if dochash_resposne.get('Item') is not None:
+                    # Check if already processed AND not a force reprocess request
+                    if dochash_resposne.get('Item') is not None and not force_reprocess:
                         print(f"Document {key} already processed")
                         text_bucket = dochash_resposne.get('Item').get('textLocationBucket')
                         text_key = dochash_resposne.get('Item').get('textLocationKey')
@@ -587,6 +591,8 @@ def process_document_for_rag(event, context):
                         tags = text.get('tags', [])
                         props = text.get('props', [])
                     else:
+                        if force_reprocess:
+                            print(f"Force reprocessing document {key}")
                         text = extract_text_from_file(file_extension, file_content)
                         print(f"Extracted text from {key}")
                         total_tokens = sum(d.get('tokens', 0) for d in text)
@@ -770,10 +776,6 @@ def get_original_creator(key):
 def chunk_document_for_rag(event, context):
     print(f"Received event: {event}")
     queue_url = os.environ['rag_chunk_document_queue_url']
-
-    dynamodb = boto3.resource('dynamodb')
-    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
-
 
     for record in event['Records']:
         try:
