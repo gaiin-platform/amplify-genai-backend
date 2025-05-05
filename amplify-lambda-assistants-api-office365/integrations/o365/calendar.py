@@ -250,35 +250,113 @@ def format_event(event: Dict) -> Dict:
         'onlineMeetingUrl': event.get('onlineMeeting').get('joinUrl', '') if event.get('onlineMeeting') else ''
     }
 
-####### Additions
-def list_calendars(current_user: str, access_token: str) -> List[Dict]:
+
+def list_calendars(current_user: str, access_token: str = None, include_shared: bool = False) -> List[Dict]:
     """
-    Retrieve all calendars available in the user's mailbox.
+    Retrieve all calendars available in the user's mailbox, including those in different groups.
     
     Args:
         current_user: The user's identifier
+        access_token: Optional access token
+        include_shared: Whether to include calendars shared with the user (default: True)
         
     Returns:
         List of calendar objects with their properties
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/calendars"
+        result_calendars = []
         
+        # 1. Get all direct calendars first (primary approach)
+        url = f"{GRAPH_ENDPOINT}/me/calendars"
         response = session.get(url)
         if not response.ok:
             handle_graph_error(response)
             
         calendars = response.json().get('value', [])
-        return [{
-            'id': cal['id'],
-            'name': cal.get('name', ''),
-            'color': cal.get('color', ''),
-            'isDefaultCalendar': cal.get('isDefaultCalendar', False),
-            'canShare': cal.get('canShare', False),
-            'canViewPrivateItems': cal.get('canViewPrivateItems', False),
-            'owner': cal.get('owner', {}).get('name', '')
-        } for cal in calendars]
+        print(f"Calendars: {calendars}")
+        
+        # Process direct calendars
+        for cal in calendars:
+            # Skip United States holidays calendar
+            if cal.get('name') == 'United States holidays':
+                continue
+                
+            # Determine if this is a shared calendar
+            owner_email = cal.get('owner', {}).get('address', '').lower() if cal.get('owner', {}).get('address') else ''
+            current_user_email = current_user.lower()
+            is_shared = owner_email and owner_email != current_user_email
+            
+            # Skip shared calendars if not requested
+            if is_shared and not include_shared:
+                continue
+                
+            result_calendars.append({
+                'id': cal['id'],
+                'name': cal.get('name', ''),
+                'color': cal.get('color', ''),
+                'isDefaultCalendar': cal.get('isDefaultCalendar', False),
+                'canShare': cal.get('canShare', False),
+                'canViewPrivateItems': cal.get('canViewPrivateItems', False),
+                'canEdit': cal.get('canEdit', False),
+                'owner': cal.get('owner', {}).get('name', ''),
+                'ownerEmail': owner_email,
+                'isSharedWithMe': is_shared,
+                'source': 'direct'
+            })
+        
+        # 2. Get calendars from all calendar groups (includes "People's Calendars")
+        groups_url = f"{GRAPH_ENDPOINT}/me/calendarGroups"
+        groups_response = session.get(groups_url)
+        print(f"Groups Response: {groups_response.json()}")
+        if groups_response.ok:
+            calendar_groups = groups_response.json().get('value', [])
+            
+            for group in calendar_groups:
+                group_id = group.get('id')
+                group_name = group.get('name', '')
+                if group_name == "My Calendars":
+                    continue
+                # Get calendars for this group
+                group_calendars_url = f"{GRAPH_ENDPOINT}/me/calendarGroups/{group_id}/calendars"
+                group_cal_response = session.get(group_calendars_url)
+                print(f"Group Calendars Response: {group_cal_response.json()}")
+                if group_cal_response.ok:
+                    group_calendars = group_cal_response.json().get('value', [])
+                    
+                    for cal in group_calendars:
+                        # Skip if already in our list (by ID) or if it's US holidays
+                        if cal.get('name') == 'United States holidays':
+                            continue
+                            
+                        if any(existing['id'] == cal['id'] for existing in result_calendars):
+                            continue
+                        
+                        # Determine if this is a shared calendar
+                        owner_email = cal.get('owner', {}).get('address', '').lower() if cal.get('owner', {}).get('address') else ''
+                        current_user_email = current_user.lower()
+                        is_shared = owner_email and owner_email != current_user_email
+                        
+                        # Skip shared calendars if not requested
+                        if is_shared and not include_shared:
+                            continue
+                            
+                        result_calendars.append({
+                            'id': cal['id'],
+                            'name': cal.get('name', ''),
+                            'color': cal.get('color', ''),
+                            'isDefaultCalendar': cal.get('isDefaultCalendar', False),
+                            'canShare': cal.get('canShare', False),
+                            'canViewPrivateItems': cal.get('canViewPrivateItems', False),
+                            'canEdit': cal.get('canEdit', False),
+                            'owner': cal.get('owner', {}).get('name', ''),
+                            'ownerEmail': owner_email,
+                            'isSharedWithMe': is_shared,
+                            'calendarGroup': group_name,
+                            'source': 'group'
+                        })
+        
+        return result_calendars
         
     except requests.RequestException as e:
         raise CalendarError(f"Network error while fetching calendars: {str(e)}")

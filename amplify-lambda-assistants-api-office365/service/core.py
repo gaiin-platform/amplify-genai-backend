@@ -51,7 +51,7 @@ def common_handler(operation, *required_params, **optional_params):
 
             params['access_token'] = data['access_token']
             response = operation(current_user, **params)
-            # print("Integration Response: ", response)
+            print("Integration Response: ", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
             print("Missing Credentials Error: ", str(me))
@@ -2415,13 +2415,20 @@ def list_calendar_events_handler(current_user, data):
     type="integration",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="microsoftListCalendars",
-    params={},
+    params={"include_shared": "Whether to include shared calendars as boolean (default: false)"},
     description="Lists all calendars in the user's mailbox.",
-    schema={}
+    schema={
+        "type": "object",
+        "properties": {
+            "include_shared": {"type": "boolean", 
+                               "description": "Whether to include shared calendars as boolean (default: false)"}
+        },
+        "required": []
+    }
 )
 # @validated("list_calendars")
 def list_calendars_handler(current_user, data):
-    return common_handler(list_calendars)(current_user, data)
+    return common_handler(list_calendars, include_shared=False)(current_user, data)
 
 
 @vop(
