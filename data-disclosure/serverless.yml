@@ -110,6 +110,8 @@ functions:
           bucket: !Ref DataDisclosureStorage
           event: s3:ObjectCreated:*
           existing: true
+          rules:
+            - suffix: .pdf
 
 
 resources:
@@ -204,13 +206,5 @@ resources:
           ServerSideEncryptionConfiguration:
             - ServerSideEncryptionByDefault:
                 SSEAlgorithm: AES256
-        NotificationConfiguration:
-            LambdaConfigurations:
-              - Event: 's3:ObjectCreated:Put'
-                Filter:
-                  S3Key:
-                    Rules:
-                      - Name: suffix
-                        Value: '.pdf'
-                Function: !GetAtt ConvertDataDisclosureLambdaFunction.Arn
+
                 

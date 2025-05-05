@@ -431,6 +431,8 @@ def add_path_to_assistant(event, context, current_user, name, data):
     if not assistant:
         return {"message": "Assistant not found", "success": False}
     print("Adding path to group_id: ", group_id, " with data: ", path_data)
+    log_item(group_id, 'Add Path to Assistant', current_user, f"Path added to assistant {assistantId}")
+
     # call add path to assistant
     return add_assistant_path(access_token, path_data)
 
@@ -690,14 +692,14 @@ def get_my_groups(current_user, token):
 def is_group_member(current_user, group, token):
     print(f"\n\nChecking if {current_user} is a member of {group['groupName']}")
     # check if member
-    if current_user in group.get('members', {}):  # Check if current_user is a key in the members dictionary
+    if group.get("isPublic", False): 
+        print(f"Group is public")
+        return True
+    elif current_user in group.get('members', {}):  # Check if current_user is a key in the members dictionary
         print(f"User is a direct member of {group['group_id']}")
         return True
     elif current_user in group.get('systemUsers', []):
         print(f"User is a system user of {group['group_id']}")
-        return True
-    elif group.get("isPublic", False): 
-        print(f"Group is public")
         return True
     else: 
         print(f"User is not a member of {group['group_id']}... checking if the user and group share a common amplify group")

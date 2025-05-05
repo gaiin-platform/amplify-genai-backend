@@ -283,6 +283,10 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
                     sticky: true
                 }));
             llm.forceFlush();
+
+            if (body.options.api_accessed) {
+                throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
+            }
         }
     } else if (body.options.codeInterpreterOnly && (!body.options.api_accessed)) {
         selectedAssistant = await codeInterpreterAssistant(defaultAssistant);
