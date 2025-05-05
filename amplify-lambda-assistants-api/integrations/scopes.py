@@ -17,7 +17,7 @@ scopes = {
                             "openid"]
     },
     "microsoft": {
-        "microsoft_calendar": ["Calendars.Read", "Calendars.ReadWrite"],
+        "microsoft_calendar": ["Calendars.Read", "Calendars.ReadWrite", "Calendars.Read.Shared"],
         "microsoft_drive": ["Files.Read", "Files.ReadWrite"],
         "microsoft_excel": ["Files.Read", "Files.ReadWrite"],
         "microsoft_onenote": ["Notes.Read", "Notes.ReadWrite" ],
