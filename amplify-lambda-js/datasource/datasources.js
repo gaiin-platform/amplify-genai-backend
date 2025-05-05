@@ -588,41 +588,39 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
 
         try {
             if (key.startsWith("s3://")) {
-
                 key = extractKey(key);
-
-                // Check the hash keys cache
-                const cached = hashDataSourcesCache.get(key);
-                if (cached) {
-                    return cached;
-                }
-
-                const command = new GetItemCommand({
-                    TableName: hashFilesTableName, // Replace with your table name
-                    Key: {
-                        id: {S: key}
-                    }
-                });
-
-                // Send the command to DynamoDB and wait for the response
-                const {Item} = await dynamodbClient.send(command);
-
-                if (Item) {
-                    // Convert the returned item from DynamoDB's format to a regular JavaScript object
-                    const item = unmarshall(Item);
-                    const result = {
-                        ...ds,
-                        metadata: {...ds.metadata, userDataSourceId: ds.id},
-                        id: "s3://" + item.textLocationKey};
-                    hashDataSourcesCache.set(key, result);
-                    return result;
-                } else {
-                    hashDataSourcesCache.set(key, ds);
-                    return ds; // No item found with the given ID
-                }
-            } else {
-                return ds;
             }
+
+            // Check the hash keys cache
+            const cached = hashDataSourcesCache.get(key);
+            if (cached) {
+                return cached;
+            }
+
+            const command = new GetItemCommand({
+                TableName: hashFilesTableName, // Replace with your table name
+                Key: {
+                    id: {S: key}
+                }
+            });
+
+            // Send the command to DynamoDB and wait for the response
+            const {Item} = await dynamodbClient.send(command);
+
+            if (Item) {
+                // Convert the returned item from DynamoDB's format to a regular JavaScript object
+                const item = unmarshall(Item);
+                const result = {
+                    ...ds,
+                    metadata: {...ds.metadata, userDataSourceId: ds.id},
+                    id: "s3://" + item.textLocationKey};
+                hashDataSourcesCache.set(key, result);
+                return result;
+            } else {
+                hashDataSourcesCache.set(key, ds);
+                return ds; // No item found with the given ID
+            }
+            return ds;
         } catch (e) {
             return ds;
         }

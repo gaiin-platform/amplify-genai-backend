@@ -10,6 +10,7 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets
 
 custom:
   pythonRequirements:
@@ -90,12 +91,12 @@ functions:
           method: get
           cors: true
 
-  get_support_email:
-    handler: service/core.get_support_email_data
+  get_user_app_configs:
+    handler: service/core.get_user_app_configs
     timeout: 10
     events:
       - http:
-          path: amplifymin/support_email
+          path: amplifymin/user_app_configs
           method: get
           cors: true
 

@@ -1,3 +1,4 @@
+import requests
 from llm.chat import chat
 import os
 from common.validate import validated
@@ -6,6 +7,7 @@ import json
 import os
 from botocore.exceptions import ClientError
 import boto3
+from decimal import Decimal
 
 @op(
     path="/chat",
@@ -51,6 +53,7 @@ import boto3
 )
 @validated(op = 'chat')
 def chat_endpoint(event, context, current_user, name, data):
+    access_token = data['access_token']
     access = data['allowed_access']
     if ('chat' not in access and 'full_access' not in access):
         return {'success': False, 'message': 'API key does not have access to chat functionality'}
@@ -59,9 +62,14 @@ def chat_endpoint(event, context, current_user, name, data):
         chat_endpoint = get_chat_endpoint()
         if (not chat_endpoint):
             return {"success": False, "message": "We are unable to make the request. Error: No chat endpoint found."}
-        access_token = data['access_token']
 
         payload = data['data']
+        assistant_id = payload["options"].get("assistantId")
+        if (assistant_id):
+            verify_assistant_id = validate_assistant_id(assistant_id, access_token)
+            if (not verify_assistant_id["success"]):
+                return {"success": False, "message": "Invalid assistant id"}
+            
         payload["dataSources"] = get_data_source_details(payload["dataSources"])
         payload_options = payload["options"]
         payload["model"] = payload_options["model"]["id"]
@@ -76,7 +84,7 @@ def chat_endpoint(event, context, current_user, name, data):
         response, metadata = chat(chat_endpoint, access_token, payload)
         return {"success": True, "message": "Chat endpoint response retrieved", "data": response}
     except Exception as e:
-        return {"success": False, "message": {f"Error: {e}"}}
+        return {"success": False, "message": {f"Chat service error: {e}"}}
     
 
 def get_chat_endpoint():
@@ -102,6 +110,25 @@ def get_chat_endpoint():
         print(f"Error getting secret: {e}")
 
     return None
+
+
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj) if obj % 1 != 0 else int(obj)
+        return super(DecimalEncoder, self).default(obj)
+
+def convert_decimal(obj):
+    """Convert Decimal objects to Python native types (float or int)"""
+    if isinstance(obj, Decimal):
+        return float(obj) if obj % 1 != 0 else int(obj)
+    elif isinstance(obj, dict):
+        return {k: convert_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimal(item) for item in obj]
+    return obj
+
 
 def get_data_source_details(data_sources):
     if (len(data_sources) == 0): return []
@@ -162,4 +189,35 @@ def get_data_source_details(data_sources):
     if missing_ids:
         print(f"Warning: The following requested IDs were not found: {missing_ids}")
     
+    # Convert any Decimal objects to regular Python types
+    formatted_sources = convert_decimal(formatted_sources)
+    
     return formatted_sources
+
+
+def validate_assistant_id(assistant_id, access_token):
+    print("Initiate call to validate assistant id: ", assistant_id)
+    endpoint = os.environ['API_BASE_URL'] + '/assistant/validate/assistant_id'
+
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    try:
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            data=json.dumps({"data": {"assistantId": assistant_id} })
+        )
+        response_content = response.json() # to adhere to object access return response dict
+
+        if response.status_code != 200:
+            print("Error validating assistant id: ", response.content)
+            return {"success": False}
+        return response_content
+
+    except Exception as e:
+        print(f"Error validating assistant id: {e}")
+        return {"success": False}

@@ -617,8 +617,7 @@ register_conversation_schema = {
                 "type": "object",
                 "properties": {
                     "role": {
-                        "type": "string",
-                        "enum": ["system", "user", "assistant"] 
+                        "type": "string"
                     },
                     "content": {
                         "type": "string"
@@ -808,6 +807,9 @@ validators = {
     "/state/settings/get": {
         "get": {}
     },
+    "/files/reprocess/rag": {
+        "upload": key_request_schema
+    }
 
 }
 
@@ -845,6 +847,9 @@ api_validators = {
     "/state/conversation/register" : {
         "conversation_upload": register_conversation_schema
     },
+    "/files/reprocess/rag": {
+        "upload": key_request_schema
+    }
 }
 
 def validate_data(name, op, data, api_accessed):

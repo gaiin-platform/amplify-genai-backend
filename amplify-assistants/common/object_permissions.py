@@ -55,40 +55,53 @@ def update_object_permissions(access_token,
 def can_access_objects(access_token, data_sources, permission_level="read"):
     print(f"Checking access on data sources: {data_sources}")
 
-    # If there is a protocol on the ID, we need to strip it off
-    access_levels = {
-        ds['id'].split('://')[-1]: permission_level
-        for ds in data_sources
-    }
+    # Skip empty data sources
+    if not data_sources:
+        return True
 
-    print(f"With access levels: {access_levels}")
+    # Separate web and non-web data sources
+    non_web_data_sources = []
+    for ds in data_sources:
+        # Skip websites and sitemaps - they don't need permission checks
+        if ds.get("type") in ["website/url", "website/sitemap"] or ds.get(
+            "id", ""
+        ).startswith(("http://", "https://")):
+            continue
+        non_web_data_sources.append(ds)
 
-    request_data = {
-        'data': {
-            'dataSources': access_levels
-        }
-    }
+    # If there are no non-web data sources left, return true (all were web URLs)
+    if not non_web_data_sources:
+        return True
 
+    # Check permissions for non-web data sources
+    access_levels = {}
+    for ds in non_web_data_sources:
+        id_key = ds["id"].split("://")[-1]
+        access_levels[id_key] = permission_level
+
+    print(f"Checking access for non-web data sources: {access_levels}")
+
+    request_data = {"data": {"dataSources": access_levels}}
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {access_token}'
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
     }
 
-    # Replace 'permissions_endpoint' with the actual permissions endpoint URL
-    permissions_endpoint = os.environ['API_BASE_URL'] + '/utilities/can_access_objects'
+    permissions_endpoint = os.environ["API_BASE_URL"] + "/utilities/can_access_objects"
     try:
         response = requests.post(
-            permissions_endpoint,
-            headers=headers,
-            data=json.dumps(request_data)
+            permissions_endpoint, headers=headers, data=json.dumps(request_data)
         )
 
-        response_content = response.json() # to adhere to object access return response dict
+        response_content = response.json()
 
-        if response.status_code != 200 or response_content.get('statusCode', None) != 200:
+        if (
+            response.status_code != 200
+            or response_content.get("statusCode", None) != 200
+        ):
             print(f"User does not have access to data sources: {response.status_code}")
             return False
-        elif response.status_code == 200 and response_content.get('statusCode', None) == 200:
+        else:
             return True
 
     except Exception as e:

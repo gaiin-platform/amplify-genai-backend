@@ -188,9 +188,6 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 await saveTrace(params.user, requestId);
             }
 
-               
-            
-
             if (response) {
                 logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");
                 logger.debug("Response", response);

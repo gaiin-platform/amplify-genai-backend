@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -147,6 +146,7 @@ def generate_openai_embeddings(content):
     return {"success": True, "data": embedding, "token_count": token_count}        
 
 def generate_questions(content):
+    print(f"Generating questions with {qa_provider}")
     if qa_provider == PROVIDERS.BEDROCK.value:
         return generate_bedrock_questions(content)
     if qa_provider == PROVIDERS.AZURE.value:
@@ -159,35 +159,29 @@ def generate_bedrock_questions(content):
         client = boto3.client("bedrock-runtime", region_name=region)
         model_id = qa_model_name
         
-        system_prompt = f"With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."
-
-        native_request = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "system": system_prompt,
-            "max_tokens": 512,
-            "temperature": 0.7,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": content}],
-                }
-            ],
-        }
-        request = json.dumps(native_request)
+        system_prompts = [{"text": "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."}]
         
-        response = client.invoke_model(modelId=model_id, body=request)
-        model_response = json.loads(response["body"].read())
+        messages = [{
+            "role": "user",
+            "content": [{"text": content}]
+        }]
         
-        questions = model_response["content"][0]["text"]
-        input_tokens = model_response["usage"]["input_tokens"]
-        output_tokens = model_response["usage"]["output_tokens"]
+        # Send the conversation request
+        response = client.converse(
+            modelId=model_id,
+            messages=messages,
+            system=system_prompts,
+            inferenceConfig={"temperature": 0.7},
+            additionalModelRequestFields={"max_tokens": 512}
+        )
+        
+        # Extract data from the response
+        questions = response['output']['message']['content'][0]['text']
+        input_tokens = response['usage']['inputTokens']
+        output_tokens = response['usage']['outputTokens']
         
         logger.info(f"Questions generated: {questions}")
         return {
-            "success": True,
-            "data": questions,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
             "success": True,
             "data": questions,
             "input_tokens": input_tokens,

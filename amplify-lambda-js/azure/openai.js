@@ -14,21 +14,13 @@ const logger = getLogger("openai");
 
 
 export const translateModelToOpenAI = (modelId) => {
-    if(modelId === "gpt-4-1106-Preview"){
+    if (modelId === "gpt-4-1106-Preview"){
         return "gpt-4-turbo";
-    }
-    else if(modelId === "gpt-4o"){
-        return "gpt-4o";
-    }    
-    else if(modelId === "gpt-35-turbo"){
+    } else if (modelId === "gpt-35-turbo"){
         return "gpt-3.5-turbo";
     }
-    else if(modelId.startsWith("o3-mini")){
-        return "o3-mini";
-    }
-    else {
-        return modelId;
-    }
+    
+    return modelId;
 }
 
 const isOpenAIEndpoint = (url) => {
@@ -119,19 +111,6 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         data = {max_completion_tokens: model.outputTokenLimit,
                 messages: data.messages, model: modelId, stream: true
                 }
-
-        // was working previously and now isnt?
-        // if (modelId.includes("o3")) {
-            // Convert messages to O3 format and handle system->developer role
-            // data.messages = data.messages.map(msg => ({
-            //     role: msg.role === 'system' ? 'developer' : msg.role,
-            //     content: [
-            //         {   type: "text",
-            //             text: msg.content
-            //         }
-            //     ]
-            // }));
-        // }
     }
     if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
     

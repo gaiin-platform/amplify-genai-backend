@@ -222,9 +222,6 @@ update_admin_config_schema = {
                                             "isBuiltIn": {
                                                 "type": "boolean"
                                             },
-                                             "isDefault": {
-                                                "type": "boolean"
-                                            },
                                             "systemPrompt": {
                                                 "type": "string"
                                             },
@@ -235,18 +232,6 @@ update_admin_config_schema = {
                                                 "type": "boolean"
                                             },
                                             "supportsReasoning": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultCheapestModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultAdvancedModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultEmbeddingsModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultQAModel": {
                                                 "type": "boolean"
                                             },
                                              "inputContextWindow": {
@@ -271,12 +256,36 @@ update_admin_config_schema = {
                                                 }
                                             }
                                         },
-                                        "required": ["id","name", "provider", "description", "isAvailable", 
+                                        "required": ["id","name", "provider", "description", "isAvailable",  "isBuiltIn",
                                                      "supportsImages", "supportsReasoning", "supportsSystemPrompts", "systemPrompt",
-                                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
-                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost", "exclusiveGroupAvailability"],
+                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", 
+                                                     "cachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }
+                                },
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'defaultModels'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultModels"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "user": {"type": ["string", "null"]},
+                                    "advanced": {"type": ["string", "null"]},
+                                    "cheapest": {"type": ["string", "null"]},
+                                    "agent": {"type": ["string", "null"]},
+                                    "embeddings": {"type": ["string", "null"]},
+                                    "qa": {"type": ["string", "null"]}
                                 },
                                 "additionalProperties": False
                             }
@@ -428,6 +437,22 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
+                     {
+                        # Configuration for 'defaultConversationStorage'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultConversationStorage"
+                            },
+                            "data": {
+                                "type": "string",
+                                "enum": ["future-local", "future-cloud"],
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
                                 
                     {
                         # Configuration for 'rateLimit'
@@ -575,7 +600,7 @@ validators = {
     "/amplifymin/amplify_groups/list" : {
         "read": {}
     },
-    "/amplifymin/support_email": {
+    "/amplifymin/user_app_configs": {
         "read": {}
     }
     
@@ -823,10 +848,10 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('admin' not in access):
-            # and 'full_access' not in access
-            print("API doesn't have access to api functionality")
-            raise PermissionError("API key does not have access to api functionality")
+        # if ('admin' not in access):
+        #     # and 'full_access' not in access
+        #     print("API doesn't have access to api functionality")
+        #     raise PermissionError("API key does not have access to api functionality")
         
         # Determine API user
         current_user = determine_api_user(item)
