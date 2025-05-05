@@ -95,12 +95,29 @@ def extract_email_body_and_attachments(sns_message):
         elif content_type == "text/html" and body_html is None:  # HTML body
             body_html = part.get_payload(decode=True)
 
-    # Return the extracted content
+    # Return the extracted content with safe decoding
     return {
-        "body_plain": body_plain.decode('utf-8') if body_plain else None,
-        "body_html": body_html.decode('utf-8') if body_html else None,
+        "body_plain": safe_decode(body_plain) if body_plain else None,
+        "body_html": safe_decode(body_html) if body_html else None,
         "attachments": attachments
     }
+
+
+def safe_decode(byte_content):
+    """Safely decode byte content, trying UTF-8 first then falling back to more permissive encodings."""
+    if not byte_content:
+        return None
+    
+    # Try UTF-8 first
+    try:
+        return byte_content.decode('utf-8')
+    except UnicodeDecodeError:
+        # Fall back to latin-1 (ISO-8859-1) which can handle any byte value
+        try:
+            return byte_content.decode('latin-1')
+        except:
+            # If all else fails, use UTF-8 with replacement for invalid chars
+            return byte_content.decode('utf-8', errors='replace')
 
 
 def find_hash_tags(text):
@@ -133,7 +150,7 @@ def save_email_to_s3(current_user, email_details, tags):
     email_time = email_details['timestamp'],
     email_base_name = f"Email {email_subject} from {email_sender} at {email_time}"
     email_file_name = f"{email_base_name}.json"
-    bucket_name, body_key = create_file_metadata_entry(current_user, email_file_name, "application/json", tags, {},
+    bucket_name, body_key = create_file_metadata_entry(current_user, email_file_name, "application/json", tags,
                                                        "email")
 
     email_to_save_string = (
