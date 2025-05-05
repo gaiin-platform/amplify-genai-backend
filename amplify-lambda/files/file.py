@@ -1313,7 +1313,6 @@ def delete_embeddings(event, context, current_user, name, data):
 
     except Exception as e:
         print(f"Exception occurred: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
