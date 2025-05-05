@@ -42,7 +42,7 @@ def common_handler(operation, *required_params, **optional_params):
                     params[snake_param] = data['data'][param]
             params['access_token'] = data['access_token']
             response = operation(current_user, **params)
-            # print("Integration Response: ", response)
+            print("Integration Response: ", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
             print("Missing Credentials Error: ", str(me))
@@ -1405,14 +1405,18 @@ def check_event_conflicts_handler(current_user, data):
     tags=["default", "integration", "google_calendar", "google_calendar_read"],
     name="googleListCalendars",
     description="Lists all calendars the user has access to in Google Calendar.",
-    params={},
+    params={"include_shared": "Whether to include shared calendars as boolean (default: false)"},
     schema={
         "type": "object",
-        "properties": {}
+        "properties": {
+            "include_shared": {"type": "boolean", 
+                               "description": "Whether to include shared calendars as boolean (default: false)"}
+        },
+        "required": []
     }
 )
 def list_calendars_handler(current_user, data):
-    return common_handler(list_calendars)(current_user, data)
+    return common_handler(list_calendars, include_shared=False)(current_user, data)
 
 @vop(
     path="/google/integrations/create_calendar",

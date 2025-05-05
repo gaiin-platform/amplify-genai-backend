@@ -489,13 +489,14 @@ def get_calendar_service(current_user, access_token):
     credentials = Credentials.from_authorized_user_info(user_credentials)
     return build('calendar', 'v3', credentials=credentials)
 
-def list_calendars(current_user, access_token=None):
+def list_calendars(current_user, access_token=None, include_shared=False):
     """
     Lists all calendars the user has access to.
     
     Args:
         current_user: The current user making the request
         access_token: Optional access token
+        include_shared: Whether to include calendars shared with the user (default: True)
         
     Returns:
         List of calendar objects with id, summary, description, etc.
@@ -505,11 +506,17 @@ def list_calendars(current_user, access_token=None):
     
     calendars = []
     for calendar in calendar_list.get('items', []):
+        if calendar["id"] == "en.usa#holiday@group.v.calendar.google.com":
+            continue
         # Determine if calendar is shared or owned
         is_owned = calendar.get('accessRole', '') == 'owner'
         is_primary = calendar.get('primary', False)
         is_shared = not is_primary and not is_owned
         
+        # Skip shared calendars if include_shared is False
+        if is_shared and not include_shared:
+            continue
+            
         calendars.append({
             'id': calendar['id'],
             'name': calendar.get('summary', ''),
