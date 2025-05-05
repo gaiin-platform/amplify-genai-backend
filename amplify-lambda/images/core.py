@@ -8,10 +8,9 @@ from PIL import Image
 from io import BytesIO
 import urllib.parse
 from rag.core import update_object_permissions
-
+from images.image_types import IMAGE_FILE_TYPES
 s3 = boto3.client('s3')
 
-IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 #currently is resized to support both clause and openAIs needs 
 def resize_image(image):

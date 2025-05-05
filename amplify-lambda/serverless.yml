@@ -435,7 +435,20 @@ functions:
         FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
-    
+  
+  reprocess_document_for_rag:
+    handler: files/file.reprocess_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/reprocess/rag
+          method: post
+    environment:
+        rag_process_document_queue_url:
+          Ref: RagDocumentIndexQueue
+        
+
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
     layers:
@@ -468,7 +481,7 @@ functions:
   process_images_for_chat:
     handler: images/core.process_images_for_chat
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}

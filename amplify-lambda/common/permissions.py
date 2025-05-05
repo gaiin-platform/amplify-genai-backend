@@ -7,7 +7,7 @@
 def can_share(user, data):
   return True
 
-def can_publish_item(user, data):
+def can_save(user, data):
   return True
 
 def can_delete_item(user, data):
@@ -21,9 +21,6 @@ def can_create_assistant(user, data):
 def can_create_assistant_thread(user, data):
   return True
 
-def can_read_share(user, data):
-  # Read share automatically pulls data for the authenticated user
-  return True
 
 def can_read(user, data):
   return True
@@ -44,10 +41,10 @@ def get_data_owner(event, data):
 permissions_by_state_type = {
   "/state/share": {
     "append": can_share,
-    "read": can_read_share
+    "read": can_share
   },
   "/state/share/load": {
-    "load": can_read_share
+    "load": can_share
   },
   "/datasource/metadata/set": {
     "set": can_upload
@@ -59,31 +56,31 @@ permissions_by_state_type = {
     "set_tags": can_upload
   },
   "/files/tags/create": {
-    "create": can_upload
+    "create": can_save
   },
   "/files/tags/delete": {
-    "delete": can_upload
+    "delete": can_delete_item
   },
   "/files/tags/list": {
-    "list": can_upload
+    "list": can_read
   },
   "/files/query": {
-    "query": can_upload
+    "query": can_read
   },
   "/files/download": {
-    "download": can_upload
+    "download": can_read
   },
   "/chat/convert": {
-    "convert": can_publish_item
+    "convert": can_save
   },
   "/state/accounts/charge": {
-    "create_charge": can_publish_item
+    "create_charge": can_save
     },
   "/state/accounts/get": {
     "get": can_read
   },
   "/state/accounts/save": {
-    "save": can_publish_item
+    "save": can_save
   },
   "/state/conversation/upload": {
     "conversation_upload": can_upload
@@ -113,9 +110,12 @@ permissions_by_state_type = {
     "chat": can_chat
   },
    "/state/settings/save": {
-        "save": can_upload
+        "save": can_save
   },
     "/state/settings/get": {
         "get": can_read
   },
+  "/files/reprocess/rag": {
+    "upload": can_upload
+  }
 }
