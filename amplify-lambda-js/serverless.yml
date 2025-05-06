@@ -229,6 +229,11 @@ resources:
                 - dynamodb:DeleteItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
     
     RequestStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
