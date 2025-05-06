@@ -26,6 +26,9 @@ custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
+    # uncomment in case of issues with pythonRequirement layers not uploading to aws 
+    # useStaticCache: false  # Uses a static path for the cache
+    # useDownloadCache: false 
 
   prune:
     automatic: true
@@ -225,7 +228,7 @@ functions:
           cors: true
 
   delete_file:
-    handler: files/file.delete_embeddings
+    handler: files/file.delete_file
     timeout: 30
     layers:
       - Ref: PythonRequirementsLambdaLayer
