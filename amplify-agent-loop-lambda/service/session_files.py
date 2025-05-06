@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from botocore.exceptions import ClientError
 import shutil
+import requests
 
 class LambdaFileTracker:
     def __init__(self, current_user: str, session_id: str, working_dir: str = "/tmp"):
@@ -17,6 +18,7 @@ class LambdaFileTracker:
         self.initial_state: Dict[str, Dict] = {}
         self.s3_client = boto3.client('s3')
         self.bucket = os.getenv('AGENT_STATE_BUCKET')
+        self.data_sources: Dict[str, str] = {}  # Maps source ID -> local filename
 
         # Create session working directory in /tmp
         self.working_dir = working_dir
@@ -68,6 +70,8 @@ class LambdaFileTracker:
                 session_data = json.loads(response['Body'].read().decode('utf-8'))
                 # Store existing mappings when session is found
                 self.existing_mappings = session_data.get('mappings', {})
+                # Load data sources mapping
+                self.data_sources = session_data.get('data_sources', {})
                 return session_data
 
             except ClientError as e:
@@ -207,6 +211,171 @@ class LambdaFileTracker:
             print(f"Error getting tracked files: {e}")
 
         return tracked_files
+        
+    def add_data_source(self, data_source: Dict) -> Dict:
+        """
+        Add a data source to the file tracker. This downloads the data source from S3
+        or from a signed URL and makes it available in the working directory.
+        
+        Args:
+            data_source: A data source object with id, name, type and optionally ref and format
+            
+        Returns:
+            A dictionary with status and information about the data source
+        """
+        if not self.bucket:
+            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+            
+        # Extract information from the data source
+        source_id = data_source.get('id')
+        source_name = data_source.get('name')
+        source_type = data_source.get('type')
+        source_ref = data_source.get('ref')  # URL or content reference
+        source_format = data_source.get('format')  # signedUrl or content
+
+        print(f"Adding data source {source_id} of type {source_type} with name {source_name}, format: {source_format}")
+        print(f"Full data source: {json.dumps(data_source, indent=2)}")
+
+        if not source_id:
+            print("Data source missing required id field")
+            return {
+                "status": "error",
+                "message": "Data source missing required id field",
+                "data_source": data_source
+            }
+        
+        # Generate a filename if not provided
+        if not source_name:
+            source_name = source_id.split('/')[-1]
+            if '.' not in source_name:
+                # Add extension based on type if needed
+                if source_type == 'application/json':
+                    source_name += '.json'
+                elif source_type.startswith('image/'):
+                    ext = source_type.split('/')[-1]
+                    source_name += f'.{ext}'
+        
+        print(f"Using filename: {source_name}")
+            
+        # Check if this data source has already been added
+        if source_id in self.data_sources:
+            local_path = os.path.join(self.working_dir, self.data_sources[source_id])
+            if os.path.exists(local_path):
+                print(f"Data source {source_id} already exists at {local_path}")
+                return {
+                    "status": "success",
+                    "message": "Data source already downloaded",
+                    "local_path": self.data_sources[source_id],
+                    "already_exists": True
+                }
+        
+        # Create a local file path using the source name
+        local_path = os.path.join(self.working_dir, source_name)
+        
+        # Ensure the target directory exists
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        
+        try:
+            # Handling based on the format and reference
+            if source_format == 'signedUrl' and source_ref:
+                print(f"Downloading from signed URL: {source_ref}")
+                
+                try:
+                    response = requests.get(source_ref)
+                    response.raise_for_status()
+                    
+                    # Write the content to the local file
+                    with open(local_path, 'wb') as f:
+                        f.write(response.content)
+                    
+                    print(f"Downloaded data source from signed URL to {local_path}")
+                except requests.exceptions.RequestException as e:
+                    print(f"Error downloading from signed URL: {e}")
+                    return {
+                        "status": "error",
+                        "message": f"Error downloading from signed URL: {str(e)}",
+                        "data_source": data_source
+                    }
+            
+            elif source_format == 'content' and source_ref:
+                print(f"Saving content directly to file")
+                
+                # For JSON content, we may need to parse it first
+                if source_type == 'application/json' and isinstance(source_ref, str):
+                    try:
+                        content = json.loads(source_ref)
+                        with open(local_path, 'w') as f:
+                            json.dump(content, f, indent=2)
+                    except json.JSONDecodeError:
+                        # If not valid JSON, save as string
+                        with open(local_path, 'w') as f:
+                            f.write(source_ref)
+                else:
+                    # For other content types, save directly
+                    mode = 'wb' if isinstance(source_ref, bytes) else 'w'
+                    with open(local_path, mode) as f:
+                        f.write(source_ref)
+                
+                print(f"Saved data source content to {local_path}")
+            
+            # Legacy S3 download logic as fallback
+            else:
+                print("Downloading data source from S3...")
+                # Parse the S3 URI to get bucket and key
+                # Assuming format: s3://user/date/uuid.json
+                if source_id.startswith('s3://'):
+                    # Remove 's3://' prefix and split by '/'
+                    parts = source_id[5:].split('/')
+                    if len(parts) < 3:
+                        print(f"Invalid S3 URI format: {source_id}")
+                        return {
+                            "status": "error",
+                            "message": f"Invalid S3 URI format: {source_id}",
+                            "data_source": data_source
+                        }
+                        
+                    # The last part should be the object key
+                    s3_key = parts[-1]
+                    # The rest is the path in the bucket
+                    if len(parts) > 3:  # If we have a nested path
+                        s3_key = '/'.join(parts[1:])
+                else:
+                    # If not an S3 URI, use as-is
+                    s3_key = source_id
+                
+                print(f"Downloading {s3_key} to {local_path}")
+                
+                try:
+                    self.s3_client.download_file(self.bucket, s3_key, local_path)
+                    print(f"Downloaded data source {source_id} to {local_path}")
+                except ClientError as e:
+                    print(f"Error downloading data source {source_id}: {e}")
+                    return {
+                        "status": "error",
+                        "message": f"Error downloading data source: {str(e)}",
+                        "data_source": data_source
+                    }
+            
+            # Store the mapping from source ID to local path
+            self.data_sources[source_id] = source_name
+            
+            # Add to initial state to avoid re-uploading
+            self.initial_state[source_name] = self.get_file_info(local_path)
+            
+            return {
+                "status": "success",
+                "message": "Data source downloaded successfully",
+                "local_path": source_name,
+                "already_exists": False
+            }
+                
+        except Exception as e:
+            print(f"Unexpected error adding data source {source_id}: {e}")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}",
+                "data_source": data_source
+            }
 
     def get_changed_files(self) -> Tuple[List[str], Dict[str, str], Dict[str, Dict]]:
         """Get list of changed/new files and their S3 mappings, with version info."""
@@ -280,6 +449,11 @@ class LambdaFileTracker:
             # Update current mappings
             existing_index['mappings'].update(filename_mapping)
             existing_index['timestamp'] = datetime.utcnow().isoformat()
+            
+            # Add data sources mapping to the index file
+            if not 'data_sources' in existing_index:
+                existing_index['data_sources'] = {}
+            existing_index['data_sources'].update(self.data_sources)
 
             # Upload index file
             self.s3_client.put_object(
@@ -364,6 +538,8 @@ def get_file_versions(self, filepath: str) -> Optional[List[Dict]]:
     except Exception as e:
         print(f"Error retrieving file versions: {e}")
         return None
+
+
 
 def get_presigned_url_by_id(current_user: str, session_id: str, file_id: str, expiration: int = 3600) -> Optional[str]:
     """

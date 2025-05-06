@@ -24,6 +24,7 @@ from agent.tools.ops import ops_to_tools, get_default_ops_as_tools
 from common.ops import vop
 from datetime import datetime
 from typing import List, Dict, Any
+from common.data_sources import resolve_datasources
 from botocore.exceptions import ClientError
 
 from service.session_files import create_file_tracker, get_presigned_url_by_id
@@ -208,6 +209,61 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         # Extract data sources from messages
         data_sources = extract_data_sources_from_messages(prompt)
         print(f"Data sources referenced in messages: {data_sources}")
+        
+        # Process data sources
+        if data_sources:
+            print(f"Processing {len(data_sources)} data sources")
+            
+            try:
+                datasource_request = {
+                    "dataSources": data_sources,
+                    "options": {
+                        "useSignedUrls": True
+                    },
+                    "chat": {
+                        "messages": prompt
+                    }
+                }
+                
+                resolved_result = resolve_datasources(datasource_request, access_token)
+                print(f"Resolved data sources: {resolved_result}")
+                
+                if "dataSources" in resolved_result and resolved_result["dataSources"]:
+                    resolved_sources = resolved_result["dataSources"]
+                    
+                    for source_details in resolved_sources:
+                        print(f"Processing resolved data source: {source_details}")
+
+                        # Add the data source name if missing
+                        if "name" not in source_details:
+                            file_name = source_details["id"].split("/")[-1]
+                            source_details["name"] = file_name
+                        
+                        # Process the data source through the tracker
+                        result = tracker.add_data_source(source_details)
+                        print(f"Added data source {source_details}: {result}")
+                else:
+                    # Fallback to the original data sources if resolution fails
+                    for source_details in data_sources:
+                        print(f"Processing data source (fallback): {source_details}")
+                        if source_details:
+                            result = tracker.add_data_source(source_details)
+                            print(f"Added data source {source_details}: {result}")
+                        else:
+                            print(f"Could not find full details for data source: {source_details}")
+            
+            except Exception as e:
+                print(f"Error resolving data sources: {e}")
+                traceback.print_exc()
+                
+                # Fallback to original approach if resolution fails
+                for source_details in data_sources:
+                    print(f"Processing data source (error fallback): {source_details}")
+                    if source_details:
+                        result = tracker.add_data_source(source_details)
+                        print(f"Added data source {source_details}: {result}")
+                    else:
+                        print(f"Could not find full details for data source: {source_details}")
 
         metadata = metadata or {}
         agent_id = "default"
@@ -862,7 +918,7 @@ def update_workflow_template_handler(current_user, access_token, template_id, te
         raise RuntimeError(f"Failed to update workflow template: {str(e)}")
 
 
-def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[str]:
+def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Extracts all data sources from a list of messages.
     
@@ -870,17 +926,21 @@ def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[s
         messages: A list of message dictionaries that may contain data sources
         
     Returns:
-        A list of data source identifiers
+        A list of data source objects
     """
     data_sources = []
+    seen_source_ids = set()
     
     for message in messages:
         # Check if message has data and dataSources fields
         message_data_sources = message.get('data', {}).get('dataSources', [])
         
-        # Add all data sources to our list
+        # Add all data sources to our list, avoiding duplicates by ID
         if message_data_sources:
-            data_sources.extend(message_data_sources)
+            for source in message_data_sources:
+                source_id = source.get('id')
+                if source_id and source_id not in seen_source_ids:
+                    seen_source_ids.add(source_id)
+                    data_sources.append(source)
     
-    # Return unique data sources
-    return list(set(data_sources))
+    return data_sources

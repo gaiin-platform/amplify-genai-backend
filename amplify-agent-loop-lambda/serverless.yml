@@ -75,6 +75,7 @@ provider:
     CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
     MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
     REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
+    DATASOURCES_RESOLVER_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
     #AWS_REGION optional for /chat/service.py 
 
   iam:

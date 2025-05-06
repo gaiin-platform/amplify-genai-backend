@@ -49,7 +49,7 @@ class PythonActionRegistry(ActionRegistry):
     def register_bound_tool_by_name(self, operation):
         print("Registering bound builtIn tool: ", operation)
         #{'name': 'get_current_directory', 'operation': {'name':
-        tool_name = operation.get('operation',{}).get('name', None)
+        tool_name = operation.get('name', None)
         print("Tool name:", tool_name)
         if tool_name in tool.tools:
             tool_desc = tool.tools[tool_name]
