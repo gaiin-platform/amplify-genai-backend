@@ -40,7 +40,6 @@ def get_presigned_download_url(event, context, current_user, name, data):
     if "://" in key:
         key = key.split("://")[1]
 
-    dynamodb = boto3.resource('dynamodb')
     s3 = boto3.client('s3')
     files_table_name = os.environ['FILES_DYNAMO_TABLE']
 
@@ -70,7 +69,7 @@ def get_presigned_download_url(event, context, current_user, name, data):
         return access_result
     
     download_filename = item['name']
-    is_file_type = item['Item']['type'] in IMAGE_FILE_TYPES
+    is_file_type = item['type'] in IMAGE_FILE_TYPES
     response_headers = {
         'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
     } if download_filename and not is_file_type else {}
@@ -253,7 +252,6 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
 
 
 def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
-    dynamodb = boto3.resource('dynamodb')
     bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME' if (file_type in IMAGE_FILE_TYPES) else 'S3_RAG_INPUT_BUCKET_NAME' ] 
     dt_string = datetime.now().strftime('%Y-%m-%d')
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
@@ -290,8 +288,6 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
     kb = data.get('knowledge_base','default')
     data_props = data.get('data',{})
     tags = data.get('tags',[])
-
-    dynamodb = boto3.resource('dynamodb')
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
 
@@ -626,7 +622,6 @@ def get_presigned_url(event, context, current_user, name, data):
 )
 @validated(op="list")
 def list_tags_for_user(event, context, current_user, name, data):
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
 
     try:
@@ -687,7 +682,6 @@ def delete_tag_from_user(event, context, current_user, name, data):
     data = data['data']
     tag_to_delete = data['tag']
 
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
 
     try:
@@ -762,7 +756,6 @@ def create_tags(event, context, current_user, name, data):
 
 def add_tags_to_user(current_user, tags_to_add):
     """Add a tag to user's list of tags if it doesn't already exist."""
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
 
     try:
@@ -850,8 +843,6 @@ def update_item_tags(event, context, current_user, name, data):
 def update_file_tags(current_user, item_id, tags):
     # Helper function that updates tags in DynamoDB and adds tags to the user
     table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
-
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(table_name)
 
     try:
@@ -1207,7 +1198,7 @@ def query_user_files_by_created_at2(user, created_at_start, page_size, exclusive
     }
 
 @validated("delete")
-def delete_embeddings(event, context, current_user, name, data):
+def delete_file(event, context, current_user, name, data):
     """
     Function to delete a file from the company's database. Handles partial and full deletions 
     based on access permissions and file ownership.
@@ -1215,7 +1206,6 @@ def delete_embeddings(event, context, current_user, name, data):
     :param event: Event payload containing 'key'
     :param context: Lambda context (not used here)
     """
-    print("Endpoint hit")
 
     try:
         # Extract the access token from the Authorization header
@@ -1226,20 +1216,42 @@ def delete_embeddings(event, context, current_user, name, data):
 
         if not key or not current_user:
             raise ValueError("'key' and 'name' are required")
-
-        dynamodb = boto3.resource('dynamodb')
+        
         print(f"Key: {key}")
         print(f"Current User: {current_user}")
-
-        # Step 1: Read the hash files table to get global key
-        hash_table = os.environ['HASH_FILES_DYNAMO_TABLE']
-        hash_files_table = dynamodb.Table(hash_table)
-        hash_response = hash_files_table.get_item(Key={'id': key})
-        if 'Item' not in hash_response:
-            return {'statusCode': 404, 'body': json.dumps({'error': 'File not found'})}
+        #check if the file is an image
+        try:
+            print("Looking up file in files table")
+            files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+            response = files_table.get_item(Key={'id': key})
+            if 'Item' not in response:
+                # User doesn't match or item doesn't exist
+                print(f"File not found for user {current_user}: {response}")
+                return {'success': False, 'message': 'File not found'}
+        except ClientError as e:
+            print(f"Error getting file metadata from DynamoDB: {e}")
+            error_message = e.response['Error']['Message']
+            return {'success': False, 'message': error_message}
         
-        global_key = hash_response['Item'].get('textLocationKey')
-        print(f"Global Key: {global_key}")
+        item = response['Item']
+        file_type = item.get('type')
+        print(f"File type: {file_type}")
+        is_image = file_type and file_type in IMAGE_FILE_TYPES
+
+        file_contents_hash = None
+        global_key = key
+        if not is_image:
+            # Step 1: Read the hash files table to get global key
+            hash_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+            hash_files_table = dynamodb.Table(hash_table)
+            hash_response = hash_files_table.get_item(Key={'id': key})
+            if 'Item' not in hash_response:
+                print(f"File not found in hash files table")
+                return {'success': False, 'message': 'File not found'}
+            
+            global_key = hash_response['Item'].get('textLocationKey')
+            file_contents_hash = hash_response['Item'].get('hash')
+            print(f"Global Key: {global_key}")
 
         # Step 2: Get all access entries for this file
         oa_table = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
@@ -1249,7 +1261,8 @@ def delete_embeddings(event, context, current_user, name, data):
         )
 
         if not access_response['Items']:
-            return {'statusCode': 403, 'body': json.dumps({'error': 'No access entries found for this file'})}
+            print(f"No access entries found for this file")
+            return {'success': False, 'message': 'No access entries found for this file'}
 
         # Step 3: Analyze access rights
         current_user_permission = None
@@ -1267,15 +1280,14 @@ def delete_embeddings(event, context, current_user, name, data):
                 high_access_count += 1
 
         if current_user_permission is None:
-            return {'statusCode': 403, 'body': json.dumps({'error': 'Current user has no access to this file'})}
+            return {'success': False, 'message': 'Current user has no access to this file'}
 
         # Step 4: Handle deletion paths
         if current_user_permission.lower() == 'read':
-            delete_personally(dynamodb, global_key, key, current_user)
+            print("Current user has read access only")
+            route_personal_file_deletion(global_key, key, current_user, is_image)
 
             # Step 3: Delete from object access table
-            oa_table = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
-            object_access_table = dynamodb.Table(oa_table)
             try:
                 object_access_table.delete_item(Key={'object_id': global_key, 'principal_id': current_user})
                 print("Deleted from object access file table")
@@ -1285,11 +1297,9 @@ def delete_embeddings(event, context, current_user, name, data):
         elif current_user_permission.lower() in ['write', 'owner']:
             if high_access_count > 1:
                 # Multiple users have write access
-                delete_personally(dynamodb, global_key, key, current_user)
+                route_personal_file_deletion(global_key, key, current_user, is_image)
 
                 # Step 3: Delete from object access table
-                oa_table = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
-                object_access_table = dynamodb.Table(oa_table)
                 try:
                     object_access_table.delete_item(Key={'object_id': global_key, 'principal_id': current_user})
                     print("Deleted from object access file table")
@@ -1298,28 +1308,46 @@ def delete_embeddings(event, context, current_user, name, data):
 
             elif len(users_with_access) > 1:
                 # Other users have access, but current user is the only one with write access
-                
+                print("Other users have access, but current user is the only one with write access")
                 #TODO Update with whatever we want to do to the other lower accessed people
-                delete_fully(dynamodb, global_key, key, current_user, access_token)
+                route_full_file_deletion(global_key, key, file_contents_hash, current_user, access_token, is_image)
             else:
                 # Current user is the only one with access
-                delete_fully(dynamodb, global_key, key, current_user, access_token)
+                print("Current user is the only one with access")
+                route_full_file_deletion(global_key, key, file_contents_hash, current_user, access_token, is_image)
 
         return {
-            'statusCode': 200,
-            'body': json.dumps({'message': f'File deleted successfully'}),
-            'headers': {'Content-Type': 'application/json'}
+            'success': True,
+            'message': f'File deleted successfully'
         }
 
     except Exception as e:
         print(f"Exception occurred: {str(e)}")
         return {
-            'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
+            'success': False,
+            'message': str(e)
         }
 
 
-def delete_personally(dynamodb, global_key, key, current_user):
+def route_personal_file_deletion(global_key, key, current_user, is_image):
+    print(f"Route personal file deletion - is_image: {is_image}")
+    if is_image:
+        delete_file_from_table(key)
+    else:
+        delete_text_file_personally(global_key, key, current_user)
+      
+    
+
+def route_full_file_deletion(global_key, key, file_contents_hash, current_user, access_token, is_image):
+    print(f"Route full file deletion - is_image: {is_image}")
+    if is_image:
+        delete_file_from_table(key)
+        delete_image_file(key)
+    else:
+        delete_text_file_fully(global_key, key, file_contents_hash, current_user, access_token)
+
+
+def delete_text_file_personally(global_key, key, current_user):
     """
     Perform a partial deletion of a file.
     """
@@ -1334,7 +1362,6 @@ def delete_personally(dynamodb, global_key, key, current_user):
     )
 
     items_to_delete = response['Items']
-
     # Check if there are more items (pagination)
     while 'LastEvaluatedKey' in response:
         response = hash_files_table.query(
@@ -1343,41 +1370,48 @@ def delete_personally(dynamodb, global_key, key, current_user):
             ExclusiveStartKey=response['LastEvaluatedKey']
         )
         items_to_delete.extend(response['Items'])
-
+    
+    print("Deleting items:")
     # Step 2: Delete each item
     for item in items_to_delete:
-        user = item['id'].split("/")[0]
+        user = item.get("originalCreator") or item['id'].split("/")[0]
+        print("item: ", item)
+        print(f"user: {user}")
         if user == current_user:
             try:
+                print(f"Deleting entry from hash files table: {item['id']}") 
                 hash_files_table.delete_item(Key={'id': item['id']})
                 print(f"Deleted item with id {item['id']} from hash files table")
             except ClientError as e:
                 print(f"Error deleting file text from hash file table: {e}")
         else:
-            print(f"File belongs to another user with the ID: {item['id']}")
+            print(f"Skipping delete, entry belongs to another user with the entry ID: {item['id']}")
 
     print(f"Total items deleted: {len(items_to_delete)}")
 
     # Step 2: Delete from user files table
-    user_table = os.environ['FILES_DYNAMO_TABLE']
-    user_files_table = dynamodb.Table(user_table)
-    try:
-        user_files_table.delete_item(Key={'id': key})
-        print("Deleted from user file table")
-    except ClientError as e:
-        print(f"Error deleting file text from the user file table: {e}")
+    delete_file_from_table(key)
 
-
-def delete_fully(dynamodb, global_key, key, current_user, access_token):
+    
+def delete_text_file_fully(global_key, key, file_contents_hash,  current_user, access_token):
     """
     Perform a full deletion of a file.
     """
-    delete_personally(dynamodb, global_key, key, current_user)
+    delete_text_file_personally(global_key, key, current_user)
+
+    hash_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+    hash_files_table = dynamodb.Table(hash_table)
+
+    try:
+        print(f"Deleting hash entry from hash files table: {file_contents_hash}")
+        # delete hash 
+        hash_files_table.delete_item(Key={'id': file_contents_hash})
+        print(f"Deleted item with id {file_contents_hash} from hash files table")
+    except ClientError as e:
+        print(f"Error deleting file text from hash file table: {e}")
 
     #TODO Update the PostgreSQL embedding
     # Notes: Query the embeddings database by global ID
-
-
     # Step 4: Delete embedding progress
     embedding_table = os.environ['EMBEDDING_PROGRESS_TABLE']
     embedding_progress_table = dynamodb.Table(embedding_table)
@@ -1391,8 +1425,9 @@ def delete_fully(dynamodb, global_key, key, current_user, access_token):
     # Step 5: Delete file from S3
     s3 = boto3.client('s3')
     s3_bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
-
+    
     try:
+        print(f"Deleting file from S3: {key}")
         s3.delete_object(Bucket=s3_bucket_name, Key=key)
         print("Deleted file from S3")
     except ClientError as e:
@@ -1423,3 +1458,27 @@ def delete_fully(dynamodb, global_key, key, current_user, access_token):
         print("Deleted from object access file table")
     except ClientError as e:
         print(f"Error deleting file text from object access table: {e}")
+
+
+
+def delete_file_from_table(key):
+    # Step 2: Delete from user files table
+    user_table = os.environ['FILES_DYNAMO_TABLE']
+    user_files_table = dynamodb.Table(user_table)
+    try:
+        user_files_table.delete_item(Key={'id': key})
+        print("Deleted from user file table")
+    except ClientError as e:
+        print(f"Error deleting file text from the user file table: {e}")
+
+
+
+def delete_image_file(key):
+    bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME'] 
+    s3 = boto3.client('s3')
+    try:
+        print(f"Deleting image file from S3: {key}")
+        s3.delete_object(Bucket=bucket_name, Key=key)
+        print("Deleted from S3")
+    except ClientError as e:
+        print(f"Error deleting file from S3: {e}")
