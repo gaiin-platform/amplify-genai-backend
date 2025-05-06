@@ -76,7 +76,7 @@ provider:
     DEP_REGION: ${self:custom.stageVars.DEP_REGION} 
     AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
     AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
-
+    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
     
     
 
