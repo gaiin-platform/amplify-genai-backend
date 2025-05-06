@@ -589,8 +589,11 @@ def build_response(
 
         response["files"] = transformed_files
 
-    if file_results and file_results["status"] == "success" and file_results["files_processed"] > 0:
-        response["changed_files"] = file_results["changed_files"]
+    if file_results and file_results["status"] == "success":
+        if file_results.get("files_processed", 0) > 0:
+            response["changed_files"] = file_results["changed_files"]
+        if file_results.get("files_deleted", 0) > 0:
+            response["deleted_files"] = file_results["deleted_files"]
 
     return response
 

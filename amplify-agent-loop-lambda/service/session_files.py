@@ -359,8 +359,8 @@ class LambdaFileTracker:
             # Store the mapping from source ID to local path
             self.data_sources[source_id] = source_name
             
-            # Add to initial state to avoid re-uploading
-            self.initial_state[source_name] = self.get_file_info(local_path)
+            # Don't add to initial state so the data source will be detected as a changed file
+            # and properly synced to S3
             
             return {
                 "status": "success",
@@ -377,10 +377,12 @@ class LambdaFileTracker:
                 "data_source": data_source
             }
 
-    def get_changed_files(self) -> Tuple[List[str], Dict[str, str], Dict[str, Dict]]:
-        """Get list of changed/new files and their S3 mappings, with version info."""
+    def get_changed_files(self) -> Tuple[List[str], Dict[str, str], Dict[str, Dict], List[str]]:
+        """Get list of changed/new files and their S3 mappings, with version info.
+        Also returns list of deleted files that should be removed from S3 index."""
         current_state = self.scan_directory()
         changed_files = []
+        deleted_files = []
         filename_mapping = self.existing_mappings.copy()
         version_info = {}
 
@@ -397,20 +399,28 @@ class LambdaFileTracker:
                     'hash': current_info['hash'],
                     'size': current_info['size']
                 }
+                
+        # Check for deleted files (exist in initial_state but not in current_state)
+        for filepath in self.initial_state:
+            if filepath not in current_state:
+                deleted_files.append(filepath)
+                # Remove the mapping for deleted files
+                if filepath in filename_mapping:
+                    filename_mapping.pop(filepath)
 
-        return changed_files, filename_mapping, version_info
+        return changed_files, filename_mapping, version_info, deleted_files
 
     def upload_changed_files(self) -> Dict:
         """Upload changed files to S3 and return upload information."""
         if not self.bucket:
             raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
-        changed_files, filename_mapping, version_info = self.get_changed_files()
+        changed_files, filename_mapping, version_info, deleted_files = self.get_changed_files()
 
-        if not changed_files:
+        if not changed_files and not deleted_files:
             return {
                 "status": "success",
-                "message": "No files changed",
+                "message": "No files changed or deleted",
                 "files_processed": 0,
                 "mappings": self.existing_mappings
             }
@@ -446,14 +456,18 @@ class LambdaFileTracker:
                 # Add new version
                 existing_index['version_history'][filepath].append(version_data)
 
-            # Update current mappings
-            existing_index['mappings'].update(filename_mapping)
+            # Replace mappings entirely to ensure deletions are reflected
+            existing_index['mappings'] = filename_mapping
             existing_index['timestamp'] = datetime.utcnow().isoformat()
             
             # Add data sources mapping to the index file
             if not 'data_sources' in existing_index:
                 existing_index['data_sources'] = {}
             existing_index['data_sources'].update(self.data_sources)
+            
+            # Log deletion information
+            if deleted_files:
+                print(f"Deleted files removed from mappings: {deleted_files}")
 
             # Upload index file
             self.s3_client.put_object(
@@ -485,9 +499,11 @@ class LambdaFileTracker:
 
             return {
                 "status": "success",
-                "message": f"Processed {len(changed_files)} files",
+                "message": f"Processed {len(changed_files)} files, removed {len(deleted_files)} deleted files",
                 "files_processed": len(changed_files),
+                "files_deleted": len(deleted_files),
                 "changed_files": changed_files,
+                "deleted_files": deleted_files,
                 "mappings": filename_mapping,
                 "upload_results": upload_results,
                 "index_location": {
