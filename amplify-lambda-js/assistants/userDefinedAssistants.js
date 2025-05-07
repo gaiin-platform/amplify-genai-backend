@@ -245,6 +245,10 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
+            if (assistant.data && assistant.data.trackConversations) {
+                body.options.trackConversations = true;
+            }
+
             if(assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
 
