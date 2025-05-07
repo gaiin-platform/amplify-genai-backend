@@ -42,7 +42,7 @@ provider:
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    DATASOURCE_REGISTRY_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-datasource-registry
+    DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
     S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
