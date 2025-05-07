@@ -85,7 +85,10 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                                                                         
             let options = params.body.options ? {...params.body.options} : {};
 
-            params.body.options.numPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
+            // Calculate numberPrompts and set it in both places
+            const calculatedPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
+            params.body.options.numberPrompts = calculatedPrompts;
+            options.numberPrompts = calculatedPrompts; // Set it in the new options object too
             
             const modelId = (options.model && options.model.id);
 

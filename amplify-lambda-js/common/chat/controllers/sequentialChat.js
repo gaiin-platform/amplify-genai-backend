@@ -141,13 +141,23 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
     console.log("--llm response-- ", llmResponse );
                                                    
     if (isDirectResponseToUser) {
-        
-        if (chatRequest.options.analysisCategories) { 
-            logger.debug("Performing AI Analysis on conversationId:", chatRequest.options.conversationId);
-            analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
+        if (chatRequest.options.trackConversations) {
+            logger.debug("Track conversations enabled for:", chatRequest.options.conversationId);
+
+            // Determine if category analysis should be performed
+            const performCategoryAnalysis = !!chatRequest.options?.analysisCategories;
+
+            logger.debug(`Category analysis ${performCategoryAnalysis ? 'enabled' : 'disabled'} for conversation ${chatRequest.options.conversationId}`);
+
+            // Pass the flag to the analysis function
+            analyzeAndRecordGroupAssistantConversation(
+                chatRequest,
+                llmResponse,
+                user,
+                performCategoryAnalysis
+            ).catch(error => {
                 logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
             });
         }
-    
     }
 }
