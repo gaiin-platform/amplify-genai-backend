@@ -23,4 +23,5 @@ FEATURE_FLAGS = {
     'mtdCost': False,
     'highlighter': True,
     'mixPanel': False,
+    'assistantPathPublishing': False, # Controls the feature to publish assistants at custom paths
   }

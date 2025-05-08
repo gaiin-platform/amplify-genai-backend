@@ -1,46 +1,15 @@
-
 import os
 import requests
 import json
 
 
-def get_all_ast_admin_groups(access_token):
-    print("Initiate get ast admin call")
+def verify_member_of_ast_admin_group(access_token, group_id):
+    print("Initiate verify in ast admin group call")
 
-    endpoint =  os.environ['API_BASE_URL'] + '/groups/list_all'
-
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {access_token}'
-    }
-
-    try:
-        response = requests.get(
-            endpoint,
-            headers=headers,
-        )
-        print("Response: ", response.content)
-        response_content = response.json() # to adhere to object access return response dict
-
-        if response.status_code != 200 or not response_content.get('success', False):
-            return {'success': False, 'data': None}
-        elif response.status_code == 200 and response_content.get('success', False):
-            return response_content
-
-    except Exception as e:
-        print(f"Error getting ast admin groups: {e}")
-        return {'success': False, 'data': None}
-
-
-
-
-def update_ast_admin_groups(access_token, data):
-    print("Initiate update ast admin groups call")
-
-    endpoint = os.environ['API_BASE_URL'] + '/groups/update'
-    
+    endpoint = os.environ['API_BASE_URL'] + '/groups/verify_ast_group_member'
+ 
     request = {
-        "data": data
+        "data": {'groupId': group_id}
     }
 
     headers = {
@@ -58,12 +27,46 @@ def update_ast_admin_groups(access_token, data):
         response_content = response.json() # to adhere to object access return response dict
 
         if response.status_code != 200 or not response_content.get('success', False):
-            return {'success': False, "message": response_content.get('message', 'Failed to update supported models')}
+            return False
         elif response.status_code == 200 and response_content.get('success', False):
-            return response_content
+            return response_content.get('isMember', False)
 
     except Exception as e:
-        print(f"Error updating supported Models: {e}")
-        return {'success': False, "message": "Failed to make request"}
+        print(f"Error verifying amp group membership: {e}")
+        return False
 
+
+
+def verify_user_in_amp_group(access_token, groups):
+    if (not groups or len(groups) == 0): return False
+    print("Initiate verify in amp group call")
+
+    endpoint = os.environ['API_BASE_URL'] + '/amplifymin/verify_amp_member'
+ 
+    request = {
+        "data": {'groups': groups}
+    }
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    try:
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            data=json.dumps(request)
+        )
+        print("Response: ", response.content)
+        response_content = response.json() # to adhere to object access return response dict
+
+        if response.status_code != 200 or not response_content.get('success', False):
+            return False
+        elif response.status_code == 200 and response_content.get('success', False):
+            return response_content.get('isMember', False)
+
+    except Exception as e:
+        print(f"Error verifying amp group membership: {e}")
+        return False
 

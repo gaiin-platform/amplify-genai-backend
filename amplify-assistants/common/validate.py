@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -59,6 +58,44 @@ delete_assistant_schema = {
         },
     },
     "required": ["assistantId"],
+}
+
+lookup_assistant_schema = {
+    "type": "object",
+    "properties": {
+        "astPath": {
+            "type": "string",
+            "description": "The path to look up an assistant",
+        },
+    },
+    "required": ["astPath"],
+}
+
+add_assistant_path_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The ID of the assistant"
+        },
+        "astPath": {
+            "type": "string",
+            "description": "The path to add to the assistant"
+        },
+        "isPublic": {
+            "type": "boolean",
+            "description": "assistant is public to all amplify users"
+        },
+        "accessTo": {
+            "type": "object",
+            "description": "list of amplify groups and users that can access the assistant",
+            "properties": {
+                "amplifyGroups": {"type": "array", "items": {"type": "string"}},
+                "users": {"type": "array", "items": {"type": "string"}}
+            }
+        },
+    },
+    "required": ["assistantId", "astPath", "isPublic"]
 }
 
 create_assistant_schema = {
@@ -275,7 +312,7 @@ remove_astp_perms_schema = {
     "required": ["assistant_public_id", "users"],
 }
 
-get_group_assistant_conversations_schema = {
+assistant_id_schema = {
     "type": "object",
     "properties": {
         "assistantId": {
@@ -349,6 +386,30 @@ get_group_conversations_data_schema = {
     "required": ["conversationId", "assistantId"],
 }
 
+scrape_website_schema = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "description": "The URL to scrape"},
+        "isSitemap": {"type": "boolean", "description": "Whether the URL is a sitemap"},
+        "maxPages": {
+            "type": "integer",
+            "description": "Maximum pages to scrape from sitemap",
+        },
+    },
+    "required": ["url"],
+}
+
+rescan_websites_schema = {
+    "type": "object",
+    "properties": {
+        "assistantId": {
+            "type": "string",
+            "description": "The ID of the assistant to update",
+        },
+    },
+    "required": ["assistantId"],
+}
+
 """
 Every service must define the permissions for each operation here. 
 The permission is related to a request path and to a specific operation.
@@ -369,7 +430,7 @@ validators = {
         "remove_astp_permissions": remove_astp_perms_schema
     },
     "/assistant/get_group_assistant_conversations": {
-        "get_group_assistant_conversations": get_group_assistant_conversations_schema
+        "get_group_assistant_conversations": assistant_id_schema
     },
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
@@ -379,7 +440,11 @@ validators = {
     },
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
-    }
+    },
+    "/assistant/lookup": {"lookup": lookup_assistant_schema},
+    "/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
+    "/assistant/scrape_website": {"scrape_website": scrape_website_schema},
+    "/assistant/rescan_websites": {"rescan_websites": rescan_websites_schema},
 }
 
 api_validators = {
@@ -388,9 +453,6 @@ api_validators = {
     "/assistant/share": {"share_assistant": share_assistant_schema},
     "/assistant/list": {"list": {}},  # Get
     "/assistant/chat_with_code_interpreter": {"chat": chat_assistant_schema},
-    # "/": {
-    #     "chat": chat_assistant_schema
-    # },
     "/assistant/create/codeinterpreter": {
         "create": create_code_interpreter_assistant_schema
     },
@@ -402,17 +464,21 @@ api_validators = {
     },
     "/assistant/get/system_user": {"get": {}},
     "/assistant/get_group_assistant_conversations": {
-        "get_group_assistant_conversations": get_group_assistant_conversations_schema
+        "get_group_assistant_conversations": assistant_id_schema
     },
     "/assistant/get_group_assistant_dashboards": {
         "get_group_assistant_dashboards": get_group_assistant_dashboards_schema
     },
-    "/assistant/save_user_rating": {
-        "save_user_rating": save_user_rating_schema
-    },
+    "/assistant/save_user_rating": {"save_user_rating": save_user_rating_schema},
     "/assistant/get_group_conversations_data": {
         "get_group_conversations_data": get_group_conversations_data_schema
-    }
+    },
+    "/assistant/lookup": {"lookup": lookup_assistant_schema},
+    "/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
+    "/assistant/request_access": {"share_assistant": assistant_id_schema},
+    "/assistant/validate/assistant_id": {"lookup": assistant_id_schema},
+    "/assistant/scrape_website": {"scrape_website": scrape_website_schema},
+    "/assistant/rescan_websites": {"rescan_websites": rescan_websites_schema},
 }
 
 

@@ -23,9 +23,10 @@ export const chatBedrock = async (chatBody, writable) => {
 
     const withoutSystemMessages = [];
     // options.prompt is a match for the first message in messages 
-    for (const msg of body.messages.slice(1)) {
+    for (const msg of body.messages) {
         if (msg.role === "system") {
-            if (msg.content.trim()) systemPrompts.push({ "text": msg.content });
+                                      // avoid duplicate system prompts
+            if (msg.content.trim() && msg.content !== options.prompt) systemPrompts.push({ "text": msg.content });
         } else {
             withoutSystemMessages.push(msg);
         }
@@ -41,12 +42,12 @@ export const chatBedrock = async (chatBody, writable) => {
         
         logger.debug("Initiating call to Bedrock");
 
-        const maxModelTokens = 4096; // currently it seems like bedrock has it maxed out at 4096 not the models output max token
-        //options.model.outputTokenLimit;
+        const maxModelTokens = options.model.outputTokenLimit;
+
         const maxTokens = body.max_tokens || 1000;
         const inferenceConfigs = {"temperature": options.temperature, 
-                                  "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens};
-
+                                  "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens, };
+        
         const input = { modelId: currentModel.id,
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
@@ -84,25 +85,27 @@ export const chatBedrock = async (chatBody, writable) => {
 
         writable.on('error', (error) => {
             logger.error('Error with Writable stream: ', error);
-            sendErrorMessage(writable);
+            const statusCode = error.code || error.statusCode;
+            const statusText = error.message || error.name || 'Stream Error';
+            sendErrorMessage(writable, statusCode, statusText);
             reject(error);
         });
          
     } catch (error) {
+        if (error.message || error.$response?.message) console.log("Error invoking Bedrock API:", error.message || error.$response?.message);
         logger.error(`Error invoking Bedrock chat for model ${currentModel.id}: `, error);
-        sendErrorMessage(writable);
+        sendErrorMessage(writable, error.$metadata?.httpStatusCode, error.$response?.reason);
     }
 }
 
 
 function combineMessages(oldMessages, failSafeUserMessage) {
-    if (!oldMessages) return oldMessages;
+    if (!oldMessages || oldMessages.length === 0) return oldMessages;
     let messages = [];
     const delimiter = "\n_________________________\n";
     
     const newestMessage = oldMessages[oldMessages.length - 1]
     if (newestMessage['role'] === 'user') oldMessages[oldMessages.length - 1]['content'] =
-        //`${delimiter}Respond to the following inquiry: ${newestMessage['content']}`
         `${delimiter}${newestMessage['content']}`
     
     let i = -1;
