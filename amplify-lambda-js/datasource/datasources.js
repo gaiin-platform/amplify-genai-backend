@@ -622,6 +622,7 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
             }
             return ds;
         } catch (e) {
+            console.log(e);
             return ds;
         }
     }));

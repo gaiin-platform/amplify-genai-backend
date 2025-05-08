@@ -11,7 +11,7 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
-import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
+import {handleAgentInteraction} from "./agentHandler.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -474,7 +474,6 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     await llm.prompt(summaryRequest, []);
 
                 }
-
                 return;
 
             } else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {

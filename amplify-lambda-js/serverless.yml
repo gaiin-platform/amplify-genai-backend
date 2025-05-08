@@ -43,6 +43,7 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
+    #Combined Vars:
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
     S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
@@ -70,9 +71,11 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    DEP_REGION: ${self:custom.stageVars.DEP_REGION}
+    DEP_REGION: ${self:custom.stageVars.DEP_REGION} 
     AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
     AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
+    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
+
     
   iam:
     role:
@@ -205,7 +208,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - 'arn:aws:bedrock:*::foundation-model/*'
-                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+                - "arn:aws:bedrock:*:${aws:accountId}:inference-profile/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -214,6 +217,7 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -224,6 +228,11 @@ resources:
                 - dynamodb:DeleteItem
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
     
     RequestStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
