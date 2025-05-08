@@ -8,6 +8,7 @@ import {getChatFn, getCheapestModel, getAdvancedModel} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {resolveDataSources} from "./datasource/datasources.js";
+import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
@@ -27,12 +28,12 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
         logger.debug("Extracting params from event");
         if (params && params.statusCode) {
             returnResponse(responseStream, params);
-        } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch)) {
+        } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest)) {
             logger.info("Invalid request body", params.body);
 
             returnResponse(responseStream, {
                 statusCode: 400,
-                body: {error: "No messages provided"}
+                body: {error: "No messages or datasource request provided"}
             });
         } else if (params && !params.user) {
             logger.info("No user found, returning 401");
@@ -62,7 +63,11 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                     body: {error: "Invalid killswitch request"}
                 });
             }
-
+        } else if(params.body.datasourceRequest) {
+            // Handle datasource request
+            logger.info("Processing datasource request");
+            const response = await handleDatasourceRequest(params, params.body.datasourceRequest);
+            returnResponse(responseStream, response);
         } else if (await isRateLimited(params)) {
             returnResponse(responseStream, {
                 statusCode: 429,
