@@ -4,7 +4,7 @@
 import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
-import {getChatFn, getCheapestModel} from "../common/params.js";
+import {getChatFn, getCheapestModel, isOpenAIModel} from "../common/params.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
@@ -52,7 +52,7 @@ const defaultAssistant = {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
         }
 
-        if(!body.options.ragOnly && (dataSources.length > 1 || aboveLimit)){
+        if(!body.options.ragOnly && aboveLimit){
             return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
         }
         else {
@@ -235,8 +235,8 @@ const getTokenCount = (dataSource, model) => {
     if (dataSource.metadata && dataSource.metadata.totalTokens ) {
         const totalTokens = dataSource.metadata.totalTokens;
         if (isImage(dataSource)) {
-            return model.id.includes("gpt") ? totalTokens.gpt : 
-                   model.id.includes("anthropic") ? totalTokens.claude : "";
+            return isOpenAIModel (model.id) ? totalTokens.gpt : 
+                 model.id.includes("anthropic") ? totalTokens.claude : 1000;
         }
         if (!dataSource.metadata.ragOnly) return totalTokens;
     }
@@ -275,8 +275,9 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
         logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
         // For group ast
         const user = llm.params.account.user;
+        const token = llm.params.account.accessToken;
         const ast_owner = clientSelectedAssistant.startsWith("astgp") ? body.options.groupId : user;
-        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, ast_owner, clientSelectedAssistant);
+        selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, ast_owner, clientSelectedAssistant, token);
         if (!selectedAssistant) {
             llm.sendStatus(newStatus(
                 {   inProgress: false,
@@ -285,6 +286,10 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
                     sticky: true
                 }));
             llm.forceFlush();
+
+            if (body.options.api_accessed) {
+                throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
+            }
         }
     }
     else if(hasTools) {

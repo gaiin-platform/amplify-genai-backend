@@ -43,8 +43,6 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
-    OBJECT_ACCESS_PERMISSIONS_ENDPOINT: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects
-
     #Combined Vars:
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
     SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
@@ -77,14 +75,14 @@ provider:
     AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
     AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
     S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
-    
-    
 
+    
   iam:
     role:
       managedPolicies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - !Ref LambdaJSIAMPolicy
+        - !Ref BedrockIAMPolicy
         #- arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_JS_IAM_POLICY_NAME}
 
 
@@ -208,6 +206,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
                 - 'arn:aws:bedrock:*::foundation-model/*'
                 - "arn:aws:bedrock:*:${aws:accountId}:inference-profile/*"
             - Effect: Allow
@@ -322,3 +321,23 @@ resources:
         Type: AWS::S3::Bucket
         Properties:
           BucketName: ${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}
+    BedrockIAMPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-${sls:stage}-bedrock-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModelWithResponseStream
+                - bedrock:InvokeModel
+              Resource:
+                - 'arn:aws:bedrock:*::foundation-model/*'
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+  Outputs:
+    BedrockIAMPolicyArn:
+      Value: 
+        Ref: BedrockIAMPolicy
+      Export:
+        Name: ${self:service}-${sls:stage}-BedrockIAMPolicyArn

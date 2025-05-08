@@ -144,7 +144,7 @@ export class StreamMultiplexer {
 
                             if (processor) {
                                 transformed = processor(eventObj);
-                                logger.debug("Processing Event...");
+                                // logger.debug("Processing Event...");
                             }
 
                             if (transformed) {

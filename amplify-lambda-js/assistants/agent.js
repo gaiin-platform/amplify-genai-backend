@@ -51,7 +51,7 @@ export const listenForAgentUpdates = async function(accessToken, currentUser, se
 
 
 
-export const invokeAgent = async function(accessToken, sessionId, prompt, metadata={}) {
+export const invokeAgent = async function(accessToken, sessionId, requestId, prompt, metadata={}) {
     // Do other async operations here if needed
     // const someData = await fetchSomeData();
     const endpoint = process.env.AGENT_ENDPOINT;
@@ -63,6 +63,7 @@ export const invokeAgent = async function(accessToken, sessionId, prompt, metada
         {
             data: {
                 sessionId,
+                requestId,
                 prompt,
                 metadata
             }

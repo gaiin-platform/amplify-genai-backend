@@ -26,6 +26,17 @@ export const mistralTransform = (event) => {
 export const bedrockConverseTransform = (event) => { 
     if (event && event.d && event.d.delta && event.d.delta.text) { 
         return {d: event.d.delta.text}
+    } else if (event && event.d && event.d && event.d.stopReason) {
+        switch (event.d.stopReason) {
+            case "content_filtered":
+                console.log("Bedrock Content_filtered Stop Reason");
+                return {d: "\nYour request was blocked by an AWS content filter."}
+            case "guardrail_intervened":
+                console.log("Bedrock Guardrail_intervened Stop Reason");
+                return {d: "\nYour request was blocked by your organization's guardrails."}
+            default:
+                return null;
+        }
     } else {
         return null;
     }

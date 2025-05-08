@@ -11,14 +11,14 @@ from common.validate import validated
 import os
 import boto3
 import rag.util
-import images.core
 from boto3.dynamodb.conditions import Key
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
 from common.object_permissions import can_access_objects
+from common.embedding_permissions import embedding_permission
+from common.amplify_groups import verify_member_of_ast_admin_group
+from images.image_types import IMAGE_FILE_TYPES
 
 dynamodb = boto3.resource('dynamodb')
-
-IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @op(
@@ -40,7 +40,6 @@ def get_presigned_download_url(event, context, current_user, name, data):
     if "://" in key:
         key = key.split("://")[1]
 
-    dynamodb = boto3.resource('dynamodb')
     s3 = boto3.client('s3')
     files_table_name = os.environ['FILES_DYNAMO_TABLE']
 
@@ -62,32 +61,56 @@ def get_presigned_download_url(event, context, current_user, name, data):
         # User doesn't match or item doesn't exist
         print(f"File not found for user {current_user}: {response}")
         return {'success': False, 'message': 'File not found'}
-    print("Item found: ", response['Item'])
-    if response['Item']['createdBy'] == group_id:
+    item = response['Item']
+    print("Item found: ", item)
+    access_result = can_access_file(item, current_user, key, group_id, access_token)
+    
+    if not access_result['success']:
+        return access_result
+    
+    download_filename = item['name']
+    is_file_type = item['type'] in IMAGE_FILE_TYPES
+    response_headers = {
+        'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
+    } if download_filename and not is_file_type else {}
+
+    bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME'] if is_file_type  else os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    # If the user matches, generate a presigned URL for downloading the file from S3
+    try:
+        presigned_url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': key,
+                **response_headers
+            },
+            ExpiresIn=3600  # Expiration time for the presigned URL, in seconds
+        )
+    except ClientError as e:
+        print(f"Error generating presigned download URL: {e}")
+        return {'success': False, 'message': "File not found"}
+
+    if presigned_url:
+        return {'success': True, 'downloadUrl': presigned_url}
+    else:
+        return {'success': False, 'message': 'File not found'}
+
+def can_access_file(table_item, current_user, key, group_id, access_token):
+    print(f"Checking if user {current_user} can access file {key} with groupId {group_id}")
+    created_by = table_item['createdBy']
+    if created_by == current_user:
+        return {'success': True}
+    elif group_id and created_by == group_id:
         # ensure the user/system user has access to the group by either
-        # 1. group is public 
-        # 2. user is a member of the group 
-        try:
-            print("Checking if user is a member of the group")
-            group_table = dynamodb.Table(os.environ['GROUPS_DYNAMO_TABLE'])
-            member_response = group_table.get_item(Key={'group_id': group_id})
-
-            # Check if the item was found
-            if 'Item' in member_response:
-                item = member_response['Item']
-                # Check if the group is public or if the user is in the members
-                if not (item.get('isPublic', False) or current_user in item.get('members', {}).keys() or current_user in item.get('systemUsers', [])):
-                    return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
-            else:
-                return {'success': False, 'message': f"No group entry found for groupId: {group_id}"}
-
-        except Exception as e:
-            print(f"An error occurred while processing groupId {group_id}: {e}")
-            return {'success': False, 'message': f"An error occurred while processing groupId: {group_id}"}
-    elif response['Item']['createdBy'] != current_user:
+        print("Checking if user is a member of the group: ", group_id)
+        is_member = verify_member_of_ast_admin_group(access_token, group_id)
+        if (not is_member):
+            return {'success': False, 'message': f"User is not a member of groupId: {group_id}"}
+        print("User is a member of the group: ", group_id)
+    else:
         translated_ds = None
         try:# need global 
-            translated_ds = translate_user_data_sources_to_hash_data_sources([{"id" : key, 'type': response['Item']['type']}])
+            translated_ds = translate_user_data_sources_to_hash_data_sources([{"id" : key, 'type': table_item['type']}])
         except:
             print("Datasource translation failed")
 
@@ -134,39 +157,101 @@ def get_presigned_download_url(event, context, current_user, name, data):
                 return {'success': False, 'message': 'GroupId does not have access to the data source'} 
             
         elif (not can_access_objects(access_token, translated_ds)): # checks can access on the user 
-            print(f"User {current_user} does not have acces to download: {response['Item']}")
+            print(f"User {current_user} does not have acces to download: {table_item}")
             return {'success': False, 'message': 'User does not have access to the data source'}
+# due to lambda layer requirements in rag.core, we have to define this function here
+@validated(op="upload")
+def reprocess_document_for_rag(event, context, current_user, name, data):
+    """
+    Reprocess a document that has already been processed.
+    This function deletes the hash entry and then queues the document for processing again,
+    while preserving the original metadata.
+    """
+    s3 = boto3.client('s3')
+    access_token = data['access_token']
+    data = data['data']
+    key = data['key']
+    group_id = data.get('groupId')
+    bucket = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+
+    if not bucket or not key:
+        return {
+            'success': False,
+            'message': 'Missing required parameters: bucket and key'
+        }
+   
+    print(f"Reprocessing document: {bucket}/{key}")
     
-    download_filename = response['Item']['name']
-    is_file_type = response['Item']['type'] in IMAGE_FILE_TYPES
-    response_headers = {
-        'ResponseContentDisposition': f'attachment; filename="{download_filename}"'
-    } if download_filename and not is_file_type else {}
-
-    bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME'] if is_file_type  else os.environ['S3_RAG_INPUT_BUCKET_NAME']
-    # If the user matches, generate a presigned URL for downloading the file from S3
+    files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+    # verify this is not an image file
     try:
-        presigned_url = s3.generate_presigned_url(
-            ClientMethod='get_object',
-            Params={
-                'Bucket': bucket_name,
-                'Key': key,
-                **response_headers
-            },
-            ExpiresIn=3600  # Expiration time for the presigned URL, in seconds
-        )
+        response = files_table.get_item(Key={'id': key})
+        if 'Item' not in response:
+            # User doesn't match or item doesn't exist
+            print(f"File not found for user {current_user}: {response}")
+            return {'success': False, 'message': 'File not found'}
+        item = response['Item']
+        file_type = item.get('type')
+        if file_type and file_type in IMAGE_FILE_TYPES:
+            print(f"File {key} is an image file, not supported for reprocessing")
+            return {'success': False, 'message': 'Image files are not supported for reprocessing'}
+        access_result = can_access_file(item, current_user, key, group_id, access_token)
+        if not access_result['success']:
+            return access_result
+        
     except ClientError as e:
-        print(f"Error generating presigned download URL: {e}")
-        return {'success': False, 'message': "File not found"}
-
-    if presigned_url:
-        return {'success': True, 'downloadUrl': presigned_url}
-    else:
-        return {'success': False, 'message': 'File not found'}
+        print(f"Error getting file metadata from DynamoDB: {e}")
+        error_message = e.response['Error']['Message']
+        return {
+                'success': False,
+                'message': error_message
+            }
+    try:
+        
+        # First, verify the file exists and get its metadata
+        try:
+            s3.head_object(Bucket=bucket, Key=key)
+        except Exception as e:
+            print(f"Error checking S3 object: {str(e)}")
+            return {
+                'success': False,
+                'message': f'File not found or not accessible: {bucket}/{key}'
+            }
+                   
+        # Create a synthetic S3 event to trigger processing
+        record = {
+                    'force_reprocess': True,  # This will be included in the JSON sent to SQS
+                    's3': {
+                        'bucket': {
+                            'name': bucket
+                        },
+                        'object': {
+                            'key': key
+                        }
+                    },
+                }
+        # Queue the document for processing
+        queue_url = os.environ['rag_process_document_queue_url']
+        message_body = json.dumps(record)
+        print(f"Sending message to queue: {message_body}")
+        sqs = boto3.client('sqs')
+        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
+        print(f"Message sent to queue: {message_body}")
+        
+        return {
+            'success': True,
+            'message': 'Document queued for reprocessing'
+        }
+    
+    except Exception as e:
+        print(f"Error reprocessing document: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error reprocessing document: {str(e)}'
+        }
 
 
 def create_file_metadata_entry(current_user, name, file_type, tags, data_props, knowledge_base):
-    dynamodb = boto3.resource('dynamodb')
     bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME' if (file_type in IMAGE_FILE_TYPES) else 'S3_RAG_INPUT_BUCKET_NAME' ] 
     dt_string = datetime.now().strftime('%Y-%m-%d')
     key = f'{current_user}/{dt_string}/{uuid.uuid4()}.json'
@@ -203,8 +288,6 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
     kb = data.get('knowledge_base','default')
     data_props = data.get('data',{})
     tags = data.get('tags',[])
-
-    dynamodb = boto3.resource('dynamodb')
 
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
 
@@ -539,7 +622,6 @@ def get_presigned_url(event, context, current_user, name, data):
 )
 @validated(op="list")
 def list_tags_for_user(event, context, current_user, name, data):
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
 
     try:
@@ -600,7 +682,6 @@ def delete_tag_from_user(event, context, current_user, name, data):
     data = data['data']
     tag_to_delete = data['tag']
 
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
 
     try:
@@ -675,7 +756,6 @@ def create_tags(event, context, current_user, name, data):
 
 def add_tags_to_user(current_user, tags_to_add):
     """Add a tag to user's list of tags if it doesn't already exist."""
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(os.environ['USER_TAGS_DYNAMO_TABLE'])
 
     try:
@@ -763,8 +843,6 @@ def update_item_tags(event, context, current_user, name, data):
 def update_file_tags(current_user, item_id, tags):
     # Helper function that updates tags in DynamoDB and adds tags to the user
     table_name = os.environ['FILES_DYNAMO_TABLE']  # Get the table name from the environment variable
-
-    dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(table_name)
 
     try:
@@ -1118,3 +1196,289 @@ def query_user_files_by_created_at2(user, created_at_start, page_size, exclusive
             'pageKey': last_evaluated_key
         }
     }
+
+@validated("delete")
+def delete_file(event, context, current_user, name, data):
+    """
+    Function to delete a file from the company's database. Handles partial and full deletions 
+    based on access permissions and file ownership.
+
+    :param event: Event payload containing 'key'
+    :param context: Lambda context (not used here)
+    """
+
+    try:
+        # Extract the access token from the Authorization header
+        access_token = data['access_token']
+
+        data = data.get('data', {})
+        key = data.get('key')
+
+        if not key or not current_user:
+            raise ValueError("'key' and 'name' are required")
+        
+        print(f"Key: {key}")
+        print(f"Current User: {current_user}")
+        #check if the file is an image
+        try:
+            print("Looking up file in files table")
+            files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
+            response = files_table.get_item(Key={'id': key})
+            if 'Item' not in response:
+                # User doesn't match or item doesn't exist
+                print(f"File not found for user {current_user}: {response}")
+                return {'success': False, 'message': 'File not found'}
+        except ClientError as e:
+            print(f"Error getting file metadata from DynamoDB: {e}")
+            error_message = e.response['Error']['Message']
+            return {'success': False, 'message': error_message}
+        
+        item = response['Item']
+        file_type = item.get('type')
+        print(f"File type: {file_type}")
+        is_image = file_type and file_type in IMAGE_FILE_TYPES
+
+        file_contents_hash = None
+        global_key = key
+        if not is_image:
+            # Step 1: Read the hash files table to get global key
+            hash_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+            hash_files_table = dynamodb.Table(hash_table)
+            hash_response = hash_files_table.get_item(Key={'id': key})
+            if 'Item' not in hash_response:
+                print(f"File not found in hash files table")
+                return {'success': False, 'message': 'File not found'}
+            
+            global_key = hash_response['Item'].get('textLocationKey')
+            file_contents_hash = hash_response['Item'].get('hash')
+            print(f"Global Key: {global_key}")
+
+        # Step 2: Get all access entries for this file
+        oa_table = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+        object_access_table = dynamodb.Table(oa_table)
+        access_response = object_access_table.query(
+            KeyConditionExpression=Key('object_id').eq(global_key)
+        )
+
+        if not access_response['Items']:
+            print(f"No access entries found for this file")
+            return {'success': False, 'message': 'No access entries found for this file'}
+
+        # Step 3: Analyze access rights
+        current_user_permission = None
+        users_with_access = []
+        high_access_count = 0
+
+        for item in access_response['Items']:
+            users_with_access.append({
+                'principal_id': item['principal_id'],
+                'permission_level': item['permission_level']
+            })
+            if item['principal_id'] == current_user:
+                current_user_permission = item['permission_level']
+            if item['permission_level'].lower() in ['write', 'owner']:
+                high_access_count += 1
+
+        if current_user_permission is None:
+            return {'success': False, 'message': 'Current user has no access to this file'}
+
+        # Step 4: Handle deletion paths
+        if current_user_permission.lower() == 'read':
+            print("Current user has read access only")
+            route_personal_file_deletion(global_key, key, current_user, is_image)
+
+            # Step 3: Delete from object access table
+            try:
+                object_access_table.delete_item(Key={'object_id': global_key, 'principal_id': current_user})
+                print("Deleted from object access file table")
+            except ClientError as e:
+                print(f"Error deleting file text from object access table: {e}")
+
+        elif current_user_permission.lower() in ['write', 'owner']:
+            if high_access_count > 1:
+                # Multiple users have write access
+                route_personal_file_deletion(global_key, key, current_user, is_image)
+
+                # Step 3: Delete from object access table
+                try:
+                    object_access_table.delete_item(Key={'object_id': global_key, 'principal_id': current_user})
+                    print("Deleted from object access file table")
+                except ClientError as e:
+                    print(f"Error deleting file text from object access table: {e}")
+
+            elif len(users_with_access) > 1:
+                # Other users have access, but current user is the only one with write access
+                print("Other users have access, but current user is the only one with write access")
+                #TODO Update with whatever we want to do to the other lower accessed people
+                route_full_file_deletion(global_key, key, file_contents_hash, current_user, access_token, is_image)
+            else:
+                # Current user is the only one with access
+                print("Current user is the only one with access")
+                route_full_file_deletion(global_key, key, file_contents_hash, current_user, access_token, is_image)
+
+        return {
+            'success': True,
+            'message': f'File deleted successfully'
+        }
+
+    except Exception as e:
+        print(f"Exception occurred: {str(e)}")
+        return {
+            'success': False,
+            'message': str(e)
+        }
+
+
+def route_personal_file_deletion(global_key, key, current_user, is_image):
+    print(f"Route personal file deletion - is_image: {is_image}")
+    if is_image:
+        delete_file_from_table(key)
+    else:
+        delete_text_file_personally(global_key, key, current_user)
+      
+    
+
+def route_full_file_deletion(global_key, key, file_contents_hash, current_user, access_token, is_image):
+    print(f"Route full file deletion - is_image: {is_image}")
+    if is_image:
+        delete_file_from_table(key)
+        delete_image_file(key)
+    else:
+        delete_text_file_fully(global_key, key, file_contents_hash, current_user, access_token)
+
+
+def delete_text_file_personally(global_key, key, current_user):
+    """
+    Perform a partial deletion of a file.
+    """
+    # Step 1: Delete from hash files table
+    hash_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+    hash_files_table = dynamodb.Table(hash_table)
+
+    # Step 1: Query the GSI to get all items with the same textLocationKey
+    response = hash_files_table.query(
+        IndexName='TextLocationIndex',
+        KeyConditionExpression=Key('textLocationKey').eq(global_key)
+    )
+
+    items_to_delete = response['Items']
+    # Check if there are more items (pagination)
+    while 'LastEvaluatedKey' in response:
+        response = hash_files_table.query(
+            IndexName='TextLocationIndex',
+            KeyConditionExpression=Key('textLocationKey').eq(global_key),
+            ExclusiveStartKey=response['LastEvaluatedKey']
+        )
+        items_to_delete.extend(response['Items'])
+    
+    print("Deleting items:")
+    # Step 2: Delete each item
+    for item in items_to_delete:
+        user = item.get("originalCreator") or item['id'].split("/")[0]
+        print("item: ", item)
+        print(f"user: {user}")
+        if user == current_user:
+            try:
+                print(f"Deleting entry from hash files table: {item['id']}") 
+                hash_files_table.delete_item(Key={'id': item['id']})
+                print(f"Deleted item with id {item['id']} from hash files table")
+            except ClientError as e:
+                print(f"Error deleting file text from hash file table: {e}")
+        else:
+            print(f"Skipping delete, entry belongs to another user with the entry ID: {item['id']}")
+
+    print(f"Total items deleted: {len(items_to_delete)}")
+
+    # Step 2: Delete from user files table
+    delete_file_from_table(key)
+
+    
+def delete_text_file_fully(global_key, key, file_contents_hash,  current_user, access_token):
+    """
+    Perform a full deletion of a file.
+    """
+    delete_text_file_personally(global_key, key, current_user)
+
+    hash_table = os.environ['HASH_FILES_DYNAMO_TABLE']
+    hash_files_table = dynamodb.Table(hash_table)
+
+    try:
+        print(f"Deleting hash entry from hash files table: {file_contents_hash}")
+        # delete hash 
+        hash_files_table.delete_item(Key={'id': file_contents_hash})
+        print(f"Deleted item with id {file_contents_hash} from hash files table")
+    except ClientError as e:
+        print(f"Error deleting file text from hash file table: {e}")
+
+    #TODO Update the PostgreSQL embedding
+    # Notes: Query the embeddings database by global ID
+    # Step 4: Delete embedding progress
+    embedding_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+    embedding_progress_table = dynamodb.Table(embedding_table)
+    
+    try:
+        embedding_progress_table.delete_item(Key={'object_id': global_key})
+        print("Deleted from embedding progress file table")
+    except ClientError as e:
+        print(f"Error deleting file text from embedding progress table: {e}")
+
+    # Step 5: Delete file from S3
+    s3 = boto3.client('s3')
+    s3_bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
+    
+    try:
+        print(f"Deleting file from S3: {key}")
+        s3.delete_object(Bucket=s3_bucket_name, Key=key)
+        print("Deleted file from S3")
+    except ClientError as e:
+        print(f"Error deleting file from S3: {e}")
+
+    # Step 6: Delete from file-text bucket
+    file_text_bucket = os.environ['S3_FILE_TEXT_BUCKET_NAME']
+    
+    try:
+        s3.delete_object(Bucket=file_text_bucket, Key=global_key)
+        print("Deleted file from file-text bucket")
+    except ClientError as e:
+        print(f"Error deleting file text from S3: {e}")
+
+    # Step 7: Delete from embeddings
+    success, result = embedding_permission(access_token, global_key)
+    if success:
+        print(f"Embeddings deleted successfully. Result: {result}")
+    else:
+        print(f"Failed to delete embeddings. Error: {result}")
+
+    
+    # Finally: Delete from object access
+    oa_table = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
+    object_access_table = dynamodb.Table(oa_table)
+    try:
+        object_access_table.delete_item(Key={'object_id': global_key, 'principal_id': current_user})
+        print("Deleted from object access file table")
+    except ClientError as e:
+        print(f"Error deleting file text from object access table: {e}")
+
+
+
+def delete_file_from_table(key):
+    # Step 2: Delete from user files table
+    user_table = os.environ['FILES_DYNAMO_TABLE']
+    user_files_table = dynamodb.Table(user_table)
+    try:
+        user_files_table.delete_item(Key={'id': key})
+        print("Deleted from user file table")
+    except ClientError as e:
+        print(f"Error deleting file text from the user file table: {e}")
+
+
+
+def delete_image_file(key):
+    bucket_name = os.environ[ 'S3_IMAGE_INPUT_BUCKET_NAME'] 
+    s3 = boto3.client('s3')
+    try:
+        print(f"Deleting image file from S3: {key}")
+        s3.delete_object(Bucket=bucket_name, Key=key)
+        print("Deleted from S3")
+    except ClientError as e:
+        print(f"Error deleting file from S3: {e}")

@@ -110,6 +110,8 @@ functions:
           bucket: !Ref DataDisclosureStorage
           event: s3:ObjectCreated:*
           existing: true
+          rules:
+            - suffix: .pdf
 
 
 resources:
@@ -204,4 +206,5 @@ resources:
           ServerSideEncryptionConfiguration:
             - ServerSideEncryptionByDefault:
                 SSEAlgorithm: AES256
+
                 
