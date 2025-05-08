@@ -2338,13 +2338,14 @@ def lookup_assistant_path(event, context, current_user, name, data):
         
         # Initialize accessTo outside the conditional block
         accessTo = item.get("accessTo", {})
-        
+        amp_groups = accessTo.get("amplifyGroups", [])
         # Check if the assistant is public or if the user has access
         if not item.get("public", False):
             # check if user is listed in the entry or are part of the amplify groups
             if (current_user != item.get("createdBy") and \
                 current_user not in accessTo.get("users", [])) and \
-                not verify_user_in_amp_group(token, accessTo.get("amplifyGroups", [])):
+                (len(amp_groups) > 0 and not verify_user_in_amp_group(token, amp_groups)):
+                    print(f"User {current_user} is not authorized to access assistant {assistant_id}")
                     return {"statusCode": 403,
                             "body": json.dumps(
                                 {
@@ -2367,6 +2368,7 @@ def lookup_assistant_path(event, context, current_user, name, data):
             print("Checking if user is a member of the ast group: ", group_id)
             is_member = verify_member_of_ast_admin_group(token, group_id)
             if (not is_member):
+                print("User is not a member of the ast group: ", group_id)
                 return {"statusCode": 403,
                             "body": json.dumps(
                                 {
