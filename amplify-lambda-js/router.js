@@ -72,9 +72,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             returnResponse(responseStream, {
                 statusCode: 429,
                 statusText: "Request limit reached. Please try again in a few minutes.",
-                body: {error: "Too Many Requests",
-                       rateLimitInfo: rateLimit,
-                }
+                body: {error: "Too Many Requests"}
             });
 
         } else {
@@ -92,7 +90,10 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                                                                         
             let options = params.body.options ? {...params.body.options} : {};
 
-            params.body.options.numPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
+            // Calculate numberPrompts and set it in both places
+            const calculatedPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
+            params.body.options.numberPrompts = calculatedPrompts;
+            options.numberPrompts = calculatedPrompts; // Set it in the new options object too
             
             const modelId = (options.model && options.model.id);
 
@@ -137,8 +138,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 logger.info("Request data sources", dataSources);
                 dataSources = await resolveDataSources(params, body, dataSources);
 
-                for(const ds of dataSources) {
-                    console.debug("Resolved data source", ds.id, ds);
+                for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
+                    console.debug("Resolved data source: ", ds.id, "\n". ds);
                 }
 
             } catch (e) {

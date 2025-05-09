@@ -25,6 +25,9 @@ def can_update(user, data):
 def can_delete(user, data):
     return True
 
+def can_add_path(user, data):
+    return True
+
 
 def get_permission_checker(user, type, op, data):
     logger.info("Checking permissions for user: %s, type: %s, op: %s", user, type, op)
@@ -70,17 +73,26 @@ permissions_by_state_type = {
     },
     "/groups/create": {
         "create": can_create
-    }, "/groups/members/update" : {
+    }, "/groups/update/members" : {
         "update": can_update
     },
-    "/groups/members/update_permissions" : {
+    "/groups/update/members/permissions" : {
         "update": can_update
     },
-    "/groups/assistants/update" : {
+    "/groups/update/assistants" : {
         "update": can_update
     },
-    "/groups/types/update": {
+    "/groups/update/types": {
         'update' : can_update
+    },
+    "/groups/update" : {
+        "update": can_update
+    },
+    "/groups/update/amplify_groups" : {
+        "update": can_update
+    },
+    "/groups/update/system_users" : {
+        "update": can_update
     },
     "/groups/delete" : {
         "delete": can_delete
@@ -94,14 +106,17 @@ permissions_by_state_type = {
      "/groups/members/list" : {
         'list': can_read
     },
-     "/groups/update" : {
-        "update": can_update
-    },
     "/groups/replace_key" : {
         "update" : can_update
     },
     "/groups/assistants/amplify": {
         "create": can_create
+    },
+    "/groups/assistant/add_path": {
+        "add_assistant_path": can_add_path
+    },
+    "/groups/verify_ast_group_member": {
+        "verify_member": can_read
     }
 }
 

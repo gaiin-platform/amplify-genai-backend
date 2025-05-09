@@ -14,21 +14,13 @@ const logger = getLogger("openai");
 
 
 export const translateModelToOpenAI = (modelId) => {
-    if(modelId === "gpt-4-1106-Preview"){
+    if (modelId === "gpt-4-1106-Preview"){
         return "gpt-4-turbo";
-    }
-    else if(modelId === "gpt-4o"){
-        return "gpt-4o";
-    }    
-    else if(modelId === "gpt-35-turbo"){
+    } else if (modelId === "gpt-35-turbo"){
         return "gpt-3.5-turbo";
     }
-    else if(modelId.startsWith("o3-mini")){
-        return "o3-mini";
-    }
-    else {
-        return modelId;
-    }
+    
+    return modelId;
 }
 
 const isOpenAIEndpoint = (url) => {
@@ -117,7 +109,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     if (isOmodel) {
         data = {max_completion_tokens: model.outputTokenLimit,
-                messages: data.messages
+                messages: data.messages, model: modelId, stream: true
                 }
     }
     if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
@@ -140,17 +132,16 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 .then(response => {
 
                     const streamError = (err) => {
-                        if (statusTimer) clearTimeout(statusTimer);
-                        sendErrorMessage(writableStream);
+                        clearTimeout(statusTimer);
+                        sendErrorMessage(writableStream, err.response?.status, err.response?.statusText);
                         reject(err);
                     };
+                    const finalizeSuccess = () => {
+                        clearTimeout(statusTimer);
+                        resolve();
+                    };
 
-                    if (isOmodel && !isOpenAiEndpoint) { // azure currently does not support streaming 
-
-                        const finalizeSuccess = () => {
-                            clearTimeout(statusTimer);
-                            resolve();
-                        };
+                    if (!data.stream) {
                     
                         let jsonBuffer = '';
                         let numOfChunks = 0;
@@ -187,7 +178,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     } else {
                         response.data.pipe(writableStream);
                         // Handle the 'finish' event to resolve the promise
-                        writableStream.on('finish', resolve);
+                        writableStream.on('finish', finalizeSuccess);
 
                         // Handle errors
                         response.data.on('error', streamError);
@@ -198,9 +189,8 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 })
                 .catch((e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
-                    sendErrorMessage(writableStream);
-                    
-                    if(e.response && e.response.data) {
+                    sendErrorMessage(writableStream, e.response.status, e.response.statusText);
+                    if (e.response && e.response.data) {
                         console.log("Error invoking OpenAI API: ",e.response.statusText);
 
                         if (e.response.data.readable) {
@@ -222,17 +212,15 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         });
     }
     let statusTimer = null;
-    if (isOmodel && !isOpenAiEndpoint) {
-        const statusInterval = 8000;
-        const handleSendStatusMessage = () => {
-            console.log("Sending status message...");
-            sendStatusMessage(writable);
-            statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
-            };
+    const statusInterval = 8000;
+    const handleSendStatusMessage = () => {
+        // console.log("Sending status message...");
+        sendStatusMessage(writable);
+        statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
+        };
 
-            // Start the timer
-        statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
-    }
+        // Start the timer
+    statusTimer = setTimeout(handleSendStatusMessage, statusInterval)
 
     return streamAxiosResponseToWritable(url, writable, statusTimer);
 }
@@ -304,15 +292,14 @@ const forceFlush = (responseStream) => {
 }
 
 const sendStatusMessage = (responseStream) => {
-    const statusInfo = newStatus(
-        {
-            animated: true,
-            inProgress: true,
-            sticky: true,
-            summary: getThinkingMessage(),
-            icon: "info",
-        }
-    );
+    const statusInfo = { id: "openai",
+                         animated: true,
+                         inProgress: true,
+                         sticky: true,
+                         summary: getThinkingMessage(),
+                         icon: "info",
+                         type: "info",
+                       };
 
     sendStatusEventToStream(responseStream, statusInfo);
 

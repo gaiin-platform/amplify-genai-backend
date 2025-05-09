@@ -335,10 +335,27 @@ export const findResult = (result) => {
 }
 
 
-export const sendErrorMessage = (writable, errorMessage = "Error retrieving response. Please try again.") => {
+export const sendErrorMessage = (writable, statusCode, code=null) => {
+
     if (!writable || writable.writableEnded) {
         console.log('Stream already ended, cannot send error message');
         return;
+    }
+
+    console.log("-- Error Message Response Status -- ", statusCode);
+    console.log("-- Error Message Response Code -- ", code);
+
+    const waitMessage = " Please try another model or wait a few minutes before trying again.";
+    let errorMessage = "Error retrieving response. Please try again."
+
+    if (code === 'content_filter') {
+        errorMessage = "Content Filter: The response was blocked due to the content of the request.";
+    } else if (statusCode === 429) {
+        errorMessage = "Too Many Requests: You have sent too many requests in a given amount of time to this model." + waitMessage;
+    } else if ([408, 503, 504].includes(statusCode)) {
+        errorMessage = "Request Timed Out: We did not receive a timely response from the model providers server." + waitMessage;
+    } else if (statusCode === 413) {
+        errorMessage = "Request Entity Too Large: The request body is too large. Please try again with a smaller request.";
     }
     
     try {
@@ -349,4 +366,5 @@ export const sendErrorMessage = (writable, errorMessage = "Error retrieving resp
     } catch (err) {
         console.error('Error while sending error message:', err);
     }
+
 }
