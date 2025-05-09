@@ -10,6 +10,15 @@ from common.auth_admin import verify_user_as_admin
 dynamodb = boto3.client('dynamodb')
 
 
+
+
+@validated(op="get")
+def get_all_ops(event, context, current_user, name, data):
+    if (not verify_user_as_admin(data['access_token'], 'Get All Ops')):
+        return {'success': False , 'error': 'Unable to authenticate user as admin'}
+
+    return fetch_user_ops("system", 'all')
+
 @op(
     path="/ops/get",
     tags=["ops", "default"],
@@ -19,15 +28,6 @@ dynamodb = boto3.client('dynamodb')
         "tag": "The optional tag to search for.",
     }
 )
-
-@validated(op="get")
-def get_all_ops(event, context, current_user, name, data):
-    if (not verify_user_as_admin(data['access_token'], 'Get All Ops')):
-        return {'success': False , 'error': 'Unable to authenticate user as admin'}
-
-    return fetch_user_ops("system", 'all')
-
-
 @validated(op="get")
 def get_ops(event, context, current_user, name, data):
     data = data['data']
@@ -54,11 +54,29 @@ def fetch_user_ops(current_user, tag):
             '#usr': 'user'
         }
     }
-    # Execute the DynamoDB query
-    response = dynamodb.query(**query_params)
-
+    
+    all_items = []
+    last_evaluated_key = None
+    
+    # Loop to handle pagination
+    while True:
+        # Add the ExclusiveStartKey if we have a LastEvaluatedKey from previous query
+        if last_evaluated_key:
+            query_params['ExclusiveStartKey'] = last_evaluated_key
+            
+        # Execute the DynamoDB query
+        response = dynamodb.query(**query_params)
+        
+        # Add current batch to our results
+        all_items.extend(response['Items'])
+        
+        # Check if there are more results
+        last_evaluated_key = response.get('LastEvaluatedKey')
+        if not last_evaluated_key:
+            break
+    
     # Extract the data from the DynamoDB response
-    data_from_dynamo = [item['ops'] for item in response['Items']]
+    data_from_dynamo = [item['ops'] for item in all_items]
     data_from_dynamo = [TypeDeserializer().deserialize(item) for item in data_from_dynamo]
     # Flatten the list of operations
     data_from_dynamo = [op for sublist in data_from_dynamo for op in sublist]
@@ -84,8 +102,10 @@ def fetch_user_ops(current_user, tag):
 
 @validated(op="write")
 def write_ops(event, context, current_user, name, data):
-    ops = data['data']["ops"]
-    user = 'system' # for now 
+    data = data['data']
+    system_op = data.get("system_op", True)
+    ops = data["ops"]
+    user = 'system' if system_op else current_user
 
     table_name = os.environ.get('OPS_DYNAMODB_TABLE')
     if not table_name:

@@ -649,7 +649,7 @@
 				"header": [],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"data\":{\n        \"temperature\": 0.7,\n        \"max_tokens\": 4000,\n        \"dataSources\": [{\"id\": \"s3://user@vanderbilt.edu/2014-qwertyuio\",\"type\": \"application/pdf\"}],\n        \"messages\": [\n            {\n            \"role\": \"user\",\n            \"content\": \"What is the capital of France?\"\n            }\n        ],\n        \"options\": {\n            \"ragOnly\": false,\n            \"skipRag\": true,\n            \"model\": {\"id\": \"gpt-4o\"},\n            \"assistantId\": \"astp/abcdefghijk\",\n            \"prompt\": \"What is the capital of France?\"\n        }\n    }\n}",
+					"raw": "{\n    \"data\":{\n        \"temperature\": 0.7,\n        \"max_tokens\": 4000,\n        \"dataSources\": [\"user@vanderbilt.edu/2014-qwertyuio\"],\n        \"messages\": [\n            {\n            \"role\": \"user\",\n            \"content\": \"What is the capital of France?\"\n            }\n        ],\n        \"options\": {\n            \"ragOnly\": false,\n            \"skipRag\": true,\n            \"model\": {\"id\": \"gpt-4o\"},\n            \"assistantId\": \"astp/abcdefghijk\",\n            \"prompt\": \"What is the capital of France?\"\n        }\n    }\n}",
 					"options": {
 						"raw": {
 							"language": "json"

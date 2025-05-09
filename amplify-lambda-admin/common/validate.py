@@ -222,9 +222,6 @@ update_admin_config_schema = {
                                             "isBuiltIn": {
                                                 "type": "boolean"
                                             },
-                                             "isDefault": {
-                                                "type": "boolean"
-                                            },
                                             "systemPrompt": {
                                                 "type": "string"
                                             },
@@ -234,16 +231,7 @@ update_admin_config_schema = {
                                              "supportsImages": {
                                                 "type": "boolean"
                                             },
-                                             "defaultCheapestModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultAdvancedModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultEmbeddingsModel": {
-                                                "type": "boolean"
-                                            },
-                                             "defaultQAModel": {
+                                            "supportsReasoning": {
                                                 "type": "boolean"
                                             },
                                              "inputContextWindow": {
@@ -268,12 +256,36 @@ update_admin_config_schema = {
                                                 }
                                             }
                                         },
-                                        "required": ["id","name", "provider", "description", "isAvailable", 
-                                                     "supportsImages","supportsSystemPrompts", "systemPrompt",
-                                                     "defaultCheapestModel", "defaultAdvancedModel", "defaultEmbeddingsModel", "isBuiltIn", "isDefault",
-                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", "cachedTokenCost", "exclusiveGroupAvailability"],
+                                        "required": ["id","name", "provider", "description", "isAvailable",  "isBuiltIn",
+                                                     "supportsImages", "supportsReasoning", "supportsSystemPrompts", "systemPrompt",
+                                                     "inputContextWindow", "outputTokenLimit", "inputTokenCost", "outputTokenCost", 
+                                                     "cachedTokenCost", "exclusiveGroupAvailability"],
                                         "additionalProperties": False
                                     }
+                                },
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'defaultModels'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultModels"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "user": {"type": ["string", "null"]},
+                                    "advanced": {"type": ["string", "null"]},
+                                    "cheapest": {"type": ["string", "null"]},
+                                    "agent": {"type": ["string", "null"]},
+                                    "embeddings": {"type": ["string", "null"]},
+                                    "qa": {"type": ["string", "null"]}
                                 },
                                 "additionalProperties": False
                             }
@@ -405,6 +417,44 @@ update_admin_config_schema = {
                         "additionalProperties": False
                     },
                     {
+                        # Configuration for 'emailSupport'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "emailSupport"
+                            },
+                            "data": {
+                                "type": "object",
+                                "properties": {
+                                    "isActive": {"type": "boolean"},
+                                    "email": {"type": "string"},
+                                },
+                                "required": ["isActive", "email"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                     {
+                        # Configuration for 'defaultConversationStorage'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "defaultConversationStorage"
+                            },
+                            "data": {
+                                "type": "string",
+                                "enum": ["future-local", "future-cloud"],
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                                
+                    {
                         # Configuration for 'rateLimit'
                         "type": "object",
                         "properties": {
@@ -419,6 +469,39 @@ update_admin_config_schema = {
                                     "rate": { "type": ["number", "null"] }, 
                                 },
                                 "required": ["period", "rate"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
+                        # Configuration for 'integrations'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "integrations"
+                            },
+                            "data": {
+                                "type": "object",
+                                "patternProperties": {
+                                    "^(google|microsoft|drive|github|slack)$": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "id": {"type": "string"},
+                                                "icon": {"type": "string"},
+                                                "description": {"type": "string"},
+                                                "isAvailable": {"type": "boolean"},
+                                            },
+                                            "required": ["name", "id", "icon", "description"],
+                                            "additionalProperties": False
+                                        },
+                                    }
+                                },
                                 "additionalProperties": False
                             }
                         },
@@ -490,19 +573,19 @@ add_user_access_ast_admin = {
 
 
 validators = {
-    "/amplifymin/configs/get": {
+    "/amplifymin/configs": {
         "read": {} #get
     },
     "/amplifymin/configs/update": {
         "update": update_admin_config_schema
     },
-    "/amplifymin/feature_flags/get": {
+    "/amplifymin/feature_flags": {
         "read": {} 
     },
     "/amplifymin/auth": {
         "read": auth_as_admin_schema
     },
-    "/amplifymin/pptx_templates/get": {
+    "/amplifymin/pptx_templates": {
         "read": {} 
     },
     "/amplifymin/pptx_templates/delete": {
@@ -514,6 +597,12 @@ validators = {
     "/amplifymin/verify_amp_member" : {
         "read": verify_in_amp_group_schema
     },
+    "/amplifymin/amplify_groups/list" : {
+        "read": {}
+    },
+    "/amplifymin/user_app_configs": {
+        "read": {}
+    }
     
 }
 
@@ -759,10 +848,10 @@ def api_claims(event, context, token):
 
         # Check for access rights
         access = item.get('accessTypes', [])
-        if ('admin' not in access):
-            # and 'full_access' not in access
-            print("API doesn't have access to api functionality")
-            raise PermissionError("API key does not have access to api functionality")
+        # if ('admin' not in access):
+        #     # and 'full_access' not in access
+        #     print("API doesn't have access to api functionality")
+        #     raise PermissionError("API key does not have access to api functionality")
         
         # Determine API user
         current_user = determine_api_user(item)

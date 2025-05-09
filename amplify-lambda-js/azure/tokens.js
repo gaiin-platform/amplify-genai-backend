@@ -31,7 +31,7 @@ export const createTokenCounter = (model) => {
             }
         },
         countMessageTokens: (messages) => {
-            const counts = messages.map(m => encoding.encode(m.content).length);
+            const counts = messages.map(m => encoding.encode(m.content ?? '').length);
             const count = counts.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
             return count;
         },

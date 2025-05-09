@@ -54,8 +54,22 @@ chat_input_schema = {
         },
         "dataSources": {
         "type": "array",
-        "items": {
-            "type": "object"
+        "items":  {
+            "oneOf": [
+            {
+                "type": "string"
+            },
+            {
+                "type": "object",
+                "required": ["id"],
+                "additionalProperties": True,
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    }
+                }
+            }
+        ]
         }
         },
         "messages": {
@@ -573,6 +587,21 @@ save_settings_schema = {
     "required": ["settings"]
 }
 
+file_delete_schema = {
+    "type": "object",
+    "properties": {
+        "key": {
+            "type": "string",
+            "description": "Key."
+        },
+        "groupId": {
+            "type": "string",
+            "description": "Group Id."
+        }
+    },
+    "required": ["key"]
+}
+
 register_conversation_schema = {
     "type": "object",
     "properties": {
@@ -588,8 +617,7 @@ register_conversation_schema = {
                 "type": "object",
                 "properties": {
                     "role": {
-                        "type": "string",
-                        "enum": ["system", "user", "assistant"] 
+                        "type": "string"
                     },
                     "content": {
                         "type": "string"
@@ -716,6 +744,9 @@ validators = {
     "/files/download": {
         "download": key_request_schema
     },
+    "/files/delete": {
+        "delete": file_delete_schema
+    },
     "/files/set_tags": {
         "set_tags": file_set_tags_schema
     },
@@ -776,6 +807,9 @@ validators = {
     "/state/settings/get": {
         "get": {}
     },
+    "/files/reprocess/rag": {
+        "upload": key_request_schema
+    }
 
 }
 
@@ -813,6 +847,9 @@ api_validators = {
     "/state/conversation/register" : {
         "conversation_upload": register_conversation_schema
     },
+    "/files/reprocess/rag": {
+        "upload": key_request_schema
+    }
 }
 
 def validate_data(name, op, data, api_accessed):

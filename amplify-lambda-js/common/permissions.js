@@ -3,7 +3,7 @@
 
 import {extractKey} from "../datasource/datasources.js";
 
-const permissionsEndpoint = process.env.OBJECT_ACCESS_PERMISSIONS_ENDPOINT;
+const permissionsEndpoint = process.env.API_BASE_URL + "/utilities/can_access_objects";
 
 export const canReadDatasource = (userId, datasourceId) => {
     return extractKey(datasourceId).startsWith(userId+"/");

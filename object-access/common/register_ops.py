@@ -7,7 +7,7 @@ import json
 def register_ops(access_token, ops):
     print("Initiate amplify assistants write ops call")
 
-    update_model_endpoint = os.environ['API_BASE_URL'] + '/ops/register'
+    endpoint = os.environ['API_BASE_URL'] + '/ops/register'
  
     request = {
         "data": {'ops': ops}
@@ -20,7 +20,7 @@ def register_ops(access_token, ops):
 
     try:
         response = requests.post(
-            update_model_endpoint,
+            endpoint,
             headers=headers,
             data=json.dumps(request)
         )
