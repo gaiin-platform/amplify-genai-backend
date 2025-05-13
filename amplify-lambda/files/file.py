@@ -99,7 +99,7 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
     print(f"Checking if user {current_user} can access file {key} with groupId {group_id}")
     created_by = table_item['createdBy']
     if created_by == current_user:
-        return {'success': True}
+        pass
     elif group_id and created_by == group_id:
         # ensure the user/system user has access to the group by either
         print("Checking if user is a member of the group: ", group_id)
@@ -121,9 +121,9 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
         # Since groups can have documents that belongs to others and the group itself only has permission to we need to check the table 
         if (group_id):# checks can access of the group_id 
             object_table = dynamodb.Table(os.environ['OBJECT_ACCESS_DYNAMODB_TABLE'])
-            
-            object_id = translated_ds[0]['id']
+    
             try:
+                object_id = translated_ds[0]['id']
                 print("Checking Object Access for groupId permission to the datasource")
                 # Check if any permissions already exist for the object_id
                 query_response = object_table.get_item(
@@ -151,14 +151,13 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
             except ClientError as e:
                 print(f"Error accessing DynamoDB for can_access_objects: {e.response['Error']['Message']}")
                 return {'success': False, 'message': f'Error performing can_access on ds with groupid {group_id}'} 
-
-            can_access = True
-            if (not can_access):
-                return {'success': False, 'message': 'GroupId does not have access to the data source'} 
             
         elif (not can_access_objects(access_token, translated_ds)): # checks can access on the user 
             print(f"User {current_user} does not have acces to download: {table_item}")
             return {'success': False, 'message': 'User does not have access to the data source'}
+        
+    return {'success': True}
+        
 # due to lambda layer requirements in rag.core, we have to define this function here
 @validated(op="upload")
 def reprocess_document_for_rag(event, context, current_user, name, data):
