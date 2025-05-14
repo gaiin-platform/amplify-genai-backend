@@ -1,4 +1,3 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
@@ -8,7 +7,24 @@ from decimal import Decimal
 import boto3
 import os
 import uuid
+import json
 
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)  # Convert Decimal to float for JSON serialization
+        return super(DecimalEncoder, self).default(obj)
+
+def convert_decimal_in_dict(obj):
+    """Recursively finds Decimal values in dict/list structures and converts them to float"""
+    if isinstance(obj, list):
+        return [convert_decimal_in_dict(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: convert_decimal_in_dict(value) for key, value in obj.items()}
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    else:
+        return obj
 
 def get_accounts_for_user(user):
     dynamodb = boto3.resource('dynamodb')
@@ -138,7 +154,8 @@ def charge_request(event, context, user, name, data):
 def get_accounts(event, context, user, name, data):
     # accounts/get
     accounts = get_accounts_for_user(user)
-
+    # Convert any Decimal values to float before returning
+    accounts = convert_decimal_in_dict(accounts)
     return {'success': True, 'message': 'Successfully fetched accounts', 'data': accounts}
 
 

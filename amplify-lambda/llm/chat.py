@@ -146,7 +146,21 @@ def chat_streaming(chat_url, access_token, payload, content_handler, meta_handle
     # Send POST request to the specified URL
     response = requests.post(chat_url, headers=headers, json=payload, stream=True)
     if response.status_code != 200:
-        response.raise_for_status()
+        try:
+            # Try to extract error message from response body
+            error_content = response.json()
+            error_message = error_content.get('error')
+            
+            if error_message:
+                # Return a more descriptive error with the actual message
+                print(f"Request failed with status {response.status_code}: {error_message}")
+                raise Exception(f"Request failed with status {response.status_code}: {error_message}")
+            else:
+                # Fallback to standard status code error
+                response.raise_for_status()
+        except json.JSONDecodeError:
+            # If response is not valid JSON, fall back to standard error
+            response.raise_for_status()
 
     error_message = None
 
