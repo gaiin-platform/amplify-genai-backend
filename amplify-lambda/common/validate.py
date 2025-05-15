@@ -339,6 +339,9 @@ file_upload_schema = {
         "groupId": {
             "type": ["string", "null"]
         },
+        "ragOn": {
+            "type": "boolean"
+        }
     },
     "required": ["type", "name", "knowledgeBase", "tags", "data"],
 }

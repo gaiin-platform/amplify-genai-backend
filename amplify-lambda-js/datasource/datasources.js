@@ -8,6 +8,8 @@ import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
+import { getModelByType, ModelTypes, getChatFn, setModel} from "../common/params.js";
+import { LLM } from "../common/llm.js";
 
 const logger = getLogger("datasources");
 
@@ -699,15 +701,156 @@ export const getContent = async (chatRequest, params, dataSource) => {
  * @param options
  * @returns {Promise<*[]|*>}
  */
-export const getContexts = async (resolutionEnv, dataSource, maxTokens, options) => {
+export const getContexts = async (resolutionEnv, dataSource, maxTokens, options, extractRelevantContext = false) => {
     const tokenCounter = resolutionEnv.tokenCounter;
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Get contexts with options", options);
-
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
     const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
+    
+    if (extractRelevantContext) {
+        try {
+            const filteredContent = await getExtractRelevantContext(resolutionEnv, {...result});
+            if (!filteredContent) return null;
+            const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
+            const originalTotalTokens = formattedContext.dataSource?.metadata?.totalTokens;
+            const filteredTotalTokens = formattedContext.tokens;
+            logger.debug(`Original document total tokens: ${originalTotalTokens} \nFiltered document tokens: ${filteredTotalTokens}\n${Math.round(filteredTotalTokens/originalTotalTokens*100)}% of original`);
+  
+            return formattedContext;
+        } catch (error) {
+            logger.error("Error extracting relevant context:", error);
+            logger.debug("Dumping entire document context as a fallback...");
+        }
+    }
+
     return formatAndChunkDataSource(tokenCounter, dataSource, result, maxTokens, options);
+}
+
+/**
+ * Extracts the relevant context from the document.
+ * @param resolutionEnv
+ * @param context
+ * @param dataSource
+ * @returns {Promise<*[]|*>}
+ */
+const getExtractRelevantContext = async (resolutionEnv, context) => {
+    const params = resolutionEnv.params;
+    const chatBody = resolutionEnv.chatRequest;
+    const userMessage = chatBody.messages.slice(-1)[0].content;
+    // Use a cheaper model for document analysis with built-in caching
+    
+    const model = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
+    
+    // Create parameters for the LLM with caching enabled
+    const llmParams = setModel ({
+        ...params,
+        options: {
+            skipRag: true,
+            ragOnly: false,
+            dataSourceOptions:{},
+        }
+    }, model);
+    
+    // Initialize LLM for document analysis
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model, body, writable, context);
+    };
+    
+    const llm = new LLM(chatFn, llmParams, null);
+
+    // Create a mapped version of the context content for easier lookups
+    const contentByIndex = {};
+    context.content.forEach((c, idx) => {
+        contentByIndex[idx] = c;
+    });
+    
+    // Create a clean representation of the document for the LLM
+    const documentLines = context.content.map((item, idx) => 
+        `[${idx}] ${item.content.replace(/\n/g, ' ')}`
+    ).join('\n');
+    
+    // Create a clear, structured prompt for the LLM
+    const updatedBody = {
+        ...chatBody,
+        messages: [{
+            role: 'system',
+            content: `You are a precise document analyzer specializing in finding only the most relevant information. 
+Your task is to identify the exact indexes of document fragments that would help answer a user's question.
+
+IMPORTANT INSTRUCTIONS:
+1. The document fragments are labeled with indexes like [0], [1], [2], etc.
+2. Only select fragments that contain information DIRECTLY relevant to answering the user's question.
+3. Output ONLY a JSON array of index numbers (as integers), nothing else.
+4. If no fragments are relevant, return an empty array: []
+5. DO NOT explain your reasoning - provide ONLY the array of indexes.
+
+Example outputs:
+- For relevant fragments: [3, 4, 7, 12]
+- For no relevant fragments: []`
+          },{
+            role: 'user',
+            content: `USER QUESTION:
+${userMessage}
+
+DOCUMENT FRAGMENTS (with indexes):
+${documentLines}
+
+Return ONLY the indexes of fragments that contain information directly relevant to answering the question.
+Expected format: [0, 1, 5] or [] if nothing is relevant.`
+          }],
+        imageSources: [],
+        model: model.id,
+        max_tokens: 300, // Lower token limit, we only need the array
+        options: {
+            ...chatBody.options,
+            skipRag: true,
+            ragOnly: false
+        }
+    };
+
+    // Use a simpler prompt for data
+    const extraction = await llm.promptForData(
+        updatedBody,
+        [],
+        '', // prompt already in messages
+        {
+            "relevantIndexes": "Array of integer indexes indicating relevant document fragments",
+        },
+        null,
+        (r) => {
+            // Ensure we get a valid array of numbers
+            if (!r.relevantIndexes || !Array.isArray(r.relevantIndexes)) {
+                return null;
+            }
+            return r.relevantIndexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+        },
+        2 // Fewer retries for faster response
+    );
+
+    // Handle case where no relevant content was found
+    if (!extraction.relevantIndexes) {
+        logger.debug("Error extracting relevant content in llm call, dumping entire document context as a fallback...");
+        return context; // Return unchanged context if nothing relevant found
+    } else if  (extraction.relevantIndexes.length === 0) {
+        logger.debug("No datasource content was relevant to the query");
+        return null;
+    }
+
+    // Filter the content to only include relevant items
+    const filteredContent = extraction.relevantIndexes.map(idx => contentByIndex[idx]).filter(Boolean);
+
+    // Create a new context with only the relevant content
+    const filteredContext = {
+        ...context,
+        content: filteredContent,
+        originalContent: context.content,
+    };
+    
+    // Pass the filtered content through the standard formatting/chunking process
+    return filteredContext;
+
 }

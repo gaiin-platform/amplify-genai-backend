@@ -15,6 +15,8 @@ import re
 import traceback
 from cryptography.fernet import Fernet
 from boto3.dynamodb.conditions import Key
+import nltk
+from nltk.tokenize import sent_tokenize
 
 from rag.handlers.commaseparatedvalues import CSVHandler
 from rag.handlers.excel import ExcelHandler
@@ -163,10 +165,7 @@ def save_chunks(chunks_bucket, key, split_count, chunks):
 
 
 def chunk_content(key, text_content, split_params):
-    import nltk
     # nltk.download('punkt')
-    from nltk.tokenize import sent_tokenize
-
     nltk.data.path.append("/tmp")
     nltk.download("punkt", download_dir="/tmp")
     # Normalize whitespace once at the start.
@@ -483,6 +482,7 @@ def process_document_for_rag(event, context):
             try:
                 response = s3.head_object(Bucket=bucket, Key=key)
                 encrypted_metadata_b64 = response['Metadata']['encrypted_metadata'] 
+                rag_enabled = response['Metadata']['rag_enabled']
                 print("Encrypted Metadata:", encrypted_metadata_b64)
                 
                 # Decrypt the metadata
@@ -615,9 +615,12 @@ def process_document_for_rag(event, context):
                             print(f"Uploading text to {file_text_content_bucket_name}/{text_content_key}")
                             # Put the text into a file and upload to S3 bucket
                             # use a random uuid for the key
-                            s3.put_object(Bucket=file_text_content_bucket_name,
-                                          Key=text_content_key,
-                                          Body=json.dumps(text))
+                            s3.put_object(
+                                Bucket=file_text_content_bucket_name,
+                                Key=text_content_key,
+                                Body=json.dumps(text),
+                                Metadata={'rag_enabled': rag_enabled }
+                            )
                             print(f"Uploaded text to {file_text_content_bucket_name}/{text_content_key}")
 
                             hash_file_data = {
@@ -653,7 +656,6 @@ def process_document_for_rag(event, context):
             # If text extraction was successful, delete the message from the queue
             if text is not None:
 
-                # [_, text_content_key] = get_text_content_location(bucket, dochash)
                 [_, text_content_key] = get_text_content_location(bucket, key)
 
                 text_metadata = {
@@ -670,9 +672,12 @@ def process_document_for_rag(event, context):
                 [file_text_metadata_bucket_name, text_metadata_key] = \
                     get_text_metadata_location(bucket, key)
 
-                s3.put_object(Bucket=file_text_metadata_bucket_name,
-                              Key=text_metadata_key,
-                              Body=json.dumps(text_metadata))
+                s3.put_object(
+                    Bucket=file_text_metadata_bucket_name,
+                    Key=text_metadata_key,
+                    Body=json.dumps(text_metadata),
+                    Metadata={'rag_enabled': rag_enabled }
+                )
                 print(f"Uploaded metadata to {file_text_metadata_bucket_name}/{text_metadata_key}")
 
                 receipt_handle = record['receiptHandle']
@@ -700,22 +705,41 @@ def queue_document_for_rag_chunking(event, context):
     queue_url = os.environ['rag_chunk_document_queue_url']
 
     print(f"Received chunk event: {event}")
-    print(f"{event}")
+
     for record in event['Records']:
-        # Send the S3 object data as a message to the SQS queue
-        message_body = json.dumps(record)
-        print(f"Sending message to queue: {message_body}")
-        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
-        print(f"Message sent to queue: {message_body}")
+        try:
+            if not record.get('manual_processing'):
+                print(f"Inspecting object for RAG chunking: {record}")
+                bucket_name = record['s3']['bucket']['name']
+                object_key = record['s3']['object']['key']
 
-    return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
+                response = s3.head_object(Bucket=bucket_name, Key=object_key)
+                metadata = response.get('Metadata', {})
+                rag_enabled = metadata.get('rag_enabled', 'true').lower() == 'true'
+                
+                if not rag_enabled:
+                    print(f"RAG chunking is disabled for {bucket_name}/{object_key}, skipping")
+                    continue
+                
+            # Send the S3 object data as a message to the SQS queue
+            message_body = json.dumps(record)
+            print(f"Sending message to queue: {message_body}")
+            sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
+            print(f"Message sent to queue: {message_body}")
+            
+        except Exception as e:
+            print(f"Error processing record {record}: {str(e)}")
+            # Continue processing other records
+            continue
+
+    return {'statusCode': 200, 'body': json.dumps('Successfully processed S3 event')}
 
 
-def update_embedding_status(original_creator, object_id, chunk_index, total_chunks, status):
+def update_embedding_status(original_creator, object_id, total_chunks, status):
     try:
         progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
         print(f"Updating chunk count status for embedding {progress_table}/{object_id} "
-              f"{chunk_index}/{total_chunks} {status}")
+              f"Total Chunks: {total_chunks} {status}")
         
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table(progress_table)
@@ -803,7 +827,7 @@ def chunk_document_for_rag(event, context):
 
             chunks = chunk_s3_file_content(bucket, key)
 
-            update_embedding_status(original_creator, key, 0, chunks, "starting")
+            update_embedding_status(original_creator, key, chunks, "starting")
 
             receipt_handle = record['receiptHandle']
             print(f"Deleting message {receipt_handle} from queue")

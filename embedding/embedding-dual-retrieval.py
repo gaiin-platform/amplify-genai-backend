@@ -1,10 +1,11 @@
-
 #Copyright (c) 2024 Vanderbilt University  
 #Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 # set up retriever function that accepts a a query, user, and/or list of keys for where claus
 
+import json
 import os
+import time
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from common.credentials import get_credentials
@@ -15,6 +16,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from common.ops import op
 from common.amplify_groups import verify_user_in_amp_group
+from datetime import datetime, timezone
 
 # Configure Logging 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -24,13 +26,14 @@ pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
 rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
-embedding_provider = os.environ['EMBEDDING_PROVIDER']
-embedding_provider = os.environ['EMBEDDING_PROVIDER']
 qa_model_name = os.environ['QA_MODEL_NAME']
 api_version = os.environ['API_VERSION']
 object_access_table = os.environ['OBJECT_ACCESS_TABLE']
 groups_table = os.environ['GROUPS_DYNAMO_TABLE']
-embedding_provider = os.environ['EMBEDDING_PROVIDER']
+
+queue_url = os.environ['rag_chunk_document_queue_url']
+s3_bucket = os.environ['S3_FILE_TEXT_BUCKET_NAME']
+sqs = boto3.client('sqs')
 
 # Define the permission levels that grant access
 permission_levels = ['read', 'write', 'owner']
@@ -276,6 +279,16 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
 
     src_ids = accessible_src_ids + group_accessible_src_ids
 
+
+    # wait until all embeddings are completed 
+    pending_ids = src_ids
+    is_complete = False
+    while not is_complete:
+        time.sleep(3)
+        completion_result = check_embedding_completion(pending_ids)
+        is_complete = completion_result['all_complete']
+        pending_ids = completion_result['pending_ids']
+
     response_embeddings = generate_embeddings(content)
 
     if response_embeddings["success"]:
@@ -297,13 +310,131 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     print(f"Here are the related docs {related_docs}")
 
     return {"result":related_docs}
+
+
+
+@validated("embeddings-check")
+def queue_missing_embeddings(event, context, current_user, name, data):
+    src_ids = data['data']['dataSources']
+    completion_result = check_embedding_completion(src_ids)
+    embed_ids = completion_result['requires_embedding']
+
+    failed_ids = []
+    if embed_ids:
+        print(f"Queueing {len(embed_ids)} documents for embedding")
+        for src_id in embed_ids:
+            queue_result = manually_queue_embedding(src_id)
+            if not queue_result['success']:
+                failed_ids.append(src_id)
+                
+
+    result = {"success": len(failed_ids) == 0}
+    if failed_ids:
+        print(f"Failed to queue {len(failed_ids)} documents for embedding: ", failed_ids)
+        result["failed_ids"] = failed_ids
+
+    return result
+
+
+def check_embedding_completion(src_ids):
+    if not src_ids:
+        return {'all_complete': True, 'pending_ids': []}
+        
+    dynamodb = boto3.resource('dynamodb')
+    embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
+    table = dynamodb.Table(embedding_progress_table)
     
+    pending_ids = []
+    requires_embedding = []
+    
+    for src_id in src_ids:
+        try:
+            # Normalize the source ID format
+            trimmed_src = src_id.split('.json')[0] + '.json' if '.json' in src_id else src_id
+            response = table.get_item(Key={'object_id': trimmed_src})
+            
+            # No record means document hasn't been submitted for embedding yet
+            if 'Item' not in response:
+                logging.info(f"No embedding process record found for {src_id}")
+                requires_embedding.append(src_id)
+                continue
+                
+            item = response['Item']
+            parent_status = item.get('parentChunkStatus', '')
+            is_terminated = item.get('terminated', False)
+            last_updated = item.get('lastUpdated')
+            
+            # Check for stalled jobs (running for too long without updates)
+            if parent_status in ['starting', 'processing'] and last_updated:
+                last_updated_time = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                current_time = datetime.now(timezone.utc)
+                
+                # If job has been running for more than 3 minutes without updates, consider it stalled
+                if (current_time - last_updated_time).total_seconds() > 180:  # 3 minutes
+                    logging.warning(f"Document {src_id} appears stalled in state {parent_status}. Last updated: {last_updated}")
+                    manually_queue_embedding(src_id)
+                    pending_ids.append(src_id)
+                    continue
 
 
+            if parent_status == 'completed':
+                logging.info(f"Document {src_id} embedding is complete")
+                continue  # Skip adding to pending_ids
+            elif parent_status == 'failed':
+                logging.warning(f"Document {src_id} embedding failed. Requeuing.")
+                manually_queue_embedding(src_id)
+                pending_ids.append(src_id)
+                continue
+            elif parent_status in ['starting', 'processing']:
+                logging.info(f"Document {src_id} is still being embedded. Current status: {parent_status}")
+                pending_ids.append(src_id)
+                continue
+            
+            # Check termination flag (which may be separate from status)
+            if is_terminated: ### todo
+                logging.warning(f"Document {src_id} embedding was terminated. Requeuing.")
+                continue
+
+            # If we reach here, there's an unexpected status value
+            logging.warning(f"Document {src_id} has unexpected status: {parent_status}. Treating as pending.")
+        
+        except Exception as e:
+            logging.error(f"Error checking embedding progress for {src_id}: {str(e)}", exc_info=True)
+            # Conservatively assume it's still processing if we can't check
+            pending_ids.append(src_id)
+    
+    return {
+        'all_complete': len(pending_ids) == 0,
+        'pending_ids': pending_ids,
+        'requires_embedding': requires_embedding
+    }
    
 
 
-
+def manually_queue_embedding(src_id):
+    try:
+        # Create a record for manual processing
+        record = {
+            'manual_processing': True,
+            's3': {
+                'bucket': {
+                    'name': s3_bucket
+                },
+                'object': {
+                    'key': src_id
+                }
+            }
+        }
+        
+        # Queue the document for processing
+        message_body = json.dumps(record)
+        logging.info(f"Queueing document for embedding: {message_body}")
+        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
+        return {"success": True}
+        
+    except Exception as e:
+        logging.error(f"Failed to queue {src_id} for embedding: {str(e)}")
+        return {"success": False}
 
 
 

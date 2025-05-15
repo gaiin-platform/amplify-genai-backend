@@ -108,7 +108,7 @@ terminate_embedding_schema = {
     "required": ["object_key"]
 }
 
-delete_embedding_schema = {
+embedding_ids_schema = {
     "type": "object",
     "properties": {
         "dataSources": {
@@ -136,7 +136,10 @@ validators = {
         "get": {}
     },
     "/embedding-delete": {
-        "embedding-delete": delete_embedding_schema
+        "embedding-delete": embedding_ids_schema
+    },
+    "/embedding/check-completion": {
+        "embeddings-check": embedding_ids_schema
     }
 }
 
@@ -146,7 +149,10 @@ api_validators = {
         "dual-retrieval": dual_retrieval_schema
     },
     "/embedding-delete": {
-        "embedding-delete": delete_embedding_schema
+        "embedding-delete": embedding_ids_schema
+    },
+    "/embedding/check-completion": {
+        "embeddings-check": embedding_ids_schema
     }
 }
 

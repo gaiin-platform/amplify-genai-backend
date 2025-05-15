@@ -164,16 +164,22 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     dataSources = allSources.dataSources;
     // These data sources will be searched with RAG for relevant information to
     // insert into the conversation
-    let ragDataSources = allSources.ragDataSources;
+    let ragDataSources = [];
+    let conversationDataSources = [];
+
+    if (!params.options.skipRag) { // only populated on !params.options.skipRag
+        ragDataSources = allSources.ragDataSources;
+    } else if (!params.options.skipDocumentCache) { // only populated when rag is off
+        conversationDataSources = allSources.conversationDataSources;
+    } 
 
     // This is helpful later to convert a key to a data source
     // file name and type
     const dataSourceDetailsLookup = {};
-    ragDataSources.forEach(ds => {
-        dataSourceDetailsLookup[ds.id] = ds;
-    });
-    dataSources.forEach(ds => {
-        dataSourceDetailsLookup[ds.id] = ds;
+    [ragDataSources, dataSources, conversationDataSources].forEach(sourceArray => {
+        sourceArray.forEach(ds => {
+            dataSourceDetailsLookup[ds.id] = ds;
+        });
     });
 
 
@@ -183,17 +189,18 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         message: "I am searching for relevant information...",
         icon: "aperture",
     });
-    if(ragDataSources.length > 0 && !params.options.skipRag){
+
+    if (ragDataSources.length > 0){
         sendStatusEventToStream(responseStream, ragStatus);
         forceFlush(responseStream);
     }
 
     // Query for related information from RAG
-    const {messages:ragContextMsgs, sources} = (ragDataSources.length > 0 && !params.options.skipRag) ?
+    const {messages:ragContextMsgs, sources} = (ragDataSources.length > 0) ?
         await getContextMessages(params, chatRequestOrig, ragDataSources) :
         {messages:[], sources:[]};
 
-    if(ragDataSources.length > 0 && !params.options.skipRag){
+    if(ragDataSources.length > 0){
         sendStateEventToStream(responseStream, {
           sources: {
               rag:{
@@ -326,7 +333,8 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // context window of whatever model we are using. Each chunk becomes a "context" and we will prompt
     // against each context in a separate request to the LLM.
     let contexts = []
-    if(!params.options.ragOnly && dataSources.length > 0) {
+    if(!params.options.ragOnly && (dataSources.length > 0 || conversationDataSources.length > 0)) {
+        const DOCUMENT_CONTEXT_TYPE = "documentCacheContext";
         try {
             const contextResolverEnv = {
                 tokenCounter: tokenCounter.countTokens,
@@ -350,12 +358,17 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 forceFlush(responseStream);
             });
 
-            contexts = (await Promise.all(
-                dataSources.map(dataSource => {
+            contexts = (await Promise.all([
+                ...dataSources.map(dataSource => {
                     const results = getContexts(contextResolverEnv, dataSource, maxTokens, options);
                     return results;
-                })))
+                }), 
+                ...conversationDataSources.map(async dataSource => {
+                    const results = await getContexts(contextResolverEnv, dataSource, maxTokens, options, true);
+                    return results.map(result => ({...result, type: DOCUMENT_CONTEXT_TYPE}));
+                }) ]))
                 .flat()
+                .filter(context => context !== null)
                 .map((context) => {
                     return {...context, id: srcPrefix + "#" + context.id};
                 })
@@ -371,21 +384,19 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 const sources = contexts.map(s => {
                     const dataSource = s.dataSource;
                     //const summary = summarizeLocations(s.locations);
-
-                    if(s && !dataSource){
-                        const source = {key: s.id, name, type: dataSource.type, locations: s.locations};
+                    //documentCacheContext
+                    if (s && !dataSource) {
+                        const source = {key: s.id, type: dataSource.type, locations: s.locations};
                         return {type: 'documentContext', source};
-                    }
-                    else if(dataSource && isDocument(dataSource)){
+                    } else if (dataSource && isDocument(dataSource)){
+                        // *add custom for DOCUMENT_CONTEXT_TYPE*
                         const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
                         const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations, contentKey: dataSource.metadata?.userDataSourceId};
                         return {type: 'documentContext', source};
-                    }
-                    else if(dataSource) {
+                    } else if (dataSource) {
                         const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
                         return {type, source: {key: dataSource.id, name: dataSource.name || dataSource.id, locations: s.locations}};
-                    }
-                    else {
+                    } else {
                         return null;
                     }
                 }).filter(s => s);
@@ -432,7 +443,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         const totalDsTokens = contexts.reduce((acc, context) => acc + (context.tokens || 1000), 0);
         if (totalDsTokens <= maxTokens) {
             logger.debug("Merging contexts into one: ", updatedContexts);
-            const mergedContext = contexts.map(c => c.context).join("\n\n");
+            const mergedContext = contexts.map((c, index) => `DataSource ${index + 1}: \n\n${c.context}`).join("\n\n");
             // we can save the old contexts in its own attribute for now
             updatedContexts = [{id: 0, context: mergedContext, contexts: updatedContexts}];
         }
