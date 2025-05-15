@@ -12,6 +12,7 @@ from shared_functions import generate_embeddings, generate_questions, record_usa
 import urllib
 from create_table import create_table
 from embedding_models import get_embedding_models
+import datetime
 sqs = boto3.client('sqs')
 
 
@@ -40,6 +41,23 @@ table_name = 'embeddings'
 pg_password = get_credentials(rag_pg_password)
 
 
+# Add this at the top of the file as documentation
+
+"""
+Embedding Process Status Flow
+
+The embedding process tracks status at two levels:
+1. Parent Chunk Status - tracks the overall document processing status
+2. Child Chunk Status - tracks the status of individual chunks
+
+states: 
+- "starting" - Initial state when document is submitted for embedding
+- "processing" - Child chunk is actively being processed
+- "completed" - Child chunk has been successfully processed
+- "failed" - Child chunk processing encountered an error
+- "terminated" - Processing has been terminated for all chunks of a document
+
+"""
 
 
 def trim_src(src):
@@ -58,76 +76,188 @@ def extract_child_chunk_number_from_src(src):
         raise ValueError("Number not found in the key")
 
 
-def update_child_chunk_status(object_id, child_chunk, new_status):
+def update_child_chunk_status(object_id, child_chunk, new_status, error_message=None):
     try:
+        # First, verify the current status and validate the transition
+        valid_transitions = {
+            'starting': ['processing', 'failed'],  # Starting can go to processing or failed
+            'processing': ['completed', 'failed'],  # Processing can go to completed or failed
+            'completed': [],  # Completed is a terminal state
+            'failed': []     # Failed is a terminal state
+        }
+        
         progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
-        print(f"Updating status of child chunk {child_chunk} for {object_id} to {new_status}")
+        logging.info(f"Updating status of child chunk {child_chunk} for {object_id} to {new_status}")
         
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table(progress_table)
         
-        # Update the status of the specific child chunk
-        update_expression = 'SET #data.#childChunks.#chunkId.#status = :new_status'
+        # Get current status first
+        response = table.get_item(
+            Key={'object_id': object_id},
+            ProjectionExpression='#data.#childChunks.#chunkId.#status',
+            ExpressionAttributeNames={
+                '#data': 'data',
+                '#childChunks': 'childChunks',
+                '#chunkId': str(child_chunk),
+                '#status': 'status'
+            }
+        )
+        
+        # Extract the current status
+        current_status = None
+        if 'Item' in response:
+            item = response['Item']
+            if 'data' in item and 'childChunks' in item['data']:
+                child_chunks = item['data']['childChunks']
+                if str(child_chunk) in child_chunks:
+                    current_status = child_chunks[str(child_chunk)].get('status')
+        
+        # Validate the transition if there's a current status
+        if current_status:
+            if current_status in ['completed', 'failed']:
+                logging.warning(f"Cannot update chunk {child_chunk} status from {current_status} to {new_status} (terminal state)")
+                return  # Skip the update, already in terminal state
+            
+            if new_status not in valid_transitions.get(current_status, []):
+                logging.warning(f"Invalid transition from {current_status} to {new_status} for chunk {child_chunk}")
+                return  # Skip the invalid transition
+        
+        # Add timestamp for tracking processing age
+        current_time = datetime.datetime.now().isoformat()
+        
+        # Add a version attribute to track changes
+        update_expression = '''
+            SET #data.#childChunks.#chunkId.#status = :new_status,
+                #data.#childChunks.#chunkId.#lastUpdated = :timestamp,
+                #data.#childChunks.#chunkId.#version = if_not_exists(#data.#childChunks.#chunkId.#version, :zero) + :one
+        '''
+        
         expression_attribute_names = {
             '#data': 'data',
             '#childChunks': 'childChunks',
             '#chunkId': str(child_chunk),
-            '#status': 'status'
+            '#status': 'status',
+            '#lastUpdated': 'lastUpdated',
+            '#version': 'version'
         }
+        
         expression_attribute_values = {
-            ':new_status': new_status
+            ':new_status': new_status,
+            ':timestamp': current_time,
+            ':zero': 0,
+            ':one': 1,
+            ':completed': 'completed',
+            ':failed': 'failed'
         }
+        
+        # Add error message if applicable
+        if error_message and new_status == 'failed':
+            update_expression += ", #data.#childChunks.#chunkId.#error = :error"
+            expression_attribute_names['#error'] = 'error'
+            expression_attribute_values[':error'] = error_message
+        
+        # Define condition that prevents updating terminal states
+        condition_expression = "attribute_not_exists(#data.#childChunks.#chunkId.#status) OR "
+        condition_expression += "(#data.#childChunks.#chunkId.#status <> :completed AND #data.#childChunks.#chunkId.#status <> :failed)"
         
         result = table.update_item(
             Key={'object_id': object_id},
             UpdateExpression=update_expression,
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=expression_attribute_values,
-            ReturnValues='UPDATED_NEW'  # Optional: to return the updated values
+            ConditionExpression=condition_expression,
+            ReturnValues='UPDATED_NEW'
         )
         
-        print(f"Successfully updated child chunk status: {result}")
+        logging.info(f"Successfully updated child chunk status: {result}")
     
     except Exception as e:
-        print("Failed to update the child chunk status in DynamoDB table.")
-        print(e)
+        logging.error(f"Failed to update the child chunk status in DynamoDB table: {str(e)}")
+        logging.exception(e)
 
 
-def update_parent_chunk_status(object_id):
+def update_parent_chunk_status(object_id, new_status=None, error_message=None):
+    """
+    Update the parent chunk status.
+    
+    Args:
+        object_id: The unique identifier for the document
+        new_status: Status to set ('processing', 'completed', 'failed')
+        error_message: Optional error message when status is 'failed'
+    """
     dynamodb = boto3.resource('dynamodb')
     progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
     table = dynamodb.Table(progress_table)
     
     try:
-        logging.info('Fetching item from DynamoDB for object_id: %s', object_id)
-        # Fetch the item from DynamoDB
-        response = table.get_item(Key={'object_id': object_id})
-        item = response.get('Item')
+        logging.info(f'Updating parent chunk status for {object_id} to {new_status}')
         
-        if not item:
-            raise ValueError(f"No item found with object_id {object_id}")
-    
-        logging.info('Item fetched: %s', item)
-        child_chunks = item.get('data', {}).get('childChunks', {})
-        logging.info('Child chunks: %s', child_chunks)
+        # If no status provided, check if all chunks are complete
+        if new_status is None:
+            response = table.get_item(Key={'object_id': object_id})
+            item = response.get('Item')
+            
+            if not item:
+                raise ValueError(f"No item found with object_id {object_id}")
+            
+            child_chunks = item.get('data', {}).get('childChunks', {})
+            current_status = item.get('parentChunkStatus', '')
+            
+            # Skip if already completed or failed
+            if current_status in ['completed', 'failed']:
+                logging.info(f'Parent chunk already in terminal state: {current_status}')
+                return
+            
+            # Check if all child chunks are complete
+            all_complete = all(chunk['status'] == 'completed' for chunk in child_chunks.values())
+            any_failed = any(chunk['status'] == 'failed' for chunk in child_chunks.values())
+            
+            if any_failed:
+                new_status = 'failed'
+            elif all_complete:
+                new_status = 'completed'
+            else:
+                new_status = 'processing'
         
-        # Check if all child chunks are complete
-        all_complete = all(chunk['status'] == 'completed' for chunk in child_chunks.values())
-        logging.info('All child chunks complete: %s', all_complete)
+        # Update the status with timestamp
+        current_time = datetime.datetime.now().isoformat()
         
-        if all_complete:
-            logging.info('Updating parentChunkStatus to completed for object_id: %s', object_id)
+        update_expression = "SET parentChunkStatus = :status, lastUpdated = :timestamp"
+        
+        # Use condition expression to prevent race conditions
+        condition_expression = "attribute_not_exists(parentChunkStatus) OR "
+        condition_expression += "(parentChunkStatus <> :completed AND parentChunkStatus <> :failed)"
+        
+        expression_values = {
+            ':status': new_status,
+            ':timestamp': current_time,
+            ':completed': 'completed',
+            ':failed': 'failed'
+        }
+        
+        # Add error message if provided
+        if error_message and new_status == 'failed':
+            update_expression += ", errorMessage = :error"
+            expression_values[':error'] = error_message
+
+        try:
             table.update_item(
                 Key={'object_id': object_id},
-                UpdateExpression="set parentChunkStatus = :val",
-                ExpressionAttributeValues={':val': 'completed'}
+                UpdateExpression=update_expression,
+                ExpressionAttributeValues=expression_values,
+                ConditionExpression=condition_expression
             )
-            logging.info('parentChunkStatus updated to completed for object_id: %s', object_id)
-        else:
-            logging.info('Not all child chunks are complete for object_id: %s', object_id)        
+            logging.info(f'parentChunkStatus updated to {new_status} for {object_id}')
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                logging.info(f'Parent chunk already in terminal state, not updating to {new_status}')
+            else:
+                raise
     except Exception as e:
-        print("Failed to update the parentChunkStatus in DynamoDB table.")
-        print(e)
+        logging.error(f"Failed to update parentChunkStatus for {object_id}: {str(e)}")
+        logging.exception(e)
+
 def table_exists(cursor, table_name):
     cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s);", (table_name,))
     return cursor.fetchone()[0]
@@ -196,56 +326,46 @@ def lambda_handler(event, context):
     logging.basicConfig(level=logging.INFO)
     
     for record in event['Records']:
-        # Extract bucket name and file key from the S3 event
-        #bucket_name = event['Records'][0]['s3']['bucket']['name']
-        #url_encoded_key = event['Records'][0]['s3']['object']['key']
         print(f"Processing message: {record}")
-        # Assuming the message body is a JSON string, parse it
         s3_info = json.loads(record['body'])
         print(f"Message body: {s3_info}")
         s3_info = s3_info["s3"]
 
-        # Get the bucket and object key from the event
-        print(f"Getting text from {s3_info['object']['key']}")
         bucket_name = s3_info['bucket']['name']
         url_encoded_key = s3_info['object']['key']
-
-        #Print the bucket name and key for debugging purposes
-        print(f"url_key={url_encoded_key}")
-
-        #url decode the key
         object_key = urllib.parse.unquote(url_encoded_key)
         childChunk = extract_child_chunk_number_from_src(object_key)
+        trimmed_src = trim_src(urllib.parse.unquote(url_encoded_key))
 
-        #Print the bucket name and key for debugging purposes
-        print(f"bucket = {bucket_name} and key = {object_key}")
+        # Check if parent is already failed or completed before processing
+        dynamodb = boto3.resource('dynamodb')
+        progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
 
-
+        should_continue = check_parent_terminal_status(trimmed_src, record)
+        if should_continue:
+            continue
+                
         # Create an S3 client
         s3_client = boto3.client('s3')
-
         db_connection = None
 
         try:
             # Get the object from the S3 bucket
             response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-
-            # Read the content of the object
             data = json.loads(response['Body'].read().decode('utf-8'))
             src = data.get('src', '')
-
-            # Get or establish a database connection
+            trimmed_src = trim_src(src)
+            
+            # Mark parent as processing if not already
+            update_parent_chunk_status(trimmed_src, 'processing')
+            
+            # Get database connection
             db_connection = get_db_connection()
+            success, src, error_msg = embed_chunks(data, childChunk, embedding_progress_table, db_connection)
 
-            # Call the embed_chunks function with the JSON data
-            success, src = embed_chunks(data, childChunk, embedding_progress_table, db_connection)
-
-            # If the extraction process was successful, send a completion email
             if success:
                 print(f"Embedding process completed successfully for {src}.")
-
                 receipt_handle = record['receiptHandle']
-                print(f"Deleting message {receipt_handle} from queue")
                 
                 # Delete received message from queue
                 sqs.delete_message(
@@ -253,45 +373,63 @@ def lambda_handler(event, context):
                     ReceiptHandle=receipt_handle
                 )
                 print(f"Deleted message {record['messageId']} from queue")
-                # Update the parent chunk status to 'completed' if all child chunks are complete
-                update_parent_chunk_status(src)
-                print(f"Parent chunk status updated to 'completed' for {src}.")
-
+                
+                # Update the parent chunk status
+                update_parent_chunk_status(trimmed_src)  # Will auto-determine status
             else:
-                print(f"An error occurred during the embedding process for {src}.")
-
-                db_connection.close()
+                print(f"An error occurred during the embedding process for {src}: {error_msg}")
+                # Parent status should already be set to failed by embed_chunks
+                
+                # Still delete the message to prevent retries
+                receipt_handle = record['receiptHandle']
+                sqs.delete_message(
+                    QueueUrl=embedding_chunks_index_queue,
+                    ReceiptHandle=receipt_handle
+                )
+                
             return {
                 'statusCode': 200,
                 'body': json.dumps('Embedding process completed successfully.')
             }
         except Exception as e:
             logging.exception(f"Error processing SQS message: {str(e)}")
+            # Mark parent as failed in case of unhandled exceptions
+            if 'trimmed_src' in locals():
+                update_parent_chunk_status(trimmed_src, 'failed', str(e))
             return {
                 'statusCode': 500,
                 'body': json.dumps('Error processing SQS message.')
             }
         finally:
             # Ensure the database connection is closed
-            if db_connection is not None:
+            if db_connection is not None and not db_connection.closed:
                 db_connection.close()
-            logging.info("Database connection closed.")    
+                logging.info("Database connection closed.")
 
 
 def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(embedding_progress_table)
     src = None
-
+    trimmed_src = None
+    error_msg = None
+    
     try:
         local_chunks = data.get('chunks', [])
         src = data.get('src', '')
         trimmed_src = trim_src(src)
         childChunk = str(childChunk) 
         
+        # Mark this child chunk as processing
+        update_child_chunk_status(trimmed_src, childChunk, "processing")
+        
         if (not embedding_model_name or not qa_model_name):
-            logging.error(f"No Models Provided:\nembedding: {embedding_model_name}\nqa:{qa_model_name}")
-            return False, src
+            error_msg = f"No Models Provided: embedding: {embedding_model_name}, qa: {qa_model_name}"
+            logging.error(error_msg)
+            update_child_chunk_status(trimmed_src, childChunk, "failed", error_msg)
+            # Immediately mark parent as failed
+            update_parent_chunk_status(trimmed_src, "failed", error_msg)
+            return False, src, error_msg
 
         try:
             response = table.get_item(Key={'object_id': trimmed_src})
@@ -304,7 +442,7 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                 
                 if not item['data'].get('terminated', True):
                     logging.info("The file embedding process has been terminated.")
-                    return False, src
+                    return False, src, error_msg
             else:
                 logging.warning("No item found in DynamoDB table.")
         except ClientError as e:
@@ -389,19 +527,61 @@ def embed_chunks(data, childChunk, embedding_progress_table, db_connection):
                     db_connection.commit()
                 
                 except Exception as e:
-                    logging.error(f"Error processing chunk {local_chunk_index} of {src}: {str(e)}")
-                    update_child_chunk_status(trimmed_src, childChunk, "failed")
-                    db_connection.rollback()
+                    error_msg = f"Error processing chunk {local_chunk_index} of {src}: {str(e)}"
+                    logging.error(error_msg)
+                    # Mark this child as failed
+                    update_child_chunk_status(trimmed_src, childChunk, "failed", error_msg)
+                    # Immediately mark parent as failed
+                    update_parent_chunk_status(trimmed_src, "failed", error_msg)
+                    if not db_connection.closed:
+                        db_connection.rollback()
+                    return False, src, error_msg
 
         update_child_chunk_status(trimmed_src, childChunk, "completed")
-        return True, src
+        return True, src, None
 
     except Exception as e:
-        logging.exception(f"Critical error in embed_chunks for {src}: {str(e)}")
-        update_child_chunk_status(trimmed_src, childChunk, "failed")
-        db_connection.rollback()
-        return False, src
+        error_msg = f"Critical error in embed_chunks for {src}: {str(e)}"
+        logging.exception(error_msg)
+        if trimmed_src:
+            update_child_chunk_status(trimmed_src, childChunk, "failed", error_msg)
+            # Immediately mark parent as failed
+            update_parent_chunk_status(trimmed_src, "failed", error_msg)
+        if db_connection and not db_connection.closed:
+            db_connection.rollback()
+        return False, src, error_msg
     
+def check_parent_terminal_status(trimmed_src, record):
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(embedding_progress_table)
+    try:
+            response = table.get_item(Key={'object_id': trimmed_src})
+            item = response.get('Item')
+            
+            if item:
+                parent_status = item.get('parentChunkStatus')
+                if parent_status in ['failed', 'completed']:
+                    logging.info(f"Parent chunk is already in terminal state: {parent_status}. Skipping processing.")
+                    receipt_handle = record['receiptHandle']
+                    sqs.delete_message(
+                        QueueUrl=embedding_chunks_index_queue,
+                        ReceiptHandle=receipt_handle
+                    )
+                    return True
+                
+                if item.get('terminated', False):
+                    logging.info(f"Job for {trimmed_src} has been terminated. Skipping processing.")
+                    receipt_handle = record['receiptHandle']
+                    sqs.delete_message(
+                        QueueUrl=embedding_chunks_index_queue,
+                        ReceiptHandle=receipt_handle
+                    )
+                    return True
+    except Exception as e:
+        logging.error(f"Error checking parent status: {e}")
+        return False
+        
+
 
 @validated(op='terminate')
 def terminate_embedding(event, context, current_user, name, data):

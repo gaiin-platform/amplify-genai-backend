@@ -283,6 +283,7 @@ update_admin_config_schema = {
                                     "user": {"type": ["string", "null"]},
                                     "advanced": {"type": ["string", "null"]},
                                     "cheapest": {"type": ["string", "null"]},
+                                    "documentCaching": {"type": ["string", "null"]},
                                     "agent": {"type": ["string", "null"]},
                                     "embeddings": {"type": ["string", "null"]},
                                     "qa": {"type": ["string", "null"]}

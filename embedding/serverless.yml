@@ -104,11 +104,9 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
-    EMBEDDING_PROVIDER: ${self:custom.stageVars.EMBEDDING_PROVIDER}
-    KEYWORD_MODEL_NAME: ${self:custom.stageVars.KEYWORD_MODEL_NAME}
     REGION: ${self:provider.region}
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
+    
     
   iam:
     role:
@@ -200,6 +198,9 @@ functions:
           path: /embedding-dual-retrieval
           method: post
           cors: true
+    environment:
+      RAG_CHUNK_DOCUMENT_QUEUE_URL: 
+        Fn::ImportValue: ${sls:stage}-RagChunkDocumentQueueURL
 
 
   terminate_embedding:
@@ -212,6 +213,20 @@ functions:
           path: /embedding/terminate
           method: post
           cors: true
+
+  check_embedding_completion:
+    handler: embedding-dual-retrieval.queue_missing_embeddings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /embedding/check-completion
+          method: post
+          cors: true
+    environment:
+      RAG_CHUNK_DOCUMENT_QUEUE_URL: 
+        Fn::ImportValue: ${sls:stage}-RagChunkDocumentQueueURL
 
 
   get_sqs_messages:
@@ -305,7 +320,11 @@ resources:
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
-          
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-document-chunk-queue"
 
     RagPostgresDbSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
