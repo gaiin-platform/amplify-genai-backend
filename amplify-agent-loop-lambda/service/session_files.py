@@ -19,6 +19,7 @@ class LambdaFileTracker:
         self.s3_client = boto3.client('s3')
         self.bucket = os.getenv('AGENT_STATE_BUCKET')
         self.data_sources: Dict[str, str] = {}  # Maps source ID -> local filename
+        self.deleted_files: List[str] = []  # Track files that have been deleted
 
         # Create session working directory in /tmp
         self.working_dir = working_dir
@@ -72,6 +73,8 @@ class LambdaFileTracker:
                 self.existing_mappings = session_data.get('mappings', {})
                 # Load data sources mapping
                 self.data_sources = session_data.get('data_sources', {})
+                # Load list of deleted files
+                self.deleted_files = session_data.get('deleted_files', [])
                 return session_data
 
             except ClientError as e:
@@ -87,8 +90,19 @@ class LambdaFileTracker:
     def restore_session_files(self, index_content: Dict) -> bool:
         """Restore files from a previous session to the working directory."""
         try:
+            # Load list of files that were previously deleted
+            deleted_files = index_content.get('deleted_files', [])
+            files_restored = 0
+            files_skipped = 0
+            
             # Download each file from the index
             for original_path, s3_name in index_content['mappings'].items():
+                # Skip files that were previously deleted
+                if original_path in deleted_files or original_path in self.deleted_files:
+                    print(f"Skipping previously deleted file: {original_path}")
+                    files_skipped += 1
+                    continue
+                    
                 # Construct the S3 key without date
                 s3_key = f"{self.current_user}/{self.session_id}/{s3_name}"
                 print(f"Restoring {original_path} from {s3_key}")
@@ -104,10 +118,12 @@ class LambdaFileTracker:
                         s3_key,
                         local_path
                     )
+                    files_restored += 1
                 except ClientError as e:
                     print(f"Error downloading file {s3_key}: {e}")
                     continue
 
+            print(f"Files restored: {files_restored}, files skipped (previously deleted): {files_skipped}")
             return True
 
         except Exception as e:
@@ -437,13 +453,16 @@ class LambdaFileTracker:
                 # Ensure version_history exists
                 if 'version_history' not in existing_index:
                     existing_index['version_history'] = {}
+                if 'deleted_files' not in existing_index:
+                    existing_index['deleted_files'] = []
             except ClientError as e:
                 if e.response['Error']['Code'] == 'NoSuchKey':
                     existing_index = {
                         "user": self.current_user,
                         "session_id": self.session_id,
                         "mappings": {},
-                        "version_history": {}
+                        "version_history": {},
+                        "deleted_files": []
                     }
                 else:
                     raise
@@ -465,9 +484,16 @@ class LambdaFileTracker:
                 existing_index['data_sources'] = {}
             existing_index['data_sources'].update(self.data_sources)
             
-            # Log deletion information
+            # Update deleted files list in the index
             if deleted_files:
                 print(f"Deleted files removed from mappings: {deleted_files}")
+                # Add new deleted files to the list, avoiding duplicates
+                for df in deleted_files:
+                    if df not in existing_index['deleted_files']:
+                        existing_index['deleted_files'].append(df)
+                        
+                # Save deleted files to instance variable for next session
+                self.deleted_files = existing_index['deleted_files']
 
             # Upload index file
             self.s3_client.put_object(

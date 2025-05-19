@@ -1,6 +1,7 @@
 import json
 import os
 import traceback
+import copy
 
 import boto3
 
@@ -214,6 +215,18 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         if data_sources:
             print(f"Processing {len(data_sources)} data sources")
             
+            # Map to track which message each data source belongs to
+            data_source_to_message_idx = {}
+            for i, message in enumerate(prompt):
+                message_data_sources = message.get('data', {}).get('dataSources', [])
+                for source in message_data_sources:
+                    source_id = source.get('id')
+                    if source_id:
+                        data_source_to_message_idx[source_id] = i
+            
+            # Track successfully processed data sources with their local paths
+            processed_data_sources = {}
+            
             try:
                 datasource_request = {
                     "dataSources": data_sources,
@@ -242,6 +255,16 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                         # Process the data source through the tracker
                         result = tracker.add_data_source(source_details)
                         print(f"Added data source {source_details}: {result}")
+                        
+                        # If successful, store the information for enhancing the prompt
+                        if result["status"] == "success":
+                            source_id = source_details.get("id")
+                            if source_id:
+                                processed_data_sources[source_id] = {
+                                    "name": source_details.get("name", "file"),
+                                    "type": source_details.get("type", "unknown"),
+                                    "local_path": os.path.join(work_directory, result["local_path"])
+                                }
                 else:
                     # Fallback to the original data sources if resolution fails
                     for source_details in data_sources:
@@ -249,6 +272,16 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                         if source_details:
                             result = tracker.add_data_source(source_details)
                             print(f"Added data source {source_details}: {result}")
+                            
+                            # If successful, store the information for enhancing the prompt
+                            if result["status"] == "success":
+                                source_id = source_details.get("id")
+                                if source_id:
+                                    processed_data_sources[source_id] = {
+                                        "name": source_details.get("name", "file"),
+                                        "type": source_details.get("type", "unknown"),
+                                        "local_path": os.path.join(work_directory, result["local_path"])
+                                    }
                         else:
                             print(f"Could not find full details for data source: {source_details}")
             
@@ -262,8 +295,38 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                     if source_details:
                         result = tracker.add_data_source(source_details)
                         print(f"Added data source {source_details}: {result}")
+                        
+                        # If successful, store the information for enhancing the prompt
+                        if result["status"] == "success":
+                            source_id = source_details.get("id")
+                            if source_id:
+                                processed_data_sources[source_id] = {
+                                    "name": source_details.get("name", "file"),
+                                    "type": source_details.get("type", "unknown"),
+                                    "local_path": os.path.join(work_directory, result["local_path"])
+                                }
                     else:
                         print(f"Could not find full details for data source: {source_details}")
+            
+            # Enhance the prompt with data source information
+            if processed_data_sources:
+                # Create a deep copy of the prompt to avoid modifying the original
+                enhanced_prompt = copy.deepcopy(prompt)
+                
+                # Add conversational notes about data sources to the relevant messages
+                for source_id, source_info in processed_data_sources.items():
+                    if source_id in data_source_to_message_idx:
+                        message_idx = data_source_to_message_idx[source_id]
+                        
+                        if message_idx < len(enhanced_prompt) and 'content' in enhanced_prompt[message_idx]:
+                            note = f"\n\nI've attached {source_info['name']} to this message. It's a {source_info['type']} file stored at {source_info['local_path']}."
+                            
+                            if isinstance(enhanced_prompt[message_idx]['content'], str):
+                                enhanced_prompt[message_idx]['content'] += note
+                
+                # Use the enhanced prompt for the agent
+                prompt = enhanced_prompt
+                print("Enhanced prompt with data source information")
 
         metadata = metadata or {}
         agent_id = "default"
