@@ -1,4 +1,4 @@
-service:  amplify-${self:custom.stageVars.DEP_NAME}-agent-loop
+service: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop
 
 frameworkVersion: "3"
 
@@ -9,40 +9,33 @@ package:
 
 plugins:
   - serverless-offline
-  - serverless-python-requirements
   - serverless-prune-plugin
   - serverless-cloudformation-changesets
 
 custom:
-  pythonRequirements:
-    dockerizePip: true
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   stages:
     - dev
     - staging
     - prod
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+  # Using your existing repository
+  ecrRepository: 654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
 
-    
 provider:
   name: aws
-  runtime: python3.11
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
-  logRetentionInDays: 365  
+  logRetentionInDays: 365
   apiGateway:
     restApiId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
     restApiRootResourceId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
-  
-  
-
 
   environment:
-
     LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
@@ -76,18 +69,14 @@ provider:
     MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
     REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
     DATASOURCES_RESOLVER_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
-    #AWS_REGION optional for /chat/service.py 
 
   iam:
     role:
       managedPolicies:
         - !Ref LambdaAgentLoopIAMPolicy
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        #- Fn::ImportValue: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-BedrockIAMPolicyArn
-
 
 functions:
-
   agentRouter:
     handler: service/core.route
     timeout: 900
@@ -96,8 +85,29 @@ functions:
           path: vu-agent/{proxy+}
           method: post
 
+  # Original handler-based function URL - keep this working
   agentRouterFnUrl:
     handler: service/core.route
+    timeout: 900
+    url:
+      cors: true
+
+  # New container-based function with different name
+  agentRouterContainer:
+    image:
+      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router
+      command: ["service.core.route"]
+    timeout: 900
+    events:
+      - http:
+          path: vu-agent-container/{proxy+}
+          method: post
+
+  # New container-based function URL with different name
+  agentRouterFnUrlContainer:
+    image:
+      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router
+      command: ["service.core.route"]
     timeout: 900
     url:
       cors: true
@@ -187,7 +197,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
-                
+
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -202,7 +212,7 @@ resources:
                 - sqs:DeleteMessage
               Resource:
                 - !GetAtt AgentQueue.Arn
-                
+
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
@@ -210,6 +220,14 @@ resources:
               Resource:
                 - arn:aws:bedrock:*::foundation-model/*
                 - arn:aws:bedrock:*:654654422653:inference-profile/*
+
+            # Add permission to pull from your specific ECR repository
+            - Effect: Allow
+              Action:
+                - ecr:BatchGetImage
+                - ecr:GetDownloadUrlForLayer
+              Resource:
+                - arn:aws:ecr:us-east-1:654654422653:repository/dev-amplifygenai-repo
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table
@@ -347,7 +365,7 @@ resources:
         BillingMode: PAY_PER_REQUEST
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
-        
+
     EmailSendersDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -355,7 +373,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
         SSESpecification:
-          SSEEnabled: false          
+          SSEEnabled: false
         AttributeDefinitions:
           -
             AttributeName: email
