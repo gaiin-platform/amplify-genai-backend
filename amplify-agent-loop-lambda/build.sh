@@ -10,7 +10,7 @@ echo "Building container image for stage: $STAGE"
 echo "Repository: $REPOSITORY_URI"
 echo "Image tag: $IMAGE_TAG"
 
-# Ensure BuildKit is enabled explicitly
+# Enable Docker BuildKit explicitly
 export DOCKER_BUILDKIT=1
 
 # Login to ECR
@@ -19,13 +19,17 @@ aws ecr get-login-password --region $REGION | docker login --username AWS --pass
 # Clean previous builds
 docker system prune -f
 
-# Explicitly create a new buildx builder for single-arch builds (do this once)
+# Ensure buildx builder
 docker buildx create --name lambda-builder --use || docker buildx use lambda-builder
 docker buildx inspect --bootstrap
 
-# Build and push explicitly targeting amd64 (Lambda's preferred architecture)
-docker buildx build --platform linux/amd64 \
+# Build explicitly for Lambda (single-arch, clean manifest)
+docker buildx build \
+  --platform linux/amd64 \
   --push \
+  --provenance=false \
+  --sbom=false \
+  --no-cache \
   -t $REPOSITORY_URI:$IMAGE_TAG .
 
 echo "Image built and pushed: $REPOSITORY_URI:$IMAGE_TAG"
