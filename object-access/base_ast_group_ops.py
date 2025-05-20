@@ -18,6 +18,7 @@ Example response:
                 "inputContextWindow": 200000,
                 "outputTokenLimit": 4096, 
                 "supportsImages": true,
+                "supportsReasoning": false,
                 "provider": "OpenAI",
                 "supportsSystemPrompts": true,
                 "systemPrompt": "Additional Prompt",
@@ -45,7 +46,7 @@ Example request:
     "data":{
         "temperature": 0.7,
         "max_tokens": 4000,
-        "dataSources": [{"id": "s3://user@vanderbilt.edu/2014-qwertyuio","type": "application/pdf"}],
+        "dataSources": ["yourEmail@vanderbilt.edu/2014-qwertyuio.json"],
         "messages": [
             {
                 "role": "user",
@@ -78,7 +79,7 @@ Example request:
     },
     {
         "name": "dataSources",
-        "description": "Array of objects representing input files or documents for retrieval-augmented generation (RAG). Each object must contain an 'id' and 'type'. Example: [{'id': 's3://example_file.pdf', 'type': 'application/pdf'}]. The user can make a call to the /files/query endpoint to get the id for their file."
+        "description": "Array of strings representing input file ids, primarily used for retrieval-augmented generation (RAG). The user can make a call to the /files/query endpoint to get the id for their file. In the case of uploading a new data source through the /files/upload endpoint, the user can use the returned key as the id.",
     },
     {
         "name": "messages",

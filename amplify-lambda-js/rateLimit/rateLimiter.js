@@ -44,16 +44,21 @@ export async function isRateLimited(params) {
         }
         const rateData = unmarshall(item);
 
-        const calcIsRateLimited = (limit, rateData) => {
+        const calcIsRateLimited = (limit, rateData, adminSet = false) => {
             //periods include Monthly, Daily, Hourly 
             const period = limit.period
             const colName = `${period.toLowerCase()}Cost`
             let spent = rateData[colName];
             if (period === 'Hourly') spent = spent[new Date().getHours()]// Get the current hour as a number from 0 to 23
-            return spent >= limit.rate;
+            const isRateLimited = spent >= limit.rate;
+            if (isRateLimited) {
+                if (adminSet) params.body.options.rateLimit =  {...limit, adminSet};
+                params.body.options.rateLimit.currentSpent = spent;
+            }
+            return isRateLimited;
         }
         return rateLimit ? calcIsRateLimited(rateLimit, rateData) : false || 
-          adminRateLimit ? calcIsRateLimited(adminRateLimit, rateData) : false;
+          adminRateLimit ? calcIsRateLimited(adminRateLimit, rateData, true) : false;
         
     } catch (error) {
         console.error("Error during rate limit DynamoDB operation:", error);
@@ -102,4 +107,21 @@ async function getAdminRateLimit() {
     }
 
 
+}
+
+export const formatRateLimit = (limit) =>  {
+    if (limit.rate === undefined || limit.rate === null) return noRateLimit.period;
+    return `$${limit.rate.toFixed(2)} / ${limit.period}`;
+}
+
+export const formatCurrentSpent = (limit) =>  {
+    if (limit.currentSpent === undefined || limit.currentSpent === null) return "";
+    const periodDisplay = {
+        "Daily": "today",
+        "Hourly": "this hour",
+        "Monthly": "this month",
+        "Total": "in total"
+    };
+    const periodText = periodDisplay[limit.period] || limit.period.toLowerCase();
+    return `$${limit.currentSpent} spent ${periodText}.`;
 }

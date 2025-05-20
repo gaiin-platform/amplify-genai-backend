@@ -1,4 +1,4 @@
-Amplify_API_Documentation
+Amplify_API_Documentation,,,,,,,
 Path,Method,Summary,Expected Data,Responses,Example Body,Example Response,
 https://<Your_URL>,,,,,,,
           /available_models,GET,"View a list of available models, including id, name, descriptions, context window size, output token limit, provider, support of base-64 encoded images as data source input, support of system prompts, and any additional system prompts Amplify appends to the model.",,"200: List of available models and Amplify’s set default, cheapest, and advanced models. Content: application/json    models (list of model objects)    default (object)    cheapest (object)    advanced (object)",,"{
@@ -19,10 +19,12 @@ https://<Your_URL>,,,,,,,
     ""advanced<model Object>,
     ""cheapest"": <model Object> }
 }",
-          /chat,POST," Offers real-time chat capabilities exclusively through streaming. Interact with a selection of the most advanced AI chat models available, including GPT, Claude, and Mistral.",
+          /chat,POST," Offers real-time chat capabilities exclusively through streaming. Interact with a selection of the most advanced AI chat models available, including GPT, Claude, and Mistral.","model (string): Required. To get model Ids, make a request to the /available_models endpoint
 temperature (number)
 max_tokens (integer)
-dataSources (array of strings)
+dataSources (array of strings) Obtain data source ids in the following ways:
+1.	Call the /files/query endpoint. 
+2.	Upload a new data source using the /files/upload endpoint, the id is returned as the key attribute.
 messages (array of objects):
  - role (string): Required. Options include system, assistant, user.
  -content (string): Required.
@@ -32,7 +34,7 @@ options (object):
  - ragOnly (boolean)
  - skipRag (boolean)
  - assistantId (string)
- - model (object) Required (View available model ids by calling /available_models):
+ - model (object):
       - id (string)
  - prompt (string)","200: Chat stream response.
 Content: application/json
@@ -42,14 +44,10 @@ data (string)
 403: Forbidden, request refused.
 404: Not found, resource not found.","{
     ""data"":{
+        ""model"": ""gpt-4o"",
         ""temperature"": 0.7,
         ""max_tokens"": 4000,
-        ""dataSources"": [
-	{
-	“id”: “s3://user@vanderbilt.edu/56789876rtfghjkbvder5678"", 
-	“type”:”application/pdf”
-	}
-        ],
+        ""dataSources"": [""user@vanderbilt.edu/56789876rtfghjkbvder5678""],
         ""messages"": [
             {
             ""role"": ""user"",
@@ -59,7 +57,7 @@ data (string)
         ""options"": {
             ""ragOnly"": false,
             ""skipRag"": true,
-            ""model"": {"id":“gpt-4o”},
+            ""model"": [“gpt-4o”],
  	“assistantId”: “astp/abcdefghi”
             ""prompt"": ""What is the capital of France?""
         }

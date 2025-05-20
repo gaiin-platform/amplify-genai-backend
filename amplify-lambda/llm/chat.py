@@ -70,10 +70,15 @@ def chat(chat_url, access_token, payload):
         nonlocal meta_events
         meta_events.append(data)
 
-    # invoke the chat_streaming function with the provided parameters
-    chat_streaming(chat_url, access_token, payload, content_handler, meta_handler)
-
-    return concatenated_d_data, meta_events
+    try:
+        # invoke the chat_streaming function with the provided parameters
+        chat_streaming(chat_url, access_token, payload, content_handler, meta_handler)
+        return concatenated_d_data, meta_events
+    except Exception as e:
+        # Return the error message in a format that can be handled by the caller
+        error_msg = str(e)
+        print(f"Error in chat function: {error_msg}")
+        return f"Error: {error_msg}", []
 
 
 def chat_streaming(chat_url, access_token, payload, content_handler, meta_handler = lambda x: None):
@@ -140,9 +145,24 @@ def chat_streaming(chat_url, access_token, payload, content_handler, meta_handle
 
     # Send POST request to the specified URL
     response = requests.post(chat_url, headers=headers, json=payload, stream=True)
-
     if response.status_code != 200:
-        response.raise_for_status()
+        try:
+            # Try to extract error message from response body
+            error_content = response.json()
+            error_message = error_content.get('error')
+            
+            if error_message:
+                # Return a more descriptive error with the actual message
+                print(f"Request failed with status {response.status_code}: {error_message}")
+                raise Exception(f"Request failed with status {response.status_code}: {error_message}")
+            else:
+                # Fallback to standard status code error
+                response.raise_for_status()
+        except json.JSONDecodeError:
+            # If response is not valid JSON, fall back to standard error
+            response.raise_for_status()
+
+    error_message = None
 
     # Process the streamed response
     for line in response.iter_lines():
@@ -152,6 +172,13 @@ def chat_streaming(chat_url, access_token, payload, content_handler, meta_handle
                 stripped_line = line.decode('utf-8').lstrip("data: ").strip()
                 if stripped_line:
                     data = json.loads(stripped_line)
+                    # Check for error in the response
+                    if "error" in data:
+                        error_message = data["error"]
+                        print(f"Error detected from chat service: {error_message}")
+                        # Break the loop when error is detected
+                        break
+                    
                     if data.get("s") == "meta":
                         meta_handler(data)
                     else:
@@ -159,5 +186,9 @@ def chat_streaming(chat_url, access_token, payload, content_handler, meta_handle
             except json.JSONDecodeError as e:
                 print(f"JSON decode error: {e} - Content: {line}")
                 continue
+    
+    # If we found an error, raise an exception to propagate it back
+    if error_message:
+        raise Exception(f"{error_message}")
 
 

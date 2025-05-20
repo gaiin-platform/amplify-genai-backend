@@ -71,6 +71,7 @@ provider:
     CHAT_BILLING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
     
 
   iam:
@@ -116,6 +117,17 @@ functions:
           method: get
           cors: true
 
+  get_default_models:
+    handler: service/core.get_default_models
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 10
+    events:
+      - http:
+          path: /default_models
+          method: get
+          cors: true
+
   
 resources:
   Resources:
@@ -136,9 +148,7 @@ resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:CreateTable
-                - "dynamodb:BatchWriteItem"
-                - "dynamodb:PutItem"
-                - "dynamodb:DeleteItem"
+                - dynamodb:BatchWriteItem
               Resource:
                 - "arn:aws:secretsmanager:us-east-1:*:secret:aws/ses/credentials-i82Vzw"
                 - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
@@ -151,6 +161,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
     # model rates needed for usage cost calculations
     ModelRateTable:
       Type: 'AWS::DynamoDB::Table'

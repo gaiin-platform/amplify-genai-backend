@@ -377,7 +377,12 @@ export const resolveDataSources = async (params, body, dataSources) => {
     if (body && body.messages && body.messages.length > 0) {
         const lastMsg = body.messages[body.messages.length - 1];
         const ds = lastMsg.data && lastMsg.data.dataSources;
-        if (ds) body.imageSources = ds.filter(d => isImage(d));
+        if (ds) {
+            body.imageSources = ds.filter(d => isImage(d));
+        } else if (body.options?.api_accessed){ // support images coming from the /chat endpoint
+            const imageSources = dataSources.filter(d => isImage(d));
+            if (imageSources.length > 0) body.imageSources = imageSources;
+        }
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
@@ -583,41 +588,39 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
 
         try {
             if (key.startsWith("s3://")) {
-
                 key = extractKey(key);
-
-                // Check the hash keys cache
-                const cached = hashDataSourcesCache.get(key);
-                if (cached) {
-                    return cached;
-                }
-
-                const command = new GetItemCommand({
-                    TableName: hashFilesTableName, // Replace with your table name
-                    Key: {
-                        id: {S: key}
-                    }
-                });
-
-                // Send the command to DynamoDB and wait for the response
-                const {Item} = await dynamodbClient.send(command);
-
-                if (Item) {
-                    // Convert the returned item from DynamoDB's format to a regular JavaScript object
-                    const item = unmarshall(Item);
-                    const result = {
-                        ...ds,
-                        metadata: {...ds.metadata, userDataSourceId: ds.id},
-                        id: "s3://" + item.textLocationKey};
-                    hashDataSourcesCache.set(key, result);
-                    return result;
-                } else {
-                    hashDataSourcesCache.set(key, ds);
-                    return ds; // No item found with the given ID
-                }
-            } else {
-                return ds;
             }
+
+            // Check the hash keys cache
+            const cached = hashDataSourcesCache.get(key);
+            if (cached) {
+                return cached;
+            }
+
+            const command = new GetItemCommand({
+                TableName: hashFilesTableName, // Replace with your table name
+                Key: {
+                    id: {S: key}
+                }
+            });
+
+            // Send the command to DynamoDB and wait for the response
+            const {Item} = await dynamodbClient.send(command);
+
+            if (Item) {
+                // Convert the returned item from DynamoDB's format to a regular JavaScript object
+                const item = unmarshall(Item);
+                const result = {
+                    ...ds,
+                    metadata: {...ds.metadata, userDataSourceId: ds.id},
+                    id: "s3://" + item.textLocationKey};
+                hashDataSourcesCache.set(key, result);
+                return result;
+            } else {
+                hashDataSourcesCache.set(key, ds);
+                return ds; // No item found with the given ID
+            }
+            return ds;
         } catch (e) {
             console.log(e);
             return ds;

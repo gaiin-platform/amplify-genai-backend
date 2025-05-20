@@ -1,4 +1,3 @@
-import json
 import os
 import ast
 from typing import List
@@ -23,7 +22,7 @@ serializer = TypeSerializer()
 IGNORED_DIRECTORIES = {"node_modules", "venv", "__pycache__"}
 
 
-def op(tags=None, path="", name="", description="", params=None, method="POST", parameters=None):
+def op(tags=None, path="", name="", description="", params=None, method="POST"):
     # This is the actual decorator
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -56,7 +55,7 @@ class OperationModel(BaseModel):
     params: List[ParamModel]
     type: str
     url: str
-    parameters: Optional[dict] = None
+    schema: dict = None  # Add schema field to store JSON schema
 
     @field_validator('method')
     def validate_method(cls, v):
@@ -64,35 +63,6 @@ class OperationModel(BaseModel):
         if v.upper() not in allowed_methods:
             raise ValueError(f"Method must be one of {allowed_methods}")
         return v.upper()
-
-def extract_dict_from_ast(node):
-    """Helper function to extract dictionary from AST nodes"""
-    if isinstance(node, ast.Dict):
-        keys = []
-        values = []
-        for k, v in zip(node.keys, node.values):
-            if isinstance(k, ast.Constant):
-                key = k.value
-            elif isinstance(k, ast.Str):  # for older Python versions
-                key = k.s
-            else:
-                continue
-
-            if isinstance(v, ast.Dict):
-                value = extract_dict_from_ast(v)
-            elif isinstance(v, ast.List):
-                value = [x.value if isinstance(x, ast.Constant) else x.s for x in v.elts]
-            elif isinstance(v, ast.Constant):
-                value = v.value
-            elif isinstance(v, ast.Str):  # for older Python versions
-                value = v.s
-            else:
-                continue
-
-            keys.append(key)
-            values.append(value)
-        return dict(zip(keys, values))
-    return {}
 
 def find_python_files(directory: str) -> List[str]:
     python_files = []
@@ -107,6 +77,45 @@ def extract_dict(ast_node):
     """Extract dictionary from AST Dict node."""
     return {key.s: value.s for key, value in zip(ast_node.keys, ast_node.values)}
 
+def extract_complex_dict(ast_node):
+    """Extract nested dictionary structures from AST Dict node."""
+    result = {}
+    for key, value in zip(ast_node.keys, ast_node.values):
+        if isinstance(value, ast.Dict):
+            result[key.s] = extract_complex_dict(value)
+        elif isinstance(value, ast.List):
+            result[key.s] = extract_list(value)
+        elif isinstance(value, ast.Constant):
+            result[key.s] = value.value
+        elif isinstance(value, ast.Str):
+            result[key.s] = value.s
+        else:
+            # Try to get a literal value or default to string representation
+            try:
+                result[key.s] = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                result[key.s] = str(value)
+    return result
+
+def extract_list(ast_node):
+    """Extract list from AST List node."""
+    result = []
+    for item in ast_node.elts:
+        if isinstance(item, ast.Dict):
+            result.append(extract_complex_dict(item))
+        elif isinstance(item, ast.List):
+            result.append(extract_list(item))
+        elif isinstance(item, ast.Constant):
+            result.append(item.value)
+        elif isinstance(item, ast.Str):
+            result.append(item.s)
+        else:
+            # Try to get a literal value or default to string representation
+            try:
+                result.append(ast.literal_eval(item))
+            except (ValueError, SyntaxError):
+                result.append(str(item))
+    return result
 
 def extract_tags(op_kwargs):
     tags = op_kwargs.get('tags', [])
@@ -130,45 +139,35 @@ def extract_ops_from_file(file_path: str) -> List[OperationModel]:
 
         # Look for function definitions and their decorators
         for node in ast.walk(tree):
-            try:
-                if isinstance(node, ast.FunctionDef):
-                    for decorator in node.decorator_list:
-                        if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
-                            op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
-                            if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs and ('params' in op_kwargs or 'parameters' in op_kwargs):
-                                params_dict = extract_dict(op_kwargs['params'])
+            if isinstance(node, ast.FunctionDef):
+                for decorator in node.decorator_list:
+                    if isinstance(decorator, ast.Call) and (getattr(decorator.func, 'id', None) == 'op' or getattr(decorator.func, 'id', None) == 'vop'):
+                        op_kwargs = {kw.arg: kw.value for kw in decorator.keywords}
+                        if 'path' in op_kwargs and 'name' in op_kwargs and 'description' in op_kwargs:
+                            
+                            params_dict = extract_dict( op_kwargs.get('params', ast.Dict(keys=[], values=[])) )
+                            params = [ParamModel(description=desc, name=name) for name, desc in params_dict.items()]
 
+                            # Extract schema if available
+                            schema = None
+                            if 'schema' in op_kwargs:
+                                schema = extract_complex_dict(op_kwargs['schema'])
 
-                                params = [ParamModel(description=desc, name=name) for name, desc in params_dict.items()] if 'params' in op_kwargs else []
-                                parameters = extract_dict_from_ast(op_kwargs.get('parameters', ast.Dict(keys=[], values=[])))
-                                try:
-                                    operation = OperationModel(
-                                        description=op_kwargs['description'].s,
-                                        id=op_kwargs['name'].s,
-                                        includeAccessToken=True,  # Assuming ops will include access token
-                                        method=op_kwargs['method'].s if 'method' in op_kwargs else "POST",  # Default method
-                                        name=op_kwargs['name'].s,
-                                        params=params,
-                                        type="custom",  # Assuming custom type
-                                        url=op_kwargs['path'].s,
-                                        tags=extract_tags(op_kwargs),
-                                        parameters=parameters
-                                    )
-                                    ops_found.append(operation)
-                                except ValidationError as ve:
-                                    print(f"\nValidation error in {file_path}:")
-                                    for error in ve.errors():
-                                        print(f"Parsing: "+ op_kwargs['name'].s)
-                                        print(f"Field: {' -> '.join(str(x) for x in error['loc'])}")
-                                        print(f"Error: {error['msg']}")
-                                        print(f"Type: {error['type']}\n")
-            except Exception as e:
-                print(f"Error processing function {node.name} in {file_path}: {e}")
-
-
+                            operation = OperationModel(
+                                description=op_kwargs['description'].s,
+                                id=op_kwargs['name'].s,
+                                includeAccessToken=True,  # Assuming ops will include access token
+                                method=op_kwargs['method'].s if 'method' in op_kwargs else "POST",  # Default method
+                                name=op_kwargs['name'].s,
+                                params=params,
+                                type=op_kwargs['type'].s if 'type' in op_kwargs else "built_in",  # Assuming custom type
+                                url=op_kwargs['path'].s,
+                                tags=extract_tags(op_kwargs),
+                                schema=schema
+                            )
+                            ops_found.append(operation)
         return ops_found
     except Exception as e:
-        print(f"Error processing {file_path}:")
         print(e)
         print(f"Skipping {file_path} due to unparseable AST")
         return []
@@ -192,6 +191,8 @@ def print_pretty_ops(ops: List[OperationModel]):
             print(f"    - {param.name} : {param.description}")
         print(f"  Include Access Token: {op.includeAccessToken}")
         print(f"  Type       : {op.type}")
+        if op.schema:
+            print(f"  Schema     : {op.schema}")
         print('')
 
 
@@ -261,8 +262,6 @@ def write_ops(current_user: str = 'system', tags: List[str] = None, ops: List[Op
 
                     for index, existing_op in enumerate(existing_ops):
                         if existing_op['id'] == op_dict['id']:
-                            print(f"Updating {op_dict['id']} for user {current_user} and tag {tag}")
-                            print(f"Operation: {json.dumps(op_dict, indent=2)}")
                             existing_ops[index] = op_dict
                             op_exists = True
                             break
@@ -280,7 +279,7 @@ def write_ops(current_user: str = 'system', tags: List[str] = None, ops: List[Op
                             ':ops': existing_ops,
                         }
                     )
-                    print(f"Published operation with id {op.id} to table {table_name} for user {current_user} and tag {tag}: {op_dict}")
+                    print(f"Updated item in table {table_name} for user {current_user} and tag {tag}")
             else:
                 # If no entry exists, create a new one
                 item = {
@@ -290,7 +289,7 @@ def write_ops(current_user: str = 'system', tags: List[str] = None, ops: List[Op
                     'ops': [op_dict]
                 }
                 table.put_item(Item=item)
-                print(f"Published operation with id {op.id} to table {table_name} for user {current_user} and tag {tag}: {op_dict}")
+                print(f"Put item into table {table_name} for user {current_user} and tag {tag}: {item}")
 
     return {
         "success": True,
