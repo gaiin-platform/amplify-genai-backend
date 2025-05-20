@@ -13,6 +13,7 @@ echo "Deploying to stage: $STAGE in region: $REGION"
 
 # Run the build script
 ./build.sh
+./build-fat.sh
 
 sls deploy --stage $STAGE --region $REGION
 

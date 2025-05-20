@@ -11,9 +11,12 @@ plugins:
   - serverless-offline
   - serverless-prune-plugin
   - serverless-cloudformation-changesets
+  - serverless-python-requirements
 
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  pythonRequirements:
+    dockerizePip: true
   stages:
     - dev
     - staging
@@ -27,6 +30,7 @@ provider:
   name: aws
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
+  runtime: python3.11
   versionFunctions: false
   logRetentionInDays: 365
   apiGateway:
@@ -79,6 +83,7 @@ provider:
 functions:
   agentRouter:
     handler: service/core.route
+    runtime: python3.11
     timeout: 900
     events:
       - http:
@@ -88,6 +93,7 @@ functions:
   # Original handler-based function URL - keep this working
   agentRouterFnUrl:
     handler: service/core.route
+    runtime: python3.11
     timeout: 900
     url:
       cors: true
@@ -124,6 +130,7 @@ functions:
 
   agentEventProcessor:
     handler: service/agent_queue.route_queue_event
+    runtime: python3.11
     timeout: 900
     events:
       - sqs:
@@ -132,6 +139,7 @@ functions:
 
   toolsEndpoint:
     handler: service/core.get_builtin_tools
+    runtime: python3.11
     timeout: 30
     events:
       - http:
