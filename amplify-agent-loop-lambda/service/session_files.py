@@ -227,6 +227,71 @@ class LambdaFileTracker:
             print(f"Error getting tracked files: {e}")
 
         return tracked_files
+    
+    def _decode_image_if_base64(self, file_path: str, source_name: str) -> None:
+        """
+        Check if an image file contains base64 encoded data and decode it if necessary.
+        
+        Args:
+            file_path: Path to the file that may contain base64 encoded data
+            source_name: Name of the source for logging purposes
+        """
+        try:
+            print(f"Checking if image needs base64 decoding: {source_name}")
+            # Read the file content
+            with open(file_path, 'rb') as f:
+                content = f.read()
+            
+            # Skip if file is empty
+            if not content:
+                print(f"Empty file, skipping base64 check: {source_name}")
+                return
+                
+            # Check if content appears to be base64
+            # First, try to decode as UTF-8 string
+            try:
+                content_str = content.decode('utf-8', errors='ignore')
+                
+                # Heuristics to detect base64:
+                # 1. Starts with data: URI prefix 
+                # 2. Content is mostly printable ASCII characters (base64 alphabet)
+                # 3. No binary data in first chunk of content
+                is_printable = all(c.isprintable() or c.isspace() for c in content_str[:1000])
+                print(f"Content is printable: {is_printable}")
+                has_data_uri = content_str.startswith('data:')
+                print(f"Content has data URI prefix: {has_data_uri}")
+                looks_like_base64 = is_printable or (has_data_uri or ',' in content_str[:100])
+                print(f"Looks like base64: {looks_like_base64}")
+                
+                if looks_like_base64:
+                    import base64
+                    print(f"Decoding base64 image data for {source_name}")
+                    
+                    # If it has the data:image prefix, extract just the base64 part
+                    if has_data_uri:
+                        header, base64_data = content_str.split(',', 1)
+                    else:
+                        # Assume the entire content is base64
+                        base64_data = content_str.strip()
+                    
+                    # Clean any whitespace or line breaks that might be in the base64 string
+                    base64_data = ''.join(base64_data.split())
+                    
+                    # Decode and write back to the same file
+                    try:
+                        decoded_data = base64.b64decode(base64_data)
+                        with open(file_path, 'wb') as f:
+                            f.write(decoded_data)
+                        print(f"Successfully decoded base64 image: {source_name}")
+                    except Exception as decode_error:
+                        print(f"Error decoding base64 data: {decode_error}")
+            except UnicodeDecodeError:
+                # If we can't decode as UTF-8, it's likely already binary
+                print(f"File appears to be binary already, no decoding needed: {source_name}")
+                
+        except Exception as e:
+            print(f"Error checking/decoding image: {e}")
+            # We don't raise the exception - continue with original file if decoding fails
         
     def add_data_source(self, data_source: Dict) -> Dict:
         """
@@ -267,7 +332,7 @@ class LambdaFileTracker:
                 # Add extension based on type if needed
                 if source_type == 'application/json':
                     source_name += '.json'
-                elif source_type.startswith('image/'):
+                elif source_type and source_type.startswith('image/'):
                     ext = source_type.split('/')[-1]
                     source_name += f'.{ext}'
         
@@ -304,6 +369,10 @@ class LambdaFileTracker:
                     with open(local_path, 'wb') as f:
                         f.write(response.content)
                     
+                    # If this is an image, check if it needs base64 decoding
+                    if source_type and source_type.startswith('image/'):
+                        self._decode_image_if_base64(local_path, source_name)
+                        
                     print(f"Downloaded data source from signed URL to {local_path}")
                 except requests.exceptions.RequestException as e:
                     print(f"Error downloading from signed URL: {e}")
@@ -316,8 +385,28 @@ class LambdaFileTracker:
             elif source_format == 'content' and source_ref:
                 print(f"Saving content directly to file")
                 
+                # Handle base64 encoded images
+                if source_type and source_type.startswith('image/') and isinstance(source_ref, str) and source_ref.startswith('data:'):
+                    print(f"Decoding base64 image data for {source_name}")
+                    try:
+                        # Extract the base64 content after the data URI prefix
+                        import base64
+                        # Format typically: data:image/png;base64,<actual-base64-data>
+                        header, base64_data = source_ref.split(',', 1)
+                        decoded_data = base64.b64decode(base64_data)
+                        
+                        # Write decoded binary data to file
+                        with open(local_path, 'wb') as f:
+                            f.write(decoded_data)
+                    except Exception as e:
+                        print(f"Error decoding base64 image: {e}")
+                        return {
+                            "status": "error",
+                            "message": f"Error decoding base64 image: {str(e)}",
+                            "data_source": data_source
+                        }
                 # For JSON content, we may need to parse it first
-                if source_type == 'application/json' and isinstance(source_ref, str):
+                elif source_type == 'application/json' and isinstance(source_ref, str):
                     try:
                         content = json.loads(source_ref)
                         with open(local_path, 'w') as f:
@@ -331,6 +420,10 @@ class LambdaFileTracker:
                     mode = 'wb' if isinstance(source_ref, bytes) else 'w'
                     with open(local_path, mode) as f:
                         f.write(source_ref)
+                    
+                    # If this is an image, check if it needs base64 decoding
+                    if source_type and source_type.startswith('image/') and mode == 'w':
+                        self._decode_image_if_base64(local_path, source_name)
                 
                 print(f"Saved data source content to {local_path}")
             
@@ -364,6 +457,10 @@ class LambdaFileTracker:
                 try:
                     self.s3_client.download_file(self.bucket, s3_key, local_path)
                     print(f"Downloaded data source {source_id} to {local_path}")
+                    
+                    # Convert base64 encoded images to binary if needed
+                    if source_type and source_type.startswith('image/'):
+                        self._decode_image_if_base64(local_path, source_name)
                 except ClientError as e:
                     print(f"Error downloading data source {source_id}: {e}")
                     return {

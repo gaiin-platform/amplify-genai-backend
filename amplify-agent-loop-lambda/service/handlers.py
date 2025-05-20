@@ -255,6 +255,10 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                             file_name = source_details["id"].split("/")[-1]
                             source_details["name"] = file_name
                         
+                        # Check if this is an image that needs base64 decoding before processing
+                        if source_details.get("type", "").startswith("image/"):
+                            print(f"Processing potential base64 image: {source_details.get('id')}")
+                            
                         # Process the data source through the tracker
                         result = tracker.add_data_source(source_details)
                         print(f"Added data source {source_details}: {result}")
@@ -1006,9 +1010,12 @@ def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[D
         
         # Add all data sources to our list, avoiding duplicates by ID
         if message_data_sources:
+            print(f"Found data sources in message: {message_data_sources}")
             for source in message_data_sources:
                 source_id = source.get('id')
+                print(f"Processing data source: {source}")
                 if source_id and source_id not in seen_source_ids:
+                    print(f"Adding new data source: {source}")
                     seen_source_ids.add(source_id)
                     data_sources.append(source)
     
