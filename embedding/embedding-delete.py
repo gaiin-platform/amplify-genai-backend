@@ -12,16 +12,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger('embedding_delete')
 
 # Get environment variables
-pg_host = os.environ['RAG_POSTGRES_DB_READ_ENDPOINT']
+pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
 pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
 pg_database = os.environ['RAG_POSTGRES_DB_NAME']
-rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
+rag_pg_password = os.environ.get('RAG_POSTGRES_DB_ENV', os.environ['RAG_POSTGRES_DB_SECRET'])
 object_access_table = os.environ['OBJECT_ACCESS_TABLE']
 
 # Define the permission levels that grant delete access
 permission_levels = ['write', 'owner']
 
-pg_password = get_credentials(rag_pg_password)
+# pg_password = get_credentials(rag_pg_password)
 
 def check_delete_access(src_id, current_user):
     """Check if user has permission to delete embeddings for a given source."""
@@ -32,13 +32,11 @@ def check_delete_access(src_id, current_user):
         response = table.query(
             KeyConditionExpression=Key('object_id').eq(src_id) & Key('principal_id').eq(current_user)
         )
-        
-        # Check if user has write or owner permissions
+        logger.info(f"Access check response: {response}")  # Add this
         items_with_access = [item for item in response.get('Items', []) 
                            if item['permission_level'] in permission_levels]
-        
+        logger.info(f"Items with access: {items_with_access}")  # Add this
         return len(items_with_access) > 0
-        
     except Exception as e:
         logger.error(f"Error checking delete access: {e}")
         return False
@@ -49,11 +47,12 @@ def delete_embeddings_from_db(src_id):
         host=pg_host,
         database=pg_database,
         user=pg_user,
-        password=pg_password,
+        password=rag_pg_password,
         port=3306
     ) as conn:
         with conn.cursor() as cur:
             try:
+                print(f"Connecting to database at {pg_host}")
                 # Delete both regular and QA embeddings for the source
                 sql_query = """
                     DELETE FROM embeddings 
@@ -98,6 +97,7 @@ def delete_embeddings_from_db(src_id):
 )
 @validated("embedding-delete")
 def delete_embeddings(event, context, current_user, name, data):
+    print("Made it to delete embeddings")
     data = data['data']
     src_ids = data['dataSources']
     

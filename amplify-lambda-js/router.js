@@ -10,7 +10,7 @@ import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {resolveDataSources} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
-import {isRateLimited} from "./rateLimit/rateLimiter.js";
+import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 
 
@@ -33,7 +33,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 
             returnResponse(responseStream, {
                 statusCode: 400,
-                body: {error: "No messages or datasource request provided"}
+                body: {error: "Invalid request body"}
             });
         } else if (params && !params.user) {
             logger.info("No user found, returning 401");
@@ -69,12 +69,17 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             const response = await handleDatasourceRequest(params, params.body.datasourceRequest);
             returnResponse(responseStream, response);
         } else if (await isRateLimited(params)) {
+            const rateLimitInfo = params.body.options.rateLimit;
+            let errorMessage = "Request limit reached."
+            if (rateLimitInfo) {
+                const currentRate = rateLimitInfo.currentSpent ? `Current Spent: ${formatCurrentSpent(rateLimitInfo)}` : "";
+                const rateLimitStr = `${rateLimitInfo.adminSet ? "Amplify " : ""}Set Rate limit: ${formatRateLimit(rateLimitInfo)}`;
+                errorMessage = `${errorMessage} ${currentRate} ${rateLimitStr}`;
+            }
             returnResponse(responseStream, {
                 statusCode: 429,
                 statusText: "Request limit reached. Please try again in a few minutes.",
-                body: {error: "Too Many Requests",
-                       rateLimitInfo: rateLimit,
-                }
+                body: {error: errorMessage}
             });
 
         } else {
@@ -92,7 +97,10 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                                                                         
             let options = params.body.options ? {...params.body.options} : {};
 
-            params.body.options.numPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
+            // Calculate numberPrompts and set it in both places
+            const calculatedPrompts = params.body.messages ? Math.ceil(params.body.messages.length / 2) : 0;
+            params.body.options.numberPrompts = calculatedPrompts;
+            options.numberPrompts = calculatedPrompts; // Set it in the new options object too
             
             const modelId = (options.model && options.model.id);
 
@@ -137,8 +145,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 logger.info("Request data sources", dataSources);
                 dataSources = await resolveDataSources(params, body, dataSources);
 
-                for(const ds of dataSources) {
-                    console.debug("Resolved data source", ds.id, ds);
+                for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
+                    console.debug("Resolved data source: ", ds.id, "\n". ds);
                 }
 
             } catch (e) {

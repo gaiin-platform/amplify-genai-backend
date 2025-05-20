@@ -67,10 +67,12 @@ provider:
     RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-${self:service}-rag-cluster
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
+    # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
     RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
     RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
     OBJECT_ACCESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
@@ -83,6 +85,7 @@ provider:
     GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
     EMBEDDING_CHUNKS_INDEX_DLQ: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
     EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
 
         #Stand Alone Vars references from local vars file
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
@@ -175,6 +178,7 @@ functions:
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
         ENDPOINTS_ARN: ${self:provider.environment.ENDPOINTS_ARN}
         MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
+        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
         API_VERSION: ${self:provider.environment.API_VERSION}
         EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
         REGION: ${self:provider.region}
@@ -294,6 +298,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"

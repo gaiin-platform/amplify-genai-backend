@@ -14,10 +14,21 @@ plugins:
   - serverless-domain-manager
   - serverless-cloudformation-changesets  
 
+layers:
+  markitdown:
+    path: markitdown
+    name: ${self:service}-${sls:stage}-markitdown
+    description: Markitdown layer
+    compatibleRuntimes:
+      - python3.11
+      
 custom:
   pythonRequirements:
     dockerizePip: true
     layer: true
+    # uncomment in case of issues with pythonRequirement layers not uploading to aws 
+    # useStaticCache: false  # Uses a static path for the cache
+    # useDownloadCache: false 
 
   prune:
     automatic: true
@@ -62,7 +73,6 @@ provider:
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
-    GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  
@@ -75,16 +85,13 @@ provider:
     S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
-    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-settings
     EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
-    PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME: ${self:service}-${sls:stage}-personal-assistant-sns-email-topic
     OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
     MAX_CHUNKS: 1000
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
@@ -207,7 +214,7 @@ functions:
           method: post
           cors: true
     environment:
-        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+        FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
     timeout: 9    
 
   download_file:
@@ -217,6 +224,17 @@ functions:
     events:
       - http:
           path: files/download
+          method: post
+          cors: true
+
+  delete_file:
+    handler: files/file.delete_file
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/delete
           method: post
           cors: true
 
@@ -394,12 +412,19 @@ functions:
     handler: powerpoints/core.handle_pptx_upload
     layers:
       - Ref: PythonRequirementsLambdaLayer
-
-
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          existing: true
+          rules:
+            - prefix: templates/
+            - suffix: .pptx 
+      
   queue_document_for_rag:
     handler: rag/core.queue_document_for_rag
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
@@ -412,7 +437,7 @@ functions:
   process_document_for_rag:
     handler: rag/core.process_document_for_rag
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -421,14 +446,27 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
-        ENCRYPTION_PARAMETER: ${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}
+        FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
         rag_process_document_queue_url:
           Ref: RagDocumentIndexQueue
-    
+  
+  reprocess_document_for_rag:
+    handler: files/file.reprocess_document_for_rag
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: files/reprocess/rag
+          method: post
+    environment:
+        rag_process_document_queue_url:
+          Ref: RagDocumentIndexQueue
+        
+
   queue_document_for_chunking:
     handler: rag/core.queue_document_for_rag_chunking
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
@@ -441,7 +479,7 @@ functions:
   process_document_for_chunking:
     handler: rag/core.chunk_document_for_rag
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     timeout: 300
     events:
         - sqs:
@@ -453,18 +491,11 @@ functions:
         rag_chunk_document_queue_url:
           Ref: RagChunkDocumentQueue
 
-  email_assistant:
-    handler: personal/assistant.process_email
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    timeout: 900
-    events:
-      - sns: ${self:provider.environment.PERSONAL_ASSISTANT_SNS_EMAIL_TOPIC_NAME}
 
   process_images_for_chat:
     handler: images/core.process_images_for_chat
     layers:
-      - Ref: PythonRequirementsLambdaLayer
+      - Ref: MarkitdownLambdaLayer
     events:
       - s3:
           bucket: ${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}
@@ -493,7 +524,7 @@ resources:
                 - ssm:DescribeParameters
                 - ssm:PutParameter
               Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.FILE_UPLOAD_ENCRYPTION_PARAMETER}*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/s3/metadata/encryption        
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -534,7 +565,7 @@ resources:
                 - rds-data:BeginTransaction
                 - rds-data:CommitTransaction
                 - rds-data:RollbackTransaction
-                - secretsmanager:GetSecretValue
+                - dynamodb:BatchGetItem
               Resource:
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
@@ -557,15 +588,12 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"               
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
@@ -856,28 +884,6 @@ resources:
             KeyType: HASH
         TableName: ${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}
 
-    EmailSettingsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        SSESpecification:
-          SSEEnabled: false          
-        AttributeDefinitions:
-          -
-            AttributeName: email
-            AttributeType: S
-          -
-            AttributeName: tag
-            AttributeType: S
-        KeySchema:
-          - AttributeName: email
-            KeyType: HASH
-          - AttributeName: tag
-            KeyType: RANGE
-        TableName: ${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}
-
     AccountingChatUsageDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -981,6 +987,7 @@ resources:
             DestinationBucketName: 
               Ref: AccessLogsBucket
             LogFilePrefix: S3AccessLogs/ 
+
 
 
     RagInputBucket:

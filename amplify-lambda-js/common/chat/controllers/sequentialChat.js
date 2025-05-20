@@ -7,14 +7,16 @@ import { PassThrough, Writable } from 'stream';
 import { newStatus } from "../../status.js";
 import { isKilled } from "../../../requests/requestState.js";
 import { getLogger } from "../../logging.js";
-import { sendStatusEventToStream } from "../../streams.js";
+import { sendStatusEventToStream, sendStateEventToStream} from "../../streams.js";
 import { addContextMessage, createContextMessage } from "./common.js";
 import { analyzeAndRecordGroupAssistantConversation } from "../../../groupassistants/conversationAnalysis.js";
 import {trace} from "../../trace.js";
+// import { evaluateRAG } from "../rag/ragEvaluation.js";
 
 const logger = getLogger("sequentialChat");
 export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaData, responseStream, eventTransformer}) => {
-
+                                     // for serverless responses                               // for localServer.js responses   
+    const isDirectResponseToUser = (typeof responseStream.setContentType) === 'function' || (typeof responseStream.returnResponse) === 'function';
     // The multiplexer is used to multiplex the streaming responses from the LLM provider
     // back to the client. This is necessary because we are going to run multiple requests (potentially)
     // to generate a single response. We want the client to see one continuous stream and not have to
@@ -63,7 +65,7 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
         // Add the context as the next to last message in the
         // message list. This will provide the context for the user's
         // prompt.
-        messages = addContextMessage(messages, context, chatRequest.options.model.id);
+        messages = addContextMessage(messages, context);
 
         const requestWithData = {
             ...chatRequest,
@@ -81,6 +83,7 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
 
         logger.debug("Creating stream wrapper");
         const streamReceiver = new PassThrough();
+
 
         // Capture data as it's written to the streamReceiver for AI analysis
         // PassThrough streams should support event listeners, but let's add a check just in case
@@ -134,14 +137,27 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             status);
     }
     
-    trace(requestId, ["LLM Complete Response"], {data: llmResponse});
-    // console.log("--llm response: ", llmResponse );
-                                                   //prod ast
-    if ((chatRequest.options.analysisCategories || chatRequest.options.assistantId === 'astgp/ebe68911-87e9-4914-95ba-5ec947a8828c') && 
-       ((!chatRequest.options.source && !chatRequest.options.ragOnly) || (chatRequest.options.source && !chatRequest.options.skipRag))) {
-        logger.debug("Performing AI Analysis on conversationId:", chatRequest.options.conversationId);
-        analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user).catch(error => {
-            logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
-        });
+    trace(requestId, isDirectResponseToUser ? ["LLM Final User Response"] : ["LLM Amplify Prompted Response"], {data: llmResponse});
+    console.log("--llm response-- ", llmResponse );
+                                                   
+    if (isDirectResponseToUser) {
+        if (chatRequest.options.trackConversations) {
+            logger.debug("Track conversations enabled for:", chatRequest.options.conversationId);
+
+            // Determine if category analysis should be performed
+            const performCategoryAnalysis = !!chatRequest.options?.analysisCategories;
+
+            logger.debug(`Category analysis ${performCategoryAnalysis ? 'enabled' : 'disabled'} for conversation ${chatRequest.options.conversationId}`);
+
+            // Pass the flag to the analysis function
+            analyzeAndRecordGroupAssistantConversation(
+                chatRequest,
+                llmResponse,
+                user,
+                performCategoryAnalysis
+            ).catch(error => {
+                logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
+            });
+        }
     }
 }
