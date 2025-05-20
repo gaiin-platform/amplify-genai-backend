@@ -463,12 +463,36 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         ...body,
                         messages: [
                             {
+                                role: "system",
+                                content: `
+                                Use the most specific markdown block in the list below to provide the user access to the files, images, and other outputs you create.
+                                Use the plain file reference as a last resort.
+                        
+                                You can reference files, images, and other outputs by using the syntax: \`\`\`agent <filename>\`\`\` anywhere in youre response. 
+                                
+                                There are some additional special markdown blocks that you should use:
+                                
+                                If the file is CSV, agent_table will display a rich table editor with the data from the file, a great way to get data from numpy/pandas back to the user:
+                                \`\`\`agent_table 
+                                <filename>
+                                \`\`\` 
+                                
+                                If the file is an image, agent_image will display a rich image viewer with the image from the file...good for outputs from matplotlib in particular!
+                                \`\`\`agent_image 
+                                <filename>
+                                \`\`\` 
+                                
+                                ALWAYS display CSV in an agent_table. 
+                                Always display images in an agent_image.
+                                `
+                            },
+                            {
                                 role: "user",
                                 content:
                                     `The user's prompt was: ${body.messages.slice(-1)[0].content}` +
                                     `\n\nA log of the assistant's reasoning / work:\n---------------------\n${JSON.stringify(result.data.result)}` +
                                     `\n\n---------------------` +
-                                    `\n\nRespond to the user.`
+                                    `\n\nRespond to the user and reference files, images, etc. that were created as appropriate.`
                             }]};
 
                     await llm.prompt(summaryRequest, []);
