@@ -109,6 +109,7 @@ functions:
       uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router
       command: ["service.core.route"]
     timeout: 900
+    memorySize: 1024
     url:
       cors: true
 
@@ -117,6 +118,7 @@ functions:
       uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-fat
       command: ["service.core.route"]
     timeout: 900
+    memorySize: 1024
     url:
       cors: true
 

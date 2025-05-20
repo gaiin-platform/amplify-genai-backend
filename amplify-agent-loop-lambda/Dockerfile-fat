@@ -39,13 +39,19 @@ RUN curl -L https://github.com/jgm/pandoc/releases/download/3.2/pandoc-3.2-linux
     rm -rf pandoc*
 
 
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
-    export NVM_DIR="$HOME/.nvm" && \
-    . "$NVM_DIR/nvm.sh" && \
-    nvm install 16 && \
-    nvm use 16 && \
+ENV PATH="/usr/local/bin:${PATH}" \
+    NPM_CONFIG_PREFIX=/usr/local
+
+RUN curl -fsSL https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz -o node.tar.xz && \
+    yum install -y xz && \
+    tar -xf node.tar.xz && \
+    cp -r node-v16.20.2-linux-x64/{bin,include,lib,share} /usr/local/ && \
+    rm -rf node.tar.xz node-v16.20.2-linux-x64 && \
+    node -v && npm -v && \
     npm install -g markitdown && \
-    ln -s "$NVM_DIR/versions/node/v16.*/bin/markitdown" /usr/local/bin/markitdown
+    which markitdown && \
+    ls -l /usr/local/bin/markitdown && \
+    chmod 755 /usr/local/bin/markitdown
 
 # Upgrade pip
 RUN pip install --upgrade pip
