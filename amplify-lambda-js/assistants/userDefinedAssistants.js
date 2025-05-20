@@ -465,7 +465,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             {
                                 role: "system",
                                 content: `
-                                Use the most specific markdown block in the list below to provide the user access to the files, images, and other outputs you create.
+                                Unless the user tells you otherwise, use the most specific markdown block in the list below to provide the user access to the files, images, and other outputs you create.
                                 Use the plain file reference as a last resort.
                         
                                 You can reference files, images, and other outputs by using the syntax: \`\`\`agent <filename>\`\`\` anywhere in youre response. 
