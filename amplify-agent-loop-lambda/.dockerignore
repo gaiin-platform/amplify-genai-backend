@@ -16,6 +16,11 @@ downloads/
 eggs/
 .eggs/
 lib/
+.DS_Store
+test-cases
+.idea
+.serverless
+.git
 lib64/
 parts/
 sdist/

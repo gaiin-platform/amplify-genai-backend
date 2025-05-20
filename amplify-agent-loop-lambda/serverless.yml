@@ -112,6 +112,14 @@ functions:
     url:
       cors: true
 
+  agentRouterFnUrlContainerFat:
+    image:
+      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-fat
+      command: ["service.core.route"]
+    timeout: 900
+    url:
+      cors: true
+
   agentEventProcessor:
     handler: service/agent_queue.route_queue_event
     timeout: 900

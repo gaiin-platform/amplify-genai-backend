@@ -1,0 +1,46 @@
+FROM public.ecr.aws/lambda/python:3.11
+
+# Install system dependencies
+RUN yum -y update && \
+    yum -y install \
+        gcc gcc-c++ make \
+        libffi-devel \
+        cairo-devel \
+        gobject-introspection-devel \
+        glib2-devel \
+        git \
+        wget \
+        unzip \
+        tar \
+        curl \
+        which \
+        python3 \
+        python3-devel \
+        ffmpeg \
+        ImageMagick \
+        pandoc \
+        poppler-utils \
+        tesseract \
+        unrtf \
+        xpdf \
+        libGL \
+        && yum clean all
+
+# Upgrade pip
+RUN pip install --upgrade pip
+
+# Install Lambda Runtime Interface Client (NOT needed unless using custom entrypoint)
+# RUN pip install awslambdaric  ← REMOVE this
+
+# Set working directory
+WORKDIR /var/task
+
+# Copy and install Python dependencies
+COPY requirements.txt agent-requirements-fat.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r agent-requirements-fat.txt
+
+# Copy application code
+COPY . .
+
+# Let AWS Lambda handle RIC
+CMD ["service.core.route"]
