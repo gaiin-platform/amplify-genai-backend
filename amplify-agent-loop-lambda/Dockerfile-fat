@@ -8,6 +8,7 @@ RUN yum -y update && \
         cairo-devel \
         gobject-introspection-devel \
         glib2-devel \
+        xz \
         git \
         wget \
         unzip \
@@ -16,15 +17,35 @@ RUN yum -y update && \
         which \
         python3 \
         python3-devel \
-        ffmpeg \
         ImageMagick \
-        pandoc \
         poppler-utils \
-        tesseract \
-        unrtf \
         xpdf \
         libGL \
         && yum clean all
+
+RUN yum -y install xz && \
+    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz && \
+    tar -xf ffmpeg.tar.xz && \
+    dir=$(find . -maxdepth 1 -type d -name "ffmpeg-*-static") && \
+    cp "$dir/ffmpeg" /usr/bin/ffmpeg && \
+    cp "$dir/ffprobe" /usr/bin/ffprobe && \
+    chmod +x /usr/bin/ffmpeg /usr/bin/ffprobe && \
+    rm -rf "$dir" ffmpeg.tar.xz
+
+# Install Pandoc (static binary)
+RUN curl -L https://github.com/jgm/pandoc/releases/download/3.2/pandoc-3.2-linux-amd64.tar.gz -o pandoc.tar.gz && \
+    tar -xzf pandoc.tar.gz && \
+    cp -r pandoc-3.2/bin/* /usr/local/bin/ && \
+    rm -rf pandoc*
+
+
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
+    export NVM_DIR="$HOME/.nvm" && \
+    . "$NVM_DIR/nvm.sh" && \
+    nvm install 16 && \
+    nvm use 16 && \
+    npm install -g markitdown && \
+    ln -s "$NVM_DIR/versions/node/v16.*/bin/markitdown" /usr/local/bin/markitdown
 
 # Upgrade pip
 RUN pip install --upgrade pip
