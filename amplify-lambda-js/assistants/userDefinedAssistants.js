@@ -11,7 +11,7 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
-import {handleAgentInteraction} from "./agentHandler.js";
+import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
