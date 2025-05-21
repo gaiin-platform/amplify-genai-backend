@@ -666,9 +666,7 @@ compressed_conversation_schema = {
                             "type": "string"
                         },
                         "date": {
-                            "type": "string",
-                            "format": "date",
-                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                            "type": "string"
                         },
                         "name": {
                             "type": "string"
