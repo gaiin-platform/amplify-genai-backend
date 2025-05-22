@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError
 from common.validate import validated
 from common.ops import op
 from common.encoders import CombinedEncoder
+from urllib.parse import urlparse
 
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
@@ -2698,7 +2699,13 @@ def fetch_and_parse_url(url):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=30)
+
+        # Parse URL to get the fragment
+        parsed_url = urlparse(url)
+        fragment = parsed_url.fragment
+        base_url = url.replace(f"#{fragment}", "") if fragment else url
+
+        response = requests.get(base_url, headers=headers, timeout=30)
 
         # Handle HTTP errors explicitly
         try:
@@ -2750,13 +2757,41 @@ def fetch_and_parse_url(url):
 
         # Build a more structured extraction of content
         main_content = ""
+        section_title = ""
 
-        # Try to find main content containers
-        main_elements = soup.find_all(["main", "article", "div", "section"])
-        if main_elements:
-            for element in main_elements:
-                if len(element.get_text(strip=True)) > 200:  # Only substantial blocks
-                    main_content += element.get_text(separator=" ", strip=True) + "\n\n"
+        # If we have a fragment, try to find the specific section
+        if fragment:
+            # Try different ways to find the section
+            section = (
+                soup.find(id=fragment)
+                or soup.find(attrs={"name": fragment})
+                or soup.find(id=lambda x: x and fragment in x)
+                or soup.find(class_=lambda x: x and fragment in x)
+            )
+
+            if section:
+                # Get the section title if available
+                heading = section.find(["h1", "h2", "h3", "h4", "h5", "h6"])
+                if heading:
+                    section_title = heading.get_text(strip=True)
+
+                # Get the content of the section
+                main_content = section.get_text(separator=" ", strip=True)
+            else:
+                print(f"Could not find section with fragment: {fragment}")
+
+        # If no specific section was found or no fragment was provided, get the main content
+        if not main_content:
+            # Try to find main content containers
+            main_elements = soup.find_all(["main", "article", "div", "section"])
+            if main_elements:
+                for element in main_elements:
+                    if (
+                        len(element.get_text(strip=True)) > 200
+                    ):  # Only substantial blocks
+                        main_content += (
+                            element.get_text(separator=" ", strip=True) + "\n\n"
+                        )
 
         # If no main content found, just get the body text
         if not main_content:
@@ -2765,8 +2800,12 @@ def fetch_and_parse_url(url):
         # Clean up whitespace
         main_content = re.sub(r"\s+", " ", main_content).strip()
 
-        # Add a headline with the title
-        formatted_text = f"# {title}\n\n{main_content}"
+        # Add a headline with the title and section title if available
+        formatted_text = (
+            f"# {title} - {section_title}\n\n{main_content}"
+            if section_title
+            else f"# {title}\n\n{main_content}"
+        )
 
         # Extract metadata
         metadata = {
