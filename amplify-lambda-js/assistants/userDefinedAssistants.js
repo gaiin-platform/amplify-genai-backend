@@ -12,6 +12,7 @@ import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} f
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
 import {handleAgentInteraction} from "./agentHandler.js";
+import {invokeAgent} from "./agent.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
