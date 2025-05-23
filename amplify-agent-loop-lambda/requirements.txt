@@ -11,3 +11,4 @@ Pillow==10.1.0
 python-dotenv==1.0.1
 python_jose==3.3.0
 pyyaml
+croniter==6.0.0

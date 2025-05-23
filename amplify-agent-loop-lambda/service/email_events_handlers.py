@@ -3,7 +3,7 @@ import traceback
 from common.ops import vop
 from events.email_sender_controls import add_allowed_sender, remove_allowed_sender, list_allowed_senders
 from events.event_templates import remove_event_template, get_event_template, list_event_templates_for_user, \
-    add_event_template, is_event_template_tag_available
+    add_event_template, is_event_template_tag_available, list_event_templates_tags_for_user
 from events.mock import generate_ses_event
 from service.agent_queue import route_queue_event
 
@@ -129,6 +129,40 @@ def handle_list_event_templates_for_user(current_user, access_token):
             "success": False,
             "data": None,
             "message": "Server error: Unable to list event templates. Please try again later."
+        }
+
+
+@vop(
+    path="/vu-agent/list-event-template-tags",
+    tags=["events","default"],
+    name="listEventTemplateTags",
+    description="List all event template tags for the current user.",
+    params={},
+    schema={
+        "type": "object",
+        "properties": {}
+    }
+)
+def handle_list_event_template_tags(current_user, access_token):
+    try:
+        response = list_event_templates_tags_for_user(current_user)
+        if not response["success"]:
+            return response
+            
+        # Extract just the tags from the event templates
+        tags = [template["tag"] for template in response["data"]]
+        
+        return {
+            "success": True,
+            "data": tags,
+            "message": "Event template tags retrieved successfully."
+        }
+    except Exception:
+        traceback.print_exc()
+        return {
+            "success": False,
+            "data": None,
+            "message": "Server error: Unable to list event template tags. Please try again later."
         }
 
 

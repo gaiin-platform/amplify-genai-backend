@@ -32,8 +32,7 @@ from common.data_sources import resolve_datasources
 from botocore.exceptions import ClientError
 
 from service.session_files import create_file_tracker, get_presigned_url_by_id
-from workflow.workflow_template_registry import list_workflow_templates, get_workflow_template, \
-    register_workflow_template, delete_workflow_template, update_workflow_template
+from workflow.workflow_template_registry import get_workflow_template
 from service.models import get_default_models
 
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -350,7 +349,6 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         # Determine which Python built-in operations to include
         all_built_in_operations = []
         if metadata:
-
             built_in_operations = metadata.get('builtInOperations', [])
             assistant_data = metadata.get('assistant', {}).get('data',{})
             assistant_built_in_operations = assistant_data.get('builtInOperations', [])
@@ -397,10 +395,16 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         action_registry.register_terminate_tool() # We always include terminate
 
         model = metadata.get('model')
-
+        
+        operations = metadata.get("operations", [])
         if 'assistant' in metadata:
-            assistant = metadata['assistant']
-            print(f"Assistant metadata: {metadata['assistant']}")
+            assistant = metadata['assistant']        
+            # enforce assistant selected model
+            if ("data" in assistant and "model" in assistant["data"]):
+                print(f"Enforcing assistant selected model: {assistant['data']['model']}")
+                model = assistant["data"]["model"]
+
+            print(f"Assistant metadata: {assistant}")
             if assistant['instructions']:
                 print(f"Adding assistant instructions to goals: {assistant['instructions']}")
                 additional_goals.append(Goal(
@@ -409,7 +413,10 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                 ))
             ops = assistant.get("data",{}).get("operations", [])
             print(f"Assistant operations: {ops}")
-            op_tools = ops_to_tools(ops)
+            operations.extend(ops)
+        
+        if operations:
+            op_tools = ops_to_tools(operations)
 
             for op_tool in op_tools:
                 print(f"Registering op tool in action registry: {op_tool['tool_name']}: {op_tool['description']}")
@@ -424,10 +431,6 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                         terminal=op_tool.get("terminal", False)
                     )
                 )
-            # enforce assistant selected model
-            if ("data" in assistant and "model" in assistant["data"]):
-                model = assistant["data"]["model"]
-
 
         default_models = get_default_models(access_token)
         print(f"Using model: {model}")
@@ -775,221 +778,6 @@ def get_file_download_urls(current_user, access_token, session_id, files, versio
         urls_by_file[file_id] = url
 
     return urls_by_file
-
-@vop(
-    path="/vu-agent/register-workflow-template",
-    tags=["workflows"],
-    name="registerWorkflowTemplate",
-    description="Register a new workflow template.",
-    params={
-        "template": "The workflow template definition with steps",
-        "name": "Name of the template",
-        "description": "Description of the template",
-        "inputSchema": "Schema defining the template inputs",
-        "outputSchema": "Schema defining the template outputs"
-    },
-    schema={
-        "type": "object",
-        "properties": {
-            "template": {
-                "type": "object",
-                "properties": {
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "description": {"type": "string"},
-                                "tool": {"type": "string"},
-                                "instructions": {"type": "string"},
-                                "values": {"type": "object", "additionalProperties": {"type": "string"}},
-                                "args": {"type": "object", "additionalProperties": {"type": "string"}},
-                                "stepName": {"type": "string"},
-                                "actionSegment": {"type": "string"},
-                                "editableArgs": {"type": "array", "items": {"type": "string"}},
-                                "useAdvancedReasoning": {"type": "boolean"}
-                            },
-                            "required": ["tool", "instructions"]
-                        }
-                    }
-                },
-                "required": ["steps"]
-            },
-            "name": {"type": "string"},
-            "description": {"type": "string"},
-            "inputSchema": {"type": "object"},
-            "outputSchema": {"type": "object"},
-            "isBaseTemplate": {"type": "boolean"},
-            "isPublic": {"type": "boolean"}
-        },
-        "required": ["template", "name", "description", "inputSchema", "outputSchema"]
-    }
-)
-def register_workflow_template_handler(current_user, access_token, template, name, description, input_schema, output_schema, is_base_template=False, is_public=False):
-    try:
-        template_id = register_workflow_template(  # Use template_id as per earlier changes
-            current_user=current_user,
-            template=template,
-            name=name,
-            description=description,
-            input_schema=input_schema,
-            output_schema=output_schema,
-            is_base_template=is_base_template,
-            is_public=is_public
-        )
-        print(f"Registered workflow template: {template_id}")
-        return {"templateId": template_id}  # Use camel case in response
-    except Exception as e:
-        print(f"Error registering workflow template: {e}")
-        raise RuntimeError(f"Failed to register workflow template: {str(e)}")
-
-@vop(
-    path="/vu-agent/delete-workflow-template",
-    tags=["workflows"],
-    name="deleteWorkflowTemplate",
-    description="Delete a workflow template by ID.",
-    params={
-        "templateId": "ID of the template to delete"
-    },
-    schema={
-        "type": "object",
-        "properties": {
-            "templateId": {"type": "string"}
-        },
-        "required": ["templateId"]
-    }
-)
-def delete_workflow_template_handler(current_user, access_token, template_id):
-    try:
-        result = delete_workflow_template(current_user, template_id)
-        print(f"Delete workflow template result: {result}")
-        return result
-    except Exception as e:
-        print(f"Error deleting workflow template: {e}")
-        raise RuntimeError(f"Failed to delete workflow template: {str(e)}")
-
-
-@vop(
-    path="/vu-agent/get-workflow-template",
-    tags=["workflows"],
-    name="getWorkflowTemplate",
-    description="Get a workflow template by ID.",
-    params={
-        "templateId": "ID of the template to retrieve"
-    },
-    schema={
-        "type": "object",
-        "properties": {
-            "templateId": {"type": "string"}
-        },
-        "required": ["templateId"]
-    }
-)
-def get_workflow_template_handler(current_user, access_token, template_id):
-    try:
-        template = get_workflow_template(current_user, template_id)
-        if template is None:
-            raise ValueError("Template not found")
-        return template  # No need for conversion; already uses templateId
-    except Exception as e:
-        raise RuntimeError(f"Failed to get workflow template: {str(e)}")
-
-@vop(
-    path="/vu-agent/list-workflow-templates",
-    tags=["workflows"],
-    name="listWorkflowTemplates",
-    description="List all workflow templates for the current user.",
-    schema={
-       "type": "object",
-        "properties": {
-            "filterBaseTemplates": {"type": "boolean"}
-        },
-        "required": []
-    },
-    params={"filterBaseTemplates": "Optional boolean to filter for base templates only"}
-)
-def list_workflow_templates_handler(current_user, access_token, filter_base_templates=False):
-    try:
-        templates = list_workflow_templates(current_user)
-        if filter_base_templates:
-            templates = [t for t in templates if t['isBaseTemplate']]
-        return {"templates": templates}  # No need for conversion; already uses templateId
-    except Exception as e:
-        raise RuntimeError(f"Failed to list workflow templates: {str(e)}")
-
-@vop(
-    path="/vu-agent/update-workflow-template",
-    tags=["workflows"],
-    name="updateWorkflowTemplate",
-    description="Update an existing workflow template.",
-    params={
-        "templateId": "ID of the template to update",
-        "template": "The updated workflow template definition with steps",
-        "name": "Updated name of the template",
-        "description": "Updated description of the template",
-        "inputSchema": "Updated schema defining the template inputs",
-        "outputSchema": "Updated schema defining the template outputs",
-        "isBaseTemplate": "Whether this is a base template",
-        "isPublic": "Whether this template is publicly accessible"
-    },
-    schema={
-        "type": "object",
-        "properties": {
-            "templateId": {"type": "string"},
-            "template": {
-                "type": "object",
-                "properties": {
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "description": {"type": "string"},
-                                "tool": {"type": "string"},
-                                "instructions": {"type": "string"},
-                                "values": {"type": "object", "additionalProperties": {"type": "string"}},
-                                "args": {"type": "object", "additionalProperties": {"type": "string"}},
-                                "stepName": {"type": "string"},
-                                "actionSegment": {"type": "string"},
-                                "editableArgs": {"type": "array", "items": {"type": "string"}},
-                                "useAdvancedReasoning": {"type": "boolean"}
-                            },
-                            "required": ["tool", "instructions"]
-                        }
-                    }
-                },
-                "required": ["steps"]
-            },
-            "name": {"type": "string"},
-            "description": {"type": "string"},
-            "inputSchema": {"type": "object"},
-            "outputSchema": {"type": "object"},
-            "isBaseTemplate": {"type": "boolean"},
-            "isPublic": {"type": "boolean"}
-        },
-        "required": ["templateId", "template", "name", "description", "inputSchema", "outputSchema"]
-    }
-)
-def update_workflow_template_handler(current_user, access_token, template_id, template, name, description, 
-                                      input_schema, output_schema, is_base_template=False, is_public=False):
-    try:
-        result = update_workflow_template(
-            current_user=current_user,
-            template_id=template_id,
-            template=template,
-            name=name,
-            description=description,
-            input_schema=input_schema,
-            output_schema=output_schema,
-            is_base_template=is_base_template,
-            is_public=is_public
-        )
-        print(f"Updated workflow template: {template_id}")
-        return result
-    except Exception as e:
-        print(f"Error updating workflow template: {e}")
-        raise RuntimeError(f"Failed to update workflow template: {str(e)}")
-
 
 def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """

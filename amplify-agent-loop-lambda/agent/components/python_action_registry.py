@@ -50,23 +50,8 @@ class PythonActionRegistry(ActionRegistry):
         print("Registering bound builtIn tool: ", operation)
         #{'name': 'get_current_directory', 'operation': {'name':
         tool_name = operation.get('name', None)
-        print("Tool name:", tool_name)
-        if tool_name in tool.tools:
-            tool_desc = tool.tools[tool_name]
-            print(f"-- Action Registry: Registering Built-In Tool by Name -- {tool_name}")
-            print(f"         Tool description: {tool_desc}")
-            self.register(Action(
-                name=tool_name,
-                function=tool_desc["function"],
-                description=tool_desc["description"],
-                parameters=tool_desc.get("parameters", {}),
-                output=tool_desc.get("output", {}),
-                terminal=tool_desc.get("terminal", False)
-            ))
-            return True
-        else:
-            print(f"Tool '{tool_name}' not found in tool registry")
-            return False
+        return self.register_tool_by_name(tool_name)
+    
 
     def register_tool_by_name(self, tool_name):
         if tool_name in tool.tools:

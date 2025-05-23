@@ -2,6 +2,7 @@ from typing import Union, Dict
 import os
 import json
 import requests
+import boto3
 
 # Define period types
 PERIOD_TYPE = ["Unlimited", "Daily", "Hourly", "Monthly"]
@@ -45,11 +46,11 @@ def rate_limit_obj(period: str, rate: Union[str, None]) -> Dict[str, Union[str, 
     }
 
 
-def create_api_key(token: str, user: str, selected_account: dict, delegate_input: [str, None],
+def create_api_key(token: str, user: str, selected_account: dict, delegate_input: str | None,
                    app_name: str, app_description: str, rate_limit_period: str,
                    rate_limit_rate: Union[str, None], include_expiration: bool,
                    selected_date: Union[str, None], full_access: bool, options: Dict[str, bool],
-                   system_use: bool) -> Union[Dict, None]:
+                   system_use: bool, purpose: str) -> Union[Dict, None]:
     """
     Calls the apiKeys/keys/create endpoint to generate a new API key.
 
@@ -92,7 +93,8 @@ def create_api_key(token: str, user: str, selected_account: dict, delegate_input
             "rateLimit": rate_limit_obj(rate_limit_period, rate_limit_rate),
             "expirationDate": selected_date if include_expiration else None,
             "accessTypes": ["full_access"] if full_access else [key for key, value in options.items() if value],
-            "systemUse": system_use and not delegate_input
+            "systemUse": system_use and not delegate_input,
+            "purpose" : purpose
         }
     }
 
@@ -109,7 +111,7 @@ def create_api_key(token: str, user: str, selected_account: dict, delegate_input
 
 
 def create_agent_event_api_key(user: str, token: str, agent_event_name: str,
-                               account: str, description: str) -> Union[Dict, None]:
+                               account: str, description: str, purpose: str) -> Union[Dict, None]:
     """
     Creates an API key with unlimited rate limits for an agent event.
 
@@ -148,9 +150,11 @@ def create_agent_event_api_key(user: str, token: str, agent_event_name: str,
         selected_date=selected_date,
         full_access=full_access,
         options=options,
-        system_use=system_use
+        system_use=system_use,
+        purpose=purpose
     )
 
+# Requires a valid user token 
 def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
     """
     Fetches a specific API key by its ID.
@@ -225,4 +229,23 @@ def get_api_keys(token: str) -> Union[Dict, None]:
         return None
 
 
+# direct access to the api key table 
+def get_api_key_directly_by_id(api_owner_id):
+    dynamodb = boto3.resource('dynamodb')
+    api_keys_table_name = os.getenv('API_KEYS_DYNAMODB_TABLE')
+    if not api_keys_table_name:
+        raise ValueError("API_KEYS_DYNAMODB_TABLE is not provided.")
 
+    # retrieve api key 
+    try:
+        api_keys_table = dynamodb.Table(api_keys_table_name)
+        api_response = api_keys_table.get_item(Key={'api_owner_id': api_owner_id})
+        api_item = api_response.get('Item')
+        
+        if not api_item:
+            return {'success': False, 'message': f"No API key found for api id: {api_owner_id}"}
+        
+        return {'success': True, 'apiKey': api_item['apiKey']}
+    except Exception as e:
+        return {'success': False, 'message': f"Error retrieving API key for {api_owner_id}: {str(e)}"}
+    
