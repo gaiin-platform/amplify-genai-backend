@@ -105,6 +105,10 @@ create_api_keys_schema = {
         "systemUse": {
             "type": "boolean",
             "description": "For system use"
+        },
+        "purpose": {
+            "type": "string",
+            "description": "The purpose of the API key"
         }
     },
     "required": ["owner", "appName", "account", "accessTypes", "rateLimit"]
