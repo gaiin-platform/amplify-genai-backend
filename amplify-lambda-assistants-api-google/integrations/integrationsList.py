@@ -2,7 +2,7 @@ integrations_list = [
     {
         "name": "Calendar",
         "id": "google_calendar",
-        "icon": "BrandGoogleDrive",
+        "icon": "Calendar",
         "description": "This integration allows assistants to manage your Google Calendar, create events, and schedule meetings."
     },
     {
