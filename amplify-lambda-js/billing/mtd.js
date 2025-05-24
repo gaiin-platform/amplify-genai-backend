@@ -189,17 +189,23 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
 };
 
 export const listAllUserMtdCostsHandler = async (event, context, callback) => {
+    const startTime = Date.now();
+    logger.info("=== LIST ALL USER MTD COSTS REQUEST STARTED ===");
+    
     try {
-        logger.debug("Extracting params from event");
+        logger.info("Extracting params from event");
         const params = await extractParams(event);
 
         if (params.statusCode) {
+            logger.error("Failed to extract params", { statusCode: params.statusCode });
             return params; // This is an error response from extractParams
         }
 
         const { body, user } = params;
+        logger.info("Request initiated by user", { user, requestBody: body });
 
         // Check if user is in Admin group by querying ADMIN_DYNAMODB_TABLE
+        logger.info("Starting admin privilege verification");
         const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
             logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
@@ -217,11 +223,12 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 }
             };
 
+            logger.info("Querying admin table", { tableName: adminTableName });
             const adminCommand = new GetItemCommand(adminParams);
             const adminResult = await client.send(adminCommand);
 
             if (!adminResult.Item) {
-                logger.error("No admin configuration found");
+                logger.error("No admin configuration found in admin table");
                 return {
                     statusCode: 500,
                     body: JSON.stringify({ error: 'Admin configuration not found' }),
@@ -230,6 +237,7 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
 
             const adminConfig = adminResult.Item;
             const adminEmails = adminConfig.data?.L || [];
+            logger.info("Retrieved admin configuration", { adminCount: adminEmails.length });
             
             // Check if current user's email is in the admin list
             const isAdmin = adminEmails.some(emailObj => 
@@ -237,14 +245,16 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
             );
 
             if (!isAdmin) {
-                logger.warn(`Unauthorized access attempt to admin endpoint by user: ${user}`);
+                logger.warn("Unauthorized access attempt to admin endpoint", { user, isAdmin });
                 return {
                     statusCode: 403,
                     body: JSON.stringify({ error: 'Access denied. Admin privileges required.' }),
                 };
             }
+            
+            logger.info("Admin privileges verified successfully", { user });
         } catch (error) {
-            logger.error("Error verifying admin privileges:", error);
+            logger.error("Error verifying admin privileges", { error: error.message, user });
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Authorization check failed' }),
@@ -254,8 +264,11 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
         // Extract pagination parameters
         const pageSize = body?.data?.pageSize || 50;
         const lastEvaluatedKey = body?.data?.lastEvaluatedKey || null;
+        
+        logger.info("Pagination parameters", { pageSize, hasLastEvaluatedKey: !!lastEvaluatedKey });
 
         if (pageSize > 100) {
+            logger.warn("Page size too large", { pageSize });
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'Page size cannot exceed 100' }),
@@ -263,8 +276,10 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
         }
 
         // Try GSI first, if no results check if we need to backfill
+        logger.info("Starting cost data retrieval from GSI");
         let result;
         let needsBackfill = false;
+        const gsiStartTime = Date.now();
 
         try {
             // Query the GSI to get all cost records efficiently
@@ -282,12 +297,26 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 queryParams.ExclusiveStartKey = lastEvaluatedKey;
             }
 
+            logger.info("Querying GSI", { 
+                tableName: costDynamoTableName, 
+                indexName: 'record-type-user-index',
+                limit: queryParams.Limit,
+                hasPaginationKey: !!lastEvaluatedKey
+            });
+            
             const queryCommand = new QueryCommand(queryParams);
             result = await dynamoDB.send(queryCommand);
             
+            const gsiDuration = Date.now() - gsiStartTime;
+            logger.info("GSI query completed", { 
+                itemsFound: result.Items?.length || 0,
+                duration: gsiDuration,
+                hasNextPage: !!result.LastEvaluatedKey
+            });
+            
             // If no items found in GSI, check if there are records without record_type
             if (!result.Items || result.Items.length === 0) {
-                logger.info("No records found in GSI, checking for records without record_type");
+                logger.info("No records found in GSI, checking for legacy records without record_type");
                 
                 // Quick scan to see if there are any records at all
                 const checkScanParams = {
@@ -300,26 +329,40 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 
                 if (checkResult.Items && checkResult.Items.length > 0) {
                     needsBackfill = true;
-                    logger.info("Found records without record_type, will trigger backfill");
+                    logger.warn("Found legacy records without record_type, backfill needed", {
+                        legacyRecordsFound: checkResult.Items.length
+                    });
+                } else {
+                    logger.info("No cost records found in database at all");
                 }
             }
         } catch (error) {
-            logger.error("Error querying GSI:", error);
+            logger.error("Error querying GSI", { 
+                error: error.message, 
+                tableName: costDynamoTableName,
+                indexName: 'record-type-user-index'
+            });
             needsBackfill = true;
         }
 
         // Auto-trigger backfill if needed (admin already verified)
         if (needsBackfill) {
             logger.info("Triggering automatic backfill for record_type field");
+            const backfillStartTime = Date.now();
             
             try {
                 // Import and run backfill function directly
                 const { handler: backfillHandler } = await import('./backfill.js');
                 const backfillResult = await backfillHandler({}, {});
                 
-                logger.info("Backfill completed:", JSON.stringify(backfillResult));
+                const backfillDuration = Date.now() - backfillStartTime;
+                logger.info("Backfill completed successfully", { 
+                    duration: backfillDuration,
+                    result: backfillResult 
+                });
                 
                 // Now retry the GSI query
+                logger.info("Retrying GSI query after backfill");
                 const retryQueryParams = {
                     TableName: costDynamoTableName,
                     IndexName: 'record-type-user-index',
@@ -337,8 +380,15 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 const retryQueryCommand = new QueryCommand(retryQueryParams);
                 result = await dynamoDB.send(retryQueryCommand);
                 
+                logger.info("Post-backfill GSI query completed", { 
+                    itemsFound: result.Items?.length || 0 
+                });
+                
             } catch (backfillError) {
-                logger.error("Auto-backfill failed, falling back to table scan:", backfillError);
+                logger.error("Auto-backfill failed, falling back to table scan", { 
+                    error: backfillError.message,
+                    backfillDuration: Date.now() - backfillStartTime
+                });
                 
                 // Fallback to scan if backfill fails
                 const fallbackScanParams = {
@@ -350,13 +400,21 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                     fallbackScanParams.ExclusiveStartKey = lastEvaluatedKey;
                 }
 
+                logger.info("Executing fallback table scan");
                 const fallbackScanCommand = new ScanCommand(fallbackScanParams);
                 result = await dynamoDB.send(fallbackScanCommand);
+                
+                logger.info("Fallback scan completed", { 
+                    itemsFound: result.Items?.length || 0 
+                });
             }
         }
 
         // Aggregate costs by user
+        logger.info("Starting cost aggregation by user");
+        const aggregationStartTime = Date.now();
         const userCosts = {};
+        let totalRecordsProcessed = 0;
         
         result.Items.forEach(item => {
             const email = item.id;
@@ -384,6 +442,8 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 monthlyCost: monthlyCost,
                 totalCost: dailyCost + monthlyCost
             });
+            
+            totalRecordsProcessed++;
         });
 
         // Calculate total costs for each user
@@ -393,8 +453,18 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
 
         // Convert to array and sort by total cost descending
         const userCostArray = Object.values(userCosts).sort((a, b) => b.totalCost - a.totalCost);
+        
+        const aggregationDuration = Date.now() - aggregationStartTime;
+        logger.info("Cost aggregation completed", { 
+            recordsProcessed: totalRecordsProcessed,
+            uniqueUsers: userCostArray.length,
+            aggregationDuration,
+            topUserCost: userCostArray[0]?.totalCost || 0
+        });
 
-        return {
+        const totalDuration = Date.now() - startTime;
+        
+        const response = {
             statusCode: 200,
             body: JSON.stringify({
                 users: userCostArray,
@@ -403,8 +473,24 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
                 hasMore: !!result.LastEvaluatedKey
             }),
         };
+        
+        logger.info("=== LIST ALL USER MTD COSTS REQUEST COMPLETED ===", {
+            totalDuration,
+            usersReturned: userCostArray.length,
+            recordsProcessed: totalRecordsProcessed,
+            hasMoreData: !!result.LastEvaluatedKey,
+            requestedBy: user
+        });
+        
+        return response;
     } catch (error) {
-        logger.error("Error processing request:", error);
+        const totalDuration = Date.now() - startTime;
+        logger.error("=== LIST ALL USER MTD COSTS REQUEST FAILED ===", { 
+            error: error.message, 
+            stack: error.stack,
+            totalDuration,
+            requestedBy: user || 'unknown'
+        });
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Internal server error' }),
