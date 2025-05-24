@@ -153,6 +153,16 @@ functions:
           method: post
           cors: true
 
+  list_all_user_mtd_costs:
+    handler: billing/mtd.listAllUserMtdCostsHandler
+    memorySize: 128
+    events:
+      - http:
+          path: billing/list-all-user-mtd-costs
+          method: post
+          cors: true
+
+
 resources:
   Resources:
     LambdaJSIAMPolicy:
@@ -281,11 +291,22 @@ resources:
             AttributeType: S
           - AttributeName: accountInfo
             AttributeType: S
+          - AttributeName: record_type
+            AttributeType: S
         KeySchema:
           - AttributeName: id
             KeyType: HASH
           - AttributeName: accountInfo
             KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: record-type-user-index
+            KeySchema:
+              - AttributeName: record_type
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}
     HistoryCostCalculationsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -298,11 +319,22 @@ resources:
             AttributeType: S
           - AttributeName: accountInfo
             AttributeType: S
+          - AttributeName: record_type
+            AttributeType: S
         KeySchema:
           - AttributeName: userDate
             KeyType: HASH
           - AttributeName: accountInfo
             KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: record-type-user-index
+            KeySchema:
+              - AttributeName: record_type
+                KeyType: HASH
+              - AttributeName: userDate
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
         TableName: ${self:provider.environment.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE}
     ChatTracesBucket:
         Type: AWS::S3::Bucket
