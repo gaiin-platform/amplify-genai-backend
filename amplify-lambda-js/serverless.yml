@@ -33,6 +33,8 @@ provider:
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   logRetentionInDays: 365
+  tracing:
+    lambda: true
   apiGateway:
     restApiId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
@@ -91,6 +93,7 @@ functions:
     handler: index.handler
     memorySize: 1024
     timeout: 900
+    tracing: Active
     url:
       cors: true
       invokeMode: RESPONSE_STREAM
