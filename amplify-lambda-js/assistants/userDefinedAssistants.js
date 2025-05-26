@@ -12,6 +12,7 @@ import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} f
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
 import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
+import AWSXRay from "aws-xray-sdk";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -373,6 +374,9 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
                 }
 
+                const segment = AWSXRay.getSegment();
+                const agentSegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.invokeAgent');
+
                 const response = invokeAgent(
                     params.account.accessToken,
                     params.options.conversationId,
@@ -444,7 +448,11 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 })
                 llm.forceFlush();
 
+                agentSegment.close()
+
+
                 if (result.success) {
+
                     let responseFromAssistant = result.data.result?.findLast(msg => msg.role === 'assistant')?.content;
 
                     if(responseFromAssistant) {
@@ -495,7 +503,9 @@ export const fillInAssistant = (assistant, assistantBase) => {
                                     `\n\nRespond to the user and reference files, images, etc. that were created as appropriate.`
                             }]};
 
+                    const agentSummarySegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.agentSummary');
                     await llm.prompt(summaryRequest, []);
+                    agentSummarySegment.close();
 
                 }
                 return;
