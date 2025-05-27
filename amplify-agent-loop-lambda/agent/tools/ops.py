@@ -158,17 +158,6 @@ def op_to_tool(api):
         return call_api(action_context=action_context, name=id, payload=kwargs)
 
     api_func = api_func_invoke
-
-    # schema = {
-    #     "type": "object",
-    #     "properties": {
-    #         "payload": {
-    #             "type": "object",
-    #             "description": f"The payload should contain the following keys: {json.dumps(params)}"
-    #         }
-    #     },
-    #     "required": ["payload"]
-    # }
     
     op_schema = parameters or schema or build_schema_from_params(params)
 
@@ -192,7 +181,7 @@ def op_to_tool(api):
 
     tool_name = custom_name.strip() if custom_name and custom_name.strip() else id
 
-    print("Final tool name, description, and schema: ", tool_name, desc, op_schema)
+    # print("Final tool name, description, and schema: ", tool_name, desc, op_schema)
 
     tool_metadata = get_tool_metadata(
         func=api_func, tool_name=id, description=desc, parameters_override=op_schema, terminal=False, tags=tags

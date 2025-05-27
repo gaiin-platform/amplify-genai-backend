@@ -16,6 +16,8 @@ from botocore.exceptions import ClientError
 from events.event_handler import MessageHandler
 from events.email_sender_controls import is_allowed_sender
 from events.event_templates import get_event_template
+from delegation.api_keys import get_api_key_directly_by_id
+from service.conversations import register_agent_conversation
 
 IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
@@ -436,6 +438,13 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
 
         if event_response["success"]:
             event_data = event_response["data"]
+            # retrive api key from table directly
+            api_result = get_api_key_directly_by_id(event_data['apiKeyId'])
+            if not api_result['success']:
+                return None
+            
+            event_data['apiKey'] = api_result['apiKey']
+
             print(f"Found matching event for user '{user}' and tag '{tag}': {event_data}")
             break  # Stop searching once a match is found
 
@@ -473,7 +482,7 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
         "sessionId": email_id,
         "prompt": formatted_prompt,
         "metadata": {
-            "accessToken": event_data.get("apiKey", None),  # Ensured actual API key is retrieved
+            "accessToken": event_data.get("apiKey", None),
             "source": "SES",
             "eventId": email_id,
             "timestamp": email_details['received_time'],
@@ -532,4 +541,21 @@ class SESMessageHandler(MessageHandler):
         }
         event = process_email(sns_message, context)
         return event
+    
+    def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
+        print(f"SESMessageHandler onFailure: {error}")
+        pass
+
+    def onSuccess(self, agent_input_event:  Dict[str, Any], agent_result: Dict[str, Any]) -> None:
+        metadata = agent_input_event.get("metadata", {})
+        accessToken = metadata.get("accessToken")
+
+        if accessToken:
+            print(f"Registering agent conversation")
+            register_agent_conversation( 
+                access_token=accessToken,
+                input=agent_input_event,
+                result=agent_result)
+        else:
+            print(f"No access token found")
 

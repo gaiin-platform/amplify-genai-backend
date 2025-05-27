@@ -1,13 +1,13 @@
 import json
 import os
 from events.event_handler import MessageHandler
-from service.conversations import register_agent_conversation
 from service.handlers import handle_event
 import boto3
 
 from typing import Dict, Any, List
 
 from events.email_events import SESMessageHandler
+from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 sqs = boto3.client('sqs')
 agent_queue = os.environ['AGENT_QUEUE_URL']
@@ -38,43 +38,39 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         response = process_and_invoke_agent(agent_input_event)
                         print("Agent response:", response)
 
-
                         if response.get("handled"):
                             #delete record from sqs 
-                            if isinstance(handler, SESMessageHandler):
-                                try:
-                                    sqs.delete_message(
-                                        QueueUrl=agent_queue,
-                                        ReceiptHandle=receipt_handle
-                                    )
-                                except Exception as e:
-                                    print(f"Error deleting message: {e}, continuing...")
+                            try:
+                                sqs.delete_message(
+                                    QueueUrl=agent_queue,
+                                    ReceiptHandle=receipt_handle
+                                )
+                            except Exception as e:
+                                print(f"Error deleting message: {e}, continuing...")
 
                                         
                             result = response.get("result")
                             if not result:
                                 print(f"Agent response missing")
+                                handler.onFailure(agent_input_event, Exception("Failed to run the agent: Agent response missing"))
                                 result = [{"role":"environment", "content":"Failed to run the agent."}]
-                      
-                            print(f"Registering agent conversation")
-                            register_agent_conversation( 
-                                access_token=agent_input_event.get("metadata", {}).get("accessToken"),
-                                input=agent_input_event,
-                                result=result)
+
+                            handler.onSuccess(agent_input_event, result)
                     else:
+                        handler.onFailure(agent_input_event, Exception("No result from handler"))
                         print(f"Ignoring event per handler instructions (e.g., return None)")
 
         except Exception as e:
             print(f"Error processing message: {e}")
-            if isinstance(handler, SESMessageHandler):
-                try:
-                    sqs.change_message_visibility(
-                        QueueUrl=agent_queue,
-                        ReceiptHandle=receipt_handle,
-                        VisibilityTimeout=0
-                    )
-                except Exception as e:
-                    print(f"Error changing message visibility: {e}, continuing...")
+            handler.onFailure(message_body, e)
+            try:
+                sqs.change_message_visibility(
+                    QueueUrl=agent_queue,
+                    ReceiptHandle=receipt_handle,
+                    VisibilityTimeout=0
+                )
+            except Exception as e:
+                print(f"Error changing message visibility: {e}, continuing...")
             raise
         
         
@@ -103,6 +99,9 @@ def process_and_invoke_agent(event: dict):
         session_id = event.get("sessionId")
         prompt = event.get("prompt", [])
         metadata = event.get("metadata", {})
+        apiKey = metadata.get("accessToken")
+        if not apiKey:
+            raise ValueError("Missing required fields: apiKey")
 
         # Validate required fields
         if not current_user or not session_id:
@@ -111,7 +110,7 @@ def process_and_invoke_agent(event: dict):
         # Invoke the event handler
         response = handle_event(
             current_user=current_user,
-            access_token=metadata.get("accessToken"),  # Optional, if needed
+            access_token=apiKey,
             session_id=session_id,
             prompt=prompt,
             metadata=metadata
@@ -127,3 +126,4 @@ def process_and_invoke_agent(event: dict):
 
 
 register_handler(SESMessageHandler())
+register_handler(TasksMessageHandler())

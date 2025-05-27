@@ -2,9 +2,7 @@ import os
 import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
-
-from common.secrets import store_secrets_in_dict, update_dict_with_secrets, delete_secrets_in_dict
-from delegation.api_keys import create_agent_event_api_key, get_api_key_by_id
+from delegation.api_keys import create_agent_event_api_key
 
 # Initialize AWS resources
 dynamodb = boto3.resource('dynamodb')
@@ -92,7 +90,8 @@ def add_event_template(user, access_token, tag, prompt, account, description, as
             token=access_token,
             agent_event_name=tag,
             account=account,
-            description=description
+            description=description,
+            purpose="email_event"
         )
 
         if not api_key_response or not api_key_response.get("success"):
@@ -105,18 +104,13 @@ def add_event_template(user, access_token, tag, prompt, account, description, as
         # Extract API Key ID
         api_key_id = api_key_response["data"]["id"]
 
-        api_key = get_api_key_by_id(access_token, api_key_id)
-
         # Step 2: Construct the event template
         item = {
             "user": user,
             "tag": tag,
             "prompt": prompt,
-            "apiKeyId": api_key_id,  # Attach API Key ID
-            "s_apiKey": api_key
+            "apiKeyId": api_key_id, 
         }
-
-        item = store_secrets_in_dict(item)
 
         if assistant_id:
             item["assistantId"] = assistant_id
@@ -157,8 +151,6 @@ def remove_event_template(user, tag):
 
         event_template = response["Item"]
 
-        delete_secrets_in_dict(event_template)
-
         event_table.delete_item(Key={"user": user, "tag": tag})
         return {
             "success": True,
@@ -197,8 +189,6 @@ def get_event_template(user, tag):
             }
 
         event_template = response["Item"]
-
-        event_template = update_dict_with_secrets(event_template)
 
         # Step 2: Resolve the assistant if it exists
         if "assistantId" in event_template:
@@ -260,6 +250,41 @@ def list_event_templates_for_user(user):
         return {
             "success": False,
             "message": "Server error: Unable to list event templates. Please try again later."
+        }
+
+def list_event_templates_tags_for_user(user):
+    """
+    Retrieves only the tags of all event templates for a given user.
+
+    Returns:
+        dict: {success, data, message} where data is a list of tags
+    """
+    try:
+        response = event_table.query(KeyConditionExpression=Key("user").eq(user))
+        event_templates = response.get("Items", [])
+
+        if not event_templates:
+            return {
+                "success": False,
+                "data": None,
+                "message": f"No event templates found for user '{user}'. "
+                           f"Try adding a new event template first."
+            }
+
+        # Extract just the tags from the event templates
+        tags = [template["tag"] for template in event_templates]
+
+        return {
+            "success": True,
+            "data": tags,
+            "message": "Event template tags retrieved successfully."
+        }
+
+    except ClientError as e:
+        print(f"Error listing event template tags: {e}")
+        return {
+            "success": False,
+            "message": "Server error: Unable to list event template tags. Please try again later."
         }
 
 def is_event_template_tag_available(user, tag, assistant_id=None):
