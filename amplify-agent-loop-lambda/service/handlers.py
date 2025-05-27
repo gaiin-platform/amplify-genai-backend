@@ -35,6 +35,11 @@ from service.session_files import create_file_tracker, get_presigned_url_by_id
 from workflow.workflow_template_registry import get_workflow_template
 from service.models import get_default_models
 
+import aws_xray_sdk.core as xray
+from aws_xray_sdk.core import patch_all, xray_recorder
+
+patch_all()  # AWS x-ray patch all supported libraries (boto3, requests, etc.)
+
 def save_conversation_state(current_user: str, session_id: str, conversation_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Saves conversation results to S3 and updates the DynamoDB record with the S3 location.
@@ -207,78 +212,103 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
     try:
         work_directory = get_working_directory(session_id)
 
-        tracker = create_file_tracker(current_user, session_id, work_directory)
+        with xray_recorder.in_subsegment('file_tracker_init'):
+            tracker = create_file_tracker(current_user, session_id, work_directory)
         
         # Extract data sources from messages
         data_sources = extract_data_sources_from_messages(prompt)
         print(f"Data sources referenced in messages: {data_sources}")
         
         # Process data sources
-        if data_sources:
-            print(f"Processing {len(data_sources)} data sources")
-            
-            # Map to track which message each data source belongs to
-            data_source_to_message_idx = {}
-            for i, message in enumerate(prompt):
-                message_data_sources = message.get('data', {}).get('dataSources', [])
-                for source in message_data_sources:
-                    source_id = source.get('id')
-                    if source_id:
-                        data_source_to_message_idx[source_id] = i
-            
-            # Track successfully processed data sources with their local paths
-            processed_data_sources = {}
-            
-            try:
-                datasource_request = {
-                    "dataSources": data_sources,
-                    "options": {
-                        "useSignedUrls": True
-                    },
-                    "chat": {
-                        "messages": prompt
-                    }
-                }
-                
-                resolved_result = resolve_datasources(datasource_request, access_token)
-                print(f"Resolved data sources: {resolved_result}")
-                
-                if "dataSources" in resolved_result and resolved_result["dataSources"]:
-                    resolved_sources = resolved_result["dataSources"]
-                    
-                    for source_details in resolved_sources:
-                        print(f"Processing resolved data source: {source_details}")
+        with xray_recorder.in_subsegment('datasource_init'):
+            if data_sources:
+                print(f"Processing {len(data_sources)} data sources")
 
-                        # Add the data source name if missing
-                        if "name" not in source_details:
-                            file_name = source_details["id"].split("/")[-1]
-                            source_details["name"] = file_name
-                        
-                        # Check if this is an image that needs base64 decoding before processing
-                        if source_details.get("type", "").startswith("image/"):
-                            print(f"Processing potential base64 image: {source_details.get('id')}")
-                            
-                        # Process the data source through the tracker
-                        result = tracker.add_data_source(source_details)
-                        print(f"Added data source {source_details}: {result}")
-                        
-                        # If successful, store the information for enhancing the prompt
-                        if result["status"] == "success":
-                            source_id = source_details.get("id")
-                            if source_id:
-                                processed_data_sources[source_id] = {
-                                    "name": source_details.get("name", "file"),
-                                    "type": source_details.get("type", "unknown"),
-                                    "local_path": os.path.join(work_directory, result["local_path"])
-                                }
-                else:
-                    # Fallback to the original data sources if resolution fails
+                # Map to track which message each data source belongs to
+                data_source_to_message_idx = {}
+                for i, message in enumerate(prompt):
+                    message_data_sources = message.get('data', {}).get('dataSources', [])
+                    for source in message_data_sources:
+                        source_id = source.get('id')
+                        if source_id:
+                            data_source_to_message_idx[source_id] = i
+
+                # Track successfully processed data sources with their local paths
+                processed_data_sources = {}
+
+                try:
+                    datasource_request = {
+                        "dataSources": data_sources,
+                        "options": {
+                            "useSignedUrls": True
+                        },
+                        "chat": {
+                            "messages": prompt
+                        }
+                    }
+
+                    resolved_result = resolve_datasources(datasource_request, access_token)
+                    print(f"Resolved data sources: {resolved_result}")
+
+                    if "dataSources" in resolved_result and resolved_result["dataSources"]:
+                        resolved_sources = resolved_result["dataSources"]
+
+                        for source_details in resolved_sources:
+                            print(f"Processing resolved data source: {source_details}")
+
+                            # Add the data source name if missing
+                            if "name" not in source_details:
+                                file_name = source_details["id"].split("/")[-1]
+                                source_details["name"] = file_name
+
+                            # Check if this is an image that needs base64 decoding before processing
+                            if source_details.get("type", "").startswith("image/"):
+                                print(f"Processing potential base64 image: {source_details.get('id')}")
+
+                            # Process the data source through the tracker
+                            result = tracker.add_data_source(source_details)
+                            print(f"Added data source {source_details}: {result}")
+
+                            # If successful, store the information for enhancing the prompt
+                            if result["status"] == "success":
+                                source_id = source_details.get("id")
+                                if source_id:
+                                    processed_data_sources[source_id] = {
+                                        "name": source_details.get("name", "file"),
+                                        "type": source_details.get("type", "unknown"),
+                                        "local_path": os.path.join(work_directory, result["local_path"])
+                                    }
+                    else:
+                        # Fallback to the original data sources if resolution fails
+                        for source_details in data_sources:
+                            print(f"Processing data source (fallback): {source_details}")
+                            if source_details:
+                                result = tracker.add_data_source(source_details)
+                                print(f"Added data source {source_details}: {result}")
+
+                                # If successful, store the information for enhancing the prompt
+                                if result["status"] == "success":
+                                    source_id = source_details.get("id")
+                                    if source_id:
+                                        processed_data_sources[source_id] = {
+                                            "name": source_details.get("name", "file"),
+                                            "type": source_details.get("type", "unknown"),
+                                            "local_path": os.path.join(work_directory, result["local_path"])
+                                        }
+                            else:
+                                print(f"Could not find full details for data source: {source_details}")
+
+                except Exception as e:
+                    print(f"Error resolving data sources: {e}")
+                    traceback.print_exc()
+
+                    # Fallback to original approach if resolution fails
                     for source_details in data_sources:
-                        print(f"Processing data source (fallback): {source_details}")
+                        print(f"Processing data source (error fallback): {source_details}")
                         if source_details:
                             result = tracker.add_data_source(source_details)
                             print(f"Added data source {source_details}: {result}")
-                            
+
                             # If successful, store the information for enhancing the prompt
                             if result["status"] == "success":
                                 source_id = source_details.get("id")
@@ -290,49 +320,26 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                                     }
                         else:
                             print(f"Could not find full details for data source: {source_details}")
-            
-            except Exception as e:
-                print(f"Error resolving data sources: {e}")
-                traceback.print_exc()
-                
-                # Fallback to original approach if resolution fails
-                for source_details in data_sources:
-                    print(f"Processing data source (error fallback): {source_details}")
-                    if source_details:
-                        result = tracker.add_data_source(source_details)
-                        print(f"Added data source {source_details}: {result}")
-                        
-                        # If successful, store the information for enhancing the prompt
-                        if result["status"] == "success":
-                            source_id = source_details.get("id")
-                            if source_id:
-                                processed_data_sources[source_id] = {
-                                    "name": source_details.get("name", "file"),
-                                    "type": source_details.get("type", "unknown"),
-                                    "local_path": os.path.join(work_directory, result["local_path"])
-                                }
-                    else:
-                        print(f"Could not find full details for data source: {source_details}")
-            
-            # Enhance the prompt with data source information
-            if processed_data_sources:
-                # Create a deep copy of the prompt to avoid modifying the original
-                enhanced_prompt = copy.deepcopy(prompt)
-                
-                # Add conversational notes about data sources to the relevant messages
-                for source_id, source_info in processed_data_sources.items():
-                    if source_id in data_source_to_message_idx:
-                        message_idx = data_source_to_message_idx[source_id]
-                        
-                        if message_idx < len(enhanced_prompt) and 'content' in enhanced_prompt[message_idx]:
-                            note = f"\n\nI've attached {source_info['name']} to this message. It's a {source_info['type']} file stored at {source_info['local_path']}."
-                            
-                            if isinstance(enhanced_prompt[message_idx]['content'], str):
-                                enhanced_prompt[message_idx]['content'] += note
-                
-                # Use the enhanced prompt for the agent
-                prompt = enhanced_prompt
-                print("Enhanced prompt with data source information")
+
+                # Enhance the prompt with data source information
+                if processed_data_sources:
+                    # Create a deep copy of the prompt to avoid modifying the original
+                    enhanced_prompt = copy.deepcopy(prompt)
+
+                    # Add conversational notes about data sources to the relevant messages
+                    for source_id, source_info in processed_data_sources.items():
+                        if source_id in data_source_to_message_idx:
+                            message_idx = data_source_to_message_idx[source_id]
+
+                            if message_idx < len(enhanced_prompt) and 'content' in enhanced_prompt[message_idx]:
+                                note = f"\n\nI've attached {source_info['name']} to this message. It's a {source_info['type']} file stored at {source_info['local_path']}."
+
+                                if isinstance(enhanced_prompt[message_idx]['content'], str):
+                                    enhanced_prompt[message_idx]['content'] += note
+
+                    # Use the enhanced prompt for the agent
+                    prompt = enhanced_prompt
+                    print("Enhanced prompt with data source information")
 
         metadata = metadata or {}
         agent_id = "default"
@@ -440,7 +447,8 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
                 raise Exception("No model selected and no default model found")
             model = default_models.get("agent_model")
 
-        llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id}, default_models.get("advanced_model"))
+        with xray_recorder.in_subsegment('create_llm'):
+            llm = create_llm(access_token, model, current_user, account_id, {"agent_session_id": session_id}, default_models.get("advanced_model"))
 
         if len(action_registry.actions.items()) > 3:
             action_registry.filter_tools_by_relevance(llm, prompt, additional_goals)
@@ -540,7 +548,8 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         # using the template: {role}: {content}
         user_input = "\n".join([f"{entry['role']}: {entry['content']}" for entry in prompt])
 
-        result = agent.run(user_input=user_input, action_context_props=action_context_props)
+        with xray_recorder.in_subsegment('agent_run'):
+            result = agent.run(user_input=user_input, action_context_props=action_context_props)
 
         # Find the first user message in the result and replace it with the last user message from the prompt
         # We do this so that the memories start from the last user message rather than the entire conversation
@@ -574,14 +583,17 @@ def handle_event(current_user, access_token, session_id, prompt, request_id=None
         })
 
         # Save conversation state to S3 and update DynamoDB
-        save_result = save_conversation_state(current_user, session_id, processed_result)
+        with xray_recorder.in_subsegment('save_conversation_state'):
+            save_result = save_conversation_state(current_user, session_id, processed_result)
 
         if not save_result["success"]:
             print(f"Warning: Failed to save conversation state: {save_result['error']}")
 
         print(f"Conversation state saved to S3: {save_result['s3_location']}")
         print(f"Checking for changed files...")
-        file_results = tracker.upload_changed_files()
+        with xray_recorder.in_subsegment('upload_changed_files'):
+            file_results = tracker.upload_changed_files()
+
         session_files = tracker.get_tracked_files()
 
         return build_response(
