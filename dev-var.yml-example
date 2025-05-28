@@ -21,6 +21,9 @@ VPC_CIDR: "" #vpc_cidr_block of deployment from IAC output
 VPC_ID: "" #vpc_id of deployment from IAC output
 KEYWORD_MODEL_NAME: "gpt-35-turbo"
 CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
+CHAT_ENDPOINT: "" #function url for lambda
+AGENT_ENDPOINT: "" #leave blank for future release
+
 
 
 # Embeddings Configuration
