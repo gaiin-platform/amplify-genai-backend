@@ -205,29 +205,6 @@ functions:
           method: get
           cors: true
 
-  get_conversations_metadata:
-    handler: state/conversation.get_conversations_metadata_only
-    timeout: 120
-    memorySize: 1024
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: state/conversation/get/metadata
-          method: get
-          cors: true
-
-  get_conversations_since:
-    handler: state/conversation.get_conversations_since_timestamp
-    timeout: 30
-    memorySize: 512
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: state/conversation/get/since/{timestamp}
-          method: get
-          cors: true
 
   upload_file:
     handler: files/file.get_presigned_url
