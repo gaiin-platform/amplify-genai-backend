@@ -790,6 +790,12 @@ validators = {
     "/state/conversation/get/empty": {
         "read" : {}
     },
+    "/state/conversation/get/metadata": {
+        "read" : {}
+    },
+    "/state/conversation/get/since/{timestamp}": {
+        "read" : {}
+    },
     "/state/conversation/delete_multiple": {   
         "delete_multiple_conversations": conversation_ids_schema
     },
@@ -844,6 +850,12 @@ api_validators = {
     },
     "/state/conversation/register" : {
         "conversation_upload": register_conversation_schema
+    },
+    "/state/conversation/get/metadata": {
+        "read": {}
+    },
+    "/state/conversation/get/since/{timestamp}": {
+        "read": {}
     },
     "/files/reprocess/rag": {
         "upload": key_request_schema
