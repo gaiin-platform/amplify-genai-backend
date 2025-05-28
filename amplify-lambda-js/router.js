@@ -12,6 +12,7 @@ import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
+import AWSXRay from "aws-xray-sdk";
 
 
 const doTrace = process.env.TRACING_ENABLED === 'true';
@@ -23,6 +24,9 @@ function getRequestId(params) {
 }
 
 export const routeRequest = async (params, returnResponse, responseStream) => {
+    const segment = AWSXRay.getSegment();
+    const subSegment = segment.addNewSubsegment('chat-js.router.routeRequest');
+
     try {
 
         logger.debug("Extracting params from event");
@@ -176,6 +180,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 options
             };
 
+
+            const initSegment = segment.addNewSubsegment('chat-js.router.init');
             await createRequestState(params.user, requestId);
 
             const llm = new LLM(
@@ -188,13 +194,17 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             const assistantSelectionTime = new Date() - now;
             sendStateEventToStream(responseStream, {routingTime: assistantSelectionTime});
             sendStateEventToStream(responseStream, {assistant: assistant.name});
+            initSegment.close();
 
+
+            const chatSegment = segment.addNewSubsegment('chat-js.router.assistantHandler');
             const response = await assistant.handler(
                 llm,
                 assistantParams,
                 body,
                 dataSources,
                 responseStream);
+            chatSegment.close();
             
             await deleteRequestState(params.user, requestId);
 
@@ -218,6 +228,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             statusCode: 400,
             body: {error: e.message}
         });
+    } finally {
+        subSegment.close();
     }
 }
 
