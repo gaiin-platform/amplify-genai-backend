@@ -7,7 +7,7 @@ import json
 def get_all_op(access_token):
     print("Initiate get ops call")
 
-    update_model_endpoint = os.environ['API_BASE_URL'] + '/ops/get_all'
+    endpoint = os.environ['API_BASE_URL'] + '/ops/get_all'
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {access_token}'
@@ -15,7 +15,7 @@ def get_all_op(access_token):
 
     try:
         response = requests.get(
-            update_model_endpoint,
+            endpoint,
             headers=headers,
         )
         # print("Response: ", response.content)

@@ -1,0 +1,20 @@
+
+markitdown[all]==0.1.0a1
+olefile>=0.47
+cryptography==44.0.0
+    # via -r requirements.in
+chardet==5.2.0
+    # via -r requirements.in
+pypdfium2==4.30.1
+    # via -r requirements.in
+python-docx==1.1.2
+    # via -r requirements.in       
+tiktoken==0.8.0
+    # via -r requirements.in
+
+urllib3==2.3.0
+    # via
+    #   botocore
+    #   requests
+nltk==3.8.1
+    # via -r requirements.in

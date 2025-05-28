@@ -4,16 +4,15 @@
 
 
 import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
-import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
-import {getOps} from "./ops/ops.js";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
-import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
+import {handleAgentInteraction} from "./agentHandler.js";
+import {invokeAgent, listenForAgentUpdates} from "./agent.js";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -97,42 +96,81 @@ const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
     }
 }
 
+const isMemberOfGroup = async (current_user, ast_owner, token) => {
 
-export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId) => {
+    try {
+        const params = {
+            TableName: process.env.GROUPS_DYNAMO_TABLE,
+            Key: {
+                group_id: { S: ast_owner }
+            }
+        };
+    
+        const response = await dynamodbClient.send(new GetItemCommand(params));
+        
+        if (response.Item) {
+            const item = unmarshall(response.Item);
+            // Check if the group is public or if the user is a direct member, a system user, or a member of an amplify group
+            if (item.isPublic || 
+                (item.members && Object.keys(item.members).includes(current_user)) || 
+                (item.systemUsers && item.systemUsers.includes(current_user)) || 
+                userInAmplifyGroup(item.amplifyGroups ?? [], token)) {
+                return true;
+            } 
+            console.error( `User is not a member of groupId: ${ast_owner}`);
+        } else {
+            console.error(`No group entry found for groupId: ${ast_owner}`);
+        }
+    
+    } catch (error) {
+        console.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
+    }
+}
+
+const userInAmplifyGroup = async (amplifyGroups, token) => {
+    if (amplifyGroups.length === 0) return false;
+    console.log("Checking if user is in amplify groups: ", amplifyGroups)
+
+    const apiBaseUrl = process.env.API_BASE_URL;
+    if (!apiBaseUrl) {
+        console.error("API_BASE_URL environment variable is not set");
+        return false;
+    }
+
+    try {
+        const response = await fetch(`${apiBaseUrl}/amplifymin/verify_amp_member`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({data: {groups: amplifyGroups}})
+        });
+        
+        const responseContent = await response.json();
+
+        if (response.status !== 200 || !responseContent.success) {
+            console.error(`Error verifying amp group membership: ${responseContent}`);
+            return false;
+        } else if (response.status === 200 && responseContent.success) {
+            return responseContent.isMember || false;
+        }
+    } catch (e) {
+        console.error(`Error verifying amp group membership: ${e}`);
+        
+    }
+    return false;
+
+
+}
+
+export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId, token) => {
     if (!ast_owner) return null;
 
     // verify the user has access to the group since this is a group assistant
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
         console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
-
-        try {
-            const params = {
-                TableName: process.env.GROUPS_DYNAMO_TABLE,
-                Key: {
-                    group_id: { S: ast_owner }
-                }
-            };
-        
-            const response = await dynamodbClient.send(new GetItemCommand(params));
-            
-            if (response.Item) {
-                const item = unmarshall(response.Item);
-                // Check if the group is public or if the user is in the members
-                if (!(item.isPublic || 
-                    (item.members && Object.keys(item.members).includes(current_user)) || 
-                    (item.systemUsers && item.systemUsers.includes(current_user)))) {
-                    console.error( `User is not a member of groupId: ${ast_owner}`);
-                    return null;
-                }
-            } else {
-                console.error(`No group entry found for groupId: ${ast_owner}`);
-                return null;
-            }
-        
-        } catch (error) {
-            console.error(`An error occurred while processing groupId ${ast_owner}:`, error);
-            return null;
-        }
+        if (!isMemberOfGroup(current_user, ast_owner, token)) return null;
     }
 
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
@@ -206,6 +244,10 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         content: "Helpful info, don't repeat: The current time for the user is " + params.options.time
                     });
                 }
+            }
+
+            if (assistant.data && assistant.data.trackConversations) {
+                body.options.trackConversations = true;
             }
 
             if(assistant.data && assistant.data.messageOptions) {
@@ -313,7 +355,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             let blockTerminator = null;
 
-            if(assistant.data && assistant.data.opsLanguageVersion === "v4") {
+            if (assistant.data && assistant.data.opsLanguageVersion === "v4") {
 
                 const statusInfo = newStatus(
                     {
@@ -325,11 +367,19 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }
                 );
 
+                let workflowTemplateId = assistant.data?.workflowTemplateId ? 
+                                          {workflow: {templateId: assistant.data.workflowTemplateId}} : {};
+
+                if (!workflowTemplateId.workflow && assistant.data.baseWorkflowTemplateId) { // backup
+                    workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
+                }
+
                 const response = invokeAgent(
                     params.account.accessToken,
                     params.options.conversationId,
+                    params.options.requestId,
                     body.messages,
-                    {assistant}
+                    {assistant, model: params.model.id, ...workflowTemplateId} // built in 
                 );
                 llm.sendStatus(statusInfo);
                 llm.forceFlush();
@@ -396,13 +446,18 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 llm.forceFlush();
 
                 if (result.success) {
-                    let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
+                    let responseFromAssistant = result.data.result?.findLast(msg => msg.role === 'assistant')?.content;
 
-                    if(responseFromAssistant.args && responseFromAssistant.args.message){
-                        responseFromAssistant = responseFromAssistant.args.message;
+                    if(responseFromAssistant) {
+                        if (responseFromAssistant.args && responseFromAssistant.args.message) {
+                            responseFromAssistant = responseFromAssistant.args.message;
+                        } else {
+                            responseFromAssistant = JSON.stringify(responseFromAssistant);
+                        }
                     }
                     else {
-                        responseFromAssistant = JSON.stringify(responseFromAssistant);
+                        console.log("Error getting the last assistant message from the agent result: ", JSON.stringify(result));
+                        responseFromAssistant = "No response from assistant. Something went wrong.";
                     }
 
                     const summaryRequest = {
@@ -420,24 +475,37 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     await llm.prompt(summaryRequest, []);
 
                 }
-
                 return;
 
-            }
-            else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0 && assistant.data.opsLanguageVersion !== "custom") {
+            } else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
+                if (assistant.data.opsLanguageVersion !== "custom") {
+                    const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
+                    const langVersion = opsLanguages[opsLanguageVersion];
+                    const instructionsPreProcessor = langVersion.instructionsPreProcessor;
 
-                const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
-                const langVersion = opsLanguages[opsLanguageVersion];
-                const instructionsPreProcessor = langVersion.instructionsPreProcessor;
+                    if (instructionsPreProcessor) {
+                        assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                    }
 
-                if (instructionsPreProcessor) {
-                    assistant.instructions = instructionsPreProcessor(assistant.instructions);
+                    const langMessages = langVersion.messages;
+                    blockTerminator = langVersion.blockTerminator;
+                    extraMessages.push(...langMessages);
+                    suffixMessages.push(...(langVersion.suffixMessages || []));
                 }
+                const containsIntegrations = assistant.data.operations.some(op => op.tags.includes("integration"));
+                if (containsIntegrations) {
+                    const integrationInstructions = `
+                    If you detect an error message regarding *api credentials* please respond with your message and then finish with:
 
-                const langMessages = langVersion.messages;
-                blockTerminator = langVersion.blockTerminator;
-                extraMessages.push(...langMessages);
-                suffixMessages.push(...(langVersion.suffixMessages || []));
+                        \`\`\` integrationsDialog 
+                        \`\`\`
+
+                    You must provide this exactly with the 3 tick marks and a newline, so i can render a button. Let the user know they can connect to the service by clicking on the button. 
+
+                    This only applies when you have been notified there was an error regarding *api credentials* otherwise DO NOT mention it
+                    `;
+                    assistant.instructions += "\n\n" + integrationInstructions;
+                }
 
             }
 

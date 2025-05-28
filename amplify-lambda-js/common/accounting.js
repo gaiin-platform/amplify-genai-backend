@@ -45,7 +45,7 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             inputTokens: {N: "" + inputTokens},
             outputTokens: {N: "" + outputTokens},
             modelId: { S: model.id },
-            details: { M: marshall(details || {})}
+            details: { M: marshall(details || {}, { removeUndefinedValues: true })}
         };
 
         const command = new PutItemCommand({

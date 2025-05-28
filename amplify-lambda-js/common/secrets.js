@@ -46,8 +46,7 @@ const getEndpointData = (parsed_data, model_name) => {
     console.log("Get endpoint data model_name: ", model_name);
     if(model_name === "gpt-4-1106-Preview" || model_name === "gpt-4-1106-preview"){
         model_name = "gpt-4-turbo";
-    }
-    else if(model_name === "gpt-35-1106") {
+    } else if(model_name === "gpt-35-1106") {
         model_name = "gpt-35-turbo";
     }
 

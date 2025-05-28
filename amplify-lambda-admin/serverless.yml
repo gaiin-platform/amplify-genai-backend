@@ -10,6 +10,7 @@ plugins:
   - serverless-offline
   - serverless-python-requirements
   - serverless-prune-plugin
+  - serverless-cloudformation-changesets
 
 custom:
   pythonRequirements:
@@ -63,7 +64,7 @@ functions:
 
   update_admin_config:
     handler: service/core.update_configs
-    timeout: 15
+    timeout: 30
     events:
       - http:
           path: amplifymin/configs/update
@@ -73,30 +74,38 @@ functions:
 
   get_admin_config:
     handler: service/core.get_configs
-    timeout: 15
+    timeout: 30
     events:
       - http:
-          path: amplifymin/configs/get
+          path: amplifymin/configs
           method: get
           cors: true
 
 
   get_feature_flags:
     handler: service/core.get_user_feature_flags
-    timeout: 10
+    timeout: 20
     events:
       - http:
-          path: amplifymin/feature_flags/get
+          path: amplifymin/feature_flags
           method: get
           cors: true
 
+  get_user_app_configs:
+    handler: service/core.get_user_app_configs
+    timeout: 10
+    events:
+      - http:
+          path: amplifymin/user_app_configs
+          method: get
+          cors: true
 
   get_pptx_templates:
     handler: service/core.get_pptx_for_users
     timeout: 10
     events:
       - http:
-          path: amplifymin/pptx_templates/get
+          path: amplifymin/pptx_templates
           method: get
           cors: true
 
@@ -128,9 +137,17 @@ functions:
           method: post
           cors: true
 
+  get_user_amplify_groups:
+    handler: service/core.get_user_amplify_groups
+    events:
+      - http:
+          path: amplifymin/amplify_groups/list
+          method: get
+          cors: true       
+
   is_member_of_amp_group:
     handler: service/core.verify_is_in_amp_group
-    timeout: 15
+    timeout: 300
     events:
       - http:
           path: amplifymin/verify_amp_member
@@ -199,7 +216,12 @@ resources:
             AttributeType: 'S'
         KeySchema:
           - AttributeName: 'config_id'
-            KeyType: 'HASH'   
+            KeyType: 'HASH'  
+        # Enable streams so we can trigger on new inserts:
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    
 
 
     AmplifyAdminLogTable:
@@ -217,5 +239,11 @@ resources:
         KeySchema:
           - AttributeName: "log_id"
             KeyType: "HASH"      
+
+  Outputs:
+    AmplifyAdminTableStreamArn:
+      Value: !GetAtt AmplifyAdminTable.StreamArn
+      Export:
+        Name: AmplifyAdminTableStreamArn  
 
    
