@@ -74,6 +74,8 @@ provider:
     HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+
+
   iam:
     role:
       managedPolicies:
@@ -104,7 +106,7 @@ functions:
 
 
   
-  update_ojbect_perms:
+  update_object_perms:
     runtime: python3.11
     handler: object_access.update_object_permissions
     layers:
@@ -192,7 +194,7 @@ functions:
     timeout: 12
     events:
       - http:
-          path: /groups/members/update
+          path: /groups/update/members
           method: post
           cors: true
 
@@ -203,7 +205,29 @@ functions:
     timeout: 12
     events:
       - http:
-          path: /groups/types/update
+          path: /groups/update/types
+          method: post
+          cors: true
+      
+  update_group_amp_groups:
+    handler: groups.update_amplify_groups
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/update/amplify_groups
+          method: post
+          cors: true
+
+  update_group_system_users:
+    handler: groups.update_system_users
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 12
+    events:
+      - http:
+          path: /groups/update/system_users
           method: post
           cors: true
 
@@ -214,7 +238,7 @@ functions:
     timeout: 12
     events:
       - http:
-          path: /groups/members/update_permissions
+          path: /groups/update/members/permissions
           method: post
           cors: true
 
@@ -228,6 +252,7 @@ functions:
           path: /groups/list
           method: get
           cors: true
+
   list_all_groups:
     handler: groups.list_all_groups_for_admins
     layers:
@@ -259,7 +284,7 @@ functions:
     timeout: 30
     events:
       - http:
-          path: /groups/assistants/update
+          path: /groups/update/assistants
           method: post
           cors: true
 
@@ -272,6 +297,28 @@ functions:
       - http:
           path: /groups/delete
           method: delete
+          cors: true
+    
+  add_group_assistant_path:
+    handler: groups.add_path_to_assistant
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/assistant/add_path
+          method: post
+          cors: true
+
+  is_member_of_Ast_group:
+    handler: groups.verify_is_member_ast_group
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /groups/verify_ast_group_member
+          method: post
           cors: true
 
 resources:

@@ -51,16 +51,19 @@ export const listenForAgentUpdates = async function(accessToken, currentUser, se
 
 
 
-export const invokeAgent = async function(accessToken, sessionId, prompt, metadata={}) {
+export const invokeAgent = async function(accessToken, sessionId, requestId, prompt, metadata={}) {
     // Do other async operations here if needed
     // const someData = await fetchSomeData();
     const endpoint = process.env.AGENT_ENDPOINT;
+
+    console.log("Invoking agent with sessionId:", sessionId);
 
     const response = await axios.post(
         endpoint,
         {
             data: {
                 sessionId,
+                requestId,
                 prompt,
                 metadata
             }

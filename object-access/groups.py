@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr
 from common.api_key import deactivate_key
-from common.assistants import share_assistant, list_assistants, delete_assistant, create_assistant
+from common.assistants import add_assistant_path, share_assistant, list_assistants, delete_assistant, create_assistant
 import boto3
 from common.validate import validated
 from common.data_sources import translate_user_data_sources_to_hash_data_sources
@@ -27,9 +27,12 @@ def create_group(event, context, current_user, name, data):
     group_name = data['group_name']
     members = data.get('members', {}) # includes admins
     group_types = data.get('types', {})
-    return group_creation(current_user, group_name, members, group_types)
+    amplify_groups = data.get('amplify_groups', [])
+    system_users = data.get('system_users', [])
 
-def group_creation(current_user, group_name, members, group_types):
+    return group_creation(current_user, group_name, members, group_types, amplify_groups, system_users)
+
+def group_creation(current_user, group_name, members, group_types=[], amplify_groups=[], system_users=[]):
     # create_api key - 
     api_key_result = create_api_key_for_group(group_name)
     if (not api_key_result['success']):
@@ -47,10 +50,9 @@ def group_creation(current_user, group_name, members, group_types):
         'assistants': [], # contains ast/ id because sharing/permission require it 
         'createdBy': current_user,
         'createdAt': datetime.now(timezone.utc).isoformat(),
-        'access': api_key_result['api_key'],
         'groupTypes' : group_types,
-        'amplifyGroups':[],
-        'systemUsers': []
+        'amplifyGroups': amplify_groups,
+        'systemUsers': system_users
     }
     
     try:
@@ -233,7 +235,6 @@ def update_members_db(group_id, updated_members):
 
 @validated(op='update')
 def update_members_permission(event, context, current_user, name, data):
-    token = data['access_token']
     data = data['data']
     group_id = data['group_id']
     affected_user_dict = data['affected_members']
@@ -408,6 +409,34 @@ def update_assistants(current_user, group_id, update_type, ast_list):
         return {'success': False, 'message': f"Failed to update DynamoDB: {str(e)}"}
 
 
+@validated(op='add_assistant_path')
+def add_path_to_assistant(event, context, current_user, name, data):
+    data = data['data']
+    group_id = data['group_id']
+    path_data = data['path_data']
+
+    auth_check = authorized_user(group_id, current_user)
+    
+    if (not auth_check['success']):
+        return auth_check
+    
+    item = auth_check['item']
+    access_token = item['access']
+    assistantId = path_data['assistantId']
+    current_assistants = item.get('assistants', [])
+
+    # find the assistant in the current assistants
+    assistant = next((a for a in current_assistants if a['assistantId'] == assistantId), None)
+    if not assistant:
+        return {"message": "Assistant not found", "success": False}
+    print("Adding path to group_id: ", group_id, " with data: ", path_data)
+    log_item(group_id, 'Add Path to Assistant', current_user, f"Path added to assistant {assistantId}")
+
+    # call add path to assistant
+    return add_assistant_path(access_token, path_data)
+
+    
+    
 @validated(op='update')
 def update_group_types(event, context, current_user, name, data):
     data = data['data']
@@ -455,6 +484,66 @@ def update_group_types(event, context, current_user, name, data):
         # Log the exception and return an error message
         print(group_id, 'Update Group Types', current_user, str(e))
         return {"message": "Failed to update group types due to an error.", "success": False, "error": str(e)}
+
+
+@validated(op='update')
+def update_amplify_groups(event, context, current_user, name, data):
+    data = data['data']
+    group_id = data['group_id']
+    amplify_groups = data['amplify_groups']
+
+    auth_check = authorized_user(group_id, current_user, True)
+    if not auth_check['success']:
+        return auth_check
+
+    try:
+        # Update the amplify groups in the database
+        response = groups_table.update_item(
+            Key={'group_id': group_id},
+        UpdateExpression="set amplifyGroups = :ag",
+        ExpressionAttributeValues={
+            ':ag': amplify_groups
+        },
+        ReturnValues="UPDATED_NEW"
+        )
+        
+        log_item(group_id, 'Group Amplify Groups Updated', current_user, f"Group amplify groups updated to {amplify_groups}")
+
+        return {"message": "Amplify groups updated successfully", "success": True}
+    except Exception as e:
+        print(f"Failed to update group amplify groups in DynamoDB: {str(e)}")
+        return {'success': False, 'message': f"Failed to update DynamoDB: {str(e)}"}
+
+
+@validated(op='update')
+def update_system_users(event, context, current_user, name, data):
+    data = data['data']
+    group_id = data['group_id']
+    system_users = data['system_users']
+
+    auth_check = authorized_user(group_id, current_user, True)
+
+    if not auth_check['success']:
+        return auth_check
+    
+    try:
+        # Update the system users in the database
+        response = groups_table.update_item(
+            Key={'group_id': group_id},
+            UpdateExpression="set systemUsers = :su",
+            ExpressionAttributeValues={
+                ':su': system_users
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        
+        log_item(group_id, 'Group System Users Updated', current_user, f"Group system users updated to {system_users}") 
+
+        return {"message": "System users updated successfully", "success": True}
+    except Exception as e:
+        print(f"Failed to update group system users in DynamoDB: {str(e)}")
+        return {'success': False, 'message': f"Failed to update DynamoDB: {str(e)}"}
+    
 
 def is_valid_group_id(group_id):
     pattern = r'^.+\_[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$'
@@ -527,19 +616,25 @@ def list_groups(event, context, current_user, name, data):
     failed_to_list = []
     for group in groups:
         group_name = group['groupName']
+        api_key_result = retrieve_api_key(group['group_id'])
+
+        if not api_key_result['success']:
+            return api_key_result
+        
         # use api key to call list ast 
-        ast_result = list_assistants(group['access'])
+        ast_result = list_assistants(api_key_result['apiKey'])
 
         if (not ast_result['success']):
             failed_to_list.append(group_name)
             continue
-
-        ast_access = group["members"][current_user]
+        
+        group_members = group.get("members", {})
+        ast_access = group_members.get(current_user)
         hasAdminInterfaceAccess = ast_access in ['write', 'admin']
 
         #filter old versions
         assistants = get_latest_assistants(ast_result['data'])
-        print(f"{group_name} - {len(assistants)}")
+        print(f"{group_name} - {len(assistants)} Assistant Count")
         published_assistants = []
         #append groupId and correct permissions if published
         for ast in assistants:
@@ -552,10 +647,12 @@ def list_groups(event, context, current_user, name, data):
             group_info.append({
                 'name' : group_name, 
                 'id' : group['group_id'], 
-                'members': group['members'], 
+                'members': group_members, 
                 'assistants': published_assistants,
                 'groupTypes': group['groupTypes'],
                 'supportConvAnalysis': group.get('supportConvAnalysis', False), 
+                'amplifyGroups': group.get('amplifyGroups', []),
+                'systemUsers': group.get('systemUsers', [])
             })
 
     if (len(failed_to_list) == len(group_info)):
@@ -571,7 +668,9 @@ def get_my_groups(current_user, token):
         response = groups_table.scan()
 
         for group in response.get('Items', []):
-            if is_group_member(current_user, group, token): group_rows.append(group)
+            if is_group_member(current_user, group, token): 
+                print(f"Adding {group['groupName']} to group_rows")
+                group_rows.append(group)
 
         # Handle pagination if there are more records
         while 'LastEvaluatedKey' in response:
@@ -595,40 +694,49 @@ def get_my_groups(current_user, token):
         }
 
 def is_group_member(current_user, group, token):
-    members = group.get('members', {})
-    in_members_list = current_user in members
-    
+    print(f"\n\nChecking if {current_user} is a member of {group['groupName']}")
     # check if member
-    if in_members_list:  # Check if current_user is a key in the members dictionary
+    if group.get("isPublic", False): 
+        print(f"Group is public")
+        return True
+    elif current_user in group.get('members', {}):  # Check if current_user is a key in the members dictionary
+        print(f"User is a direct member of {group['group_id']}")
+        return True
+    elif current_user in group.get('systemUsers', []):
+        print(f"User is a system user of {group['group_id']}")
         return True
     else: 
-        print(f"User is not a member of {group['group_id']}... checking if group is public or the user and group share a common amplify group")
-         # check if public
-        is_public = group.get("isPublic", False)
-
-        is_in_amplify_group = False
-        if (not is_public):
+        print(f"User is not a member of {group['group_id']}... checking if the user and group share a common amplify group")
             # check if amplify group
-            groups_amplify_groups = group.get("amplifyGroups", [])
-            print("groups amplify groups: ", groups_amplify_groups)
-            # Check for intersection if there is at least one common group then they are a member
-            is_in_amplify_group = verify_user_in_amp_group(token, groups_amplify_groups)
-            print("is_in_amplify_group: ", is_in_amplify_group)
+        groups_amplify_groups = group.get("amplifyGroups", [])
+        print("Groups amplify groups: ", groups_amplify_groups)
+        # Check for intersection if there is at least one common group then they are a member
+        is_in_amplify_group = verify_user_in_amp_group(token, groups_amplify_groups)
+        print("Is user in any of the amplify groups: ", is_in_amplify_group)
+        return is_in_amplify_group
+    
 
+@validated(op='verify_member')
+def verify_is_member_ast_group(event, context, current_user, name, data):
+    token = data['access_token']
+    data = data['data']
+    group_id = data["groupId"]
+
+    try:
+        response = groups_table.get_item(Key={'group_id': group_id})
+        group_item = response.get('Item')
         
-            # if so add them to the members list 
-        if (is_public or is_in_amplify_group):
-            print("Is Public Group: ", is_public)
-            print("Is user in amplify group: ", is_in_amplify_group)
-            #update members list
-            group_id = group["group_id"]
-            members[current_user] = 'read'
-            update_res = update_members_db(group_id, members)
-            if (not update_res['success']):
-                print(f"Warning: amplify group member failed to add to group: {group_id} members dict")
-            return True
-    return False
-        
+        if not group_item:
+            return {'success': False, 'message': f"No group entry found for groupId: {group_id}"}
+
+        is_member = is_group_member(current_user, group_item, token)
+        return {"isMember": is_member, "success": True}
+    except Exception as e:
+        print(f"An error occurred while verifying if user is a member of the group: {str(e)}")
+    
+    return {"message": f"Unable to verify if user is a member of the group", "success": False}
+
+    
     
 def authorized_user(group_id, user, requires_admin_access = False):
      # Fetch the current item from DynamoDB
@@ -638,7 +746,7 @@ def authorized_user(group_id, user, requires_admin_access = False):
     if not item:
         return {"message": "Group not found", "success": False}
     
-    members = item["members"]
+    members = item.get("members", {})
     
     if (not user in members.keys()):
         return {"message": "User is not a member of the group", "success": False}
@@ -650,8 +758,42 @@ def authorized_user(group_id, user, requires_admin_access = False):
     if (requires_admin_access and members[user] != "admin"):
         return {"message": "User does not have admin access", "success": False}
     
+    if item.get('access'):
+        print("Found 'access' attribute in group item. Initiating cleanup...")
+        cleanup_result = clean_old_keys()
+        if not cleanup_result['success']:
+            # Log or handle the error appropriately if cleanup fails
+            print(f"Warning: clean_old_keys failed: {cleanup_result['message']}")
+    
+    api_key_result = retrieve_api_key(group_id)
+
+    if not api_key_result['success']:
+        return api_key_result
+    
+    item['access'] = api_key_result['apiKey']
+
     return {"item": item, "success": True}
 
+def retrieve_api_key(group_id):
+    api_owner_id = group_id.replace('_', '/systemKey/')
+
+    api_keys_table_name = os.getenv('API_KEYS_DYNAMODB_TABLE')
+    if not api_keys_table_name:
+        raise ValueError("API_KEYS_DYNAMODB_TABLE is not provided.")
+
+    # retrieve api key 
+    try:
+        api_keys_table = dynamodb.Table(api_keys_table_name)
+        api_response = api_keys_table.get_item(Key={'api_owner_id': api_owner_id})
+        api_item = api_response.get('Item')
+        
+        if not api_item:
+            return {'success': False, 'message': f"No API key found for group: {group_id}"}
+        
+        return {'success': True, 'apiKey': api_item['apiKey'], 'item': api_item}
+    except Exception as e:
+        return {'success': False, 'message': f"Error retrieving API key: {str(e)}"}
+    
 
 def log_item(group_id, action, username, details):
     audit_table = dynamodb.Table(os.environ['AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE'])
@@ -717,7 +859,8 @@ def replace_group_key(event, context, current_user, name, data):
     # verify is admin 
     if (not verify_user_as_admin(data['access_token'], 'Replace Assistant Admin Group API Key')):
         return {'success': False , 'error': 'Unable to authenticate user as admin'}
-    try:
+    
+    try: # verify group exists
         group_response = groups_table.get_item(Key={'group_id': group_id})
         if 'Item' not in group_response:
             print(f"Group '{group_id}' not found.")
@@ -729,33 +872,17 @@ def replace_group_key(event, context, current_user, name, data):
         return {'success': False, 'message': f"Error retrieving group '{group_id}': {str(e)}"}
 
     # Extract current API key (old key)
-    old_access = group_item.get('access')
+    api_key_result = retrieve_api_key(group_id)
+    if not api_key_result['success']:
+        return api_key_result
+    old_access = api_key_result['apiKey']
+
     if not old_access:
         print(f"No existing API key found for group '{group_id}'.")
         return {'success': False, 'message': f"No existing API key found for group '{group_id}'"}
 
     # Find the old API key entry in the api_keys_table (assuming no direct index, using scan)
-    api_record = None
-    try:
-        # Retrieve item from DynamoDB
-        response = api_keys_table_name.query(
-            IndexName='ApiKeyIndex',
-            KeyConditionExpression='apiKey = :apiKeyVal',
-            ExpressionAttributeValues={
-                ':apiKeyVal': old_access
-            }
-        )
-        items = response['Items']
-
-
-        if not items:
-            print("API key does not exist.")
-            raise LookupError("API key not found.")
-        
-        api_record = items[0]
-    except Exception as e:
-        print(f"Error getting old API key '{old_access}': {e}")
-        return {'success': False, 'message': f"Error scanning for old API key: {str(e)}"}
+    api_record = api_key_result['item']
 
     if not api_record:
         print(f"Old API key record not found for '{old_access}'.")
@@ -771,13 +898,11 @@ def replace_group_key(event, context, current_user, name, data):
     try:
         groups_table.update_item(
             Key={'group_id': group_id},
-            UpdateExpression="SET #acc = :newAcc, #oldKeys = :oldAccList",
+            UpdateExpression="SET #oldKeys = :oldAccList",
             ExpressionAttributeNames={
-                '#acc': 'access',
                 '#oldKeys': 'inactive_old_keys'
             },
             ExpressionAttributeValues={
-                ':newAcc': new_api_key,
                 ':oldAccList': inactive_keys
             }
         )
@@ -923,7 +1048,7 @@ def create_amplify_assistants(event, context, current_user, name, data):
     members_access_map = {member: 'admin' for member in members} 
     
     assistants = data.get('assistants', [])
-    create_result = group_creation(current_user, "Amplify Assistants", members_access_map, [])
+    create_result = group_creation(current_user, "Amplify Assistants", members_access_map)
     if (not create_result['success']): 
         print("Failed to create group")
         return create_result
@@ -949,5 +1074,43 @@ def create_amplify_assistants(event, context, current_user, name, data):
             return ast_result
     
     return {"success": True, "data": {"id": group_id}}
+
+def clean_old_keys():
+    """
+    Scans the groups_table and removes the 'access' attribute from each item
+    if it exists. This is intended as a one-time cleanup operation.
+    """
+    print("Starting clean_old_keys process...")
+    try:
+        scan_kwargs = {}
+        updated_count = 0
+        while True:
+            response = groups_table.scan(**scan_kwargs)
+            items = response.get('Items', [])
+            for item in items:
+                if 'access' in item:
+                    try:
+                        groups_table.update_item(
+                            Key={'group_id': item['group_id']},
+                            UpdateExpression="REMOVE #acc",
+                            ExpressionAttributeNames={'#acc': 'access'}
+                        )
+                        updated_count += 1
+                        print(f"Removed 'access' attribute from group_id: {item['group_id']}")
+                    except Exception as e:
+                        print(f"Error updating item {item['group_id']}: {e}")
+            
+            # Handle pagination
+            if 'LastEvaluatedKey' in response:
+                scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+            else:
+                break  # Exit loop if no more items to scan
+        
+        print(f"Finished clean_old_keys process. Updated {updated_count} items.")
+        return {'success': True, 'message': f"Successfully cleaned old keys. {updated_count} items updated."}
+
+    except Exception as e:
+        print(f"An error occurred during clean_old_keys: {e}")
+        return {'success': False, 'message': f"An error occurred during clean_old_keys: {str(e)}"}
 
 

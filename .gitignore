@@ -19,8 +19,11 @@ __pycache__/
 core/
 Include/
 lib/
-Scripts/
+Scripts/ 
+/amplify-lambda/markitdown/python/
 
+internal/
+*internal.yml
 # Environment
 .*venv
 .env* 

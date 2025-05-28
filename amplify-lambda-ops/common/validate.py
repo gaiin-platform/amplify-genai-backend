@@ -57,6 +57,7 @@ get_ops_schema = {
 register_ops_schema = {
     "type": "object",
     "properties": {
+        "system_op": {"type": "boolean"},
         "ops": {
             "type": "array",
             "items": {
@@ -85,7 +86,7 @@ register_ops_schema = {
                         "items": {"type": "string"},
                     },
                 },
-                "required": ["id", "method", "url", "name", "description", "params"],
+                "required": ["id", "method", "url", "name", "params"],
                 "additionalProperties": True
             },
         }

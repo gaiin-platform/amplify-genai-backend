@@ -138,19 +138,19 @@ export class StreamMultiplexer {
                         try {
                             const dataContent = eventText.slice(6).trim();
                             
-                            logger.debug("Parsing Event...");
+                            // logger.debug("Parsing Event...");
                             let eventObj = JSON.parse(dataContent);
                             let transformed = eventObj;
 
                             if (processor) {
                                 transformed = processor(eventObj);
-                                logger.debug("Processing Event...");
+                                // logger.debug("Processing Event...");
                             }
 
                             if (transformed) {
                                 if (transformed.s !== 'meta') transformed.s = src;
                                 this.safeWrite("data: " + JSON.stringify(transformed) + '\n\n');
-                                logger.debug("Event Transformed Sent... ", transformed);
+                                // logger.debug("Event Transformed Sent... ", transformed);
                             }
                         } catch (err) {
                             // Handle any parsing error or write error here

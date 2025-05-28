@@ -241,7 +241,8 @@ def create_api_key_for_user(user, api_key) :
                 'lastAccessed': timestamp,
                 'rateLimit': formatRateLimit( api_key["rateLimit"] ), 
                 'expirationDate': api_key.get("expirationDate", None),
-                'accessTypes' :  api_key["accessTypes"]
+                'accessTypes' :  api_key["accessTypes"],
+                'purpose': api_key.get("purpose", None)
             }
         )
 
@@ -511,13 +512,12 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
 def get_api_document_templates(event, context, current_user, name, data):
     templates_key = 'Amplify_API_Templates.zip' 
     
-    try:# Check if the templates.zip exists in S3
-        s3.head_object(Bucket=bucket_name, Key=templates_key)
-        # good to continue 
-    except ClientError as e:
-        print(e)
-        # If a 404 error is returned, then the object does not exist
-        if e.response['Error']['Code'] == '404':
+    try:
+        # List objects in the bucket and check if templates file exists
+        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=templates_key)
+        file_exists = response.get('Contents') and any(obj['Key'] == templates_key for obj in response.get('Contents', []))
+        
+        if not file_exists:
             print("templates.zip does not exist in S3. Uploading now...")
             # Upload from local to S3
             try:
@@ -547,10 +547,14 @@ def get_api_document_templates(event, context, current_user, name, data):
                     'message': f"Error uploading {templates_key} to S3: {e}"
                     }
         else:
-            return {
+            print("templates.zip exists in S3")
+        
+    except ClientError as e:
+        print(f"Error checking for template in S3: {e}")
+        return {
             'success': False,
-            'message': f'Failed to generate presigned URL {e}'
-            }
+            'message': f'Failed to check for template file: {e}'
+        }
         
 
     # Now that the file should be in S3, generate the presigned URL
