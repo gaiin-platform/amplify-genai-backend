@@ -108,7 +108,7 @@ functions:
           method: post
           cors: true
 
-  create_assistant:
+  create_ast:
     handler: service/core.create_assistant
     timeout: 30
     events:
@@ -117,7 +117,7 @@ functions:
           method: post
           cors: true
 
-  list_assistants:
+  list_asts:
     handler: service/core.list_assistants
     timeout: 30
     events:
@@ -126,7 +126,7 @@ functions:
           method: get
           cors: true
 
-  share_assistant:
+  share_ast:
     handler: service/core.share_assistant
     timeout: 30
     events:
@@ -144,7 +144,7 @@ functions:
           method: post
           cors: true
 
-  validate_assistant_id:
+  validate_ast_id:
     handler: service/core.validate_assistant_id
     timeout: 30
     events:
@@ -153,7 +153,7 @@ functions:
           method: post
           cors: true
 
-  delete_assistant:
+  delete_ast:
     handler: service/core.delete_assistant
     timeout: 30
     events:
@@ -162,7 +162,7 @@ functions:
           method: post
           cors: true
     
-  download_code_interpreter_file:
+  download_code_int_file:
     handler: openaiazure/assistant.get_presigned_url_code_interpreter
     events:
       - http:
@@ -173,7 +173,7 @@ functions:
 
   # This endpoint is mainly for local testing but doesn't have
   # a long enough timeout for use when running in AWS behind API Gateway
-  create_code_interpreter_assistant:
+  create_code_int_ast:
     handler: openaiazure/assistant.create_code_interpreter_assistant 
     timeout: 30
     events:
@@ -182,7 +182,7 @@ functions:
           method: post
           cors: true
   
-  chat_code_interpreter_assistant:
+  chat_code_int_ast:
     handler: openaiazure/assistant.chat_with_code_interpreter
     timeout: 300
 
@@ -198,7 +198,7 @@ functions:
   #   url: true
     
 
-  delete_assistant_thread:
+  delete_ast_thread:
     handler: openaiazure/assistant.delete_assistant_thread
     events:
       - http:
@@ -207,7 +207,7 @@ functions:
           cors: true
 
 
-  delete_assistant_open_ai:
+  delete_ast_open_ai:
     handler: openaiazure/assistant.delete_assistant
     events:
       - http:
@@ -215,7 +215,7 @@ functions:
           method: delete
           cors: true
 
-  get_group_assistant_conversations:
+  get_group_ast_conversations:
     handler: service/core.get_group_assistant_conversations
     timeout: 30
     events:
@@ -241,7 +241,7 @@ functions:
           method: get
           cors: true
   
-  get_group_assistant_dashboards:
+  get_group_ast_dashboards:
     handler: service/core.get_group_assistant_dashboards
     timeout: 30
     events:
@@ -259,7 +259,7 @@ functions:
           method: post
           cors: true
 
-  lookup_assistant_path:
+  lookup_ast_path:
     handler: service/core.lookup_assistant_path
     timeout: 30
     events:
@@ -268,7 +268,7 @@ functions:
           method: post
           cors: true
 
-  add_assistant_path:
+  add_ast_path:
     handler: service/core.add_assistant_path
     timeout: 30
     events:
