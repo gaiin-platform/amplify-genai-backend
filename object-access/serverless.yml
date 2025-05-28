@@ -75,6 +75,7 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
 
+
   iam:
     role:
       managedPolicies:
