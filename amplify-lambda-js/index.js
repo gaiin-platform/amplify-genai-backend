@@ -8,6 +8,7 @@ import { extractParams } from "./common/handlers.js";
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
 import { debug } from 'console';
+import AWSXRay from 'aws-xray-sdk';
 
 const pipelineAsync = promisify(pipeline);
 const logger = getLogger("index");
@@ -86,8 +87,12 @@ const returnResponse = async (responseStream, response) => {
 
 
 export const handler = awslambda.streamifyResponse(async (event, responseStream, context) => {
+
+    const segment = AWSXRay.getSegment();
+    const subSegment = segment.addNewSubsegment('chat-js.index.handler');
+
     const effectiveStream = streamEnabled ? responseStream : new AggregatorStream();
-  
+
     try {
       logger.debug("Extracting params from event");
       const params = await extractParams(event);
@@ -98,11 +103,13 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream,
         effectiveStream.sendFinalDataResponse(responseStream);
       }
     } catch (e) {
-      logger.error("Error processing request: " + e.message, e);
-      await returnResponse(responseStream, {
-        statusCode: 400,
-        body: { error: e.message }
-      });
+        logger.error("Error processing request: " + e.message, e);
+        await returnResponse(responseStream, {
+            statusCode: 400,
+            body: { error: e.message }
+        });
+    } finally {
+        subSegment.close();
     }
   });
 
