@@ -90,6 +90,7 @@ provider:
     S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    CONVERSATION_METADATA_TABLE: ${self:service}-${sls:stage}-conversation-metadata
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
     MAX_CHUNKS: 1000
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
@@ -203,6 +204,7 @@ functions:
           path: state/conversation/get/empty
           method: get
           cors: true
+
 
   upload_file:
     handler: files/file.get_presigned_url
@@ -591,6 +593,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"               
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CONVERSATION_METADATA_TABLE}/index/*"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
@@ -956,6 +960,36 @@ resources:
             Projection:
               ProjectionType: ALL  # Or specify the attributes you want projected
 
+    ConversationMetadataTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: conversation_id
+            AttributeType: S
+          - AttributeName: last_modified
+            AttributeType: N
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: conversation_id
+            KeyType: RANGE
+        TableName: ${self:provider.environment.CONVERSATION_METADATA_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: TimestampIndex
+            KeySchema:
+              - AttributeName: user_id
+                KeyType: HASH
+              - AttributeName: last_modified
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
 
     ConversionInputBucket:
          Type: AWS::S3::Bucket
