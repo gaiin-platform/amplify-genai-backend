@@ -106,6 +106,12 @@ permissions_by_state_type = {
   "/state/conversation/get/empty": {
         "read" : can_read
   },
+  "/state/conversation/get/metadata": {
+        "read" : can_read
+  },
+  "/state/conversation/get/since/{timestamp}": {
+        "read" : can_read
+  },
   "/state/conversation/delete": {
     "delete": can_delete_item
   },

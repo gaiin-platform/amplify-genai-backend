@@ -40,11 +40,12 @@ async function updateItem(item) {
                 id: { S: item.id },
                 accountInfo: { S: item.accountInfo }
             },
-            UpdateExpression: "SET monthlyCost = if_not_exists(monthlyCost, :zero) + :dailyCost, dailyCost = :zero, hourlyCost = :emptyList",
+            UpdateExpression: "SET monthlyCost = if_not_exists(monthlyCost, :zero) + :dailyCost, dailyCost = :zero, hourlyCost = :emptyList, record_type = if_not_exists(record_type, :recordType)",
             ExpressionAttributeValues: {
                 ":dailyCost": { N: item.dailyCost.toString() },
                 ":zero": { N: "0" },
-                ":emptyList": { L: Array(24).fill({ N: "0" }) }
+                ":emptyList": { L: Array(24).fill({ N: "0" }) },
+                ":recordType": { S: "cost" }
             },
             ReturnValues: "UPDATED_NEW"
         };
@@ -110,9 +111,10 @@ async function handleMonthlyReset(item) {
                     id: { S: item.id },
                     accountInfo: { S: item.accountInfo }
                 },
-                UpdateExpression: "SET monthlyCost = :zero",
+                UpdateExpression: "SET monthlyCost = :zero, record_type = if_not_exists(record_type, :recordType)",
                 ExpressionAttributeValues: {
-                    ":zero": { N: "0" }
+                    ":zero": { N: "0" },
+                    ":recordType": { S: "cost" }
                 }
             }));
         }

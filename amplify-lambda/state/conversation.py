@@ -2,12 +2,48 @@ import json
 import math
 import os
 import re
+import time
 from common.validate import validated
 from botocore.exceptions import BotoCoreError, ClientError
 import boto3
+import boto3.dynamodb.conditions
 import uuid
 from datetime import datetime,timezone
 from common.ops import op
+
+def update_conversation_cache(user_id, conversation_data, folder=None):
+    """Update conversation metadata cache when conversation changes"""
+    try:
+        if not os.environ.get('CONVERSATION_METADATA_TABLE'):
+            return  # Cache not available
+            
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(os.environ.get('CONVERSATION_METADATA_TABLE'))
+        
+        # Extract metadata from conversation
+        metadata = pick_conversation_attributes(conversation_data, include_timestamp=True)
+        
+        table.put_item(Item={
+            'user_id': user_id,
+            'conversation_id': metadata.get('id', ''),
+            'name': metadata.get('name', ''),
+            'model': metadata.get('model', ''),
+            'folder_id': metadata.get('folderId'),
+            'tags': metadata.get('tags', []),
+            'is_local': metadata.get('isLocal', False),
+            'group_type': metadata.get('groupType'),
+            'code_interpreter_assistant_id': metadata.get('codeInterpreterAssistantId'),
+            'last_modified': int(time.time() * 1000),  # Use current timestamp for uploads
+            's3_key': f"{user_id}/{metadata.get('id', '')}",
+            'folder_name': folder.get('name') if folder else None,
+            'updated_at': int(time.time() * 1000)
+        })
+        
+        print(f"Updated cache for conversation {metadata.get('id', '')}")
+        
+    except Exception as e:
+        print(f"Failed to update conversation cache (non-blocking): {str(e)}")
+
 
 def upload_to_s3(key, conversation, folder=None):
     s3 = boto3.client('s3')
@@ -31,8 +67,20 @@ def upload_conversation(event, context, current_user, name, data):
     conversation_id = data['conversationId']
     folder = data.get('folder', None)
 
-    conversation_key = f"{current_user}/{conversation_id}" 
-    return upload_to_s3(conversation_key, conversation, folder)
+    conversation_key = f"{current_user}/{conversation_id}"
+    result = upload_to_s3(conversation_key, conversation, folder)
+    
+    # Update cache after successful upload (non-blocking)
+    if result.get('success'):
+        try:
+            # Decompress the conversation to get metadata
+            decompressed_conversation = lzw_uncompress(conversation)
+            if decompressed_conversation:
+                update_conversation_cache(current_user, decompressed_conversation, folder)
+        except Exception as e:
+            print(f"Failed to update cache after upload (non-blocking): {str(e)}")
+    
+    return result
 
 
 @op(
@@ -131,9 +179,16 @@ def get_conversation(event, context, current_user, name, data):
         return  error
 
 
-def pick_conversation_attributes(conversation):
+def pick_conversation_attributes(conversation, include_timestamp=False):
+    """Extract essential conversation attributes for metadata responses"""
     attributes = ['id', 'name', 'model', 'folderId', 'tags', 'isLocal', 'groupType', 'codeInterpreterAssistantId']
-    return {attr: conversation.get(attr, None) for attr in attributes}
+    result = {attr: conversation.get(attr, None) for attr in attributes}
+    
+    # Add timestamp if requested
+    if include_timestamp:
+        result['lastModified'] = conversation.get('lastModified', int(time.time() * 1000))
+    
+    return result
 
 
 @validated("read")
@@ -417,3 +472,264 @@ def lzw_compress(str_input):
         compressed_output.append(dictionary[current_pattern])
 
     return compressed_output
+
+
+def get_conversations_metadata_lightweight(current_user):
+    """Optimized function to get only conversation metadata without full download"""
+    s3 = boto3.client('s3')
+    conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
+    user_prefix = current_user + '/'
+
+    try:
+        # List all objects to get S3 metadata (timestamps, sizes) without downloading content
+        response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
+        if 'Contents' not in response:
+            return []
+        
+        metadata = []
+        print(f"Processing {len(response['Contents'])} conversations for metadata")
+        
+        for obj in response['Contents']:
+            conversation_key = obj['Key']
+            conversation_id = conversation_key.split('/')[-1]  # Extract ID from key path
+            s3_last_modified = int(obj['LastModified'].timestamp() * 1000)
+            
+            try:
+                # Download and decompress just to get basic metadata - but do it efficiently
+                conversation_response = s3.get_object(Bucket=conversations_bucket, Key=conversation_key)
+                conversation_body = conversation_response['Body'].read().decode('utf-8')
+                conversation_data = json.loads(conversation_body)
+                
+                # Only decompress to get the metadata fields we need
+                uncompressed_conversation = lzw_uncompress(conversation_data["conversation"])
+                if uncompressed_conversation:
+                    # Extract only metadata attributes
+                    conv_meta = pick_conversation_attributes(uncompressed_conversation, include_timestamp=True)
+                    conv_meta['lastModified'] = s3_last_modified  # Use S3 timestamp
+                    
+                    # Add folder info if available
+                    if 'folder' in conversation_data:
+                        conv_meta['folder'] = conversation_data['folder']
+                    
+                    metadata.append(conv_meta)
+                    
+            except (BotoCoreError, ClientError) as e:
+                print(f"Failed to process conversation {conversation_id}: {str(e)}")
+                # Create basic metadata from S3 info only
+                metadata.append({
+                    'id': conversation_id,
+                    'name': f"Conversation {conversation_id}",
+                    'lastModified': s3_last_modified,
+                    'model': None,
+                    'folderId': None,
+                    'tags': [],
+                    'isLocal': False,
+                    'groupType': None,
+                    'codeInterpreterAssistantId': None,
+                    'folder': None
+                })
+                
+        return metadata
+        
+    except (BotoCoreError, ClientError) as e:
+        print(f"Error listing conversations: {str(e)}")
+        return None
+
+
+def get_cached_conversation_metadata(current_user):
+    """Get metadata from DynamoDB cache"""
+    try:
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(os.environ.get('CONVERSATION_METADATA_TABLE'))
+        
+        response = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('user_id').eq(current_user)
+        )
+        
+        print(f"Cache query returned {len(response['Items'])} items")
+        return response['Items']
+        
+    except Exception as e:
+        print(f"Cache query failed: {str(e)}")
+        return []
+
+
+def populate_cache_async(current_user, metadata_list):
+    """Populate cache without blocking the response"""
+    try:
+        if not metadata_list:
+            return
+            
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(os.environ.get('CONVERSATION_METADATA_TABLE'))
+        
+        print(f"Populating cache with {len(metadata_list)} conversations for {current_user}")
+        
+        # Batch write for efficiency
+        with table.batch_writer() as batch:
+            for metadata in metadata_list:
+                batch.put_item(Item={
+                    'user_id': current_user,
+                    'conversation_id': metadata.get('id', ''),
+                    'name': metadata.get('name', ''),
+                    'model': metadata.get('model', ''),
+                    'folder_id': metadata.get('folderId'),
+                    'tags': metadata.get('tags', []),
+                    'is_local': metadata.get('isLocal', False),
+                    'group_type': metadata.get('groupType'),
+                    'code_interpreter_assistant_id': metadata.get('codeInterpreterAssistantId'),
+                    'last_modified': metadata.get('lastModified', int(time.time() * 1000)),
+                    's3_key': f"{current_user}/{metadata.get('id', '')}",
+                    'folder_name': metadata.get('folder', {}).get('name') if metadata.get('folder') else None,
+                    'cached_at': int(time.time() * 1000)
+                })
+        
+        print(f"Successfully cached {len(metadata_list)} conversations for {current_user}")
+        
+    except Exception as e:
+        print(f"Error populating cache (non-blocking): {str(e)}")
+        # Non-blocking - cache population failure doesn't break the API
+
+
+@validated("read")
+def get_conversations_metadata_only(event, context, current_user, name, data):
+    """Get metadata with lazy cache population and S3 fallback"""
+    try:
+        print(f"Getting conversation metadata for user: {current_user}")
+        
+        # Try cache first (will be empty for existing users initially)
+        cached_metadata = []
+        try:
+            if os.environ.get('CONVERSATION_METADATA_TABLE'):
+                cached_metadata = get_cached_conversation_metadata(current_user)
+        except Exception as e:
+            print(f"Cache lookup failed, falling back to S3: {str(e)}")
+        
+        if cached_metadata:
+            print(f"Cache hit: Retrieved {len(cached_metadata)} conversations from cache")
+            return {
+                'success': True,
+                'conversations': cached_metadata,
+                'serverTimestamp': int(time.time() * 1000),
+                'source': 'cache'
+            }
+        
+        # Cache miss - fallback to S3 and populate cache
+        print("Cache miss - reading from S3 and populating cache")
+        s3_metadata = get_conversations_metadata_lightweight(current_user)
+        
+        if s3_metadata is None:
+            return {
+                'success': False,
+                'message': "Failed to retrieve conversations from S3"
+            }
+        
+        # Populate cache for future requests (non-blocking)
+        if os.environ.get('CONVERSATION_METADATA_TABLE') and s3_metadata:
+            try:
+                populate_cache_async(current_user, s3_metadata)
+            except Exception as e:
+                print(f"Cache population failed (non-blocking): {str(e)}")
+        
+        print(f"Retrieved {len(s3_metadata)} conversations from S3")
+        return {
+            'success': True,
+            'conversations': s3_metadata,
+            'serverTimestamp': int(time.time() * 1000),
+            'source': 's3_with_cache_population'
+        }
+
+    except Exception as e:
+        print(f"Error getting conversation metadata: {str(e)}")
+        return {
+            'success': False,
+            'message': f"Failed to get conversation metadata: {str(e)}"
+        }
+
+
+@validated("read")
+def get_conversations_since_timestamp(event, context, current_user, name, data):
+    """Get conversations modified after a specific timestamp"""
+    try:
+        # Get timestamp from path parameters
+        timestamp_str = event.get('pathParameters', {}).get('timestamp')
+        if not timestamp_str:
+            return {
+                'success': False,
+                'message': 'Timestamp parameter is required'
+            }
+
+        try:
+            since_timestamp = int(timestamp_str)
+        except ValueError:
+            return {
+                'success': False,
+                'message': 'Invalid timestamp format'
+            }
+
+        print(f"Getting conversations since {since_timestamp} for user: {current_user}")
+
+        s3 = boto3.client('s3')
+        conversations_bucket = os.environ['S3_CONVERSATIONS_BUCKET_NAME']
+        user_prefix = current_user + '/'
+        
+        # Use list_objects_v2 to get timestamps efficiently
+        response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
+        if 'Contents' not in response:
+            return {
+                'success': True,
+                'presignedUrls': [],
+                'serverTimestamp': int(time.time() * 1000)
+            }
+
+        changed_conversations = []
+
+        # Filter conversations by timestamp using S3 metadata
+        for obj in response['Contents']:
+            last_modified_ms = int(obj['LastModified'].timestamp() * 1000)
+            
+            if last_modified_ms > since_timestamp:
+                conversation_key = obj['Key']
+                conversation_id = conversation_key.split('/')[-1]
+                print(f"Conversation {conversation_id} modified at {last_modified_ms} (after {since_timestamp})")
+                
+                try:
+                    # Now download and decompress only the changed conversations
+                    conversation_response = s3.get_object(Bucket=conversations_bucket, Key=conversation_key)
+                    conversation_body = conversation_response['Body'].read().decode('utf-8')
+                    conversation_data = json.loads(conversation_body)
+                    uncompressed_conversation = lzw_uncompress(conversation_data["conversation"])
+                    
+                    if uncompressed_conversation:
+                        changed_conversations.append({
+                            'conversation': uncompressed_conversation,
+                            'folder': conversation_data.get('folder')
+                        })
+                        
+                except (BotoCoreError, ClientError) as e:
+                    print(f"Failed to retrieve changed conversation {conversation_id}: {str(e)}")
+                    continue
+
+        print(f"Found {len(changed_conversations)} changed conversations")
+
+        if not changed_conversations:
+            return {
+                'success': True,
+                'presignedUrls': [],
+                'serverTimestamp': int(time.time() * 1000)
+            }
+
+        # Use existing chunking logic to return presigned URLs
+        presigned_urls = get_presigned_urls(current_user, changed_conversations)
+        return {
+            'success': True,
+            'presignedUrls': presigned_urls,
+            'serverTimestamp': int(time.time() * 1000)
+        }
+
+    except Exception as e:
+        print(f"Error getting conversations since timestamp: {str(e)}")
+        return {
+            'success': False,
+            'message': f"Failed to get conversations since timestamp: {str(e)}"
+        }
