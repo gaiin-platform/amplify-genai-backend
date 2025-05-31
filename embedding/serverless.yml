@@ -74,7 +74,6 @@ provider:
     MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
-    EMBEDDING_CHUNKS_INDEX_QUEUE: ${self:service}-${sls:stage}-embedding-chunks-index-queue
     OBJECT_ACCESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
     S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
@@ -82,8 +81,8 @@ provider:
     HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
     GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    EMBEDDING_CHUNKS_INDEX_DLQ: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
     EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
 
@@ -104,11 +103,9 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    OPENAI_PROVIDER: ${self:custom.stageVars.OPENAI_PROVIDER}
-    EMBEDDING_PROVIDER: ${self:custom.stageVars.EMBEDDING_PROVIDER}
-    KEYWORD_MODEL_NAME: ${self:custom.stageVars.KEYWORD_MODEL_NAME}
     REGION: ${self:provider.region}
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
+    
     
   iam:
     role:
@@ -136,19 +133,6 @@ functions:
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
   
-  queue_document_for_embedding:
-      runtime: python3.11
-      layers:
-        - Ref: PythonRequirementsLambdaLayer
-      handler: embedding-sqs.queue_document_for_embedding
-      events:
-        - s3:
-            bucket: ${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}
-            event: s3:ObjectCreated:*
-            existing: true
-      environment:
-          EMBEDDING_CHUNKS_INDEX_QUEUE:
-            Ref: EmbeddingChunksIndexQueue
          
 
   process_chunk_for_embedding:
@@ -167,10 +151,7 @@ functions:
       events:
         - sqs:
             batchSize: 1         
-            arn:
-              Fn::GetAtt:
-                - EmbeddingChunksIndexQueue
-                - Arn
+            arn: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueArn"
       environment:
         RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
@@ -180,7 +161,7 @@ functions:
         MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
         AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
         API_VERSION: ${self:provider.environment.API_VERSION}
-        EMBEDDING_CHUNKS_INDEX_QUEUE: !Ref EmbeddingChunksIndexQueue   
+        EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
         REGION: ${self:provider.region}
 
   get_dual_embeddings:
@@ -200,6 +181,8 @@ functions:
           path: /embedding-dual-retrieval
           method: post
           cors: true
+    environment:
+      RAG_CHUNK_DOCUMENT_QUEUE_URL: !ImportValue "${sls:stage}-RagChunkDocumentQueueURL"
 
 
   terminate_embedding:
@@ -213,6 +196,18 @@ functions:
           method: post
           cors: true
 
+  check_embedding_completion:
+    handler: embedding-dual-retrieval.queue_missing_embeddings
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /embedding/check-completion
+          method: post
+          cors: true
+    environment:
+      RAG_CHUNK_DOCUMENT_QUEUE_URL: !ImportValue "${sls:stage}-RagChunkDocumentQueueURL"
 
   get_sqs_messages:
     handler: embedding-sqs.get_in_flight_messages
@@ -301,11 +296,15 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
-                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
-                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-queue"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
-          
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-document-chunk-queue"
 
     RagPostgresDbSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
@@ -364,22 +363,7 @@ resources:
               - AttributeName: 'object_id'
                 KeyType: 'HASH'  # Partition key
 
-    EmbeddingChunksIndexQueue:
-      Type: "AWS::SQS::Queue"
-      Properties:
-        VisibilityTimeout: 120
-        QueueName: ${self:provider.environment.EMBEDDING_CHUNKS_INDEX_QUEUE}
-        MessageRetentionPeriod: 86400 # 1 day
-        RedrivePolicy:
-          deadLetterTargetArn:
-            Fn::GetAtt: [EmbeddingChunksIndexDLQ, Arn]
-          maxReceiveCount: 5
-
-    EmbeddingChunksIndexDLQ:
-      Type: "AWS::SQS::Queue"
-      Properties:
-        QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
-
+    
     RagPostgresDbCluster:
       Type: AWS::RDS::DBCluster
       DependsOn: RagPostgresDbSecurityGroup
@@ -438,4 +422,5 @@ resources:
         Engine: aurora-postgresql
         DBInstanceClass: db.serverless
         DBClusterIdentifier: !Ref RagPostgresDbCluster
+       
        

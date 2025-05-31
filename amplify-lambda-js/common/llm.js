@@ -269,7 +269,7 @@ export class LLM {
         const systemPrompt = `
 Analyze the task or question and output the requested data.
 
-You output with the data should be in the format:
+Your output with the data should be in the format:
 \`\`\`data
 thought: <INSERT THOUGHT>
 ${dataDescs}

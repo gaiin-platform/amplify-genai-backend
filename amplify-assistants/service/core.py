@@ -1316,8 +1316,8 @@ def create_or_update_assistant(
         # Update the latest alias to point to the new version
         update_assistant_latest_alias(assistant_public_id, new_item["id"], new_version)
 
-        print(f"Indexing assistant {new_item['id']} for RAG")
-        save_assistant_for_rag(new_item)
+        # print(f"Indexing assistant {new_item['id']} for RAG")
+        # save_assistant_for_rag(new_item)
         print(f"Added RAG entry for {new_item['id']}")
 
         # Return success response
@@ -1435,8 +1435,8 @@ def create_or_update_assistant(
             "latest",
         )
 
-        print(f"Indexing assistant {new_item['id']} for RAG")
-        save_assistant_for_rag(new_item)
+        # print(f"Indexing assistant {new_item['id']} for RAG")
+        # save_assistant_for_rag(new_item)
         print(f"Added RAG entry for {new_item['id']}")
 
         # Return success response
@@ -1555,89 +1555,89 @@ def update_assistant_alias_by_type(assistant_public_id, new_id, version, alias_t
     except ClientError as e:
         print(f"Error updating assistant alias: {e}")
 
+# legacy function, no longer used
+# def generate_assistant_chunks_metadata(assistant):
+#     output = {
+#         "chunks": [
+#             {
+#                 "content": f"{assistant['description']}",
+#                 "locations": [
+#                     {
+#                         "assistantId": assistant["assistantId"],
+#                         "version": assistant["version"],
+#                         "updatedAt": assistant["updatedAt"],
+#                         "createdAt": assistant["createdAt"],
+#                         "tags": assistant["tags"],
+#                     }
+#                 ],
+#                 "indexes": [0],
+#                 "char_index": 0,
+#             },
+#             {
+#                 "content": f"{assistant['name']}: {assistant['description']}. {', '.join(assistant['tags'])}",
+#                 "locations": [
+#                     {
+#                         "assistantId": assistant["assistantId"],
+#                         "version": assistant["version"],
+#                         "updatedAt": assistant["updatedAt"],
+#                         "createdAt": assistant["createdAt"],
+#                         "tags": assistant["tags"],
+#                     }
+#                 ],
+#                 "indexes": [0],
+#                 "char_index": 0,
+#             },
+#             {
+#                 "content": assistant["instructions"],
+#                 "locations": [
+#                     {
+#                         "assistantId": assistant["assistantId"],
+#                         "version": assistant["version"],
+#                         "updatedAt": assistant["updatedAt"],
+#                         "createdAt": assistant["createdAt"],
+#                         "tags": assistant["tags"],
+#                     }
+#                 ],
+#                 "indexes": [0],
+#                 "char_index": 0,
+#             },
+#             {
+#                 "content": f"{assistant['name']}: {assistant['instructions']}. {', '.join(assistant['tags'])}",
+#                 "locations": [
+#                     {
+#                         "assistantId": assistant["assistantId"],
+#                         "version": assistant["version"],
+#                         "updatedAt": assistant["updatedAt"],
+#                         "createdAt": assistant["createdAt"],
+#                         "tags": assistant["tags"],
+#                     }
+#                 ],
+#                 "indexes": [0],
+#                 "char_index": 0,
+#             },
+#         ],
+#         "src": assistant["id"],
+#     }
+#     return output
 
-def generate_assistant_chunks_metadata(assistant):
-    output = {
-        "chunks": [
-            {
-                "content": f"{assistant['description']}",
-                "locations": [
-                    {
-                        "assistantId": assistant["assistantId"],
-                        "version": assistant["version"],
-                        "updatedAt": assistant["updatedAt"],
-                        "createdAt": assistant["createdAt"],
-                        "tags": assistant["tags"],
-                    }
-                ],
-                "indexes": [0],
-                "char_index": 0,
-            },
-            {
-                "content": f"{assistant['name']}: {assistant['description']}. {', '.join(assistant['tags'])}",
-                "locations": [
-                    {
-                        "assistantId": assistant["assistantId"],
-                        "version": assistant["version"],
-                        "updatedAt": assistant["updatedAt"],
-                        "createdAt": assistant["createdAt"],
-                        "tags": assistant["tags"],
-                    }
-                ],
-                "indexes": [0],
-                "char_index": 0,
-            },
-            {
-                "content": assistant["instructions"],
-                "locations": [
-                    {
-                        "assistantId": assistant["assistantId"],
-                        "version": assistant["version"],
-                        "updatedAt": assistant["updatedAt"],
-                        "createdAt": assistant["createdAt"],
-                        "tags": assistant["tags"],
-                    }
-                ],
-                "indexes": [0],
-                "char_index": 0,
-            },
-            {
-                "content": f"{assistant['name']}: {assistant['instructions']}. {', '.join(assistant['tags'])}",
-                "locations": [
-                    {
-                        "assistantId": assistant["assistantId"],
-                        "version": assistant["version"],
-                        "updatedAt": assistant["updatedAt"],
-                        "createdAt": assistant["createdAt"],
-                        "tags": assistant["tags"],
-                    }
-                ],
-                "indexes": [0],
-                "char_index": 0,
-            },
-        ],
-        "src": assistant["id"],
-    }
-    return output
 
+# def save_assistant_for_rag(assistant):
+#     try:
+#         key = assistant["id"]
+#         assistant_chunks = generate_assistant_chunks_metadata(assistant)
+#         chunks_bucket = os.environ["S3_RAG_CHUNKS_BUCKET_NAME"]
 
-def save_assistant_for_rag(assistant):
-    try:
-        key = assistant["id"]
-        assistant_chunks = generate_assistant_chunks_metadata(assistant)
-        chunks_bucket = os.environ["S3_RAG_CHUNKS_BUCKET_NAME"]
-
-        s3 = boto3.client("s3")
-        print(f"Saving assistant description to {key}-assistant.chunks.json")
-        chunks_key = f"assistants/{key}-assistant.chunks.json"
-        s3.put_object(
-            Bucket=chunks_bucket,
-            Key=chunks_key,
-            Body=json.dumps(assistant_chunks, cls=CombinedEncoder),
-        )
-        print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
-    except Exception as e:
-        print(f"Error saving assistant for RAG: {e}")
+#         s3 = boto3.client("s3")
+#         print(f"Saving assistant description to {key}-assistant.chunks.json")
+#         chunks_key = f"assistants/{key}-assistant.chunks.json"
+#         s3.put_object(
+#             Bucket=chunks_bucket,
+#             Key=chunks_key,
+#             Body=json.dumps(assistant_chunks, cls=CombinedEncoder),
+#         )
+#         print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
+#     except Exception as e:
+#         print(f"Error saving assistant for RAG: {e}")
 
 
 # queries GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE (updated at the end of every conversation via amplify-lambda-js/common/chat/controllers/sequentialChat.js)
