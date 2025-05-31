@@ -16,6 +16,7 @@
     "@azure/openai": "^2.0.0-beta.1",
     "@dqbd/tiktoken": "^1.0.15",
     "aws-jwt-verify": "^4.0.0",
+    "aws-xray-sdk": "^3.10.3",
     "axios": "^1.6.2",
     "bottleneck": "^2.19.5",
     "bunyan": "^1.8.15",
