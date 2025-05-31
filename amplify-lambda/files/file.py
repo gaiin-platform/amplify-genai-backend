@@ -230,7 +230,7 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
                     },
                 }
         # Queue the document for processing
-        queue_url = os.environ['rag_process_document_queue_url']
+        queue_url = os.environ['RAG_PROCESS_DOCUMENT_QUEUE_URL']
         message_body = json.dumps(record)
         print(f"Sending message to queue: {message_body}")
         sqs = boto3.client('sqs')
@@ -491,7 +491,7 @@ def get_presigned_url(event, context, current_user, name, data):
     groupId = data['data'].get('groupId', None) 
     
     # Extract ragOn parameter, default to True if not provided
-    rag_on = data['data'].get('ragOn', True)
+    rag_on = data['data'].get('ragOn', False)
     print(f"RAG processing is {'enabled' if rag_on else 'disabled'} for this upload")
     
     if (groupId): 

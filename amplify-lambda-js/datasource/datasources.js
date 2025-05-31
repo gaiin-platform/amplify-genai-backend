@@ -716,9 +716,10 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
             const filteredContent = await getExtractRelevantContext(resolutionEnv, {...result});
             if (!filteredContent) return null;
             const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
-            const originalTotalTokens = formattedContext.dataSource?.metadata?.totalTokens;
-            const filteredTotalTokens = formattedContext.tokens;
+            const originalTotalTokens = dataSource?.metadata?.totalTokens;
+            const filteredTotalTokens = filteredContent.totalTokens;
             logger.debug(`Original document total tokens: ${originalTotalTokens} \nFiltered document tokens: ${filteredTotalTokens}\n${Math.round(filteredTotalTokens/originalTotalTokens*100)}% of original`);
+            formattedContext[0].content = combineNeighboringLocations(filteredContent.content);
   
             return formattedContext;
         } catch (error) {
@@ -807,8 +808,11 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         max_tokens: 300, // Lower token limit, we only need the array
         options: {
             ...chatBody.options,
+            model,
             skipRag: true,
-            ragOnly: false
+            ragOnly: false,
+            skipDocumentCache: true,
+            prompt: `Return ONLY a list with indexes: ex. [0, 1, 5] or [] if nothing is relevant.`
         }
     };
 
@@ -823,14 +827,20 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         null,
         (r) => {
             // Ensure we get a valid array of numbers
-            if (!r.relevantIndexes || !Array.isArray(r.relevantIndexes)) {
+            if (!r.relevantIndexes) {
                 return null;
             }
-            return r.relevantIndexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+            try {
+                const indexes = JSON.parse(r.relevantIndexes);
+                return indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+            } catch (e) {
+                logger.error("Error parsing relevant indexes:", e);
+                return null;
+            }
         },
         2 // Fewer retries for faster response
     );
-
+ 
     // Handle case where no relevant content was found
     if (!extraction.relevantIndexes) {
         logger.debug("Error extracting relevant content in llm call, dumping entire document context as a fallback...");
@@ -839,18 +849,101 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         logger.debug("No datasource content was relevant to the query");
         return null;
     }
-
+    const indexes = JSON.parse(extraction.relevantIndexes);
     // Filter the content to only include relevant items
-    const filteredContent = extraction.relevantIndexes.map(idx => contentByIndex[idx]).filter(Boolean);
+    const filteredContent = indexes.map(idx => contentByIndex[idx]).filter(Boolean);
 
     // Create a new context with only the relevant content
     const filteredContext = {
         ...context,
         content: filteredContent,
         originalContent: context.content,
+        totalTokens: filteredContent.reduce((acc, item) => acc + item.tokens, 0)
     };
     
     // Pass the filtered content through the standard formatting/chunking process
     return filteredContext;
 
 }
+
+/**
+ * Combines content items that have consecutive/neighboring locations into single items
+ * to reduce the number of items in the list while preserving all location information.
+ * 
+ * @param {Array} contentArray - Array of content objects with content, location properties
+ * @returns {Array} - Array of combined content objects with locations array
+ */
+export const combineNeighboringLocations = (contentArray) => {
+    if (!contentArray || contentArray.length === 0) return [];
+
+    // Helper function to get a sortable key from location
+    const getLocationKey = (location) => {
+        if (location.line_number !== undefined) return location.line_number;
+        if (location.page !== undefined) return location.page;
+        if (location.slide !== undefined) return location.slide;
+        if (location.row_number !== undefined) return location.row_number;
+        return 0; // fallback
+    };
+
+    // Helper function to check if two locations are consecutive
+    const areConsecutive = (loc1, loc2) => {
+        const key1 = getLocationKey(loc1);
+        const key2 = getLocationKey(loc2);
+        return Math.abs(key1 - key2) <= 1;
+    };
+
+    // Sort content by location key
+    const sortedContent = [...contentArray].sort((a, b) => {
+        return getLocationKey(a.location) - getLocationKey(b.location);
+    });
+
+    const combined = [];
+    let currentGroup = [sortedContent[0]];
+
+    for (let i = 1; i < sortedContent.length; i++) {
+        const current = sortedContent[i];
+        const previous = currentGroup[currentGroup.length - 1];
+
+        if (areConsecutive(previous.location, current.location)) {
+            // Add to current group
+            currentGroup.push(current);
+        } else {
+            // Start new group - first combine the current group
+            if (currentGroup.length === 1) {
+                // Single item, keep original structure but wrap location in array
+                combined.push({
+                    content: currentGroup[0].content,
+                    locations: [currentGroup[0].location]
+                });
+            } else {
+                // Multiple items, combine them
+                const combinedContent = currentGroup.map(item => item.content).join(' ');
+                const combinedLocations = currentGroup.map(item => item.location);
+                combined.push({
+                    content: combinedContent,
+                    locations: combinedLocations
+                });
+            }
+            
+            // Start new group with current item
+            currentGroup = [current];
+        }
+    }
+
+    // Handle the last group
+    if (currentGroup.length === 1) {
+        combined.push({
+            content: currentGroup[0].content,
+            locations: [currentGroup[0].location]
+        });
+    } else {
+        const combinedContent = currentGroup.map(item => item.content).join(' ');
+        const combinedLocations = currentGroup.map(item => item.location);
+        combined.push({
+            content: combinedContent,
+            locations: combinedLocations
+        });
+    }
+
+    return combined;
+};
