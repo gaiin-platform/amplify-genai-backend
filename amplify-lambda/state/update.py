@@ -11,7 +11,8 @@ import uuid
 from boto3.dynamodb.conditions import Key
 from pycommon.encoders import dumps_lossy
 
-from state import decimalencoder
+
+
 import boto3
 
 from common.validate import validated
@@ -49,8 +50,7 @@ def update(event, context):
     # create a response
     response = {
         "statusCode": 200,
-        "body": json.dumps(result['Attributes'],
-                           cls=decimalencoder.DecimalEncoder)
+        "body": dumps_lossy(result['Attributes'])
     }
 
     return response
