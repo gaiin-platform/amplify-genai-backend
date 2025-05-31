@@ -423,19 +423,6 @@ functions:
             - prefix: templates/
             - suffix: .pptx 
       
-  queue_document_for_rag:
-    handler: rag/core.queue_document_for_rag
-    layers:
-      - Ref: MarkitdownLambdaLayer
-    events:
-      - s3:
-          bucket: ${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}
-          event: s3:ObjectCreated:*
-          existing: true
-    environment:
-        rag_process_document_queue_url:
-          Ref: RagDocumentIndexQueue
-
   process_document_for_rag:
     handler: rag/core.process_document_for_rag
     layers:
@@ -443,14 +430,15 @@ functions:
     timeout: 300
     events:
         - sqs:
+            batchSize: 1         
             arn:
               Fn::GetAtt:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
         FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
-        rag_process_document_queue_url:
-          Ref: RagDocumentIndexQueue
+        RAG_CHUNK_DOCUMENT_QUEUE_URL:
+          Ref: RagChunkDocumentQueue
   
   reprocess_document_for_rag:
     handler: files/file.reprocess_document_for_rag
@@ -461,23 +449,9 @@ functions:
           path: files/reprocess/rag
           method: post
     environment:
-        rag_process_document_queue_url:
+        RAG_PROCESS_DOCUMENT_QUEUE_URL:
           Ref: RagDocumentIndexQueue
         
-
-  queue_document_for_chunking:
-    handler: rag/core.queue_document_for_rag_chunking
-    layers:
-      - Ref: MarkitdownLambdaLayer
-    events:
-      - s3:
-          bucket: ${self:provider.environment.S3_FILE_TEXT_BUCKET_NAME}
-          event: s3:ObjectCreated:*
-          existing: true
-    environment:
-        rag_chunk_document_queue_url:
-          Ref: RagChunkDocumentQueue
-
   process_document_for_chunking:
     handler: rag/core.chunk_document_for_rag
     layers:
@@ -489,9 +463,6 @@ functions:
               Fn::GetAtt:
                 - RagChunkDocumentQueue
                 - Arn
-    environment:
-        rag_chunk_document_queue_url:
-          Ref: RagChunkDocumentQueue
 
 
   process_images_for_chat:
@@ -555,7 +526,9 @@ resources:
                 - s3:PutObjectHold
                 - s3:DeleteObject
                 - s3:ListBucket
+                - s3:GetObjectAttributes
                 - s3:CreateBucket
+                - s3:GetBucketNotification
                 - s3:PutBucketNotification
                 - sqs:SendMessage
                 - sqs:DeleteMessage
@@ -616,6 +589,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
+                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
+                - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
 
     StateBucket:
       Type: AWS::S3::Bucket
@@ -1037,7 +1012,11 @@ resources:
           LoggingConfiguration:
             DestinationBucketName: 
               Ref: AccessLogsBucket
-            LogFilePrefix: S3AccessLogs/       
+            LogFilePrefix: S3AccessLogs/
+          NotificationConfiguration:
+            QueueConfigurations:
+              - Event: s3:ObjectCreated:*
+                Queue: !GetAtt RagDocumentIndexQueue.Arn
     
     ImageInputBucket:
         Type: AWS::S3::Bucket
@@ -1067,7 +1046,11 @@ resources:
           LoggingConfiguration:
             DestinationBucketName: 
               Ref: AccessLogsBucket
-            LogFilePrefix: S3AccessLogs/       
+            LogFilePrefix: S3AccessLogs/
+          NotificationConfiguration:
+            QueueConfigurations:
+              - Event: s3:ObjectCreated:*
+                Queue: !GetAtt EmbeddingChunksIndexQueue.Arn
 
     FileTextBucket:
         Type: AWS::S3::Bucket
@@ -1084,11 +1067,61 @@ resources:
               Ref: AccessLogsBucket
             LogFilePrefix: S3AccessLogs/       
 
+    EmbeddingChunksIndexQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: s3.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt EmbeddingChunksIndexQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Sub "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}"
+        Queues:
+          - !Ref EmbeddingChunksIndexQueue
+
+    EmbeddingChunksIndexQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        VisibilityTimeout: 120
+        QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-queue
+        MessageRetentionPeriod: 86400 # 1 day
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [EmbeddingChunksIndexDLQ, Arn]
+          maxReceiveCount: 5
+
+    EmbeddingChunksIndexDLQ:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
+
+    RagDocumentIndexQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: s3.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt RagDocumentIndexQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Sub "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}"
+        Queues:
+          - !Ref RagDocumentIndexQueue
+
     RagDocumentIndexQueue:
-          Type: "AWS::SQS::Queue"
-          Properties:
-            VisibilityTimeout: 300
-            QueueName: ${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}
+      Type: "AWS::SQS::Queue"
+      Properties:
+        VisibilityTimeout: 300
+        QueueName: ${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}
 
     RagChunkDocumentQueue:
           Type: "AWS::SQS::Queue"
@@ -1184,4 +1217,46 @@ resources:
         Export:
           Name: 
             Fn::Sub: "${sls:stage}-ConversionOutputBucket"
+
+      RagDocumentIndexQueueArn:
+        Description: "The ARN of the RAG document index queue"
+        Value: !GetAtt RagDocumentIndexQueue.Arn
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RagDocumentIndexQueueArn"
+
+      RagDocumentIndexQueueUrl:
+        Description: "The URL of the RAG document index queue"
+        Value: !Ref RagDocumentIndexQueue
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RagDocumentIndexQueueUrl"
+
+      RagChunkDocumentQueueArn:
+        Description: "The ARN of the RAG chunk document processing queue"
+        Value: !GetAtt RagChunkDocumentQueue.Arn
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RagChunkDocumentQueueArn"
+
+      RagChunkDocumentQueueUrl:
+        Description: "The URL of the RAG chunk document processing queue"
+        Value: !Ref RagChunkDocumentQueue
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-RagChunkDocumentQueueURL"
+
+      EmbeddingChunksIndexQueueArn:
+        Description: "The ARN of the embedding chunks index queue"
+        Value: !GetAtt EmbeddingChunksIndexQueue.Arn
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-EmbeddingChunksIndexQueueArn"
+
+      EmbeddingChunksIndexQueueUrl:
+        Description: "The URL of the embedding chunks index queue"
+        Value: !Ref EmbeddingChunksIndexQueue
+        Export:
+          Name: 
+            Fn::Sub: "${sls:stage}-EmbeddingChunksIndexQueueUrl"
 

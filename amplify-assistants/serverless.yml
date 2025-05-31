@@ -74,7 +74,6 @@ provider:
     ASSISTANT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
     BILLING_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-additional-charges
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
     S3_SHARE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-share
     SHARES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
@@ -87,7 +86,6 @@ provider:
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
-    EMBEDDING_CHUNKS_INDEX_QUEUE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-queue
     FILE_UPLOAD_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-lambda/${sls:stage}/s3/metadata/encryption #must start with /
 
 
@@ -650,5 +648,4 @@ resources:
               Action:
                 - s3:PutObject
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/assistants/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"

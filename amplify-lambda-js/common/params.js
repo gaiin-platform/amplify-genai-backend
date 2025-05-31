@@ -14,13 +14,16 @@ export const getModel = (params) => {
     return params.model;
 }
 
-export const getCheapestModel = (params) => {
-    return params.cheapestModel ?? (params.options.cheapestModel ?? getModel(params));
+export const ModelTypes = {
+    CHEAPEST: 'cheapestModel',
+    ADVANCED: 'advancedModel',
+    DOCUMENT_CACHING: 'documentCachingModel',
+}
+                                     // ModelTypes 
+export const getModelByType = (params, identifier) => {
+    return params[identifier] ?? (params.options[identifier] ?? getModel(params));
 }
 
-export const getAdvancedModel = (params) => {
-    return params.advancedModel ?? (params.options.advancedModel ?? getModel(params));
-}
 
 export const setModel = (params, model) => {
     const options = params.options || {};

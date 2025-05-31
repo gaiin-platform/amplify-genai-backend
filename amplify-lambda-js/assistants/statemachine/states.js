@@ -8,7 +8,7 @@ import {
     sendStatusEventToStream,
     StatusOutputStream
 } from "../../common/streams.js";
-import {getChatFn, getCheapestModel} from "../../common/params.js";
+import {getChatFn, getModelByType, ModelTypes} from "../../common/params.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
 import {getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
@@ -445,7 +445,7 @@ export const ragAction = (config = {
                 [{role: "user", content: filledInQuery}] :
                 context.history;
             
-            const model = getCheapestModel(llm.params);
+            const model = getModelByType(llm.params, ModelTypes.CHEAPEST);
             const chatFn = async (body, writable, context) => {
                 return await getChatFn(model, body, writable, context);
             }

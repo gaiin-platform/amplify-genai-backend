@@ -362,6 +362,7 @@ def initialize_config(config_type):
             'user': None,
             'advanced': None,
             'cheapest': None,
+            'documentCaching': None,
             'agent': None,
             'embeddings': None,
             'qa': None,
@@ -386,6 +387,7 @@ def initialize_config(config_type):
 
 @validated(op='read')
 def get_user_app_configs(event, context, current_user, name, data):
+    # For quick table data only, anything with more complex logic should be its own endpoint
     app_configs = [AdminConfigTypes.EMAIL_SUPPORT, AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE]
     configs = {}
     for config_type in app_configs:   
@@ -646,6 +648,7 @@ def get_all_amplify_groups():
 def verify_is_in_amp_group(event, context, current_user, name, data):
     amp_groups = data['data']['groups']
     isMember = is_in_amp_group(current_user, amp_groups)
+    print(f"User {current_user} is in group: {isMember}")
     return {"success": True, "isMember": isMember}
 
 

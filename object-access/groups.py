@@ -13,6 +13,7 @@ from common.auth_admin import verify_user_as_admin
 from common.amplify_groups import verify_user_in_amp_group
 from common.register_ops import register_ops
 from base_ast_group_ops import ops
+from common.embeddings import check_embedding_completion
 
 
 # Setup AWS DynamoDB access
@@ -302,7 +303,6 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id):
 
     # print("Updating permissions for the following ds prior to translation: ", ds_selector_ds)
 
-
     try:
         translated_ds = translate_user_data_sources_to_hash_data_sources(ds_selector_ds)
         print("Updating permissions for the following ds: ", translated_ds)
@@ -315,7 +315,8 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id):
                     'permission_level': 'read',  
                     'policy': None
             })
-            
+        # ensure all ds have been embedded 
+        check_embedding_completion(translated_ds)   
                 
         return {'success': True}
     except Exception as e:
