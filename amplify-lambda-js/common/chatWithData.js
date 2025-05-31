@@ -334,7 +334,8 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
     // against each context in a separate request to the LLM.
     let contexts = []
     if(!params.options.ragOnly && (dataSources.length > 0 || conversationDataSources.length > 0)) {
-        const DOCUMENT_CONTEXT_TYPE = "documentCacheContext";
+        const DOCUMENT_CONTEXT_CACHE = "documentCacheContext";
+        const DOCUMENT_CONTEXT = "documentContext";
         try {
             const contextResolverEnv = {
                 tokenCounter: tokenCounter.countTokens,
@@ -359,13 +360,13 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             });
 
             contexts = (await Promise.all([
-                ...dataSources.map(dataSource => {
-                    const results = getContexts(contextResolverEnv, dataSource, maxTokens, options);
-                    return results;
+                ...dataSources.map(async dataSource => {
+                    const results = await getContexts(contextResolverEnv, dataSource, maxTokens, options);
+                    return results.map(result => ({...result, type: DOCUMENT_CONTEXT}));
                 }), 
                 ...conversationDataSources.map(async dataSource => {
                     const results = await getContexts(contextResolverEnv, dataSource, maxTokens, options, true);
-                    return results.map(result => ({...result, type: DOCUMENT_CONTEXT_TYPE}));
+                    return results.map(result => ({...result, type: DOCUMENT_CONTEXT_CACHE}));
                 }) ]))
                 .flat()
                 .filter(context => context !== null)
@@ -383,23 +384,35 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
 
                 const sources = contexts.map(s => {
                     const dataSource = s.dataSource;
-                    //const summary = summarizeLocations(s.locations);
-                    //documentCacheContext
                     if (s && !dataSource) {
                         const source = {key: s.id, type: dataSource.type, locations: s.locations};
-                        return {type: 'documentContext', source};
+                        return {type: DOCUMENT_CONTEXT, source};
                     } else if (dataSource && isDocument(dataSource)){
-                        // *add custom for DOCUMENT_CONTEXT_TYPE*
                         const name = dataSourceDetailsLookup[dataSource.id]?.name || "Attached Document ("+dataSource.type+")";
-                        const source = {key: dataSource.id, name, type: dataSource.type, locations: s.locations, contentKey: dataSource.metadata?.userDataSourceId};
-                        return {type: 'documentContext', source};
+                        const getSourceData = (locations = null) => {
+                            return {key: dataSource.id, name, type: dataSource.type, locations: locations ?? s.locations, contentKey: dataSource.metadata?.userDataSourceId};
+                        }
+                        if (s.type === DOCUMENT_CONTEXT || !s.content) return {type: s.type, source: getSourceData()};
+                        if (s.type === DOCUMENT_CONTEXT_CACHE) {
+                            // Return list of sources from the combined neighboring locations
+                            if (s.content) {
+                                return s.content.map(i => {
+                                    const source = getSourceData(i.locations);
+                                    source.content = i.content;
+                                    return {type: s.type, source};
+                                });
+                            } else {
+                                return {type: s.type, source: getSourceData()};
+                            }
+                        }
+                        return null;
                     } else if (dataSource) {
                         const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
                         return {type, source: {key: dataSource.id, name: dataSource.name || dataSource.id, locations: s.locations}};
                     } else {
                         return null;
                     }
-                }).filter(s => s);
+                }).flat().filter(s => s);
 
                 const byType = sources.reduce((acc, source) => {
                     if(!acc[source.type]){

@@ -31,7 +31,7 @@ api_version = os.environ['API_VERSION']
 object_access_table = os.environ['OBJECT_ACCESS_TABLE']
 groups_table = os.environ['GROUPS_DYNAMO_TABLE']
 
-queue_url = os.environ['rag_chunk_document_queue_url']
+queue_url = os.environ['RAG_CHUNK_DOCUMENT_QUEUE_URL']
 s3_bucket = os.environ['S3_FILE_TEXT_BUCKET_NAME']
 sqs = boto3.client('sqs')
 
@@ -283,11 +283,26 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
     # wait until all embeddings are completed 
     pending_ids = src_ids
     is_complete = False
+    iteration_count = 0
+    logger.info(f"Starting embedding completion check for {len(src_ids)} data sources: {src_ids}")
+    
     while not is_complete:
+        iteration_count += 1
+        logger.info(f"Polling iteration {iteration_count}: Waiting for embedding completion...")
         time.sleep(3)
         completion_result = check_embedding_completion(pending_ids)
-        is_complete = completion_result['all_complete']
+        possible_pending_ids = completion_result['requires_embedding']
+        is_complete = completion_result['all_complete'] and len(possible_pending_ids) == 0
         pending_ids = completion_result['pending_ids']
+        
+        if is_complete:
+            logger.info(f"All embeddings completed after {iteration_count} iterations")
+        else:
+            logger.info(f"Iteration {iteration_count}: {len(pending_ids) + len(possible_pending_ids)} data sources still pending embedding completion: {pending_ids + possible_pending_ids} ")
+            if iteration_count % 10 == 0:  # Log a summary every 10 iterations
+                logger.warning(f"Long-running embedding completion check: {iteration_count} iterations completed, still waiting for {len(pending_ids) + len(possible_pending_ids)} data sources")
+
+    logger.info("Starting embedding generation for user input query")
 
     response_embeddings = generate_embeddings(content)
 
@@ -338,7 +353,7 @@ def queue_missing_embeddings(event, context, current_user, name, data):
 
 def check_embedding_completion(src_ids):
     if not src_ids:
-        return {'all_complete': True, 'pending_ids': []}
+        return {'all_complete': True, 'pending_ids': [], 'requires_embedding': []}
         
     dynamodb = boto3.resource('dynamodb')
     embedding_progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
@@ -346,6 +361,7 @@ def check_embedding_completion(src_ids):
     
     pending_ids = []
     requires_embedding = []
+    print(f"Checking embedding completion for {src_ids}")
     
     for src_id in src_ids:
         try:
@@ -355,7 +371,7 @@ def check_embedding_completion(src_ids):
             
             # No record means document hasn't been submitted for embedding yet
             if 'Item' not in response:
-                logging.info(f"No embedding process record found for {src_id}")
+                logging.info(f"[NO EMBEDDING RECORD] No embedding process record found for {src_id}")
                 requires_embedding.append(src_id)
                 continue
                 
@@ -366,37 +382,50 @@ def check_embedding_completion(src_ids):
             
             # Check for stalled jobs (running for too long without updates)
             if parent_status in ['starting', 'processing'] and last_updated:
-                last_updated_time = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                current_time = datetime.now(timezone.utc)
-                
-                # If job has been running for more than 3 minutes without updates, consider it stalled
-                if (current_time - last_updated_time).total_seconds() > 180:  # 3 minutes
-                    logging.warning(f"Document {src_id} appears stalled in state {parent_status}. Last updated: {last_updated}")
-                    manually_queue_embedding(src_id)
-                    pending_ids.append(src_id)
-                    continue
+                try:
+                    # Parse timestamp and ensure it's UTC-aware
+                    if last_updated.endswith('Z'):
+                        last_updated_time = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                    else:
+                        # Parse and assume UTC if no timezone info
+                        last_updated_time = datetime.fromisoformat(last_updated)
+                        if last_updated_time.tzinfo is None:
+                            last_updated_time = last_updated_time.replace(tzinfo=timezone.utc)
+                    
+                    current_time = datetime.now(timezone.utc)
+                    
+                    # If job has been running for more than 3 minutes without updates, consider it stalled
+                    if (current_time - last_updated_time).total_seconds() > 600:  # 10 minutes
+                        logging.warning(f"[STALLED JOB] Document {src_id} appears stalled in state {parent_status}. Last updated: {last_updated}")
+                        # Not re-embedding for now 
+                        # manually_queue_embedding(src_id)
+                        # pending_ids.append(src_id)
+                        continue
+                except (ValueError, TypeError):
+                    logging.warning(f"[DATETIME ERROR] Could not parse timestamp for {src_id}: {last_updated}. Skipping stall check.")
+                    pass
 
 
             if parent_status == 'completed':
-                logging.info(f"Document {src_id} embedding is complete")
+                logging.info(f"[COMPLETED] Document {src_id} embedding is complete")
                 continue  # Skip adding to pending_ids
             elif parent_status == 'failed':
-                logging.warning(f"Document {src_id} embedding failed. Requeuing.")
+                logging.warning(f"[FAILED] Document {src_id} embedding failed. Requeuing.")
                 manually_queue_embedding(src_id)
                 pending_ids.append(src_id)
                 continue
             elif parent_status in ['starting', 'processing']:
-                logging.info(f"Document {src_id} is still being embedded. Current status: {parent_status}")
+                logging.info(f"[PROCESSING] Document {src_id} is still being embedded. Current status: {parent_status}")
                 pending_ids.append(src_id)
                 continue
             
             # Check termination flag (which may be separate from status)
             if is_terminated: ### todo
-                logging.warning(f"Document {src_id} embedding was terminated. Requeuing.")
+                logging.warning(f"[TERMINATED] Document {src_id} embedding was terminated. Requeuing.")
                 continue
 
             # If we reach here, there's an unexpected status value
-            logging.warning(f"Document {src_id} has unexpected status: {parent_status}. Treating as pending.")
+            logging.warning(f"[UNEXPECTED STATUS] Document {src_id} has unexpected status: {parent_status}. Treating as pending.")
         
         except Exception as e:
             logging.error(f"Error checking embedding progress for {src_id}: {str(e)}", exc_info=True)
@@ -415,7 +444,6 @@ def manually_queue_embedding(src_id):
     try:
         # Create a record for manual processing
         record = {
-            'manual_processing': True,
             's3': {
                 'bucket': {
                     'name': s3_bucket

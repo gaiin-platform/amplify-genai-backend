@@ -67,7 +67,8 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
             ...chatBody.options,
             model,
             skipRag: true, // Prevent the use of documents
-            ragOnly: true  // in any way
+            ragOnly: true,  // in any way
+            skipDocumentCache: true // Prevent the use of the documents - advanced rag
         }
     }
 
@@ -115,7 +116,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
         const keyLookup = {};
         const ragGroupDataSourcesKeys = {};
         const ragDataSourceKeys = [];
-        dataSources.forEach(ds => {
+        dataSources.forEach(async ds => {
             const key = extractKey(ds.id);
             if (ds.groupId) {
                 // If the dataSource has a groupId, add it to the groupDataSources object
@@ -128,7 +129,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 // call the check-completion endpoint to ensure the embeddings are complete if not itll start
                 // doing it here buys us time for any missing embeddings to complete
                 // note: group data sources are always embedded and prechecked elsewhere
-                checkEmbeddingCompletion(token, [key], params.requestId)
+                checkEmbeddingCompletion(token, [key], params.requestId);
             }
             keyLookup[key] = ds;
         });
@@ -299,7 +300,7 @@ export const checkEmbeddingCompletion = async (token, dataSourceIds, requestId) 
                 });
             }
             
-            return response;
+            return response?.data?.success;
         } else {
             logger.error("Embedding check failed with status", response.status);
             return response;
