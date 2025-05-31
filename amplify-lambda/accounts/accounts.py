@@ -7,13 +7,7 @@ from decimal import Decimal
 import boto3
 import os
 import uuid
-import json
 
-class DecimalEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj)  # Convert Decimal to float for JSON serialization
-        return super(DecimalEncoder, self).default(obj)
 
 def convert_decimal_in_dict(obj):
     """Recursively finds Decimal values in dict/list structures and converts them to float"""
