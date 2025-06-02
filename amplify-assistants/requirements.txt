@@ -30,7 +30,7 @@ charset-normalizer==3.4.1
     # via requests
 distro==1.9.0
     # via openai
-ecdsa==0.19.0
+ecdsa==0.19.1
     # via python-jose
 h11==0.14.0
     # via httpcore
