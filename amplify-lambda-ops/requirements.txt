@@ -52,7 +52,7 @@ pyasn1==0.6.1
     # via
     #   python-jose
     #   rsa
-python-dateutil==2.9.0.post0
+python-dateutil==2.9.0
     # via botocore
 python-dotenv==1.0.1
     # via -r requirements.in

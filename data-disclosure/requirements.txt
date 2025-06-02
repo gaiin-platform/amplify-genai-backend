@@ -63,7 +63,7 @@ pydantic-core==2.27.2
     #   pydantic
 pymupdf==1.25.1
     # via -r requirements.in
-python-dateutil==2.9.0.post0
+python-dateutil==2.9.0
     # via
     #   -r requirements.in
     #   botocore

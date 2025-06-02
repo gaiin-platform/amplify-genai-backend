@@ -67,7 +67,7 @@ pydantic-core==2.27.2
     # via
     #   -r requirements.in
     #   pydantic
-python-dateutil==2.9.0.post0
+python-dateutil==2.9.0
     # via
     #   -r requirements.in
     #   botocore
