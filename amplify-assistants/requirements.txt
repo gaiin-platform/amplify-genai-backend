@@ -116,4 +116,4 @@ urllib3==2.3.0
     #   botocore
     #   requests
 xmltodict==0.14.2
-beautifulsoup4==4.12.2
+beautifulsoup4==4.13.4
