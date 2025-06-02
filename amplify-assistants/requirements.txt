@@ -57,7 +57,7 @@ jsonschema-specifications==2024.10.1
     # via jsonschema
 openai==1.59.4
     # via -r requirements.in
-pillow==11.1.0
+pillow==11.2.1
     # via -r requirements.in
 pyasn1==0.6.1
     # via
