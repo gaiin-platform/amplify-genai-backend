@@ -26,7 +26,7 @@ certifi==2024.12.14
     #   httpcore
     #   httpx
     #   requests
-charset-normalizer==3.4.1
+charset-normalizer==3.4.2
     # via requests
 distro==1.9.0
     # via openai
