@@ -95,7 +95,7 @@ rpds-py==0.22.3
     #   referencing
 rsa==4.9
     # via python-jose
-s3transfer==0.10.4
+s3transfer==0.13.0
     # via boto3
 six==1.17.0
     # via
