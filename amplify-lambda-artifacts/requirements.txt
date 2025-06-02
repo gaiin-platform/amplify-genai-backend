@@ -50,7 +50,7 @@ jmespath==1.0.1
     #   botocore
 jsonschema==4.23.0
     # via -r requirements.in
-jsonschema-specifications==2024.10.1
+jsonschema-specifications==2025.4.1
     # via
     #   -r requirements.in
     #   jsonschema
