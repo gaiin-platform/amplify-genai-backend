@@ -57,7 +57,7 @@ jsonschema-specifications==2024.10.1
     # via jsonschema
 numpy==2.2.1
     # via pgvector
-openai==1.59.4
+openai==1.82.1
     # via -r requirements.in
 pgvector==0.3.6
     # via -r requirements.in
