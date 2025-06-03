@@ -15,6 +15,8 @@ import re
 import traceback
 from cryptography.fernet import Fernet
 from boto3.dynamodb.conditions import Key
+import nltk
+from nltk.tokenize import sent_tokenize
 
 from rag.handlers.commaseparatedvalues import CSVHandler
 from rag.handlers.excel import ExcelHandler
@@ -163,10 +165,7 @@ def save_chunks(chunks_bucket, key, split_count, chunks):
 
 
 def chunk_content(key, text_content, split_params):
-    import nltk
     # nltk.download('punkt')
-    from nltk.tokenize import sent_tokenize
-
     nltk.data.path.append("/tmp")
     nltk.download("punkt", download_dir="/tmp")
     # Normalize whitespace once at the start.
@@ -330,18 +329,8 @@ def get_file_from_s3(bucket, key):
         return None
 
 
-def queue_document_for_rag(event, context):
-    queue_url = os.environ['rag_process_document_queue_url']
-
-    print(f"Received event: {event}")
-    for record in event['Records']:
-        # Send the S3 object data as a message to the SQS queue
-        message_body = json.dumps(record)
-        print(f"Sending message to queue: {message_body}")
-        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
-        print(f"Message sent to queue: {message_body}")
-
-    return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
+# DEPRECATED: queue_document_for_rag
+# Deprecated: queue_document_for_rag_chunking
 
 
 def update_object_permissions(current_user, data):
@@ -451,7 +440,6 @@ def decrypt_account_data(encrypted_data_b64):
 def process_document_for_rag(event, context):
     print(f"Received event: {event}")
     s3 = boto3.client('s3')
-    queue_url = os.environ['rag_process_document_queue_url']
 
     dynamodb = boto3.resource('dynamodb')
     files_table = dynamodb.Table(os.environ['FILES_DYNAMO_TABLE'])
@@ -460,13 +448,13 @@ def process_document_for_rag(event, context):
     for record in event['Records']:
         try:
             print(f"Processing message: {record}")
-            # Assuming the message body is a JSON string, parse it
-            s3_info = json.loads(record['body'])
-            print(f"Message body: {s3_info}")
+            s3_event = json.loads(record['body'])
+            print(f"Message body: {s3_event}")
+            s3_record = s3_event['Records'][0] if 'Records' in s3_event else s3_event
+            s3_info = s3_record["s3"]
+
             # Check if this is a force reprocessing request
-            force_reprocess = s3_info.get('force_reprocess', False)
-            
-            s3_info = s3_info["s3"]
+            force_reprocess = s3_record.get('force_reprocess', False)
 
             # Get the bucket and object key from the event
             print(f"Getting text from {s3_info['object']['key']}")
@@ -482,7 +470,9 @@ def process_document_for_rag(event, context):
             user = None
             try:
                 response = s3.head_object(Bucket=bucket, Key=key)
+                print(f"Response Metadata: {response['Metadata']}")
                 encrypted_metadata_b64 = response['Metadata']['encrypted_metadata'] 
+                rag_enabled = True if force_reprocess else response['Metadata'].get('rag_enabled', 'false') == 'true'
                 print("Encrypted Metadata:", encrypted_metadata_b64)
                 
                 # Decrypt the metadata
@@ -615,9 +605,11 @@ def process_document_for_rag(event, context):
                             print(f"Uploading text to {file_text_content_bucket_name}/{text_content_key}")
                             # Put the text into a file and upload to S3 bucket
                             # use a random uuid for the key
-                            s3.put_object(Bucket=file_text_content_bucket_name,
-                                          Key=text_content_key,
-                                          Body=json.dumps(text))
+                            s3.put_object(
+                                Bucket=file_text_content_bucket_name,
+                                Key=text_content_key,
+                                Body=json.dumps(text),
+                            )
                             print(f"Uploaded text to {file_text_content_bucket_name}/{text_content_key}")
 
                             hash_file_data = {
@@ -646,6 +638,30 @@ def process_document_for_rag(event, context):
                             print(
                                 f"Uploaded user files entry with token and item "
                                 f"count for {key}: {total_tokens} / {total_items}")
+                            
+                            print(f"RAG enabled: {rag_enabled}")
+                             
+                            if not rag_enabled:
+                                print(f"RAG chunking is disabled, skipping chunk queue...")
+                            else:
+                                chunk_queue_url = os.environ['RAG_CHUNK_DOCUMENT_QUEUE_URL']
+                                print("Sending message to chunking queue")
+                                try:
+                                    record = {
+                                        's3': {
+                                            'bucket': {
+                                                'name': file_text_content_bucket_name
+                                            },
+                                            'object': {
+                                                'key': text_content_key
+                                            }
+                                        }
+                                    }
+                                    message_body = json.dumps(record)
+                                    sqs.send_message(QueueUrl=chunk_queue_url, MessageBody=message_body)
+                                    print(f"Message sent to queue: {message_body}")
+                                except Exception as e:
+                                    print(f"Error sending message to chunking queue: {str(e)}")
 
                 except Exception as e:
                     print(f"Error processing document: {str(e)}")
@@ -653,7 +669,6 @@ def process_document_for_rag(event, context):
             # If text extraction was successful, delete the message from the queue
             if text is not None:
 
-                # [_, text_content_key] = get_text_content_location(bucket, dochash)
                 [_, text_content_key] = get_text_content_location(bucket, key)
 
                 text_metadata = {
@@ -670,22 +685,12 @@ def process_document_for_rag(event, context):
                 [file_text_metadata_bucket_name, text_metadata_key] = \
                     get_text_metadata_location(bucket, key)
 
-                s3.put_object(Bucket=file_text_metadata_bucket_name,
-                              Key=text_metadata_key,
-                              Body=json.dumps(text_metadata))
-                print(f"Uploaded metadata to {file_text_metadata_bucket_name}/{text_metadata_key}")
-
-                receipt_handle = record['receiptHandle']
-                print(f"Deleting message {receipt_handle} from queue")
-
-                # Delete received message from queue
-                sqs.delete_message(
-                    QueueUrl=queue_url,
-                    ReceiptHandle=receipt_handle
+                s3.put_object(
+                    Bucket=file_text_metadata_bucket_name,
+                    Key=text_metadata_key,
+                    Body=json.dumps(text_metadata),
                 )
-                print(f"Deleted message {record['messageId']} from queue")
-            else:
-                print(f"Failed to extract text from {key}")
+                print(f"Uploaded metadata to {file_text_metadata_bucket_name}/{text_metadata_key}")
 
         except Exception as e:
             print(f"Error processing SQS message: {str(e)}")
@@ -696,26 +701,11 @@ def process_document_for_rag(event, context):
     }
 
 
-def queue_document_for_rag_chunking(event, context):
-    queue_url = os.environ['rag_chunk_document_queue_url']
-
-    print(f"Received chunk event: {event}")
-    print(f"{event}")
-    for record in event['Records']:
-        # Send the S3 object data as a message to the SQS queue
-        message_body = json.dumps(record)
-        print(f"Sending message to queue: {message_body}")
-        sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
-        print(f"Message sent to queue: {message_body}")
-
-    return {'statusCode': 200, 'body': json.dumps('Successfully sent to SQS')}
-
-
-def update_embedding_status(original_creator, object_id, chunk_index, total_chunks, status):
+def update_embedding_status(original_creator, object_id, total_chunks, status):
     try:
         progress_table = os.environ['EMBEDDING_PROGRESS_TABLE']
         print(f"Updating chunk count status for embedding {progress_table}/{object_id} "
-              f"{chunk_index}/{total_chunks} {status}")
+              f"Total Chunks: {total_chunks} {status}")
         
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table(progress_table)
@@ -775,7 +765,6 @@ def get_original_creator(key):
 
 def chunk_document_for_rag(event, context):
     print(f"Received event: {event}")
-    queue_url = os.environ['rag_chunk_document_queue_url']
 
     for record in event['Records']:
         try:
@@ -790,10 +779,12 @@ def chunk_document_for_rag(event, context):
             bucket = s3_info['bucket']['name']
             key = s3_info['object']['key']
             key = urllib.parse.unquote(key)
-
-            if key.endswith('.metadata.json'):
-                print(f"Skipping metadata file {key}")
-                continue
+            
+            # since manually triggered, we always skip metadata.json
+            # Deprecated:
+            # if key.endswith('.metadata.json'):
+            #     print(f"Skipping metadata file {key}")
+            #     continue
 
             print(f"Bucket / Key {bucket} / {key}")
 
@@ -803,18 +794,7 @@ def chunk_document_for_rag(event, context):
 
             chunks = chunk_s3_file_content(bucket, key)
 
-            update_embedding_status(original_creator, key, 0, chunks, "starting")
-
-            receipt_handle = record['receiptHandle']
-            print(f"Deleting message {receipt_handle} from queue")
-
-            # Delete received message from queue
-            sqs.delete_message(
-                QueueUrl=queue_url,
-                ReceiptHandle=receipt_handle
-            )
-            print(f"Deleted message {record['messageId']} from queue")
-
+            update_embedding_status(original_creator, key, chunks, "starting")
 
         except Exception as e:
             print(f"Error processing SQS message: {str(e)}")

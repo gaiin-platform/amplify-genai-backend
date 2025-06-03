@@ -72,7 +72,7 @@ def get_user_available_models(event, context, current_user, name, data):
     if not default_results or len(default_results.keys()) == 0:
         default_model, advanced_model, cheapest_model, _, _ = extract_and_update_default_models()
     else:
-        default_model_types = {"user": None, "advanced": None, "cheapest": None}
+        default_model_types = {"user": None, "advanced": None, "cheapest": None, "documentCaching": None}
         available_models_by_id = {model["id"]: model for model in available_models}
     
         # Process all default model types in a loop
@@ -86,11 +86,13 @@ def get_user_available_models(event, context, current_user, name, data):
         default_model = default_model_types["user"]
         advanced_model = default_model_types["advanced"]
         cheapest_model = default_model_types["cheapest"]
+        document_caching_model = default_model_types["documentCaching"]
 
     return {"success": True, "data": { "models": available_models,
                                        "default": default_model,
                                        "advanced": advanced_model,
                                        "cheapest": cheapest_model,
+                                       "documentCaching": document_caching_model,
                                     }}
 
 # to seamlessly update to the new form of saving default models - over time this will not be needed
@@ -106,6 +108,7 @@ def extract_and_update_default_models():
         'DefaultEmbeddingsModel': 'embeddings',
         'DefaultQAModel': 'qa',
         'DefaultAgentModel': 'agent',
+        'DefaultDocumentCachingModel': 'documentCaching',
     }
     
     results = {model_type: None for model_type in field_mappings.values()}

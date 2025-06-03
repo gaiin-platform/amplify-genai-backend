@@ -8,6 +8,8 @@ import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
+import { getModelByType, ModelTypes, getChatFn, setModel} from "../common/params.js";
+import { LLM } from "../common/llm.js";
 
 const logger = getLogger("datasources");
 
@@ -699,15 +701,249 @@ export const getContent = async (chatRequest, params, dataSource) => {
  * @param options
  * @returns {Promise<*[]|*>}
  */
-export const getContexts = async (resolutionEnv, dataSource, maxTokens, options) => {
+export const getContexts = async (resolutionEnv, dataSource, maxTokens, options, extractRelevantContext = false) => {
     const tokenCounter = resolutionEnv.tokenCounter;
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Get contexts with options", options);
-
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
     const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
+    
+    if (extractRelevantContext) {
+        try {
+            const filteredContent = await getExtractRelevantContext(resolutionEnv, {...result});
+            if (!filteredContent) return null;
+            const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
+            const originalTotalTokens = dataSource?.metadata?.totalTokens;
+            const filteredTotalTokens = filteredContent.totalTokens;
+            logger.debug(`Original document total tokens: ${originalTotalTokens} \nFiltered document tokens: ${filteredTotalTokens}\n${Math.round(filteredTotalTokens/originalTotalTokens*100)}% of original`);
+            formattedContext[0].content = combineNeighboringLocations(filteredContent.content);
+  
+            return formattedContext;
+        } catch (error) {
+            logger.error("Error extracting relevant context:", error);
+            logger.debug("Dumping entire document context as a fallback...");
+        }
+    }
+
     return formatAndChunkDataSource(tokenCounter, dataSource, result, maxTokens, options);
 }
+
+/**
+ * Extracts the relevant context from the document.
+ * @param resolutionEnv
+ * @param context
+ * @param dataSource
+ * @returns {Promise<*[]|*>}
+ */
+const getExtractRelevantContext = async (resolutionEnv, context) => {
+    const params = resolutionEnv.params;
+    const chatBody = resolutionEnv.chatRequest;
+    const userMessage = chatBody.messages.slice(-1)[0].content;
+    // Use a cheaper model for document analysis with built-in caching
+    
+    const model = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
+    
+    // Create parameters for the LLM with caching enabled
+    const llmParams = setModel ({
+        ...params,
+        options: {
+            skipRag: true,
+            ragOnly: false,
+            dataSourceOptions:{},
+        }
+    }, model);
+    
+    // Initialize LLM for document analysis
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model, body, writable, context);
+    };
+    
+    const llm = new LLM(chatFn, llmParams, null);
+
+    // Create a mapped version of the context content for easier lookups
+    const contentByIndex = {};
+    context.content.forEach((c, idx) => {
+        contentByIndex[idx] = c;
+    });
+    
+    // Create a clean representation of the document for the LLM
+    const documentLines = context.content.map((item, idx) => 
+        `[${idx}] ${item.content.replace(/\n/g, ' ')}`
+    ).join('\n');
+    
+    // Create a clear, structured prompt for the LLM
+    const updatedBody = {
+        ...chatBody,
+        messages: [{
+            role: 'system',
+            content: `You are a precise document analyzer specializing in finding only the most relevant information. 
+Your task is to identify the exact indexes of document fragments that would help answer a user's question.
+
+IMPORTANT INSTRUCTIONS:
+1. The document fragments are labeled with indexes like [0], [1], [2], etc.
+2. Only select fragments that contain information DIRECTLY relevant to answering the user's question.
+3. Output ONLY a JSON array of index numbers (as integers), nothing else.
+4. If no fragments are relevant, return an empty array: []
+5. DO NOT explain your reasoning - provide ONLY the array of indexes.
+
+Example outputs:
+- For relevant fragments: [3, 4, 7, 12]
+- For no relevant fragments: []`
+          },{
+            role: 'user',
+            content: `USER QUESTION:
+${userMessage}
+
+DOCUMENT FRAGMENTS (with indexes):
+${documentLines}
+
+Return ONLY the indexes of fragments that contain information directly relevant to answering the question.
+Expected format: [0, 1, 5] or [] if nothing is relevant.`
+          }],
+        imageSources: [],
+        model: model.id,
+        max_tokens: 300, // Lower token limit, we only need the array
+        options: {
+            ...chatBody.options,
+            model,
+            skipRag: true,
+            ragOnly: false,
+            skipDocumentCache: true,
+            prompt: `Return ONLY a list with indexes: ex. [0, 1, 5] or [] if nothing is relevant.`
+        }
+    };
+
+    // Use a simpler prompt for data
+    const extraction = await llm.promptForData(
+        updatedBody,
+        [],
+        '', // prompt already in messages
+        {
+            "relevantIndexes": "Array of integer indexes indicating relevant document fragments",
+        },
+        null,
+        (r) => {
+            // Ensure we get a valid array of numbers
+            if (!r.relevantIndexes) {
+                return null;
+            }
+            try {
+                const indexes = JSON.parse(r.relevantIndexes);
+                return indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+            } catch (e) {
+                logger.error("Error parsing relevant indexes:", e);
+                return null;
+            }
+        },
+        2 // Fewer retries for faster response
+    );
+ 
+    // Handle case where no relevant content was found
+    if (!extraction.relevantIndexes) {
+        logger.debug("Error extracting relevant content in llm call, dumping entire document context as a fallback...");
+        return context; // Return unchanged context if nothing relevant found
+    } else if  (extraction.relevantIndexes.length === 0) {
+        logger.debug("No datasource content was relevant to the query");
+        return null;
+    }
+    const indexes = JSON.parse(extraction.relevantIndexes);
+    // Filter the content to only include relevant items
+    const filteredContent = indexes.map(idx => contentByIndex[idx]).filter(Boolean);
+
+    // Create a new context with only the relevant content
+    const filteredContext = {
+        ...context,
+        content: filteredContent,
+        originalContent: context.content,
+        totalTokens: filteredContent.reduce((acc, item) => acc + item.tokens, 0)
+    };
+    
+    // Pass the filtered content through the standard formatting/chunking process
+    return filteredContext;
+
+}
+
+/**
+ * Combines content items that have consecutive/neighboring locations into single items
+ * to reduce the number of items in the list while preserving all location information.
+ * 
+ * @param {Array} contentArray - Array of content objects with content, location properties
+ * @returns {Array} - Array of combined content objects with locations array
+ */
+export const combineNeighboringLocations = (contentArray) => {
+    if (!contentArray || contentArray.length === 0) return [];
+
+    // Helper function to get a sortable key from location
+    const getLocationKey = (location) => {
+        if (location.line_number !== undefined) return location.line_number;
+        if (location.page !== undefined) return location.page;
+        if (location.slide !== undefined) return location.slide;
+        if (location.row_number !== undefined) return location.row_number;
+        return 0; // fallback
+    };
+
+    // Helper function to check if two locations are consecutive
+    const areConsecutive = (loc1, loc2) => {
+        const key1 = getLocationKey(loc1);
+        const key2 = getLocationKey(loc2);
+        return Math.abs(key1 - key2) <= 1;
+    };
+
+    // Sort content by location key
+    const sortedContent = [...contentArray].sort((a, b) => {
+        return getLocationKey(a.location) - getLocationKey(b.location);
+    });
+
+    const combined = [];
+    let currentGroup = [sortedContent[0]];
+
+    for (let i = 1; i < sortedContent.length; i++) {
+        const current = sortedContent[i];
+        const previous = currentGroup[currentGroup.length - 1];
+
+        if (areConsecutive(previous.location, current.location)) {
+            // Add to current group
+            currentGroup.push(current);
+        } else {
+            // Start new group - first combine the current group
+            if (currentGroup.length === 1) {
+                // Single item, keep original structure but wrap location in array
+                combined.push({
+                    content: currentGroup[0].content,
+                    locations: [currentGroup[0].location]
+                });
+            } else {
+                // Multiple items, combine them
+                const combinedContent = currentGroup.map(item => item.content).join(' ');
+                const combinedLocations = currentGroup.map(item => item.location);
+                combined.push({
+                    content: combinedContent,
+                    locations: combinedLocations
+                });
+            }
+            
+            // Start new group with current item
+            currentGroup = [current];
+        }
+    }
+
+    // Handle the last group
+    if (currentGroup.length === 1) {
+        combined.push({
+            content: currentGroup[0].content,
+            locations: [currentGroup[0].location]
+        });
+    } else {
+        const combinedContent = currentGroup.map(item => item.content).join(' ');
+        const combinedLocations = currentGroup.map(item => item.location);
+        combined.push({
+            content: combinedContent,
+            locations: combinedLocations
+        });
+    }
+
+    return combined;
+};

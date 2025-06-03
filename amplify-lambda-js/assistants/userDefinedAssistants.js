@@ -209,11 +209,9 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 const references = {};
 
-            if(assistant.skipRag) {
-                params = {
-                    ...params,
-                options:{...params.options, skipRag: true}
-                }
+            params = {
+                ...params,
+            options:{...params.options, skipRag: assistant.skipRag}
             }
 
             if(assistant.ragOnly) {
@@ -608,6 +606,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         ...body.options,
                         ...dataSourceOptions,
                         prompt: instructions,
+                        skipDocumentCache: true, // always rag documents for now
+                        skipRag: assistant.skipRag
                     }
                 };
             

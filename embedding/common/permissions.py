@@ -39,5 +39,8 @@ permissions_by_state_type = {
   },
   "/embedding-delete": {
     "embedding-delete": can_delete
+  },
+  "/embedding/check-completion": {
+    "embeddings-check": can_retrieve
   }
 }

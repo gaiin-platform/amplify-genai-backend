@@ -4,7 +4,7 @@
 import {newStatus} from "../common/status.js";
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
-import {getChatFn, getCheapestModel, isOpenAIModel} from "../common/params.js";
+import {getChatFn, ModelTypes, getModelByType, isOpenAIModel} from "../common/params.js";
 import {reportWriterAssistant} from "./reportWriter.js";
 import {documentAssistant} from "./documents.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
@@ -96,7 +96,7 @@ const batchAssistant = {
                 params.account.user,
                 `${params.account.user}/tasks/${date}/chat-${time}-${uuidv4()}.json`,
                 updatedBody,
-                getCheapestModel(params),
+                getModelByType(params, ModelTypes.CHEAPEST),
                 params.options,
             )
             await sendAssistantTaskToQueue(task);
