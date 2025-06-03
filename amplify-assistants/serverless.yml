@@ -63,7 +63,7 @@ provider:
     FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE:  amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}
-    ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
+    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
     S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
@@ -86,7 +86,7 @@ provider:
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-lambda/${sls:stage}/s3/metadata/encryption #must start with /
+
 
 
   iam:
@@ -114,6 +114,8 @@ functions:
           path: assistant/create
           method: post
           cors: true
+    # environment:
+    #     FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption
 
   list_assistants:
     handler: service/core.list_assistants
@@ -631,7 +633,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
@@ -644,6 +646,12 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: 
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - s3:PutObject

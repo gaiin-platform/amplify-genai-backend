@@ -53,7 +53,7 @@ client = get_openai_client()
 def file_keys_to_file_ids(file_keys):
     if (len(file_keys) == 0): return []
 
-    files_bucket_name = os.environ['ASSISTANTS_FILES_BUCKET_NAME']
+    files_bucket_name = os.environ['S3_RAG_INPUT_BUCKET_NAME']
     images_bucket_name = os.environ['S3_IMAGE_INPUT_BUCKET_NAME']
 
     updated_keys = []

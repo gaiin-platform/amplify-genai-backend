@@ -654,6 +654,8 @@ def create_assistant(event, context, current_user, name, data):
             standard_data_sources + scraped_data_sources
         )
 
+    print(f"Scraped data sources: {scraped_data_sources}")
+
     # Create or update the assistant with the final data sources
     return create_or_update_assistant(
         current_user=current_user,
@@ -1318,7 +1320,7 @@ def create_or_update_assistant(
 
         # print(f"Indexing assistant {new_item['id']} for RAG")
         # save_assistant_for_rag(new_item)
-        print(f"Added RAG entry for {new_item['id']}")
+        # print(f"Added RAG entry for {new_item['id']}")
 
         # Return success response
         return {
@@ -1437,7 +1439,7 @@ def create_or_update_assistant(
 
         # print(f"Indexing assistant {new_item['id']} for RAG")
         # save_assistant_for_rag(new_item)
-        print(f"Added RAG entry for {new_item['id']}")
+        # print(f"Added RAG entry for {new_item['id']}")
 
         # Return success response
         return {
@@ -2839,7 +2841,7 @@ def save_scraped_content(scraped_data, user_id):
     content_key = f"{user_id}/{timestamp}/{unique_id}.content.json"
 
     # Save to S3
-    bucket_name = os.environ["ASSISTANTS_FILES_BUCKET_NAME"]
+    bucket_name = os.environ["S3_RAG_INPUT_BUCKET_NAME"]
 
     # Create metadata with account information
     account_data = {
