@@ -4,7 +4,7 @@
 
 
 import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
-import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, GetItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
@@ -161,10 +161,56 @@ const userInAmplifyGroup = async (amplifyGroups, token) => {
     }
     return false;
 
-
 }
 
-export const getUserDefinedAssistant = async (current_user, assistantBase, ast_owner, assistantPublicId, token) => {
+
+export const getAstgGroupId = async (assistantPublicId) => {
+    /**
+     * Retrieves the most recent version of an assistant from the DynamoDB table.
+     *
+     * Args:
+     *     assistantPublicId (str): The public ID of the assistant (optional).
+     *
+     * Returns:
+     *     object: The most recent assistant item, or null if not found.
+     */
+
+    if (assistantPublicId) {
+        const command = new QueryCommand({
+            TableName: process.env.ASSISTANTS_DYNAMODB_TABLE,
+            IndexName: "AssistantIdIndex",
+            KeyConditionExpression: "assistantId = :assistantId",
+            ExpressionAttributeValues: {
+                ":assistantId": { S: assistantPublicId }
+            },
+            Limit: 1,
+            ScanIndexForward: false
+        });
+        
+        try {
+            const response = await dynamodbClient.send(command);
+            
+            if (response.Count > 0) {
+                const items = response.Items.map(item => unmarshall(item));
+                const astRecord = items.reduce((max, item) => {
+                    const itemVersion = item.version || 1;
+                    const maxVersion = max.version || 1;
+                    return itemVersion > maxVersion ? item : max;
+                });
+                return astRecord.data?.groupId;
+            }
+        } catch (error) {
+            console.error('Error querying assistant:', error);
+            return null;
+        }
+    }
+
+    return null;
+}
+
+export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
+    const ast_owner = assistantPublicId.startsWith("astgp") ? await getAstgGroupId(assistantPublicId) : current_user;
+    
     if (!ast_owner) return null;
 
     // verify the user has access to the group since this is a group assistant
