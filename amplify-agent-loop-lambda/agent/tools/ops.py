@@ -153,7 +153,10 @@ def op_to_tool(api):
         for param_name, binding in bindings.items():
             if binding.get('mode') == 'manual':
                 print("Inserting manual binding for param: ", param_name)
-                kwargs[param_name] = binding['value']
+                value = binding['value']
+                if isinstance(value, str) and value.lower() in ["true", "false"]:
+                    value = value.lower() == "true"
+                kwargs[param_name] = value
 
         return call_api(action_context=action_context, name=id, payload=kwargs)
 

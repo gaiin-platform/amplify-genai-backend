@@ -54,7 +54,7 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                 print(f"Agent response missing")
                                 handler.onFailure(agent_input_event, Exception("Failed to run the agent: Agent response missing"))
                                 result = [{"role":"environment", "content":"Failed to run the agent."}]
-
+                            print(f"Final agent results: {json.dumps(result, separators=(',', ':'))}")
                             handler.onSuccess(agent_input_event, result)
                     else:
                         handler.onFailure(agent_input_event, Exception("No result from handler"))

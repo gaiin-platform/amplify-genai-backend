@@ -147,7 +147,7 @@ class WorkflowCapability(Capability):
             for key, value in values.items():
                 args = action.get("args", {})
                 if isinstance(value, str) and value.lower() in ["true", "false"]:
-                    value = True if value.lower() == "true" else False
+                    value = value.lower() == "true"
                     
                 args[key] = value
 
