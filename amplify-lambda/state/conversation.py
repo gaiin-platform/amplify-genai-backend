@@ -217,7 +217,7 @@ def get_empty_conversations(event, context, current_user, name, data):
     empty_conversations = []
     nonempty_conversations_ids = []
     for item in conversations:
-        if ('conversation' in item and len(item['conversation']['messages']) == 0):
+        if ('conversation' in item and ('messages' not in item['conversation'] or len(item['conversation']['messages']) == 0)):
             empty_conversations.append( pick_conversation_attributes(item['conversation']) )
         else: 
             nonempty_conversations_ids.append(item['conversation']['id'] )
