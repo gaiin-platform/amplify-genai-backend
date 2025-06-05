@@ -35,9 +35,9 @@ provider:
   logRetentionInDays: 365
   apiGateway:
     restApiId:
-      Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
+      Fn::ImportValue: !Sub "${self:custom.stageVars.DEP_NAME}-${sls:stage}-RestApiId"
     restApiRootResourceId:
-      Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
+      Fn::ImportValue: !Sub "${self:custom.stageVars.DEP_NAME}-${sls:stage}-RestApiRootResourceId"
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     DATA_DISCLOSURE_VERSIONS_TABLE: ${self:service}-${sls:stage}-versions
