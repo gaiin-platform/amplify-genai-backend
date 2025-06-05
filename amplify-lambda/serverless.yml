@@ -1160,14 +1160,14 @@ resources:
         Value: !GetAtt AccountingChatUsageDynamoDbTable.StreamArn
         Export:
           Name: 
-            Fn::Sub: "${sls:stage}-AccountingChatUsageDynamoStreamArn"
+            Fn::Sub: "${self:custom.stageVars.DEP_NAME}-${sls:stage}-AccountingChatUsageDynamoStreamArn"
     
       ApiGatewayId:
         Description: "The ID of the API Gateway"
         Value: !Ref ApiGatewayRestApi
         Export:
           Name: 
-            Fn::Sub: "${sls:stage}-RestApiId"
+            Fn::Sub: "${self:custom.stageVars.DEP_NAME}-${sls:stage}-RestApiId"
     
       ApiGatewayRootResourceId:
         Description: "The ID of the API Gateway root resource"
@@ -1175,13 +1175,10 @@ resources:
           Fn::GetAtt: [ApiGatewayRestApi, "RootResourceId"]
         Export:
           Name: 
-            Fn::Sub: "${sls:stage}-RestApiRootResourceId"
-
-
+            Fn::Sub: "${self:custom.stageVars.DEP_NAME}-${sls:stage}-RestApiRootResourceId"
       ConverstionTemplatesBucketOutput:
         Description: "The S3 bucket name for ppt conversion templates"
         Value: !Ref ConversionOutputBucket
         Export:
           Name: 
-            Fn::Sub: "${sls:stage}-ConversionOutputBucket"
-
+            Fn::Sub: "${self:custom.stageVars.DEP_NAME}-${sls:stage}-ConversionOutputBucket"
