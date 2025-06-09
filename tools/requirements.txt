@@ -1,7 +1,7 @@
 annotated-types==0.6.0
 anyio==3.7.1
 attrs==23.1.0
-boto3==1.29.1
+boto3==1.38.32
 botocore==1.32.7
 httpcore==1.0.5
 httpx==0.25.1
