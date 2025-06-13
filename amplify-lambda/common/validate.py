@@ -511,6 +511,7 @@ save_accounts_schema = {
                         },
                         "description": "Cost restriction using the API key"
                     },
+
                 },
                 "required": ["id", "name", 'rateLimit']
             }
@@ -728,6 +729,94 @@ set_metdata_schema = {
     "required": ["id", "name", "type"]
 }
 
+test_db_connection_schema = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string"},
+        "host": {"type": ["string", "null"]},
+        "port": {"type": ["string", "number", "null"]},
+        "database": {"type": "string"},
+        "username": {"type": ["string", "null"]},
+        "password": {"type": ["string", "null"]},
+        "account": {"type": ["string", "null"]},
+        "warehouse": {"type": ["string", "null"]},
+        "schema": {"type": ["string", "null"]},
+    },
+    "required": ["type", "database"],
+    "additionalProperties": True,
+}
+
+save_db_connection_schema = {
+    "type": "object",
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": [
+                "postgres",
+                "mysql",
+                "mssql",
+                "duckdb",
+                "sqlite",
+                "snowflake",
+                "bigquery",
+                "oracle",
+            ],
+        },
+        "host": {"type": ["string", "null"]},
+        "port": {"type": ["string", "number", "null"]},
+        "database": {"type": "string"},
+        "username": {"type": ["string", "null"]},
+        "password": {"type": ["string", "null"]},
+        "credentials": {"type": ["string", "null"]},
+        "project_id": {"type": ["string", "null"]},
+        "service_name": {"type": ["string", "null"]},
+        "account": {"type": ["string", "null"]},
+        "warehouse": {"type": ["string", "null"]},
+        "schema": {"type": ["string", "null"]},
+    },
+    "required": ["type"],
+    "allOf": [
+        {
+            "if": {"properties": {"type": {"enum": ["postgres", "mysql", "mssql"]}}},
+            "then": {"required": ["host", "port", "database", "username", "password"]},
+        },
+        {
+            "if": {"properties": {"type": {"enum": ["duckdb", "sqlite"]}}},
+            "then": {"required": ["database"]},
+        },
+        {
+            "if": {"properties": {"type": {"enum": ["snowflake"]}}},
+            "then": {
+                "required": [
+                    "account",
+                    "warehouse",
+                    "database",
+                    "schema",
+                    "username",
+                    "password",
+                ]
+            },
+        },
+        {
+            "if": {"properties": {"type": {"enum": ["bigquery"]}}},
+            "then": {"required": ["project_id", "credentials"]},
+        },
+        {
+            "if": {"properties": {"type": {"enum": ["oracle"]}}},
+            "then": {
+                "required": ["host", "port", "service_name", "username", "password"]
+            },
+        },
+    ],
+    "additionalProperties": True,
+}
+
+get_db_connections_schema = {
+    "type": "object",
+    "properties": {},
+    "required": [],
+}
+
 validators = {
     "/state/share": {
         "append": share_schema,
@@ -816,6 +905,15 @@ validators = {
     },
     "/files/reprocess/rag": {
         "upload": key_request_schema
+    },
+    "/db/test-connection": {
+        "test_connection": test_db_connection_schema
+    },
+    "/db/save-connection": {
+        "save_connection": save_db_connection_schema
+    },
+    "/db/get-connections": {
+        "get_connections": get_db_connections_schema
     }
 
 }
@@ -862,6 +960,15 @@ api_validators = {
     },
     "/files/reprocess/rag": {
         "upload": key_request_schema
+    },
+    "/db/test-connection": {
+        "test_connection": test_db_connection_schema
+    },
+    "/db/save-connection": {
+        "save_connection": save_db_connection_schema
+    },
+    "/db/get-connections": {
+        "get_connections": get_db_connections_schema
     }
 }
 

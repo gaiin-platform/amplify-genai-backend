@@ -465,6 +465,36 @@ functions:
                 - RagChunkDocumentQueue
                 - Arn
 
+  test_db_connection:
+    handler: utilities/test_db_connection.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: db/test-connection
+          method: post
+          cors: true
+
+  save_db_connection:
+    handler: utilities/save_db_connection.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: db/save-connection
+          method: post
+          cors: true
+
+  get_db_connections:
+    handler: utilities/get_db_connections.lambda_handler
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: db/get-connections
+          method: post
+          cors: true
 
   process_images_for_chat:
     handler: images/core.process_images_for_chat
