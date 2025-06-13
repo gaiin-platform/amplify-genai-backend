@@ -41,6 +41,15 @@ def get_data_owner(event, data):
 def can_delete_file(user, data):
   return True
 
+def can_test_db_connection(user, data):
+    return True
+
+def can_save_db_connection(user, data):
+    return True
+
+def can_get_db_connections(user, data):
+    return True
+
 permissions_by_state_type = {
   "/state/share": {
     "append": can_share,
@@ -129,5 +138,14 @@ permissions_by_state_type = {
   },
   "/files/reprocess/rag": {
     "upload": can_upload
+  },
+  "/db/test-connection": {
+    "test_connection": can_test_db_connection
+  },
+  "/db/save-connection": {
+    "save_connection": can_save_db_connection
+  },
+  "/db/get-connections": {
+    "get_connections": can_get_db_connections
   }
 }
