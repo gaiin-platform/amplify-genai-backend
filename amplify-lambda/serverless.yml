@@ -75,6 +75,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
+    DB_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-db-connections
     S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  
     S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
     S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
@@ -571,6 +572,7 @@ resources:
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
@@ -1187,6 +1189,32 @@ resources:
               Condition:
                 StringEquals:
                   'aws:SourceAccount': ${aws:accountId}
+
+    DbConnectionsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.DB_CONNECTIONS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
   Outputs:
       AccountingChatUsageDynamoStreamArn:
         Description: "The ARN of the DynamoDB Stream for the ChatUsage table"
