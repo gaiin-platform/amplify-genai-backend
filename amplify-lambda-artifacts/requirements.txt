@@ -63,7 +63,7 @@ pyasn1==0.6.1
     #   rsa
 pydantic==2.10.4
     # via -r requirements.in
-pydantic-core==2.27.2
+pydantic-core==2.35.1
     # via
     #   -r requirements.in
     #   pydantic

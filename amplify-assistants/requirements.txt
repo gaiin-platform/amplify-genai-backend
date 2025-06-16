@@ -67,7 +67,7 @@ pydantic==2.10.4
     # via
     #   -r requirements.in
     #   openai
-pydantic-core==2.27.2
+pydantic-core==2.35.1
     # via pydantic
 python-dateutil==2.9.0.post0
     # via botocore
