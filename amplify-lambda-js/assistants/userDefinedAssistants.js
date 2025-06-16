@@ -10,9 +10,9 @@ import {fillInTemplate} from "./instructions/templating.js";
 import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
-import {newStatus, getThinkingMessage} from "../common/status.js";
-import {invokeAgent, getLatestAgentState, listenForAgentUpdates} from "./agent.js";
-import AWSXRay from "aws-xray-sdk";
+import {newStatus} from "../common/status.js";
+import {invokeAgent, constructTools, getTools} from "./agent.js";
+// import AWSXRay from "aws-xray-sdk";
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -406,7 +406,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         animated: true,
                         inProgress: true,
                         sticky: true,
-                        summary: `Thinking...`,
+                        summary: `Analyzing Request...`,
                         icon: "info",
                     }
                 );
@@ -418,140 +418,31 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     workflowTemplateId = {workflow: {templateId: assistant.data.baseWorkflowTemplateId}};
                 }
 
-                const segment = AWSXRay.getSegment();
-                const agentSegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.invokeAgent');
+                // const segment = AWSXRay.getSegment();
+                // const agentSegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.invokeAgent');
+                const tools = getTools(body.messages)
+                const { builtInOperations, operations } = constructTools(tools);
 
-                const response = invokeAgent(
+                const sessionId = params.options.conversationId;
+
+                invokeAgent(
                     params.account.accessToken,
-                    params.options.conversationId,
+                    sessionId,
                     params.options.requestId,
                     body.messages,
-                    {assistant, model: params.model.id, ...workflowTemplateId} // built in 
+                    {assistant, model: params.model.id, ...workflowTemplateId, 
+                     builtInOperations, operations}
                 );
+
                 llm.sendStatus(statusInfo);
                 llm.forceFlush();
                 llm.forceFlush();
 
-                //const result = await response;
-                var stopPolling = false;
-                var result = null;
-                await Promise.race([
-                    response.then(r => {
-                        stopPolling = true;
-                        result = r;
-                        return r;
-                    }),
-                    listenForAgentUpdates(params.account.accessToken, params.account.user, params.options.conversationId, (state) => {
-
-                        if(!state) {
-                            return !stopPolling;
-                        }
-
-                        console.log("Agent state updated:", state);
-                        let msg = getThinkingMessage();
-                        let details = "";//JSON.stringify(state);
-                        if(state.state){
-                            try {
-                                const tool_call = JSON.parse(state.state);
-                                const tool = tool_call.tool;
-                                if(tool === "terminate"){
-                                    msg = "Hold on..."
-                                }
-                                else if(tool === "exec_code"){
-                                    msg = "Executing code..."
-                                    details = `\`\`\`python\n\n${tool_call.args.code}\n\n\`\`\``;
-                                }
-                                else {
-                                    function formatToolCall(toolCall) {
-                                        const lines = [`Calling: ${toolCall.tool}`, '   with:'];
-                                        Object.entries(toolCall.args).forEach(([key, value]) => {
-                                            lines.push(`      ${key}: ${JSON.stringify(value)}`);
-                                        });
-                                        return lines.join('\n');
-                                    }
-
-                                    msg = "Calling: " + tool_call.tool;
-                                    details = formatToolCall(tool_call);
-                                }
-                            }catch (e){
-                            }
-                        }
-                        else {
-                            msg = `Agent state updated: ${JSON.stringify(state)}`;
-                        }
-                        statusInfo.summary = msg;
-                        statusInfo.message = details
-                        llm.sendStatus(statusInfo);
-                        llm.forceFlush();
-                        return !stopPolling;
-                    })
-                ]);
-
-                llm.sendStateEventToStream({
-                    agentLog: result
-                })
+                llm.sendStateEventToStream({ agentRun: { startTime: new Date(), sessionId } });
                 llm.forceFlush();
+                llm.forceFlush();
+                llm.endStream();
 
-                agentSegment.close()
-
-
-                if (result.success) {
-
-                    let responseFromAssistant = result.data.result?.findLast(msg => msg.role === 'assistant')?.content;
-
-                    if(responseFromAssistant) {
-                        if (responseFromAssistant.args && responseFromAssistant.args.message) {
-                            responseFromAssistant = responseFromAssistant.args.message;
-                        } else {
-                            responseFromAssistant = JSON.stringify(responseFromAssistant);
-                        }
-                    }
-                    else {
-                        console.log("Error getting the last assistant message from the agent result: ", JSON.stringify(result));
-                        responseFromAssistant = "No response from assistant. Something went wrong.";
-                    }
-
-                    const summaryRequest = {
-                        ...body,
-                        messages: [
-                            {
-                                role: "system",
-                                content: `
-                                Unless the user tells you otherwise, use the most specific markdown block in the list below to provide the user access to the files, images, and other outputs you create.
-                                Use the plain file reference as a last resort.
-                        
-                                You can reference files, images, and other outputs by using the syntax: \`\`\`agent <filename>\`\`\` anywhere in youre response. 
-                                
-                                There are some additional special markdown blocks that you should use:
-                                
-                                If the file is CSV, agent_table will display a rich table editor with the data from the file, a great way to get data from numpy/pandas back to the user:
-                                \`\`\`agent_table 
-                                <filename>
-                                \`\`\` 
-                                
-                                If the file is an image, agent_image will display a rich image viewer with the image from the file...good for outputs from matplotlib in particular!
-                                \`\`\`agent_image 
-                                <filename>
-                                \`\`\` 
-                                
-                                ALWAYS display CSV in an agent_table. 
-                                Always display images in an agent_image.
-                                `
-                            },
-                            {
-                                role: "user",
-                                content:
-                                    `The user's prompt was: ${body.messages.slice(-1)[0].content}` +
-                                    `\n\nA log of the assistant's reasoning / work:\n---------------------\n${JSON.stringify(result.data.result)}` +
-                                    `\n\n---------------------` +
-                                    `\n\nRespond to the user and reference files, images, etc. that were created as appropriate.`
-                            }]};
-
-                    const agentSummarySegment = segment.addNewSubsegment('chat-js.userDefinedAssistant.agentSummary');
-                    await llm.prompt(summaryRequest, []);
-                    agentSummarySegment.close();
-
-                }
                 return;
 
             } else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
