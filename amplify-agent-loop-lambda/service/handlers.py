@@ -820,3 +820,171 @@ def extract_data_sources_from_messages(messages: List[Dict[str, Any]]) -> List[D
                     data_sources.append(source)
     
     return data_sources
+
+
+
+@vop(
+    path="/vu-agent/get-latest-agent-state",
+    tags=[],
+    name="getLatestAgentState",
+    description="Polls latest entry from agent state logs",
+    params={
+        "sessionId": "The session ID.",
+    },
+    schema={
+        "type": "object",
+        "properties": {
+            "sessionId": {"type": "string"},
+        },
+        "required": ["sessionId"],
+    }
+)
+def get_latest_agent_state(current_user, session_id):
+    try:
+        # Initialize AWS clients
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(os.getenv('AGENT_STATE_DYNAMODB_TABLE'))
+        
+        # Query the table for the latest state for this user and session
+        response = table.query(
+            KeyConditionExpression='#user = :user AND #sessionId = :sessionId',
+            ExpressionAttributeNames={
+                '#user': 'user',
+                '#sessionId': 'sessionId'
+            },
+            ExpressionAttributeValues={
+                ':user': current_user,
+                ':sessionId': session_id
+            },
+            ScanIndexForward=False,  # Sort in descending order to get latest first
+            Limit=1
+        )
+        
+        # Get the first item if it exists
+        items = response.get('Items', [])
+        if not items:
+            return {
+                "success": False,
+                "error": "No agent state found for this session"
+            }
+        
+        latest_item = items[0]
+        
+        # Check if the memory column is populated (indicating result is complete)
+        if 'memory' in latest_item and latest_item['memory']:
+            print(f"Agent result is complete, fetching conversation from S3")
+            
+            # Extract S3 location from memory
+            memory = latest_item['memory']
+            bucket = memory.get('bucket')
+            key = memory.get('key')
+            
+            if not bucket or not key:
+                return {
+                    "success": False,
+                    "error": "Invalid S3 location in memory"
+                }
+            
+            try:
+                # Fetch conversation results from S3
+                s3 = boto3.client('s3')
+                s3_response = s3.get_object(Bucket=bucket, Key=key)
+                conversation_data = json.loads(s3_response['Body'].read().decode('utf-8'))
+                
+                # Fetch session files from index.json
+                session_files = {}
+                try:
+                    index_key = f"{current_user}/{session_id}/index.json"
+                    index_response = s3.get_object(Bucket=bucket, Key=index_key)
+                    index_data = json.loads(index_response['Body'].read().decode('utf-8'))
+                    
+                    filename_mappings = index_data.get('mappings', {})
+                    version_history = index_data.get('version_history', {})
+                    
+                    # Recreate the session files structure similar to get_tracked_files()
+                    for filepath, s3_filename in filename_mappings.items():
+                        # Remove extension to get base UUID (file_id)
+                        file_id = s3_filename.rsplit('.', 1)[0]
+                        
+                        # Get file stats from S3 if available
+                        try:
+                            file_s3_key = f"{current_user}/{session_id}/{s3_filename}"
+                            file_response = s3.head_object(Bucket=bucket, Key=file_s3_key)
+                            file_size = file_response['ContentLength']
+                            last_modified = file_response['LastModified'].isoformat()
+                        except ClientError:
+                            # Fallback values if we can't get file stats
+                            file_size = 0
+                            last_modified = datetime.utcnow().isoformat()
+                        
+                        session_files[file_id] = {
+                            "original_name": filepath,
+                            "size": file_size,
+                            "last_modified": last_modified
+                        }
+                        
+                        # Add version history if available
+                        if filepath in version_history:
+                            session_files[file_id]["versions"] = [
+                                {
+                                    "version_file_id": v.get("s3_name", "").rsplit('.', 1)[0],
+                                    "timestamp": v["timestamp"],
+                                    "hash": v["hash"],
+                                    "size": v["size"]
+                                }
+                                for v in version_history[filepath]
+                            ]
+                
+                except ClientError as e:
+                    print(f"Could not fetch session files index: {e}")
+                    # Continue without files if index is not available
+                
+                response_data = {
+                    "success": True,
+                    "inProgress": False,
+                    "result": conversation_data,
+                    "session": session_id,
+                }
+                
+                # Add files if we have any
+                if session_files:
+                    response_data["files"] = session_files
+                
+                return response_data
+                
+            except ClientError as e:
+                print(f"Error fetching conversation from S3: {e}")
+                return {
+                    "success": False,
+                    "error": "Failed to fetch conversation results from S3",
+                    "details": str(e)
+                }
+        else:
+            # Result is not complete yet, return the current state
+            return {
+                "success": True,
+                "inProgress": True,
+                "state": latest_item.get('state'),
+                "session": session_id,
+                "metadata": {
+                    "timestamp": latest_item.get('timestamp'),
+                    "event_id": latest_item.get('eventId'),
+                    "context_id": latest_item.get('contextId'),
+                    "correlation_id": latest_item.get('correlationId'),
+                }
+            }
+        
+    except ClientError as e:
+        print(f"Error retrieving DynamoDB record: {e}")
+        return {
+            "success": False,
+            "error": "Failed to retrieve DynamoDB record",
+            "details": str(e)
+        }
+    except Exception as e:
+        print(f"Unexpected error in get_latest_agent_state: {e}")
+        return {
+            "success": False,
+            "error": "Unexpected error occurred",
+            "details": str(e)
+        }
