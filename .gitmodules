@@ -1,0 +1,6 @@
+[submodule "amplify-lambda/pycommon"]
+	path = amplify-lambda/pycommon
+	url = git@github.com:gaiin-platform/pycommon.git
+[submodule "amplify-lambda-api/pycommon"]
+	path = amplify-lambda-api/pycommon
+	url = git@github.com:gaiin-platform/pycommon.git

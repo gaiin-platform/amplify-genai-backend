@@ -113,12 +113,6 @@ def get_chat_endpoint():
 
 
 
-class DecimalEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj) if obj % 1 != 0 else int(obj)
-        return super(DecimalEncoder, self).default(obj)
-
 def convert_decimal(obj):
     """Convert Decimal objects to Python native types (float or int)"""
     if isinstance(obj, Decimal):
