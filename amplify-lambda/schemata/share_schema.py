@@ -1,4 +1,4 @@
-from export_schema import export_schema
+from .export_schema import export_schema
 
 share_schema = {
     "type": "object",

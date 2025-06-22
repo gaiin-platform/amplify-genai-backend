@@ -1,4 +1,4 @@
-from export_schema import export_schema
+from .export_schema import export_schema
 
 convert_schema = {
     "type": "object",

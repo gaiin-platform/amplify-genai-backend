@@ -1,21 +1,21 @@
-import add_charge_schema
-import share_schema
-import share_load_schema
-import set_metadata_schema
-import file_upload_schema
-import key_request_schema
-import file_delete_schema
-import file_set_tags_schema
-import user_delete_tag_schema
-import create_tags_schema
-import file_query_schema
-import chat_input_schema
-import convert_schema
-import save_accounts_schema
-import compressed_conversation_schema
-import register_conversation_schema
-import conversation_ids_schema
-import save_settings_schema
+from . import add_charge_schema
+from . import share_schema
+from . import share_load_schema
+from . import set_metadata_schema
+from . import file_upload_schema
+from . import key_request_schema
+from . import file_delete_schema
+from . import file_set_tags_schema
+from . import user_delete_tag_schema
+from . import create_tags_schema
+from . import file_query_schema
+from . import chat_input_schema
+from . import convert_schema
+from . import save_accounts_schema
+from . import compressed_conversation_schema
+from . import register_conversation_schema
+from . import conversation_ids_schema
+from . import save_settings_schema
 
 rules = {
     "validators": {
