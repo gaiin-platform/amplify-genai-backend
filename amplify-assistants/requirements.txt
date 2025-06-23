@@ -55,7 +55,7 @@ jsonschema==4.23.0
     # via -r requirements.in
 jsonschema-specifications==2024.10.1
     # via jsonschema
-openai==1.59.4
+openai==1.90.0
     # via -r requirements.in
 pillow==11.1.0
     # via -r requirements.in
