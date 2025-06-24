@@ -90,7 +90,7 @@ python-dateutil==2.9.0.post0
     # via botocore
 python-dotenv==1.0.1
     # via -r requirements.in
-python-jose==3.3.0
+python-jose==3.4.0
     # via -r requirements.in
 referencing==0.35.1
     # via
