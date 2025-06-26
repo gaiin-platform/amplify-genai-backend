@@ -7,15 +7,13 @@ import {
     StreamResultCollector,
     sendResultToStream,
     findResult,
-    sendToStream,
+    endStream as terminateStream,
     sendStatusEventToStream, sendOutOfOrderModeEventToStream, sendStateEventToStream
 } from "./streams.js";
-import {chat} from "../azure/openai.js";
 import {transform} from "./chat/events/openaifn.js";
 import {geminiTransform} from "./chat/events/gemini.js";
 import {parseValue} from "./incrementalJsonParser.js";
-import {setModel, setUser, isGeminiModel, getChatFn} from "./params.js";
-import {getLLMConfig} from "./secrets.js";
+import {setModel, isGeminiModel, getChatFn} from "./params.js";
 
 
 export const getDefaultLLM = async (model, stream = null, user = "default") => {
@@ -147,6 +145,19 @@ export class LLM {
                 inProgress: false,
                 message: " ".repeat(100000)
             }));
+    }
+
+    endStream() {
+        if (this.responseStream) {
+            terminateStream(this.responseStream);
+            try {
+                if (!this.responseStream.writableEnded) {
+                    this.responseStream.end();
+                }
+            } catch (err) {
+                console.error('Error while terminating stream:', err);
+            }
+        }   
     }
 
     /**
