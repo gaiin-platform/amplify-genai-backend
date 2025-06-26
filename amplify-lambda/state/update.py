@@ -9,8 +9,10 @@ import os
 import uuid
 
 from boto3.dynamodb.conditions import Key
+from pycommon.encoders import dumps_lossy
 
-from state import decimalencoder
+
+
 import boto3
 
 from common.validate import validated
@@ -48,8 +50,7 @@ def update(event, context):
     # create a response
     response = {
         "statusCode": 200,
-        "body": json.dumps(result['Attributes'],
-                           cls=decimalencoder.DecimalEncoder)
+        "body": dumps_lossy(result['Attributes'])
     }
 
     return response
@@ -85,7 +86,7 @@ def append_using_user_and_name(event, context, user, name, data):
       table.put_item(Item=new_item)
       return {
         "statusCode": 200,
-        "body": json.dumps(new_item, cls=decimalencoder.DecimalEncoder)
+        "body": dumps_lossy(new_item)
       }
 
     elif len(items) > 1:
