@@ -118,7 +118,7 @@ def create_api_key_for_group(group_name):
                 'systemId' : group_id,
                 'active': True,
                 'createdAt': timestamp, 
-                'accessTypes': ["api_key", 'assistants' ],
+                'accessTypes': ["api_key", 'assistants', 'chat', 'dual_embedding', 'embedding', 'file_upload'],
                 'account': { 'id': 'group_account', 'name': 'No COA Required' },
                 'rateLimit': { 'rate': None, 'period': "Unlimited" },
                 'purpose': "group"
@@ -282,7 +282,7 @@ def remove_old_ast_versions(current_assistants, astp):
 def is_ds_owner(ds, group_id):
     return group_id in ds.get('id','') or group_id in ds.get('key','')
 
-def update_group_ds_perms(ast_ds, group_type_data, group_id):
+def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
     print("ast ds: ", ast_ds)
@@ -314,8 +314,9 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id):
                     'permission_level': 'read',  
                     'policy': None
             })
+        mapped_ids = [ds['id'] for ds in translated_ds]
         # ensure all ds have been embedded 
-        check_embedding_completion(translated_ds)   
+        check_embedding_completion(access_token, mapped_ids)   
                 
         return {'success': True}
     except Exception as e:
@@ -353,7 +354,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             if (('data' in ast and 'supportConvAnalysis' in ast["data"]) and 
                  not item.get('supportConvAnalysis', False)): ast["data"]["supportConvAnalysis"] = False
 
-            update_perms_result = update_group_ds_perms(ast['dataSources'], groupDSData, group_id)
+            update_perms_result = update_group_ds_perms(ast['dataSources'], groupDSData, group_id, access_token)
             if (not update_perms_result['success']):
                 print("could not update ds perms for all group type data")
                 return update_perms_result
