@@ -1,6 +1,5 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+# Copyright (c) 2024 Vanderbilt University
+# Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 # Needs to implement a function triggered by an event bridge event at the beginning of each day and beginning of each month
 # The trigger will need to write the coa, date and daily_usage or monthly_usage (from the UsagePerCoaTable) to the history-coa-usage table and set the dailyCost and monthlyCost values (within the UsagePerCoaTable) to zero

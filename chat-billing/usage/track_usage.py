@@ -1,6 +1,5 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+# Copyright (c) 2024 Vanderbilt University
+# Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import os
 import boto3
@@ -32,7 +31,7 @@ def handler(event, context):
             "statusCode": 200,
             "body": json.dumps({"message": "Usage tracked successfully"}),
         }
-    
+
     except KeyError as e:
         error_message = f"Missing key error: {str(e)}"
         print(error_message)
@@ -59,7 +58,9 @@ def track_usage(time_range="daily"):
         if not chat_usage_table_name or not additional_charges_table_name:
             raise KeyError("CHAT_USAGE_TABLE and ADDITIONAL_CHARGES_TABLE must be set.")
 
-        chat_usage_items = query_usage_table(chat_usage_table_name, time_range=time_range)
+        chat_usage_items = query_usage_table(
+            chat_usage_table_name, time_range=time_range
+        )
         additional_charges_items = query_usage_table(
             additional_charges_table_name, time_range=time_range
         )
@@ -124,7 +125,7 @@ def query_usage_table(table_name, time_range="daily"):
 
         # Return the items from the response
         return items
-    
+
     except ValueError as e:
         error_message = f"Value error: {str(e)}"
         print(error_message)
@@ -153,17 +154,17 @@ def record_additional_item_cost(item, time_range):
             )  # cost of code interpreter session is $0.03
         else:
             raise ValueError(f"Unsupported itemType value: {itemType}")
-    
+
     except ValueError as e:
         error_message = f"Value error: {str(e)}"
         print(error_message)
         raise
-    
+
     except KeyError as e:
         error_message = f"Missing key error: {str(e)}"
         print(error_message)
         raise
-    
+
     except Exception as e:
         error_message = f"An unknown error occurred: {str(e)}"
         print(error_message)
