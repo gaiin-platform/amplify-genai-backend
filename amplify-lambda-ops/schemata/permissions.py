@@ -1,6 +1,12 @@
 def get_permission_checker(user, ptype, op, data):
-    print("Checking permissions for user: {} and type: {} and op: {}".format(user, ptype, op))
-    return permissions_by_state_type.get(ptype, {}).get(op, lambda for_user, with_data: False)
+    print(
+        "Checking permissions for user: {} and type: {} and op: {}".format(
+            user, ptype, op
+        )
+    )
+    return permissions_by_state_type.get(ptype, {}).get(
+        op, lambda for_user, with_data: False
+    )
 
 
 def can_get_ops(user, data):
@@ -12,8 +18,10 @@ def can_get_ops(user, data):
     """
     return True
 
+
 def can_write(user, data):
     return True
+
 
 def can_delete(user, data):
     return True
@@ -28,16 +36,8 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/ops/get": {
-        "get": can_get_ops
-    },
-    "/ops/get_all": {
-        "get": can_get_ops
-    },
-    "/ops/register" : {
-        "write": can_write
-    },
-    "/ops/delete" : {
-        "delete": can_delete
-    }
+    "/ops/get": {"get": can_get_ops},
+    "/ops/get_all": {"get": can_get_ops},
+    "/ops/register": {"write": can_write},
+    "/ops/delete": {"delete": can_delete},
 }
