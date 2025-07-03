@@ -55,7 +55,7 @@ provider:
     JOB_RESULTS_BUCKET: ${self:service}-${sls:stage}-job-results
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
     S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-document-conversion-output # temp storage for downloaded integration file
-
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:
     role:
