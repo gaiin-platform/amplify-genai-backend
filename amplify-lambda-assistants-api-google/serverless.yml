@@ -49,6 +49,7 @@ provider:
     OAUTH_USER_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-user-oauth-integrations
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:
     role:
