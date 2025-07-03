@@ -62,7 +62,7 @@ provider:
     USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-storage
     #AWS_REGION optional for /chat/service.py 
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:
     role:
