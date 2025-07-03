@@ -17,6 +17,9 @@ custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   pythonRequirements:
     dockerizePip: true
+    usePoetry: false
+    usePipenv: false
+    fileName: requirements.txt
   stages:
     - dev
     - staging
@@ -77,6 +80,7 @@ provider:
     MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
     REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
     DATASOURCES_RESOLVER_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:
     role:

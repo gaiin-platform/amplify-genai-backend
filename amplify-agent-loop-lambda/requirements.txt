@@ -1,5 +1,5 @@
 bs4
-aws-xray-sdk
+aws-xray-sdk==2.14.0
 litellm~=1.57.1
 pydantic~=2.10.4
 requests~=2.32.3
