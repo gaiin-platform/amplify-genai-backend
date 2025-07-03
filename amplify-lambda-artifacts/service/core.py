@@ -7,7 +7,7 @@ import os
 import boto3
 import json
 import re
-from pycommon.api.amplify_users import is_valid_amplify_user
+from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -200,15 +200,20 @@ def share_artifact(event, context, current_user, name, data):
     artifact = data["artifact"]
     email_list = data["shareWith"]
 
-    errors = []
-    # Iterate over each email in the email list and save the artifact for each user
-    for email in email_list:
-        try:
-            is_valid_user = is_valid_amplify_user(access_token, email)
-            if not is_valid_user:
-                errors.append({"email": email, "message": "User is not a valid Amplify user"})
-                continue
+    if len(email_list) == 0:
+        return {"success": False, "message": "No users to share with."}
     
+    valid_users, invalid_users = are_valid_amplify_users(access_token, email_list)
+
+    if len(valid_users) == 0:
+        return {"success": False, "message": "No valid users to share with."}
+    
+    errors = []
+    for email in invalid_users:
+        errors.append({"email": email, "message": "User is not a valid Amplify user"})
+    # Iterate over each email in the email list and save the artifact for each user
+    for email in valid_users:
+        try:
             print(f"Sharing artifact with user {email}")
             save_artifact_for_user(email, artifact, current_user)
         except Exception as e:
@@ -220,7 +225,7 @@ def share_artifact(event, context, current_user, name, data):
         return {"success": True, "message": "Artifact shared successfully."}
 
     if len(errors) == len(email_list):
-        return {"success": False, "error": "Artifact failed to share."}
+        return {"success": False, "message": "Artifact failed to share."}
 
     # Return success but report any errors
     return {
