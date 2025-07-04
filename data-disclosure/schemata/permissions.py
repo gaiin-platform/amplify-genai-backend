@@ -18,8 +18,10 @@ def can_save_decision(user, data):
 def can_get_latest_disclosure(user, data):
     return True
 
+
 def can_upload(user, data):
     return True
+
 
 permissions_by_state_type = {
     "/data-disclosure/latest": {
@@ -31,7 +33,5 @@ permissions_by_state_type = {
     "/data-disclosure/check": {
         "check_data_disclosure_decision": can_check_decision,
     },
-    "/data-disclosure/upload" : {
-        "upload": can_upload 
-    },
+    "/data-disclosure/upload": {"upload": can_upload},
 }
