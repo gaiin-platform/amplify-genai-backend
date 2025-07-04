@@ -9,7 +9,7 @@ import boto3
 from common.validate import validated
 from enum import Enum
 
-from common.supported_models import update_supported_models, get_supported_models
+from service.supported_models import update_supported_models, get_supported_models
 from common.ast_admin_groups import get_all_ast_admin_groups, update_ast_admin_groups
 from common.ops_reqs import get_all_op
 from base_feature_flags import feature_flags
