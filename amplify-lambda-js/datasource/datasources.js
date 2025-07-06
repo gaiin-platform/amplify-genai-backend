@@ -713,7 +713,7 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
     
     if (extractRelevantContext) {
         try {
-            const filteredContent = await getExtractRelevantContext(resolutionEnv, {...result});
+            const filteredContent = await getExtractedRelevantContext(resolutionEnv, {...result});
             if (!filteredContent) return null;
             const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
             const originalTotalTokens = dataSource?.metadata?.totalTokens;
@@ -738,7 +738,7 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
  * @param dataSource
  * @returns {Promise<*[]|*>}
  */
-const getExtractRelevantContext = async (resolutionEnv, context) => {
+const getExtractedRelevantContext = async (resolutionEnv, context) => {
     const params = resolutionEnv.params;
     const chatBody = resolutionEnv.chatRequest;
     const userMessage = chatBody.messages.slice(-1)[0].content;
@@ -878,23 +878,105 @@ export const combineNeighboringLocations = (contentArray) => {
 
     // Helper function to get a sortable key from location
     const getLocationKey = (location) => {
-        if (location.line_number !== undefined) return location.line_number;
-        if (location.page !== undefined) return location.page;
-        if (location.slide !== undefined) return location.slide;
-        if (location.row_number !== undefined) return location.row_number;
-        return 0; // fallback
+        if (!location || typeof location !== 'object') {
+            return { primary: 0, secondary: 0, type: 'single', format: 'fallback' };
+        }
+
+        // Word documents: section + paragraph (hierarchical)
+        if (location.section_number !== undefined && location.paragraph_number !== undefined) {
+            return { 
+                primary: location.section_number, 
+                secondary: location.paragraph_number,
+                tertiary: location.section_title || '',
+                type: 'hierarchical',
+                format: 'section-paragraph'
+            };
+        }
+        
+        // Excel: sheet + row (hierarchical)
+        if (location.sheet_number !== undefined && location.row_number !== undefined) {
+            return { 
+                primary: location.sheet_number, 
+                secondary: location.row_number,
+                tertiary: location.sheet_name || '',
+                type: 'hierarchical',
+                format: 'sheet-row'
+            };
+        }
+
+        // Single dimension numeric locations
+        if (location.line_number !== undefined) return { primary: location.line_number, type: 'single', format: 'line' };
+        if (location.page_number !== undefined) return { primary: location.page_number, type: 'single', format: 'page' };
+        if (location.slide_number !== undefined) return { primary: location.slide_number, type: 'single', format: 'slide' };
+        if (location.row_number !== undefined) return { primary: location.row_number, type: 'single', format: 'row' };
+        if (location.paragraph_number !== undefined) return { primary: location.paragraph_number, type: 'single', format: 'paragraph' };
+        if (location.section_number !== undefined) return { primary: location.section_number, type: 'single', format: 'section' };
+        if (location.sheet_number !== undefined) return { primary: location.sheet_number, type: 'single', format: 'sheet' };
+        
+        // String-based location keys (no consecutive grouping possible)
+        if (location.section_title !== undefined) return { primary: location.section_title, type: 'string', format: 'section_title' };
+        if (location.sheet_name !== undefined) return { primary: location.sheet_name, type: 'string', format: 'sheet_name' };
+        
+        return { primary: 0, type: 'single', format: 'fallback' };
     };
 
     // Helper function to check if two locations are consecutive
     const areConsecutive = (loc1, loc2) => {
         const key1 = getLocationKey(loc1);
         const key2 = getLocationKey(loc2);
-        return Math.abs(key1 - key2) <= 1;
+        
+        // Must be same type and format to be consecutive
+        if (key1.type !== key2.type || key1.format !== key2.format) {
+            return false;
+        }
+        
+        if (key1.type === 'hierarchical') {
+            // Must be in same primary location (same section/sheet)
+            if (key1.primary !== key2.primary) return false;
+            
+            // Check if secondary keys are consecutive
+            return Math.abs(key1.secondary - key2.secondary) <= 1;
+        }
+        
+        if (key1.type === 'single') {
+            // Only check consecutive for numeric types
+            return Math.abs(key1.primary - key2.primary) <= 1;
+        }
+        
+        if (key1.type === 'string') {
+            // For strings, they are only "consecutive" if they're identical
+            return key1.primary === key2.primary;
+        }
+        
+        return false;
     };
 
-    // Sort content by location key
+    // Helper function to create a composite sort key
+    const createSortKey = (location) => {
+        const key = getLocationKey(location);
+        
+        if (key.type === 'hierarchical') {
+            // Create a composite key for hierarchical sorting
+            return `${key.format}_${String(key.primary).padStart(10, '0')}_${String(key.secondary).padStart(10, '0')}`;
+        }
+        
+        if (key.type === 'single') {
+            return `${key.format}_${String(key.primary).padStart(10, '0')}`;
+        }
+        
+        if (key.type === 'string') {
+            return `${key.format}_${key.primary}`;
+        }
+        
+        return `${key.format}_${String(key.primary).padStart(10, '0')}`;
+    };
+
+    // Sort content by location key with proper hierarchical ordering
     const sortedContent = [...contentArray].sort((a, b) => {
-        return getLocationKey(a.location) - getLocationKey(b.location);
+        const sortKeyA = createSortKey(a.location);
+        const sortKeyB = createSortKey(b.location);
+        
+        return sortKeyA.localeCompare(sortKeyB);
     });
 
     const combined = [];

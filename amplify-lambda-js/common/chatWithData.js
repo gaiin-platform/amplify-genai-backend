@@ -200,7 +200,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         await getContextMessages(params, chatRequestOrig, ragDataSources) :
         {messages:[], sources:[]};
 
-    if(ragDataSources.length > 0){
+    if (ragDataSources.length > 0 && sources.length > 0){
         sendStateEventToStream(responseStream, {
           sources: {
               rag:{
@@ -344,7 +344,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 chatRequest:chatRequestOrig
             };
 
-           const statuses = dataSources.map(dataSource => {
+           const statuses = [...dataSources, ...conversationDataSources].map(dataSource => {
                 const status = newStatus({
                     inProgress: true,
                     sticky: false,
@@ -353,8 +353,8 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 });
                 return status;
             });
-
-           statuses.forEach(status => {
+            
+           statuses.map(async (status) => {
                 sendStatusEventToStream(responseStream, status);
                 forceFlush(responseStream);
             });

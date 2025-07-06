@@ -378,8 +378,13 @@ def get_supported_models():
 
 def adjust_data_to_decimal(model):
     for field in COST_FIELDS:
-        if field in model and isinstance(model[field], float):
-            model[field] = Decimal(str(model[field]))
+        if field in model and model[field] is not None:
+            # Handle both float and string values
+            if isinstance(model[field], (float, str)):
+                try:
+                    model[field] = Decimal(str(model[field]))
+                except (ValueError, TypeError) as e:
+                    print(f"Warning: Could not convert {field} value '{model[field]}' to Decimal: {e}")
     return model
 
 

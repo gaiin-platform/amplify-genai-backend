@@ -1,5 +1,36 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+
+/**
+ * Ensures numeric model properties are converted to numbers instead of strings
+ * @param {Object} model - The model object to sanitize
+ * @returns {Object} - The model with numeric properties converted to numbers
+ */
+const ensureNumericProperties = (model) => {
+    if (!model) return model;
+    
+    const numericFields = [
+        'inputContextWindow',
+        'outputTokenLimit',
+        'inputTokenCost',
+        'outputTokenCost', 
+        'cachedTokenCost'
+    ];
+    
+    const sanitizedModel = { ...model };
+    
+    numericFields.forEach(field => {
+        if (sanitizedModel[field] !== undefined && sanitizedModel[field] !== null) {
+            const numValue = Number(sanitizedModel[field]);
+            if (!isNaN(numValue)) {
+                sanitizedModel[field] = numValue;
+            }
+        }
+    });
+    
+    return sanitizedModel;
+};
+
 export const getUserAvailableModels = async (accessToken) => {
     const apiUrl = process.env.API_BASE_URL + '/available_models'; 
     
@@ -24,7 +55,7 @@ export const getUserAvailableModels = async (accessToken) => {
     }
 
     const modelsMap = data.data.models.reduce((acc, model) => {
-        acc[model.id] = model; // Use the model's `id` as the key
+        acc[model.id] = ensureNumericProperties(model); // Use the model's `id` as the key
         return acc;
     }, {});
 
