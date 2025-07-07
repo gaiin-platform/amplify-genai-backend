@@ -125,7 +125,7 @@ def get_workflow_template(current_user, template_id):  # Changed from template_u
     except Exception as e:
         raise RuntimeError(f"Failed to fetch workflow template: {e}")
 
-def list_workflow_templates(current_user):
+def list_workflow_templates(current_user, include_public_templates=False):
     # Get the table name from the environment variable
     table_name = os.environ.get('WORKFLOW_TEMPLATES_TABLE')
     if not table_name:
@@ -141,7 +141,7 @@ def list_workflow_templates(current_user):
         }
 
         # Query the DynamoDB table for all templates by the current user
-        response = dynamodb.query(
+        user_response = dynamodb.query(
             TableName=table_name,
             KeyConditionExpression="#user = :user",
             ExpressionAttributeNames=expression_attribute_names,
@@ -150,8 +150,31 @@ def list_workflow_templates(current_user):
             }
         )
 
+        # Start with user's templates
+        all_items = []
+        if 'Items' in user_response and user_response['Items']:
+            all_items.extend(user_response['Items'])
+
+        # Only scan for public templates if flag is True
+        if include_public_templates:
+            # Scan for public templates from other users (exclude current user)
+            public_response = dynamodb.scan(
+                TableName=table_name,
+                FilterExpression="isPublic = :pub AND #user <> :current_user",
+                ExpressionAttributeNames={
+                    "#user": "user"
+                },
+                ExpressionAttributeValues={
+                    ":pub": {"N": "1"},
+                    ":current_user": {"S": current_user}
+                }
+            )
+
+            if 'Items' in public_response and public_response['Items']:
+                all_items.extend(public_response['Items'])
+
         # Check if any items exist
-        if 'Items' not in response or not response['Items']:
+        if not all_items:
             return []
 
         # Deserialize the items into a list of metadata dictionaries
@@ -165,8 +188,9 @@ def list_workflow_templates(current_user):
                 'outputSchema': deserializer.deserialize(item['outputSchema']),  # Use camel case
                 'isBaseTemplate': deserializer.deserialize(item['isBaseTemplate']) if 'isBaseTemplate' in item else False,
                 'isPublic': deserializer.deserialize(item['isPublic']) if 'isPublic' in item else False,
+                'user': deserializer.deserialize(item['user']),  # Include user info to distinguish ownership
             }
-            for item in response['Items']
+            for item in all_items
         ]
 
         return templates

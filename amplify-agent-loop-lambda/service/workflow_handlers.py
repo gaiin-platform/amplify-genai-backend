@@ -128,15 +128,16 @@ def get_workflow_template_handler(current_user, access_token, template_id):
     schema={
        "type": "object",
         "properties": {
-            "filterBaseTemplates": {"type": "boolean"}
+            "filterBaseTemplates": {"type": "boolean"},
+            "includePublicTemplates": {"type": "boolean"}
         },
         "required": []
     },
     params={"filterBaseTemplates": "Optional boolean to filter for base templates only"}
 )
-def list_workflow_templates_handler(current_user, access_token, filter_base_templates=False):
+def list_workflow_templates_handler(current_user, access_token, filter_base_templates=False, include_public_templates=False):
     try:
-        templates = list_workflow_templates(current_user)
+        templates = list_workflow_templates(current_user, include_public_templates)
         if filter_base_templates:
             templates = [t for t in templates if t['isBaseTemplate']]
         return {"templates": templates}  # No need for conversion; already uses templateId
