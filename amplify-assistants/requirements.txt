@@ -105,7 +105,7 @@ tiktoken==0.8.0
     # via -r requirements.in
 tqdm==4.67.1
     # via openai
-typing-extensions==4.12.2
+typing-extensions==4.14.1
     # via
     #   anyio
     #   openai
