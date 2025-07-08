@@ -74,6 +74,7 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
     DEP_REGION: ${self:custom.stageVars.DEP_REGION} 
+    BEDROCK_GUARDRAIL_ARN: ${self:custom.stageVars.BEDROCK_GUARDRAIL_ARN}
     AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
     AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
     S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
@@ -191,6 +192,7 @@ resources:
                 - sqs:GetQueueAttributes
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
+                - bedrock:ApplyGuardrail
               Resource:
                 - '${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}'
                 - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
@@ -367,8 +369,10 @@ resources:
               Action:
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
+                - bedrock:ApplyGuardrail
               Resource:
                 - 'arn:aws:bedrock:*::foundation-model/*'
+                - '${self:provider.environment.BEDROCK_GUARDRAIL_ARN}'
                 - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
   Outputs:
     BedrockIAMPolicyArn:

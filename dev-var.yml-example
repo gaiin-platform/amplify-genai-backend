@@ -23,6 +23,7 @@ KEYWORD_MODEL_NAME: "gpt-35-turbo"
 CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
 CHAT_ENDPOINT: "" #function url for lambda
 AGENT_ENDPOINT: "" #leave blank for future release
+BEDROCK_GUARDRAIL_ARN: "" # ARN of Bedrock Guardrail from IAC output
 
 
 
