@@ -53,18 +53,27 @@ RUN curl -fsSL https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz -
     ls -l /usr/local/bin/markitdown && \
     chmod 755 /usr/local/bin/markitdown
 
-# Upgrade pip
-RUN pip install --upgrade pip
-
-# Install Lambda Runtime Interface Client (NOT needed unless using custom entrypoint)
-# RUN pip install awslambdaric  ← REMOVE this
+# Install uv (much faster than pip)
+RUN pip install uv
 
 # Set working directory
 WORKDIR /var/task
 
-# Copy and install Python dependencies
-COPY requirements.txt agent-requirements-fat.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r agent-requirements-fat.txt
+# Copy Python dependencies
+COPY agent-requirements-fat.txt  ./
+
+
+RUN    uv pip install --system --no-cache-dir \
+        --only-binary=numpy \
+        --only-binary=tables \
+        --only-binary=sqlite-utils \
+        --only-binary=mtcnn \
+        --only-binary=scikit-image \
+        --only-binary=scikit-learn \
+        --only-binary=scipy \
+        --only-binary=matplotlib \
+        --only-binary=xgboost \
+        -r agent-requirements-fat.txt
 
 # Copy application code
 COPY . .

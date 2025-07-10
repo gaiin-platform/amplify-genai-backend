@@ -3,7 +3,16 @@ set -e
 
 REGION="us-east-1"
 STAGE="${1:-dev}"
-REPOSITORY_URI="654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo"
+DEV_REPOSITORY_URI="654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo"
+PROD_REPOSITORY_URI="514391678313.dkr.ecr.us-east-1.amazonaws.com/prod-amplifygenai-repo"
+
+# Set repository URI based on stage
+if [ "$STAGE" = "prod" ]; then
+    REPOSITORY_URI="$PROD_REPOSITORY_URI"
+else
+    REPOSITORY_URI="$DEV_REPOSITORY_URI"
+fi
+
 IMAGE_TAG="${STAGE}-agent-router-fat"
 
 echo "Building container image for stage: $STAGE"

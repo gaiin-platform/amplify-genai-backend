@@ -1,6 +1,6 @@
-git+https://github.com/gaiin-platform/pycommon.git@pre-release/v0.0.1
-numpy==1.26.4
-pandas==2.2.3
+numpy
+numpy-financial
+pandas
 aws-xray-sdk
 dataclasses-json
 duckdb
@@ -17,7 +17,6 @@ scikit-posthocs
 sqlite-utils
 typer-cli
 unstructured
-xlcalculator
 absl-py
 affine
 aiofiles
@@ -220,7 +219,7 @@ pydyf
 pygments
 pylog
 pyluach
-pymupdf==1.23.26
+pymupdf
 pynacl
 pypandoc
 pyparsing
@@ -237,7 +236,6 @@ pyth3
 python-dateutil
 python-docx
 python-pptx
-pyttsx3
 pytz
 pytz-deprecation-shim
 pywavelets
@@ -328,3 +326,10 @@ xpdf
 yarl
 zipp
 zopfli
+litellm
+litellm
+boto3
+jose
+python_jose
+croniter
+vanna
