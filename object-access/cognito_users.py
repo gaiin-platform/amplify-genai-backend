@@ -6,12 +6,14 @@ import os
 import re
 import boto3
 from botocore.exceptions import ClientError
-from pycommon.authz import validated, setup_validated
+from pycommon.const import APIAccessType
+from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
 setup_validated(rules, get_permission_checker)
-
+add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value, 
+                      APIAccessType.ADMIN.value, APIAccessType.API_KEY.value,])
 
 @validated("read")
 def get_emails(event, context, current_user, name, data):

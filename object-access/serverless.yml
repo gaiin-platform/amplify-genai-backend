@@ -187,7 +187,7 @@ functions:
           method: post
           cors: true
 
-  update_members:
+  update_group_members:
     handler: groups.update_members
     layers:
       - Ref: PythonRequirementsLambdaLayer

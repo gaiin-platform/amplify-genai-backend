@@ -269,7 +269,6 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 def share_with_users(event, context, current_user, name, data):
     access_token = data["access_token"]
     data = data["data"]
-    print(data)
 
     valid_users, _ = are_valid_amplify_users(access_token, data["sharedWith"])
 

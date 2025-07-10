@@ -61,6 +61,7 @@ rules = {
             "simulate_access_to_objects": simulate_access_to_objects
         },
         "/groups/verify_ast_group_member": {"verify_member": groupId_schema},
+        "/utilities/emails": {"read": {}},
     }
 }
 

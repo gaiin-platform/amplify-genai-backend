@@ -119,7 +119,7 @@ def filter_for_valid_members_dict(members, access_token):
         return members
     
     users = members.keys()
-    _, invalid_users = are_valid_amplify_users(access_token, users)
+    _, invalid_users = are_valid_amplify_users(access_token, list(users))
     for invalid in invalid_users:
         del members[invalid]
     return members
