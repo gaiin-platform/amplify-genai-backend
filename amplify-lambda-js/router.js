@@ -208,7 +208,6 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 responseStream);
             chatSegment.close();
             
-            await deleteRequestState(params.user, requestId);
 
             if(doTrace) {
                 trace(requestId, ["response"], {stream: responseStream.trace})
