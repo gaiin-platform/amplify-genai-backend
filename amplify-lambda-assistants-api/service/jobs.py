@@ -5,12 +5,15 @@ import boto3
 import os
 import json
 
+
 def stop_job(current_user, job_id):
     set_job_result(current_user, job_id, {"status": "stopped"})
+
 
 def is_job_stopped(current_user, job_id):
     job_status = check_job_status(current_user, job_id)
     return job_status == "stopped"
+
 
 def init_job_status(current_user, initial_status):
 
@@ -31,7 +34,7 @@ def init_job_status(current_user, initial_status):
                 "job_id": job_id,
                 "status": initial_status,
                 "created_at": int(time.time()),
-                "updated_at": int(time.time())
+                "updated_at": int(time.time()),
             }
         )
         print(f"Job status initialized for {current_user}/{job_id}")
@@ -39,6 +42,7 @@ def init_job_status(current_user, initial_status):
     except Exception as e:
         print(f"Error initializing job status: {e}")
         raise RuntimeError(f"Error initializing job status: {e}")
+
 
 def update_job_status(current_user, job_id, status):
 
@@ -62,8 +66,8 @@ def update_job_status(current_user, job_id, status):
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={
                 ":status": status,
-                ":timestamp": int(time.time())
-            }
+                ":timestamp": int(time.time()),
+            },
         )
         print(f"Job status updated for {current_user}/{job_id} to {status}")
         return {"message": "Job status updated successfully"}
@@ -104,7 +108,7 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
                 Bucket=bucket_name,
                 Key=s3_key,
                 Body=json.dumps(result),
-                ContentType="application/json"
+                ContentType="application/json",
             )
 
             print(f"Result uploaded to S3: {bucket_name}/{s3_key}")
@@ -117,8 +121,8 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
                 ExpressionAttributeValues={
                     ":s3_ref": {"bucket": bucket_name, "key": s3_key},
                     ":status": "finished",
-                    ":timestamp": int(time.time())
-                }
+                    ":timestamp": int(time.time()),
+                },
             )
 
             print(f"Stored result reference in DynamoDB for {current_user}/{job_id}")
@@ -135,8 +139,8 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
             ExpressionAttributeValues={
                 ":res": result,
                 ":status": "finished",
-                ":timestamp": int(time.time())
-            }
+                ":timestamp": int(time.time()),
+            },
         )
 
         print(f"Result stored directly in DynamoDB for {current_user}/{job_id}")
@@ -147,9 +151,11 @@ def set_job_result(current_user, job_id, result, store_in_s3=False):
         print(f"Error setting job result: {e}")
         raise RuntimeError(f"Error setting job result: {e}")
 
+
 # Example usage
 # result_data = {"status": "complete", "output": "some data"}
 # set_job_result("user123", "job123", result_data, store_in_s3=True)
+
 
 def check_job_status(current_user, job_id):
     # Environment variable for DynamoDB table

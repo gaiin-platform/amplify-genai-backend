@@ -1,8 +1,16 @@
 from decimal import Decimal
 from requests.auth import HTTPBasicAuth
-from common.encoders import DecimalEncoder
-from common.ops import vop
-from common.validate import validated
+from pycommon.encoders import SafeDecimalEncoder
+
+from pycommon.authz import validated, setup_validated
+from schemata.schema_validation_rules import rules
+from schemata import permissions
+
+setup_validated(rules, permissions.get_permission_checker)
+from pycommon.api.ops import api_tool, set_permissions_by_state
+
+set_permissions_by_state(permissions)
+
 import json
 import requests
 import os
@@ -10,50 +18,69 @@ import boto3
 from datetime import datetime
 import re
 import urllib.parse
-
-from integrations.oauth import get_user_credentials
 from service.jobs import check_job_status, set_job_result
 
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(os.environ['OP_LOG_DYNAMO_TABLE'])
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table(os.environ["OP_LOG_DYNAMO_TABLE"])
+
 
 def log_execution(current_user, data, code, message, result, metadata={}):
     try:
-        if not os.environ.get('OP_TRACING_ENABLED', 'false').lower() == 'true':
+        if not os.environ.get("OP_TRACING_ENABLED", "false").lower() == "true":
             return
 
         timestamp = datetime.utcnow().isoformat()
 
         # If there is metadata start_time, use it as the timestamp
-        if 'start_time' in metadata:
-            timestamp = metadata['start_time']
+        if "start_time" in metadata:
+            timestamp = metadata["start_time"]
             # convert it to the right format
-            timestamp = timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            timestamp = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-        log_item = json.loads(json.dumps({
-            'user': current_user,
-            'timestamp': timestamp,
-            'metadata': metadata,
-            'conversationId': data['conversation'],
-            'messageId': data['message'],
-            'assistantId': data.get('assistant',"chat"),
-            'actionName': data['action']['name'],
-            'resultCode': code,
-            'resultMessage': message,
-            'operationDefinition': data['operationDefinition'],
-            'actionPayload': data['action'].get('payload',{}) if os.environ.get('OP_TRACING_REQUEST_DETAILS_ENABLED', 'false').lower() == 'true' else None,
-            'result': result if os.environ.get('OP_TRACING_RESULT_DETAILS_ENABLED', 'false').lower() == 'true' else None
-        }, cls=DecimalEncoder), parse_float=Decimal)
+        log_item = json.loads(
+            json.dumps(
+                {
+                    "user": current_user,
+                    "timestamp": timestamp,
+                    "metadata": metadata,
+                    "conversationId": data["conversation"],
+                    "messageId": data["message"],
+                    "assistantId": data.get("assistant", "chat"),
+                    "actionName": data["action"]["name"],
+                    "resultCode": code,
+                    "resultMessage": message,
+                    "operationDefinition": data["operationDefinition"],
+                    "actionPayload": (
+                        data["action"].get("payload", {})
+                        if os.environ.get(
+                            "OP_TRACING_REQUEST_DETAILS_ENABLED", "false"
+                        ).lower()
+                        == "true"
+                        else None
+                    ),
+                    "result": (
+                        result
+                        if os.environ.get(
+                            "OP_TRACING_RESULT_DETAILS_ENABLED", "false"
+                        ).lower()
+                        == "true"
+                        else None
+                    ),
+                },
+                cls=SafeDecimalEncoder,
+            ),
+            parse_float=Decimal,
+        )
 
         log_item = {k: v for k, v in log_item.items() if v is not None}
 
         # We have to make sure that we stay in the size limits of DynamoDB rows
-        item_size = len(json.dumps(log_item, cls=DecimalEncoder))
+        item_size = len(json.dumps(log_item, cls=SafeDecimalEncoder))
         if item_size > 400000:
-            for key in ['result', 'actionPayload', 'operationDefinition']:
+            for key in ["result", "actionPayload", "operationDefinition"]:
                 if key in log_item:
                     del log_item[key]
-                    if len(json.dumps(log_item, cls=DecimalEncoder)) <= 400000:
+                    if len(json.dumps(log_item, cls=SafeDecimalEncoder)) <= 400000:
                         break
 
         table.put_item(Item=log_item)
@@ -61,21 +88,17 @@ def log_execution(current_user, data, code, message, result, metadata={}):
         print(f"Error logging execution: {str(e)}")
 
 
-def build_amplify_api_action(current_user, token, data, method = "POST"):
-    base_url = os.environ.get('API_BASE_URL', None)
+def build_amplify_api_action(current_user, token, data, method="POST"):
+    base_url = os.environ.get("API_BASE_URL", None)
     if not base_url:
         raise ValueError("API_BASE_URL environment variable is not set")
 
     endpoint = data["operationDefinition"]["url"]
     url = f"{base_url}{endpoint}"
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     payload = data["action"].get("payload", {})
-
 
     def send_request():
         if method.upper() == "GET":
@@ -83,8 +106,10 @@ def build_amplify_api_action(current_user, token, data, method = "POST"):
             response = requests.get(url, headers=headers, params=payload)
         else:
             print(f"Sending POST request to {url} with payload: {payload}")
-            response = requests.post(url, headers=headers, data=json.dumps({"data": payload}))
-        
+            response = requests.post(
+                url, headers=headers, data=json.dumps({"data": payload})
+            )
+
         response.raise_for_status()
 
         result = None
@@ -113,7 +138,9 @@ def print_curl_command(method, url, headers, body, auth_instance):
     print(curl_command)
 
 
-def replace_placeholders(value, payload, url_encode=False, escape_quotes=False, escape_newlines=False):
+def replace_placeholders(
+    value, payload, url_encode=False, escape_quotes=False, escape_newlines=False
+):
     def replace(match):
         key = match.group(1)
         replacement = str(payload.get(key, match.group(0)))
@@ -122,13 +149,18 @@ def replace_placeholders(value, payload, url_encode=False, escape_quotes=False, 
         if escape_quotes:
             replacement = replacement.replace('"', '\\"')
         if escape_newlines:
-            replacement = replacement.replace('\n', '\\n').replace('\r', '\\r')
+            replacement = replacement.replace("\n", "\\n").replace("\r", "\\r")
         return replacement
 
     if isinstance(value, str):
-        return re.sub(r'\${(\w+)}', replace, value)
+        return re.sub(r"\${(\w+)}", replace, value)
     elif isinstance(value, dict):
-        return {k: replace_placeholders(v, payload, url_encode, escape_quotes, escape_newlines) for k, v in value.items()}
+        return {
+            k: replace_placeholders(
+                v, payload, url_encode, escape_quotes, escape_newlines
+            )
+            for k, v in value.items()
+        }
     return value
 
 
@@ -138,10 +170,16 @@ def build_http_action(current_user, data):
     action = data.get("action", {})
     payload = action.get("payload", {})
     operation_definition = data.get("operationDefinition", {})
-    url = replace_placeholders(operation_definition.get("url", ""), payload, url_encode=True)
+    url = replace_placeholders(
+        operation_definition.get("url", ""), payload, url_encode=True
+    )
     method = operation_definition.get("requestType", "GET")
-    headers = replace_placeholders(operation_definition.get("headers", {}), payload, escape_newlines=True)
-    body = replace_placeholders(operation_definition.get("body", ""), payload, escape_quotes=True)
+    headers = replace_placeholders(
+        operation_definition.get("headers", {}), payload, escape_newlines=True
+    )
+    body = replace_placeholders(
+        operation_definition.get("body", ""), payload, escape_quotes=True
+    )
     auth = operation_definition.get("auth", None)
 
     # print everything
@@ -160,13 +198,11 @@ def build_http_action(current_user, data):
             print("Setting up bearer token authentication.")
             headers["Authorization"] = f"Bearer {auth['token']}"
         elif auth["type"].lower() == "basic":
-            auth_instance = HTTPBasicAuth(
-                auth["username"], auth["password"]
-            )
+            auth_instance = HTTPBasicAuth(auth["username"], auth["password"])
 
     def action():
 
-        #print everything going into the request in a nice format similar to the function call
+        # print everything going into the request in a nice format similar to the function call
         debug = True
         if debug:
             print(f"Final HTTP action for URL: {url}")
@@ -175,7 +211,6 @@ def build_http_action(current_user, data):
             print(f"Headers: {headers}")
             print(f"Auth: {auth_instance}")
             print_curl_command(method, url, headers, body, auth_instance)
-
 
         # Make the request
         response = requests.request(
@@ -194,6 +229,7 @@ def build_http_action(current_user, data):
 
     return action
 
+
 def resolve_op_definition(current_user, token, action_name, data):
     op_def = data.get("operationDefinition", None)
     if not op_def:
@@ -204,28 +240,27 @@ def resolve_op_definition(current_user, token, action_name, data):
         # a bearer token
         headers = {
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        payload = {
-            "data": {
-                "tag": "default"
-            }
-        }
+        payload = {"data": {"tag": "default"}}
         try:
-            response = requests.post(f"{api_base}/ops/get", headers=headers, data=json.dumps(payload))
+            response = requests.post(
+                f"{api_base}/ops/get", headers=headers, data=json.dumps(payload)
+            )
             response.raise_for_status()
             result = response.json()
 
             print(f"Result: {result}")
             # convert to dict
-            ops = result.get('data', [])
+            ops = result.get("data", [])
             print(f"Ops: {ops}")
             # find the operation definition with the name action_name
-            op_def = next((op for op in ops if op.get('name', None) == action_name), None)
+            op_def = next(
+                (op for op in ops if op.get("name", None) == action_name), None
+            )
         except Exception as e:
             print(f"Failed to resolve operation definition: {str(e)}")
             return None
-
 
     if op_def and not data.get("operationDefinition", None):
         data["operationDefinition"] = op_def
@@ -235,7 +270,7 @@ def resolve_op_definition(current_user, token, action_name, data):
 
 
 def build_action(current_user, token, action_name, data):
-    #return build_http_action(current_user, data)
+    # return build_http_action(current_user, data)
     op_def = resolve_op_definition(current_user, token, action_name, data)
 
     if not op_def:
@@ -252,7 +287,12 @@ def build_action(current_user, token, action_name, data):
         return build_http_action(current_user, data)
 
     print("Unknown operation type.")
-    return lambda : (200, "Unknown operation type.", {"data": "Please double check the operation defintion."})
+    return lambda: (
+        200,
+        "Unknown operation type.",
+        {"data": "Please double check the operation defintion."},
+    )
+
 
 @validated("execute_custom_auto")
 def execute_custom_auto(event, context, current_user, name, data):
@@ -280,7 +320,7 @@ def execute_custom_auto(event, context, current_user, name, data):
             return 404, "The specified operation was not found. Double check the name and ID of the action.", None
 
         try:
-            #Log the execution time
+            # Log the execution time
             print("Executing action...")
             start_time = datetime.now()
             code, message, result = action()
@@ -292,65 +332,98 @@ def execute_custom_auto(event, context, current_user, name, data):
             metadata = {
                 "startTime": start_time.isoformat(),
                 "endTime": end_time.isoformat(),
-                "executionTime": str(end_time - start_time)
+                "executionTime": str(end_time - start_time),
             }
 
             log_execution(current_user, nested_data, code, message, result, metadata)
 
             # Return the response content
             return {
-                'success': True,
-                'data': {
-                    'code': code,
-                    'message': message,
-                    'result': result
-                }
+                "success": True,
+                "data": {"code": code, "message": message, "result": result},
             }
         except Exception as e:
             error_result = {
-                'success': False,
-                'data': {
-                    'code': 500,
-                    'message': f"An unexpected error occurred: {str(e)}",
-                    'result': None
-                }
+                "success": False,
+                "data": {
+                    "code": 500,
+                    "message": f"An unexpected error occurred: {str(e)}",
+                    "result": None,
+                },
             }
-            log_execution(current_user, nested_data, 500, f"An unexpected error occurred: {str(e)}", error_result)
+            log_execution(
+                current_user,
+                nested_data,
+                500,
+                f"An unexpected error occurred: {str(e)}",
+                error_result,
+            )
 
             print(f"An error occurred while executing the action: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            return {"success": False, "error": str(e)}
 
     except Exception as e:
         error_result = {
-            'success': False,
-            'data': {
-                'code': 500,
-                'message': f"An unexpected error occurred: {str(e)}",
-                'result': None
-            }
+            "success": False,
+            "data": {
+                "code": 500,
+                "message": f"An unexpected error occurred: {str(e)}",
+                "result": None,
+            },
         }
-        log_execution(current_user, data.get('data',{}), 500,  f"An unexpected error occurred: {str(e)}", error_result)
+        log_execution(
+            current_user,
+            data.get("data", {}),
+            500,
+            f"An unexpected error occurred: {str(e)}",
+            error_result,
+        )
 
         return f"An unexpected error occurred: {str(e)}"
 
-@vop(
+
+@api_tool(
     path="/assistant-api/get-job-result",
     tags=["default"],
     name="getJobResult",
     description="Returns the status of the job and/or the result if it is finished.",
-    params={
-        "jobId": "The job ID to fetch the result / status of."
-    },
     parameters={
         "type": "object",
         "properties": {
-            "jobId": {"type": "string"}
+            "jobId": {
+                "type": "string",
+                "description": "The job ID to fetch the result / status of.",
+            }
         },
-        "required": ["jobId"]
-    }
+        "required": ["jobId"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the operation was successful",
+            },
+            "data": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "description": "Job result data when job is finished",
+                    },
+                    {
+                        "type": "string",
+                        "description": "Job status (running, finished, stopped) or error message (Job not found, Unknown state)",
+                    },
+                ],
+                "description": "Job status, result data, or error message",
+            },
+            "error": {
+                "type": "string",
+                "description": "Error message when operation fails",
+            },
+        },
+        "required": ["success"],
+    },
 )
 @validated("get_result")
 def get_job_result(event, context, current_user, name, data):
@@ -362,15 +435,9 @@ def get_job_result(event, context, current_user, name, data):
         job_id = nested_data["jobId"]
 
         result = check_job_status(current_user, job_id)
-        return {
-            'success': True,
-            'data': result
-        }
+        return {"success": True, "data": result}
     except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @validated("set_result")
@@ -385,46 +452,6 @@ def update_job_result(event, context, current_user, name, data):
 
         set_job_result(current_user, job_id, result, store_in_s3)
 
-        return {
-            'success': True,
-            'data': {
-                'message': "Job result updated."
-            }
-        }
+        return {"success": True, "data": {"message": "Job result updated."}}
     except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
-
-
-@vop(
-    path="/integrations/oauth/user/get",
-    tags=["default"],
-    name="getUserOAuthTokenForService",
-    description="Returns a token for the specified integration if the user has enabled it.",
-    params={
-        "integration": "The name of the integration (e.g., google_sheets)"
-    },
-    parameters={
-        "type": "object",
-        "properties": {
-            "integration": {"type": "string", "description": "The name of the integration (e.g., google_sheets)"}
-        },
-        "required": ["integration"]
-    }
-)
-@validated("get_user_oauth_token")
-def get_user_oauth_token(event, context, current_user, name, data):
-    try:
-        integration = data["data"]["integration"]
-        token = get_user_credentials(current_user, integration)
-        return {
-            'success': token is not None,
-            'data': token
-        }
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        return {"success": False, "error": str(e)}

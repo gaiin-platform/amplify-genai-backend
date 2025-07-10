@@ -82,16 +82,6 @@ functions:
           path: integrations/oauth/user/list
           method: get
 
-  getUserOAuthToken:
-    handler: service/core.get_user_oauth_token
-    timeout: 30
-    events:
-      - http:
-          path: integrations/oauth/user/get
-          method: post
-    environment:
-      OAUTH_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/oauth/integrations/encryption #must start with /
-
   listIntegrationFiles:
     handler: integrations/drive_files.list_integration_files
     timeout: 300

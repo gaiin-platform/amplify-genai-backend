@@ -9,7 +9,7 @@ def get_permission_checker(user, ptype, op, data):
     )
 
 
-def can_execute_custom_auto(user, data): 
+def can_execute_custom_auto(user, data):
     return True
 
 
@@ -25,38 +25,26 @@ permissions_by_state_type = {
     "/assistant-api/execute-custom-auto": {
         "execute_custom_auto": can_execute_custom_auto
     },
-    "/integrations/oauth/start-auth": {
-        "start_oauth": lambda for_user, with_data: True
-    },
-   
+    "/integrations/oauth/start-auth": {"start_oauth": lambda for_user, with_data: True},
     "/integrations/oauth/user/delete": {
         "delete_integration": lambda for_user, with_data: True
     },
-    "/assistant-api/get-job-result": {
-        "get_result": lambda for_user, with_data: True
-    },
-    "/assistant-api/set-job-result": {
-        "set_result": lambda for_user, with_data: True
-    }, 
+    "/assistant-api/get-job-result": {"get_result": lambda for_user, with_data: True},
+    "/assistant-api/set-job-result": {"set_result": lambda for_user, with_data: True},
     "/integrations/oauth/user/list": {
         "list_integrations": lambda for_user, with_data: True
     },
     "/integrations/list_supported": {
         "list_integrations": lambda for_user, with_data: True
     },
-    "/integrations/user/files": {
-        "list_files": lambda for_user, with_data: True
-    },
+    "/integrations/user/files": {"list_files": lambda for_user, with_data: True},
     "/integrations/user/files/download": {
         "download_file": lambda for_user, with_data: True
     },
     "/integrations/oauth/register_secret": {
         "register_secret": lambda for_user, with_data: True
     },
-     "/integrations/oauth/refresh_token": {
+    "/integrations/oauth/refresh_token": {
         "refresh_token": lambda for_user, with_data: True
     },
-    "/integrations/oauth/user/get": {
-        "get_user_oauth_token": lambda for_user, with_data: True
-    }
 }
