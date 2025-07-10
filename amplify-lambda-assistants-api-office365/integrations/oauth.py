@@ -2,62 +2,89 @@ from datetime import datetime, timezone
 import json
 import os
 import requests
-from common.validate import validated
 import boto3
 from .integrationsList import integrations_list
-from common.secrets import get_secret_parameter
-from common.oauth_encryption import decrypt_oauth_data
-from common.oauth import refresh_integration_token, get_user_integrations
+from pycommon.api.secrets import get_secret_parameter
+from auth.oauth_encryption import decrypt_oauth_data
+from auth.oauth import refresh_integration_token, get_user_integrations
+from pycommon.authz import validated, setup_validated
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
+
+setup_validated(rules, get_permission_checker)
+
 PROVIDER = "microsoft"
 MAX_RETRIES = 2
+
+
 # Define a custom error for missing credentials
 class MissingCredentialsError(Exception):
     pass
 
 
-def get_user_credentials(current_user, integration, access_token, retry_num = 0, available_integrations = None):
+def get_user_credentials(
+    current_user, integration, access_token, retry_num=0, available_integrations=None
+):
     if retry_num > MAX_RETRIES:
-        raise Exception(f"Failed to refresh credentials for user {current_user} and integration {integration} after {MAX_RETRIES} retries")
+        raise Exception(
+            f"Failed to refresh credentials for user {current_user} and integration {integration} after {MAX_RETRIES} retries"
+        )
 
-    oauth_user_table_name = os.environ.get('OAUTH_USER_TABLE')
+    oauth_user_table_name = os.environ.get("OAUTH_USER_TABLE")
 
     if not oauth_user_table_name:
         raise ValueError("OAUTH_USER_TABLE environment variable is not set")
-    
-    if (not available_integrations):
+
+    if not available_integrations:
         available_integrations = get_user_integrations(access_token)
-        if (not available_integrations):
+        if not available_integrations:
             print(f"Failed to retrieve supported integrations for user {current_user}")
-            raise Exception(f"Failed to retrieve supported integrations for user {current_user}")
-        elif (integration not in available_integrations):
+            raise Exception(
+                f"Failed to retrieve supported integrations for user {current_user}"
+            )
+        elif integration not in available_integrations:
             print(f"Integration {integration} is not currently available")
             raise Exception(f"Integration {integration} is not currently available")
 
-    dynamodb = boto3.resource('dynamodb')
+    dynamodb = boto3.resource("dynamodb")
     oauth_user_table = dynamodb.Table(oauth_user_table_name)
 
     item_key = f"{current_user}/{PROVIDER}"
-    
-    print(f"Retrieving credentials for user {current_user} and integration {integration} using key {item_key}")
+
+    print(
+        f"Retrieving credentials for user {current_user} and integration {integration} using key {item_key}"
+    )
     try:
-        response = oauth_user_table.get_item(Key={'user_integration': item_key})
-        record = response.get('Item')
-        if record and 'integrations' in record:
-            integration_map = record['integrations']
+        response = oauth_user_table.get_item(Key={"user_integration": item_key})
+        record = response.get("Item")
+        if record and "integrations" in record:
+            integration_map = record["integrations"]
             credentials = integration_map.get(integration)
             if credentials:
                 credentials = decrypt_oauth_data(credentials)
 
-                if check_credentials_expired(credentials.get('expires_at')):
-                    print(f"Credentials for user {current_user} and integration {integration} are expired")
+                if check_credentials_expired(credentials.get("expires_at")):
+                    print(
+                        f"Credentials for user {current_user} and integration {integration} are expired"
+                    )
                     result = refresh_integration_token(access_token, integration)
                     if not result:
-                        raise Exception(f"Failed to refresh credentials for user {current_user} and integration {integration}")
+                        raise Exception(
+                            f"Failed to refresh credentials for user {current_user} and integration {integration}"
+                        )
 
-                    return get_user_credentials(current_user, integration, access_token, retry_num + 1, available_integrations)
+                    return get_user_credentials(
+                        current_user,
+                        integration,
+                        access_token,
+                        retry_num + 1,
+                        available_integrations,
+                    )
 
                 return credentials
-        raise MissingCredentialsError(f"No credentials found for user {current_user} and integration {integration}")
+        raise MissingCredentialsError(
+            f"No credentials found for user {current_user} and integration {integration}"
+        )
     except Exception as e:
         print(f"Error retrieving credentials from DynamoDB: {str(e)}")
         raise e
@@ -76,41 +103,37 @@ def check_credentials_expired(expires_at: int) -> bool:
     return current_ts >= expires_at
 
 
-
 def get_ms_graph_session(current_user, integration, access_token):
     """
     Reuse get_user_credentials(...) to fetch a stored Microsoft Graph token
     and return a requests.Session with the correct Authorization header.
     """
-    creds = get_user_credentials(current_user, integration, access_token) 
-    token = creds.get('token')
+    creds = get_user_credentials(current_user, integration, access_token)
+    token = creds.get("token")
     if not token:
-        raise MissingCredentialsError(f"Missing access_token for {integration} user {current_user}")
+        raise MissingCredentialsError(
+            f"Missing access_token for {integration} user {current_user}"
+        )
 
     session = requests.Session()
-    session.headers.update({
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    })
+    session.headers.update(
+        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    )
     return session
-
 
 
 @validated("get")
 def get_integrations(event, context, current_user, name, data):
-    stage = os.environ.get('INTEGRATION_STAGE')
+    stage = os.environ.get("INTEGRATION_STAGE")
     secret_param = f"integrations/{PROVIDER}/{stage}"
     secrets_value = None
     try:
-        secrets_value = get_secret_parameter(secret_param, '/oauth')
+        secrets_value = get_secret_parameter(secret_param, "/oauth")
     except Exception as e:
         print(f"Error retrieving secrets: {str(e)}")
         print(f"Setting secrets to empty values")
 
-    secrets = { "client_id": '',
-                "client_secret": '',
-                "tenant_id": ''
-              }
+    secrets = {"client_id": "", "client_secret": "", "tenant_id": ""}
     if secrets_value:
         secrets_json = json.loads(secrets_value)
         secrets_data = secrets_json["client_config"]["web"]
@@ -119,6 +142,7 @@ def get_integrations(event, context, current_user, name, data):
         secrets["tenant_id"] = secrets_data["tenant_id"]
 
     # get secrets from param store
-    return {"success": True, "data": { "integrations": integrations_list, 
-                                       "secrets": secrets
-                                     } }
+    return {
+        "success": True,
+        "data": {"integrations": integrations_list, "secrets": secrets},
+    }
