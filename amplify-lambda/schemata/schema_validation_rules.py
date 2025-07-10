@@ -74,5 +74,6 @@ rules = {
         "/state/conversation/get/metadata": {"read": {}},
         "/state/conversation/get/since/{timestamp}": {"read": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
+        "/files/delete": {"delete": file_delete_schema},
     },
 }
