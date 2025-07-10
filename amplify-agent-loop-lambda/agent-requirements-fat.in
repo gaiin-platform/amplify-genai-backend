@@ -3,7 +3,6 @@ numpy-financial
 pandas
 aws-xray-sdk
 dataclasses-json
-duckdb
 jsonlines
 pandas-stubs
 pdfquery
