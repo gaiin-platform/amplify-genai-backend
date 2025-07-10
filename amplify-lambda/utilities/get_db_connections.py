@@ -66,9 +66,25 @@ def lambda_handler(
         items = response.get("Items", [])
         # logger.debug("Number of items retrieved: %d", len(items))
 
+        # Mask sensitive fields in the response for security
+        def mask_sensitive_fields(item):
+            """Mask sensitive fields in database connection items."""
+            masked_item = item.copy()
+            sensitive_fields = ["password", "credentials"]
+
+            for field in sensitive_fields:
+                if field in masked_item and masked_item[field]:
+                    # Replace with asterisks to indicate the field exists but hide the value
+                    masked_item[field] = "********"
+
+            return masked_item
+
+        # Apply masking to all items
+        masked_items = [mask_sensitive_fields(item) for item in items]
+
         # Create a detailed response that includes both the connections and debug info
         response_body = {
-            "connections": items,
+            "connections": masked_items,
             "debug_info": {
                 "user": user,
                 "total_connections": len(items),

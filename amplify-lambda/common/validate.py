@@ -730,20 +730,30 @@ set_metdata_schema = {
 }
 
 test_db_connection_schema = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string"},
-        "host": {"type": ["string", "null"]},
-        "port": {"type": ["string", "number", "null"]},
-        "database": {"type": "string"},
-        "username": {"type": ["string", "null"]},
-        "password": {"type": ["string", "null"]},
-        "account": {"type": ["string", "null"]},
-        "warehouse": {"type": ["string", "null"]},
-        "schema": {"type": ["string", "null"]},
-    },
-    "required": ["type", "database"],
-    "additionalProperties": True,
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {"connection_id": {"type": "string"}},
+            "required": ["connection_id"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string"},
+                "host": {"type": ["string", "null"]},
+                "port": {"type": ["string", "number", "null"]},
+                "database": {"type": "string"},
+                "username": {"type": ["string", "null"]},
+                "password": {"type": ["string", "null"]},
+                "account": {"type": ["string", "null"]},
+                "warehouse": {"type": ["string", "null"]},
+                "schema": {"type": ["string", "null"]},
+            },
+            "required": ["type", "database"],
+            "additionalProperties": True,
+        },
+    ]
 }
 
 save_db_connection_schema = {

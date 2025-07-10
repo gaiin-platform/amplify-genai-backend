@@ -1,28 +1,130 @@
 import json
 import os
 import logging
+import boto3
 from common.validate import validated
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Initialize DynamoDB
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table(os.environ["DB_CONNECTIONS_TABLE"])
+
+
+def get_raw_connection_data(connection_id, user):
+    """Fetch raw connection data directly from DynamoDB."""
+    try:
+        logger.info(
+            f"Fetching raw connection data for ID: {connection_id}, User: {user}"
+        )
+
+        # Query the table for the specific connection using only id as primary key
+        response = table.get_item(Key={"id": connection_id})
+
+        if "Item" not in response:
+            logger.error(f"Connection not found: {connection_id}")
+            return None
+
+        item = response["Item"]
+
+        # Verify that the connection belongs to the current user
+        if item.get("user") != user:
+            logger.error(f"Connection {connection_id} does not belong to user {user}")
+            return None
+
+        logger.info(
+            f"Raw connection data retrieved. Password length: {len(item.get('password', ''))}"
+        )
+
+        return item
+
+    except Exception as e:
+        logger.error(f"Error fetching raw connection data: {str(e)}")
+        return None
+
 
 @validated("test_connection")
 def lambda_handler(event, context, current_user=None, name=None, data=None):
     try:
         logger.info("Received event for database connection test")
+        logger.info(f"Current user: {current_user}")
+        logger.info(f"Event body: {json.dumps(event.get('body', {}), indent=2)}")
+
         body = event.get("body")
         if isinstance(body, str):
             body = json.loads(body)
 
         # Handle nested data structure
         if isinstance(body, dict) and "data" in body:
-            db_config = body["data"].get("config", {})
-            db_type = body["data"].get("type")
+            request_data = body["data"]
+            connection_id = request_data.get("connection_id")
+            db_config = request_data.get("config", {})
+            db_type = request_data.get("type")
         else:
-            db_config = body if isinstance(body, dict) else {}
-            db_type = db_config.get("type")
+            request_data = body if isinstance(body, dict) else {}
+            connection_id = request_data.get("connection_id")
+            db_config = request_data.get("config", {})
+            db_type = request_data.get("type")
+
+        logger.info(f"Connection ID: {connection_id}")
+        logger.info(f"DB Type: {db_type}")
+        logger.info(f"Config keys: {list(db_config.keys()) if db_config else 'None'}")
+
+        # If we have a connection_id, fetch the raw data from DynamoDB
+        if connection_id:
+            logger.info(f"Fetching raw connection data for ID: {connection_id}")
+            raw_data = get_raw_connection_data(connection_id, current_user)
+            if raw_data:
+                db_config = raw_data
+                db_type = raw_data.get("type")
+                logger.info(f"Using raw data from DynamoDB. Type: {db_type}")
+            else:
+                return {
+                    "statusCode": 404,
+                    "body": json.dumps(
+                        {
+                            "success": False,
+                            "error": f"Connection not found: {connection_id}",
+                        }
+                    ),
+                }
+        else:
+            logger.info("No connection_id provided, using config from request")
+            # Check if the password looks like it might be masked
+            password = db_config.get("password")
+            if password and password == "********":
+                logger.warning(
+                    "Password appears to be masked (********). This suggests the frontend is passing masked data from get_db_connections."
+                )
+                logger.warning(
+                    "To fix this, the frontend should pass connection_id instead of the masked config."
+                )
+                return {
+                    "statusCode": 400,
+                    "body": json.dumps(
+                        {
+                            "success": False,
+                            "error": "Password appears to be masked. Please pass connection_id instead of masked config data.",
+                        }
+                    ),
+                }
+
+        # Log the config structure (without sensitive data)
+        safe_config = {
+            k: v for k, v in db_config.items() if k not in ["password", "credentials"]
+        }
+        logger.info(f"Database config structure: {json.dumps(safe_config, indent=2)}")
+
+        # Check if password is present
+        password = db_config.get("password")
+        if password:
+            logger.info(
+                f"Password found in config. Length: {len(password)}, Preview: {password[:8]}..."
+            )
+        else:
+            logger.info("No password found in config")
 
         logger.info(f"Testing connection for database type: {db_type}")
         result = test_db_connection(db_type, db_config)
@@ -42,6 +144,15 @@ def test_db_connection(db_type, config):
         logger.info(
             f"Connection config: {json.dumps({k: v for k, v in config.items() if k != 'password'})}"
         )
+
+        # Log password info right before connection attempt
+        password = config.get("password")
+        if password:
+            logger.info(
+                f"Using password for connection - Length: {len(password)}, Preview: {password[:8]}..."
+            )
+        else:
+            logger.warning("No password found in config for connection")
 
         if db_type == "postgres":
             logger.info("Attempting PostgreSQL connection")
