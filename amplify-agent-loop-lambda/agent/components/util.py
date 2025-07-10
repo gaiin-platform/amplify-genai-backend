@@ -32,14 +32,17 @@ def event_printer(event_id: str, event: Dict[str, Any]):
             print(json.dumps(event, indent=2))
         if event_id.endswith("/end"):
             print("Result:")
-            print(json.dumps(event['result'], indent=2))
+            print(json.dumps(event["result"], indent=2))
         if event_id.endswith("/error"):
             print("Error!!!!!:")
-            print(event['exception'])
-            print(event['traceback'])
+            print(event["exception"])
+            print(event["traceback"])
+
 
 def resolve_dict_references(args, results):
-    return {k: v for k, v in [(k, resolve_references(v, results)) for k, v in args.items()]}
+    return {
+        k: v for k, v in [(k, resolve_references(v, results)) for k, v in args.items()]
+    }
 
 
 def resolve_list_references(args, results):
@@ -111,7 +114,9 @@ def extract_markdown_block(response, block_type="json"):
         if start_index == -1 or end_index == -1 or end_index <= start_index:
             return None  # No valid markdown block found
 
-        extracted_block = stripped_response[start_index + len(start_marker):end_index].strip()
+        extracted_block = stripped_response[
+            start_index + len(start_marker) : end_index
+        ].strip()
 
         if block_type == "json":
             try:

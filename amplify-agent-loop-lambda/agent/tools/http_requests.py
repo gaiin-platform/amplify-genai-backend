@@ -6,7 +6,9 @@ from agent.components.tool import register_tool
 
 
 @register_tool(tags=["http_requests"])
-def send_http_request(url: str, headers:Dict, method: str = "GET", body: str = None) -> Dict:
+def send_http_request(
+    url: str, headers: Dict, method: str = "GET", body: str = None
+) -> Dict:
     """
     Make an HTTP request to the provided URL with the given headers, method, and body.
 
@@ -23,8 +25,9 @@ def send_http_request(url: str, headers:Dict, method: str = "GET", body: str = N
     return {
         "status_code": response.status_code,
         "headers": dict(response.headers),
-        "body": response.text
+        "body": response.text,
     }
+
 
 @register_tool(tags=["web_browser"])
 def get_web_page_text(url: str) -> str:
@@ -41,8 +44,8 @@ def get_web_page_text(url: str) -> str:
 
     # Use beautifulsoup to extract text content from HTML
     from bs4 import BeautifulSoup
-    soup = BeautifulSoup(response.text, 'html.parser')
+
+    soup = BeautifulSoup(response.text, "html.parser")
     text_content = soup.get_text()
 
     return text_content
-

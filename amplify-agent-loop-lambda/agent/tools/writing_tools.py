@@ -6,7 +6,9 @@ from agent.prompt import Prompt
 
 
 @register_tool(tags=["writing"])
-def write_long_content(action_context: ActionContext, outline: List[Dict[str, Any]]) -> str:
+def write_long_content(
+    action_context: ActionContext, outline: List[Dict[str, Any]]
+) -> str:
     """
     Turn the outline into long-form written content. The LLM will be prompted
     to write the content for each section of the outline. Each section or subsection of the
@@ -56,7 +58,9 @@ def write_long_content(action_context: ActionContext, outline: List[Dict[str, An
     return content
 
 
-def write_section(action_context: ActionContext, content: str, section: Dict[str, Dict]) -> str:
+def write_section(
+    action_context: ActionContext, content: str, section: Dict[str, Dict]
+) -> str:
     """
     Write a section of the outline.
 
@@ -75,10 +79,14 @@ def write_section(action_context: ActionContext, content: str, section: Dict[str
 
     else:
         title = section["section"]
-        notes = section.get("notes", "write appropriate cohesive content to the preceding section")
+        notes = section.get(
+            "notes", "write appropriate cohesive content to the preceding section"
+        )
 
         prompt = [
-            {"role": "system", "content": """
+            {
+                "role": "system",
+                "content": """
             Be extremely careful to make sure that the material
             is completely cohesive with whatever comes before. 
             
@@ -87,11 +95,15 @@ def write_section(action_context: ActionContext, content: str, section: Dict[str
             
             Remember, more sections will come, so don't arbitrarily wrap up with "In conclusion..." type language,
             since that will likely not work with what comes next, unless this is truly a "conclusion" section. 
-            """},
+            """,
+            },
             {"role": "user", "content": content},
-            {"role": "user", "content": f"Add a section: \n'{title}'\n Here are some notes to use in writing: "
-                                        f"\n------------\n{notes}\n------------\n"
-                                        f"Now, start with the markdown formatted section title and write the content:"}
+            {
+                "role": "user",
+                "content": f"Add a section: \n'{title}'\n Here are some notes to use in writing: "
+                f"\n------------\n{notes}\n------------\n"
+                f"Now, start with the markdown formatted section title and write the content:",
+            },
         ]
 
         section_content = generate_response(Prompt(messages=prompt))

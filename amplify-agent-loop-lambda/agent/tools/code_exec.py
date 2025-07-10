@@ -22,9 +22,14 @@ def get_installed_python_modules():
         # First try using pkg_resources (preferred method)
         try:
             import pkg_resources
-            installed_packages = sorted([f'{dist.project_name}=={dist.version}'
-                                         for dist in pkg_resources.working_set])
-            return '\n'.join(installed_packages)
+
+            installed_packages = sorted(
+                [
+                    f"{dist.project_name}=={dist.version}"
+                    for dist in pkg_resources.working_set
+                ]
+            )
+            return "\n".join(installed_packages)
         except (ImportError, Exception):
             # Fall back to sys.modules if pkg_resources is not available
             import sys
@@ -35,12 +40,12 @@ def get_installed_python_modules():
             # Get modules that are currently imported
             for module_name, module in sys.modules.items():
                 # Skip internal/private modules
-                if not module_name or module_name.startswith('_') or '.' in module_name:
+                if not module_name or module_name.startswith("_") or "." in module_name:
                     continue
 
                 # Try to get the version
                 try:
-                    version = getattr(module, '__version__', 'unknown')
+                    version = getattr(module, "__version__", "unknown")
                     result.append(f"{module_name}=={version}")
                 except Exception:
                     pass
@@ -53,7 +58,7 @@ def get_installed_python_modules():
                 # Get packages using importlib.metadata (Python 3.8+)
                 for dist in distributions():
                     try:
-                        name = dist.metadata['Name']
+                        name = dist.metadata["Name"]
                         version = dist.version
                         result.append(f"{name}=={version}")
                     except Exception:
@@ -61,7 +66,7 @@ def get_installed_python_modules():
             except (ImportError, Exception):
                 pass
 
-            return '\n'.join(sorted(list(set(result))))
+            return "\n".join(sorted(list(set(result))))
 
     except Exception:
         # Return empty string if anything goes wrong
@@ -79,12 +84,15 @@ def get_imports_from_code(code_string):
                 for alias in node.names:
                     required_imports.setdefault(alias.name, []).append(None)
             elif isinstance(node, ast.ImportFrom) and node.module:
-                required_imports.setdefault(node.module, []).extend([alias.name for alias in node.names])
+                required_imports.setdefault(node.module, []).extend(
+                    [alias.name for alias in node.names]
+                )
     except SyntaxError:
         print("Failed to parse code")
         return {}
 
     return required_imports
+
 
 def prepare_exec_globals(code_string, context_dict):
     """Prepare an execution environment that mimics running the script normally."""
@@ -104,7 +112,9 @@ def prepare_exec_globals(code_string, context_dict):
             # Add specific imports from 'from module import name'
             for name in names:
                 if name:
-                    exec_globals[name] = getattr(mod, name, None)  # Store attribute directly
+                    exec_globals[name] = getattr(
+                        mod, name, None
+                    )  # Store attribute directly
         except ImportError as e:
             print(f"Warning: Could not import {module}: {e}")
 
@@ -146,8 +156,8 @@ def exec_code(action_context: ActionContext, code: str):
     context_dict = action_context.properties.get("code_exec_context", {})
 
     result_mode = "result_only"
-    var_list=[]
-    options={}
+    var_list = []
+    options = {}
 
     # Prepare the execution environment
     # exec_globals = context_dict
@@ -169,15 +179,15 @@ def exec_code(action_context: ActionContext, code: str):
             for key, value in var_dict.items():
 
                 # if we are in output_prefix mode, only include variables that start with 'output_'
-                if result_mode == 'output_prefix' and not key.startswith('output_'):
+                if result_mode == "output_prefix" and not key.startswith("output_"):
                     continue
 
                 # if we are in include_list mode, only include variables that are in the var_list
-                if result_mode == 'include_list' and key not in var_list:
+                if result_mode == "include_list" and key not in var_list:
                     continue
 
                 # if we are in exclude_list mode, only include variables that are not in the var_list
-                if result_mode == 'exclude_list' and key in var_list:
+                if result_mode == "exclude_list" and key in var_list:
                     continue
 
                 try:
@@ -191,21 +201,22 @@ def exec_code(action_context: ActionContext, code: str):
 
         all_serializable_vars = {}
         # Skip if result_mode is 'result_only'
-        if result_mode != 'result_only':
+        if result_mode != "result_only":
             serializable_globals = get_serializable_vars(exec_globals)
             serializable_locals = get_serializable_vars(exec_locals)
 
             # Merge globals and locals, with locals overriding globals for any key overlap
             all_serializable_vars = {**serializable_globals, **serializable_locals}
         # Assume the last expression in the code is the result
-        result = exec_locals.get('result', exec_globals.get('result'))
+        result = exec_locals.get("result", exec_globals.get("result"))
         send_event("tools/code_exec/execute/end", {"result": result})
 
         return result
 
     except Exception as e:
         traceback_str = traceback.format_exc()
-        send_event("tools/code_exec/execute/error", {"error": str(e), "traceback": traceback_str})
+        send_event(
+            "tools/code_exec/execute/error",
+            {"error": str(e), "traceback": traceback_str},
+        )
         return {"error": str(e), "traceback": traceback_str}
-
-

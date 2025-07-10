@@ -7,7 +7,9 @@ from agent.core import ActionContext
 
 
 @register_tool(tags=["workflow"])
-def execute_workflow(agent, action_context: ActionContext, workflow: List[dict]) -> dict:
+def execute_workflow(
+    agent, action_context: ActionContext, workflow: List[dict]
+) -> dict:
     """
     Execute a workflow of actions.
 
@@ -99,12 +101,12 @@ def execute_workflow(agent, action_context: ActionContext, workflow: List[dict])
         count = 0
 
         # Simplify the results to just the result value
-        simplified_results = {
-            k: v.get("result",v) for k, v in results.items()
-        }
+        simplified_results = {k: v.get("result", v) for k, v in results.items()}
 
         send_event = action_context.incremental_event()
-        send_event("workflow/start", {"workflow": workflow, "context": simplified_results})
+        send_event(
+            "workflow/start", {"workflow": workflow, "context": simplified_results}
+        )
 
         for action in workflow:
             count += 1
@@ -115,46 +117,62 @@ def execute_workflow(agent, action_context: ActionContext, workflow: List[dict])
             # Process the args and replace any refs with the actual value
             args = action["args"]
 
-            send_event("workflow/step/start",
-                                      {"workflow": workflow,
-                                       "count": count,
-                                       "total": len(workflow),
-                                       "step": step_name,
-                                       "action": action,
-                                       "action_def": action_def,
-                                       "context": simplified_results})
+            send_event(
+                "workflow/step/start",
+                {
+                    "workflow": workflow,
+                    "count": count,
+                    "total": len(workflow),
+                    "step": step_name,
+                    "action": action,
+                    "action_def": action_def,
+                    "context": simplified_results,
+                },
+            )
 
             resolved_args = resolve_references(args, {**simplified_results, **results})
 
-            send_event("workflow/step/resolved_args",
-                                      {"workflow": workflow,
-                                       "step": step_name,
-                                       "action": action,
-                                       "action_def": action_def,
-                                       "context": simplified_results,
-                                       "args": resolved_args})
+            send_event(
+                "workflow/step/resolved_args",
+                {
+                    "workflow": workflow,
+                    "step": step_name,
+                    "action": action,
+                    "action_def": action_def,
+                    "context": simplified_results,
+                    "args": resolved_args,
+                },
+            )
 
             action_context.properties["code_exec_context"] = {
                 # This allows code execution to reference the results of previous steps directly
                 **results,
-
                 # This allows code execution to reference the actions in the action registry directly
-                **{k: v.function for k, v in action_context.get_action_registry().actions.items()}
+                **{
+                    k: v.function
+                    for k, v in action_context.get_action_registry().actions.items()
+                },
             }
 
             try:
 
-                result = environment.execute_action(agent, action_context, action_def, resolved_args)
+                result = environment.execute_action(
+                    agent, action_context, action_def, resolved_args
+                )
                 results_full[step_name] = result
 
-                send_event("workflow/step/end",
-                                          {"workflow": workflow,
-                                           "step": step_name,
-                                           "action": action,
-                                           "action_def": action_def,
-                                           "context": simplified_results,
-                                           "args": resolved_args,
-                                           "result": result})
+                send_event(
+                    "workflow/step/end",
+                    {
+                        "workflow": workflow,
+                        "step": step_name,
+                        "action": action,
+                        "action_def": action_def,
+                        "context": simplified_results,
+                        "args": resolved_args,
+                        "result": result,
+                    },
+                )
 
                 results[step_name] = result.get("result", result)
             except Exception as e:
@@ -162,15 +180,19 @@ def execute_workflow(agent, action_context: ActionContext, workflow: List[dict])
                 # Convert the traceback to a string and send it as an event
                 error_trace = traceback.format_exc()
 
-                send_event("workflow/step/error",
-                                          {"workflow": workflow,
-                                           "step": step_name,
-                                           "action": action,
-                                           "action_def": action_def,
-                                           "context": simplified_results,
-                                           "args": resolved_args,
-                                           "traceback": error_trace,
-                                           "error": str(e)})
+                send_event(
+                    "workflow/step/error",
+                    {
+                        "workflow": workflow,
+                        "step": step_name,
+                        "action": action,
+                        "action_def": action_def,
+                        "context": simplified_results,
+                        "args": resolved_args,
+                        "traceback": error_trace,
+                        "error": str(e),
+                    },
+                )
 
                 traceback.print_exc()
                 print(f"Error executing action {action['tool']}: {str(e)}")
@@ -183,8 +205,8 @@ def execute_workflow(agent, action_context: ActionContext, workflow: List[dict])
         print(f"Error setting up workflow for execution: {str(e)}")
         raise e
 
-    action_context.send_event("workflow/end", {"workflow": workflow, "results": results_full})
+    action_context.send_event(
+        "workflow/end", {"workflow": workflow, "results": results_full}
+    )
 
     return results
-
-

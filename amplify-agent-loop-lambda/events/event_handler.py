@@ -53,10 +53,12 @@ class MessageHandler(ABC):
     def process(self, event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         pass
 
-    @abstractmethod   
+    @abstractmethod
     def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
         pass
 
     @abstractmethod
-    def onSuccess(self, agent_input_event:  Dict[str, Any], agent_result: Dict[str, Any]) -> None:
+    def onSuccess(
+        self, agent_input_event: Dict[str, Any], agent_result: Dict[str, Any]
+    ) -> None:
         pass

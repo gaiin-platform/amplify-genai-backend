@@ -19,17 +19,11 @@ if __name__ == "__main__":
                         "method": "POST",
                         "name": "getOperations",
                         "description": "Get a list of available operations for an assistant.",
-                        "id": "getOperations"
+                        "id": "getOperations",
                     }
                 ]
-            }
+            },
         }
     }
 
-    handle_event(
-        current_user,
-        access_token,
-        "1",
-        agent_prompt,
-        metadata
-    )
+    handle_event(current_user, access_token, "1", agent_prompt, metadata)

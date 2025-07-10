@@ -3,7 +3,7 @@ from typing import Dict, List
 from agent.components.tool import register_tool
 
 
-#@register_tool()
+# @register_tool()
 def get_user_input(message: str) -> str:
     """
     Get user input based on the provided message.
@@ -39,9 +39,4 @@ def terminate(message: str, result_references: List = None):
         dict: The message to display to the user and the results of the actions in the
     """
 
-    return {
-        "message": message,
-        "results": result_references
-    }
-
-
+    return {"message": message, "results": result_references}

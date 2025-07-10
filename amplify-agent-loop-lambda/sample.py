@@ -12,6 +12,7 @@ import agent.tools.common_tools
 import agent.tools.writing_tools
 import agent.tools.code_exec
 
+
 async def main():
 
     def print_agent_decisions(event_type, evt):
@@ -39,15 +40,17 @@ async def main():
             """
         ],
         capabilities=[
-            ToolUseCapability(
-                action_registry=action_registry
-            ),
+            ToolUseCapability(action_registry=action_registry),
             RememberResultsCapability(),
         ],
         environment=PythonFunctionEnvironment(action_registry=action_registry),
     )
-    result = await my_agent.run(context=agent_context, initial_input="Write a long report on Vanderbilt with two sections and no subsections")
+    result = await my_agent.run(
+        context=agent_context,
+        initial_input="Write a long report on Vanderbilt with two sections and no subsections",
+    )
     print(result)
+
 
 # Entry point for the script
 if __name__ == "__main__":

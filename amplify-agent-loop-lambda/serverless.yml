@@ -59,7 +59,7 @@ provider:
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
     AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
     # We will need to change this below in the policy when we migrate too
-    OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+    # OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
     AGENT_QUEUE_URL: !Ref AgentQueue
     FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
@@ -186,10 +186,10 @@ resources:
                 - ssm:PutParameter
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.DEFAULT_SECRET_PARAMETER_PREFIX}/*"
-            - Effect: Allow
-              Action:
-                - lambda:InvokeFunction
-              Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+            # - Effect: Allow
+            #   Action:
+            #     - lambda:InvokeFunction
+            #   Resource: arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
             - Effect: Allow
               Action:
                 - dynamodb:Query

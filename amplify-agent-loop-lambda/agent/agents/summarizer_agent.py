@@ -39,7 +39,7 @@ def build(environment: Environment, generate_response):
                 ```
                 
                 This would be replaced with the result with id $#3.
-                """
+                """,
         )
     ]
 
@@ -51,10 +51,9 @@ def build(environment: Environment, generate_response):
             function=terminate,
             terminal=True,
             output={"message": "str"},
-            parameters={}
+            parameters={},
         )
     )
-
 
     summarizer = Agent(
         goals=goals,
@@ -62,10 +61,7 @@ def build(environment: Environment, generate_response):
         generate_response=generate_response,
         action_registry=actions,
         environment=environment,
-        capabilities=[
-            ResponseResultReferencingCapability()
-        ]
+        capabilities=[ResponseResultReferencingCapability()],
     )
 
     return summarizer
-
