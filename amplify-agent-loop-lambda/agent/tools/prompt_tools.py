@@ -7,6 +7,7 @@ from inspect import signature, Parameter
 import functools
 import json
 
+
 @register_tool(tags=["prompts"])
 def prompt_llm_with_messages(action_context: ActionContext, prompt: dict):
     """
@@ -16,12 +17,13 @@ def prompt_llm_with_messages(action_context: ActionContext, prompt: dict):
     directly in the prompt. The LLM can't access any external information or context.
     """
     generate_response = action_context.get("llm")
-    response = generate_response(Prompt(messages=[
-        *prompt
-    ]))
+    response = generate_response(Prompt(messages=[*prompt]))
     return response
 
-def prompt_with_retries(generate_response, prompt: Prompt, max_retries: int = 3, functions=None):
+
+def prompt_with_retries(
+    generate_response, prompt: Prompt, max_retries: int = 3, functions=None
+):
     """
     Generate a response to a prompt using the LLM model with retries.
     This function will retry up to `max_retries` times if the response is empty.
@@ -48,6 +50,7 @@ def prompt_with_retries(generate_response, prompt: Prompt, max_retries: int = 3,
 
     return None
 
+
 def prompt2(template, tools=None):
     """
     A decorator that transforms a function into one that uses an LLM prompt template.
@@ -58,7 +61,9 @@ def prompt2(template, tools=None):
     The `action_context` parameter is automatically managed and added to the signature.
     """
     tool_meta = [get_tool_metadata(tool) for tool in tools] if tools else []
-    tool_lookup = {tool['tool_name']: tool['function'] for tool in tool_meta} if tools else {}
+    tool_lookup = (
+        {tool["tool_name"]: tool["function"] for tool in tool_meta} if tools else {}
+    )
     tools_metadata = to_openai_tools(tool_meta) if tools else []
 
     def decorator(func):
@@ -70,12 +75,14 @@ def prompt2(template, tools=None):
         action_context_param = Parameter(
             "action_context",
             kind=Parameter.KEYWORD_ONLY,  # Makes it a keyword-only parameter
-            default=None
+            default=None,
         )
         new_params = orig_params + [action_context_param]
         new_sig = orig_sig.replace(parameters=new_params)
 
-        @functools.wraps(func)  # Preserve the original docstring and function attributes
+        @functools.wraps(
+            func
+        )  # Preserve the original docstring and function attributes
         def wrapper(*args, **kwargs):
             # Extract action_context from kwargs or raise an error if not provided
             action_context = kwargs.pop("action_context", None)
@@ -83,7 +90,7 @@ def prompt2(template, tools=None):
                 raise ValueError("action_context is required for the prompt decorator")
 
             # Map function arguments to their values
-            func_args = func.__code__.co_varnames[:func.__code__.co_argcount]
+            func_args = func.__code__.co_varnames[: func.__code__.co_argcount]
             arg_dict = {**dict(zip(func_args, args)), **kwargs}
 
             # Format the prompt template
@@ -98,23 +105,28 @@ def prompt2(template, tools=None):
                     for msg in template
                 ]
             else:
-                raise TypeError("Template must be either a string or a list of messages")
+                raise TypeError(
+                    "Template must be either a string or a list of messages"
+                )
 
             # Use the LLM in the action_context to generate a response
             generate_response = action_context.get("llm")
             if not generate_response:
                 raise ValueError("No LLM available in the action_context")
 
-            response = prompt_with_retries(generate_response=generate_response,
-                                           prompt=Prompt(messages=messages, tools=tools_metadata),
-                                           functions=tool_lookup,
-                                           max_retries=3)
+            response = prompt_with_retries(
+                generate_response=generate_response,
+                prompt=Prompt(messages=messages, tools=tools_metadata),
+                functions=tool_lookup,
+                max_retries=3,
+            )
 
             return response
 
         # Dynamically update the wrapper's signature to include action_context
         wrapper.__signature__ = new_sig
         return wrapper
+
     return decorator
 
 
@@ -125,6 +137,7 @@ def prompt(template):
     Supports both a single string as a prompt or a list of messages.
     Automatically manages the `action_context` and ensures it appears in the signature.
     """
+
     def decorator(func):
         # Get the original function's signature
         orig_sig = signature(func)
@@ -134,12 +147,14 @@ def prompt(template):
         action_context_param = Parameter(
             "action_context",
             kind=Parameter.KEYWORD_ONLY,  # Makes it a keyword-only parameter
-            default=None
+            default=None,
         )
         new_params = orig_params + [action_context_param]
         new_sig = orig_sig.replace(parameters=new_params)
 
-        @functools.wraps(func)  # Preserve the original docstring and function attributes
+        @functools.wraps(
+            func
+        )  # Preserve the original docstring and function attributes
         def wrapper(*args, **kwargs):
             # Extract action_context
             action_context = kwargs.pop("action_context", None)
@@ -147,7 +162,7 @@ def prompt(template):
                 raise ValueError("action_context is required for the prompt decorator")
 
             # Map function arguments to their values
-            func_args = func.__code__.co_varnames[:func.__code__.co_argcount]
+            func_args = func.__code__.co_varnames[: func.__code__.co_argcount]
             arg_dict = {**dict(zip(func_args, args)), **kwargs}
 
             # Format the prompt template
@@ -162,7 +177,9 @@ def prompt(template):
                     for msg in template
                 ]
             else:
-                raise TypeError("Template must be either a string or a list of messages")
+                raise TypeError(
+                    "Template must be either a string or a list of messages"
+                )
 
             # Use the LLM in the action_context to generate a response
             generate_response = action_context.get("llm")
@@ -175,11 +192,14 @@ def prompt(template):
         # Dynamically update the wrapper's signature to include action_context
         wrapper.__signature__ = new_sig
         return wrapper
+
     return decorator
 
 
 @register_tool()
-def qa_check(action_context: ActionContext, qa_criteria: str, thing_to_check: Any) -> bool:
+def qa_check(
+    action_context: ActionContext, qa_criteria: str, thing_to_check: Any
+) -> bool:
     """
     Check if the provided thing meets the specified QA criteria.
 
@@ -191,35 +211,44 @@ def qa_check(action_context: ActionContext, qa_criteria: str, thing_to_check: An
         Bool: True if the thing meets the QA criteria, False otherwise.
     """
     generate_response = action_context.get("llm")
-    response = generate_response(Prompt(
-        messages=[
-            {"role": "system", "content": "Be extremely thorough in your quality assurance check."},
-            {"role": "user", "content": "Check if the following meets the specified QA criteria."
-                                        "\n\nCriteria:\n---------\n" + qa_criteria + "\n---------\n"
-                                        "\nWhat to Check:\n---------\n" + json.dumps(thing_to_check)
-                                        + "\n---------\n"},
-        ],
-        tools=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "return_qa_check_result",
-                    # Include up to 1024 characters of the description
-                    "description": "Report the result of a quality assurance check as true|false.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "passed": {
-                                "type": "boolean",
-                                "description": "True if the quality assurance check passed."
-                            }
+    response = generate_response(
+        Prompt(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Be extremely thorough in your quality assurance check.",
+                },
+                {
+                    "role": "user",
+                    "content": "Check if the following meets the specified QA criteria."
+                    "\n\nCriteria:\n---------\n" + qa_criteria + "\n---------\n"
+                    "\nWhat to Check:\n---------\n"
+                    + json.dumps(thing_to_check)
+                    + "\n---------\n",
+                },
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "return_qa_check_result",
+                        # Include up to 1024 characters of the description
+                        "description": "Report the result of a quality assurance check as true|false.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "passed": {
+                                    "type": "boolean",
+                                    "description": "True if the quality assurance check passed.",
+                                }
+                            },
+                            "required": ["passed"],
                         },
-                        "required": ["passed"]
-                    }
+                    },
                 }
-            }
-        ]
-    ))
+            ],
+        )
+    )
 
     try:
         result = json.loads(response)
@@ -240,14 +269,14 @@ def prompt_llm(action_context: ActionContext, prompt: str):
     directly in the prompt. The LLM can't access any external information or context.
     """
     generate_response = action_context.get("llm")
-    response = generate_response(Prompt(messages=[
-        {"role": "user", "content": prompt}
-    ]))
+    response = generate_response(Prompt(messages=[{"role": "user", "content": prompt}]))
     return response
 
 
 @register_tool(tags=["prompts"])
-def prompt_llm_with_info(action_context: ActionContext, prompt: str, result_references: List[str] = None):
+def prompt_llm_with_info(
+    action_context: ActionContext, prompt: str, result_references: List[str] = None
+):
     """
     Generate a response to a prompt using the LLM model.
     The LLM cannot see the conversation history, so make sure to include all necessary context in the prompt.
@@ -258,9 +287,16 @@ def prompt_llm_with_info(action_context: ActionContext, prompt: str, result_refe
     result_references = result_references or []
     result_info = "\n".join(str(result_references))
 
-    response = generate_response(Prompt(messages=[
-        {"role": "user", "content": "<info>\n" + result_info + "\n</info>\n" + prompt}
-    ]))
+    response = generate_response(
+        Prompt(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "<info>\n" + result_info + "\n</info>\n" + prompt,
+                }
+            ]
+        )
+    )
     return response
 
 
@@ -273,17 +309,24 @@ def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str
     generate_response = action_context.get("llm")
     for i in range(3):
         try:
-            response = generate_response(Prompt(messages=[
-                {"role": "system", "content": f"You MUST produce output that adheres to the following JSON schema:\n\n{json.dumps(schema, indent=4)}"},
-                {"role": "user", "content": prompt}
-            ]))
+            response = generate_response(
+                Prompt(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": f"You MUST produce output that adheres to the following JSON schema:\n\n{json.dumps(schema, indent=4)}",
+                        },
+                        {"role": "user", "content": prompt},
+                    ]
+                )
+            )
 
             # Check if the response has the json inside of a markdown code block
             if "```json" in response:
                 # Search from the front and then the back
                 start = response.find("```json")
                 end = response.rfind("```")
-                response = response[start+7:end].strip()
+                response = response[start + 7 : end].strip()
 
             # Parse the JSON response
             response = json.loads(response)
@@ -296,9 +339,10 @@ def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str
             print("Retrying...")
 
 
-
 @register_tool(tags=["prompts"])
-def prompt_expert(action_context: ActionContext, description_of_expert: str, prompt: str):
+def prompt_expert(
+    action_context: ActionContext, description_of_expert: str, prompt: str
+):
     """
     Generate a response to a prompt using the LLM model, acting as the provided expert.
     You should provide a detailed description of the expert to act as. Explain the expert's background, knowledge, and expertise.
@@ -306,12 +350,15 @@ def prompt_expert(action_context: ActionContext, description_of_expert: str, pro
     analyses, techniques, etc. of relevance.
     """
     generate_response = action_context.get("llm")
-    response = generate_response(Prompt(messages=[
-        {"role": "system", "content": f"Act as the following expert and respond accordingly: {description_of_expert}"},
-        {"role": "user", "content": prompt}
-    ]))
+    response = generate_response(
+        Prompt(
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"Act as the following expert and respond accordingly: {description_of_expert}",
+                },
+                {"role": "user", "content": prompt},
+            ]
+        )
+    )
     return response
-
-
-
-

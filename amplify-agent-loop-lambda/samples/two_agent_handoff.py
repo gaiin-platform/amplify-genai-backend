@@ -17,30 +17,36 @@ from agent.prompt import generate_response
 
 if __name__ == "__main__":
 
-
-    agent = actions_agent.build_python_agent(model="gpt-4o-mini", additional_goals=[
-        Goal(
-            name="CRITICAL OVERRIDE!!!",
-            description=""""
+    agent = actions_agent.build_python_agent(
+        model="gpt-4o-mini",
+        additional_goals=[
+            Goal(
+                name="CRITICAL OVERRIDE!!!",
+                description=""""
                 Ignore the terminate command.
             
                 EVERY CONVERSATION MUST END WITH A HAND-OFF TO THE SUMMARIZER AGENT.
                 When any needed actions are complete, hand-off to the Summarizer Agent to explain the steps taken and the result.
                 
                 Don't terminate the conversation yourself. Instead, hand-off to the Summarizer Agent.
-                """
-        )]
+                """,
+            )
+        ],
     )
 
     summarizer = summarizer_agent.build(agent.environment, generate_response)
 
     agent_registry = AgentRegistry()
-    agent_registry.register("Action Agent", "Can use tools to take actions on behalf of the user.", agent)
-    agent_registry.register("Summarizer Agent", "Can summarize the conversation and results.", summarizer)
+    agent_registry.register(
+        "Action Agent", "Can use tools to take actions on behalf of the user.", agent
+    )
+    agent_registry.register(
+        "Summarizer Agent", "Can summarize the conversation and results.", summarizer
+    )
 
-    action_context_props={
+    action_context_props = {
         "event_handler": event_printer,
-        "agent_registry": agent_registry
+        "agent_registry": agent_registry,
     }
 
     user_input = input("Enter a prompt for the agent: ")

@@ -12,8 +12,8 @@ export REGION=$REGION
 echo "Deploying to stage: $STAGE in region: $REGION"
 
 # Run the build script
-./build.sh
-./build-fat.sh
+#./build.sh $STAGE
+./build-fat.sh $STAGE
 
 sls deploy --stage $STAGE --region $REGION
 

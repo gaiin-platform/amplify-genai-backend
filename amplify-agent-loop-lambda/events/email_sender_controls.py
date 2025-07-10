@@ -9,7 +9,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 # Initialize AWS resources
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource("dynamodb")
 
 # Environment Variables
 email_settings_table = dynamodb.Table(os.getenv("EMAIL_SETTINGS_DYNAMO_TABLE"))
@@ -18,6 +18,7 @@ email_settings_table = dynamodb.Table(os.getenv("EMAIL_SETTINGS_DYNAMO_TABLE"))
 ### ==========================
 ### ✉️ Allowed Sender Functions
 ### ==========================
+
 
 def add_allowed_sender(user_email: str, tag: str, sender: str):
     """
@@ -32,27 +33,31 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         dict: {success, data, message}
     """
     try:
-        response = email_settings_table.get_item(Key={'email': user_email, 'tag': tag})
-        item = response.get('Item', {})
+        response = email_settings_table.get_item(Key={"email": user_email, "tag": tag})
+        item = response.get("Item", {})
 
-        allowed_senders = set(item.get('allowedSenders', []))
+        allowed_senders = set(item.get("allowedSenders", []))
         sender = sender.lower()
 
         if sender in allowed_senders:
             return {
                 "success": True,
-                "data": True,
-                "message": f"Sender '{sender}' is already in the allowed list for tag '{tag}'. No action was taken."
+                "message": f"Sender '{sender}' is already in the allowed list for tag '{tag}'. No action was taken.",
             }
 
         allowed_senders.add(sender)
 
-        email_settings_table.put_item(Item={'email': user_email, 'tag': tag, 'allowedSenders': list(allowed_senders)})
+        email_settings_table.put_item(
+            Item={
+                "email": user_email,
+                "tag": tag,
+                "allowedSenders": list(allowed_senders),
+            }
+        )
 
         return {
             "success": True,
-            "data": True,
-            "message": f"Sender '{sender}' was successfully added to the allowed list for tag '{tag}'."
+            "message": f"Sender '{sender}' was successfully added to the allowed list for tag '{tag}'.",
         }
 
     except ClientError as e:
@@ -60,8 +65,7 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         traceback.print_exc()
         return {
             "success": False,
-            "data": False,
-            "message": "Server error: Unable to add the allowed sender. Please try again later."
+            "message": "Server error: Unable to add the allowed sender. Please try again later.",
         }
 
 
@@ -78,36 +82,34 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         dict: {success, data, message}
     """
     try:
-        response = email_settings_table.get_item(Key={'email': user_email, 'tag': tag})
-        item = response.get('Item', {})
+        response = email_settings_table.get_item(Key={"email": user_email, "tag": tag})
+        item = response.get("Item", {})
 
-        allowed_senders = set(item.get('allowedSenders', []))
+        allowed_senders = set(item.get("allowedSenders", []))
 
         if sender == "*":
             allowed_senders = set()
         elif sender not in allowed_senders and sender.lower() not in allowed_senders:
             return {
                 "success": False,
-                "data": None,
-                "message": f"Sender '{sender}' was not found in the allowed list for tag '{tag}'. Nothing to remove."
+                "message": f"Sender '{sender}' was not found in the allowed list for tag '{tag}'. Nothing to remove.",
             }
         else:
             allowed_senders.discard(sender)
             allowed_senders.discard(sender.lower())
 
         if not allowed_senders:
-            email_settings_table.delete_item(Key={'email': user_email, 'tag': tag})
+            email_settings_table.delete_item(Key={"email": user_email, "tag": tag})
         else:
             email_settings_table.update_item(
-                Key={'email': user_email, 'tag': tag},
+                Key={"email": user_email, "tag": tag},
                 UpdateExpression="SET allowedSenders = :s",
-                ExpressionAttributeValues={":s": list(allowed_senders)}
+                ExpressionAttributeValues={":s": list(allowed_senders)},
             )
 
         return {
             "success": True,
-            "data": None,
-            "message": f"Sender '{sender}' was successfully removed from the allowed list for tag '{tag}'."
+            "message": f"Sender '{sender}' was successfully removed from the allowed list for tag '{tag}'.",
         }
 
     except ClientError as e:
@@ -115,8 +117,7 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         traceback.print_exc()
         return {
             "success": False,
-            "data": None,
-            "message": "Server error: Unable to remove the allowed sender. Please try again later."
+            "message": "Server error: Unable to remove the allowed sender. Please try again later.",
         }
 
 
@@ -134,15 +135,17 @@ def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
         bool: True if the sender is allowed, False otherwise.
     """
     try:
-        print(f"Checking allowed sender for user '{owner_email}', tag '{tag}', sender '{sender}'")
+        print(
+            f"Checking allowed sender for user '{owner_email}', tag '{tag}', sender '{sender}'"
+        )
 
         if sender == owner_email:
             return True  # Owner is always allowed
 
-        response = email_settings_table.get_item(Key={'email': owner_email, 'tag': tag})
-        item = response.get('Item', {})
+        response = email_settings_table.get_item(Key={"email": owner_email, "tag": tag})
+        item = response.get("Item", {})
 
-        allowed_senders = item.get('allowedSenders', [])
+        allowed_senders = item.get("allowedSenders", [])
 
         if not allowed_senders:
             return False  # No senders allowed
@@ -178,15 +181,15 @@ def list_allowed_senders(user_email: str, tag: str):
         dict: {success, data, message}
     """
     try:
-        response = email_settings_table.get_item(Key={'email': user_email, 'tag': tag})
-        item = response.get('Item', {})
+        response = email_settings_table.get_item(Key={"email": user_email, "tag": tag})
+        item = response.get("Item", {})
 
-        allowed_senders = item.get('allowedSenders', [])
+        allowed_senders = item.get("allowedSenders", [])
 
         return {
             "success": True,
             "data": allowed_senders,
-            "message": f"Retrieved {len(allowed_senders)} allowed sender(s) for tag '{tag}'."
+            "message": f"Retrieved {len(allowed_senders)} allowed sender(s) for tag '{tag}'.",
         }
 
     except ClientError as e:
@@ -195,5 +198,5 @@ def list_allowed_senders(user_email: str, tag: str):
         return {
             "success": False,
             "data": [],
-            "message": "Server error: Unable to list allowed senders. Please try again later."
+            "message": "Server error: Unable to list allowed senders. Please try again later.",
         }

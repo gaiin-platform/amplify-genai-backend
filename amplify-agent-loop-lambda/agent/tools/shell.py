@@ -13,18 +13,20 @@ from agent.components.tool import register_tool
 
 
 @register_tool(tags=["shell"])
-def execute_shell_command(command: str, timeout: int = 30, working_directory: str = None):
+def execute_shell_command(
+    command: str, timeout: int = 30, working_directory: str = None
+):
     """
     Executes a shell command and returns its output.
-    
+
     This tool provides a safe way to run shell commands with proper error handling,
     timeouts, and working directory control.
-    
+
     Args:
         command: The shell command to execute
         timeout: Maximum execution time in seconds (default: 30)
         working_directory: Directory to execute the command in (default: current directory)
-        
+
     Returns:
         Dictionary containing:
         - success: Boolean indicating if command executed successfully
@@ -32,7 +34,7 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
         - stderr: Standard error as string
         - exit_code: Command exit code
         - execution_time: Time taken to execute in seconds
-        
+
     Examples:
         >>> execute_shell_command('ls -la')
         {
@@ -42,7 +44,7 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
             "exit_code": 0,
             "execution_time": 0.035
         }
-        
+
         >>> execute_shell_command('find /tmp -name "*.log"', timeout=60)
         {
             "success": true,
@@ -51,7 +53,7 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
             "exit_code": 0,
             "execution_time": 2.4
         }
-        
+
         >>> execute_shell_command('grep "ERROR" /nonexistent/file.txt')
         {
             "success": false,
@@ -60,7 +62,7 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
             "exit_code": 2,
             "execution_time": 0.02
         }
-    
+
     Notes:
         - The command is run with shell=True, so shell syntax (pipes, redirects, etc.) works
         - Non-zero exit codes are treated as failures, but output is still returned
@@ -69,16 +71,16 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
     """
     try:
         start_time = time.time()
-        
+
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=True,
             text=True,
-            cwd=working_directory
+            cwd=working_directory,
         )
-        
+
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             exit_code = process.returncode
@@ -89,15 +91,15 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
             exit_code = -1
             success = False
             stderr += f"\nCommand timed out after {timeout} seconds."
-        
+
         execution_time = time.time() - start_time
-        
+
         return {
             "success": success,
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": exit_code,
-            "execution_time": round(execution_time, 3)
+            "execution_time": round(execution_time, 3),
         }
     except Exception as e:
         return {
@@ -105,7 +107,7 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
             "stdout": "",
             "stderr": f"Error executing command: {str(e)}",
             "exit_code": -1,
-            "execution_time": 0
+            "execution_time": 0,
         }
 
 
@@ -113,11 +115,11 @@ def execute_shell_command(command: str, timeout: int = 30, working_directory: st
 def get_environment_info():
     """
     Returns detailed information about the system environment.
-    
+
     This tool provides a comprehensive overview of the execution environment,
     including platform details, Python configuration, environment variables,
     file system information, and more.
-    
+
     Returns:
         Dictionary containing detailed environment information:
         - system: OS name, version, architecture, hostname, etc.
@@ -125,7 +127,7 @@ def get_environment_info():
         - environment: Key environment variables filtered for privacy
         - filesystem: Working directory, disk usage
         - time: Current timestamp, timezone info
-        
+
     Examples:
         >>> get_environment_info()
         {
@@ -165,7 +167,7 @@ def get_environment_info():
                 "uptime_seconds": 345621
             }
         }
-    
+
     Notes:
         - Environment variables are filtered to exclude sensitive data like API keys
         - Some system information may be limited in containerized environments
@@ -178,7 +180,7 @@ def get_environment_info():
             "python": get_python_info(),
             "environment": get_safe_env_vars(),
             "filesystem": get_filesystem_info(),
-            "time": get_time_info()
+            "time": get_time_info(),
         }
         return info
     except Exception as e:
@@ -193,25 +195,27 @@ def get_system_info():
         "platform_version": platform.version(),
         "architecture": platform.machine(),
         "hostname": platform.node(),
-        "processor": platform.processor()
+        "processor": platform.processor(),
     }
-    
+
     # Try to get CPU count
     try:
         import multiprocessing
+
         system_info["cpu_count"] = multiprocessing.cpu_count()
     except:
         pass
-    
+
     # Try to get memory info
     try:
         import psutil
+
         mem = psutil.virtual_memory()
         system_info["memory_total_mb"] = round(mem.total / (1024 * 1024), 2)
         system_info["memory_available_mb"] = round(mem.available / (1024 * 1024), 2)
     except:
         pass
-    
+
     return system_info
 
 
@@ -221,18 +225,23 @@ def get_python_info():
         "version": platform.python_version(),
         "implementation": platform.python_implementation(),
         "executable": sys.executable,
-        "path": sys.path
+        "path": sys.path,
     }
-    
+
     # Try to get installed packages
     try:
         import pkg_resources
-        packages = sorted([f"{dist.project_name}=={dist.version}"
-                         for dist in pkg_resources.working_set])
+
+        packages = sorted(
+            [
+                f"{dist.project_name}=={dist.version}"
+                for dist in pkg_resources.working_set
+            ]
+        )
         python_info["packages"] = packages
     except:
         python_info["packages"] = []
-    
+
     return python_info
 
 
@@ -240,40 +249,51 @@ def get_safe_env_vars():
     """Return environment variables with sensitive info filtered."""
     # List of environment variable prefixes to exclude for security
     exclude_prefixes = [
-        "AWS_", "GOOGLE_", "AZURE_", "API_", "SECRET_", "PASSWORD", "TOKEN", "KEY", 
-        "CREDENTIAL", "AUTH", "PRIVATE"
+        "AWS_",
+        "GOOGLE_",
+        "AZURE_",
+        "API_",
+        "SECRET_",
+        "PASSWORD",
+        "TOKEN",
+        "KEY",
+        "CREDENTIAL",
+        "AUTH",
+        "PRIVATE",
     ]
-    
+
     safe_env = {}
     for key, value in os.environ.items():
         # Skip variables that might contain sensitive information
-        if any(key.startswith(prefix) or prefix in key.upper() for prefix in exclude_prefixes):
+        if any(
+            key.startswith(prefix) or prefix in key.upper()
+            for prefix in exclude_prefixes
+        ):
             continue
-        
+
         safe_env[key] = value
-    
+
     return safe_env
 
 
 def get_filesystem_info():
     """Gather filesystem information."""
-    fs_info = {
-        "working_directory": os.getcwd()
-    }
-    
+    fs_info = {"working_directory": os.getcwd()}
+
     # Try to get disk usage for the current directory
     try:
         import shutil
+
         total, used, free = shutil.disk_usage(os.getcwd())
         fs_info["disk_usage"] = {
             "total_gb": round(total / (1024**3), 2),
             "used_gb": round(used / (1024**3), 2),
             "free_gb": round(free / (1024**3), 2),
-            "percent_used": round((used / total) * 100, 1)
+            "percent_used": round((used / total) * 100, 1),
         }
     except:
         pass
-    
+
     return fs_info
 
 
@@ -281,37 +301,37 @@ def get_time_info():
     """Gather time-related information."""
     time_info = {
         "timestamp": datetime.datetime.now().isoformat(),
-        "timezone": time.tzname[0]
+        "timezone": time.tzname[0],
     }
-    
+
     # Try to get system uptime
     try:
-        with open('/proc/uptime', 'r') as f:
+        with open("/proc/uptime", "r") as f:
             uptime_seconds = float(f.readline().split()[0])
             time_info["uptime_seconds"] = int(uptime_seconds)
     except:
         pass
-    
+
     return time_info
 
 
 @register_tool(tags=["shell"])
-def get_available_commands(shell: str = 'bash'):
+def get_available_commands(shell: str = "bash"):
     """
     Returns a list of available shell commands in the current environment.
-    
+
     This tool helps discover which commands are available for execution,
     which is useful when working in unfamiliar environments.
-    
+
     Args:
         shell: The shell to query (default: bash)
-        
+
     Returns:
         Dictionary containing:
         - commands: List of available commands
         - builtin_commands: List of built-in shell commands
         - command_details: Additional path information for selected commands
-        
+
     Examples:
         >>> get_available_commands()
         {
@@ -324,14 +344,14 @@ def get_available_commands(shell: str = 'bash'):
                 "aws": "/usr/local/bin/aws"
             }
         }
-        
+
         >>> get_available_commands('zsh')
         {
             "commands": ["brew", "gcc", "python3", "ssh", "vim", ...],
             "builtin_commands": ["cd", "echo", "source", "export", "alias", ...],
             "command_details": {...}
         }
-    
+
     Notes:
         - The 'commands' list contains executables found in PATH directories
         - 'builtin_commands' may vary depending on the shell specified
@@ -341,8 +361,8 @@ def get_available_commands(shell: str = 'bash'):
     """
     try:
         # Get all directories in PATH
-        path_dirs = os.environ.get('PATH', '').split(os.pathsep)
-        
+        path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+
         # Find all executable files in PATH
         commands = set()
         for directory in path_dirs:
@@ -351,59 +371,63 @@ def get_available_commands(shell: str = 'bash'):
                     filepath = os.path.join(directory, filename)
                     if os.path.isfile(filepath) and os.access(filepath, os.X_OK):
                         commands.add(filename)
-        
+
         # Get shell builtin commands
         builtin_commands = []
-        if shell == 'bash':
+        if shell == "bash":
             try:
                 result = subprocess.run(
-                    "bash -c 'compgen -b'", 
-                    shell=True, 
-                    capture_output=True, 
-                    text=True
+                    "bash -c 'compgen -b'", shell=True, capture_output=True, text=True
                 )
                 if result.returncode == 0:
-                    builtin_commands = result.stdout.strip().split('\n')
+                    builtin_commands = result.stdout.strip().split("\n")
             except:
                 pass
-        elif shell == 'zsh':
+        elif shell == "zsh":
             try:
                 result = subprocess.run(
-                    "zsh -c 'print -l ${(k)commands}'", 
-                    shell=True, 
-                    capture_output=True, 
-                    text=True
+                    "zsh -c 'print -l ${(k)commands}'",
+                    shell=True,
+                    capture_output=True,
+                    text=True,
                 )
                 if result.returncode == 0:
-                    builtin_commands = result.stdout.strip().split('\n')
+                    builtin_commands = result.stdout.strip().split("\n")
             except:
                 pass
-        
+
         # Get details for common important commands
         important_commands = [
-            "python", "python3", "pip", "pip3", "node", "npm", "git", 
-            "aws", "docker", "kubectl", "terraform", "ansible"
+            "python",
+            "python3",
+            "pip",
+            "pip3",
+            "node",
+            "npm",
+            "git",
+            "aws",
+            "docker",
+            "kubectl",
+            "terraform",
+            "ansible",
         ]
-        
+
         command_details = {}
         for cmd in important_commands:
             if cmd in commands:
                 try:
                     result = subprocess.run(
-                        f"which {cmd}", 
-                        shell=True, 
-                        capture_output=True, 
-                        text=True
+                        f"which {cmd}", shell=True, capture_output=True, text=True
                     )
                     if result.returncode == 0:
                         command_details[cmd] = result.stdout.strip()
                 except:
                     pass
-        
+
         return {
             "commands": sorted(list(commands)),
             "builtin_commands": sorted(builtin_commands),
-            "command_details": command_details
+            "command_details": command_details,
         }
     except Exception as e:
         return {"error": f"Failed to get available commands: {str(e)}"}
@@ -413,19 +437,19 @@ def get_available_commands(shell: str = 'bash'):
 def safe_command_exists(command: str):
     """
     Safely checks if a command exists in the environment without executing it.
-    
+
     This tool determines if a command is available for execution via PATH
     lookup or as a shell builtin, without actually running the command.
-    
+
     Args:
         command: The command name to check
-        
+
     Returns:
         Dictionary containing:
         - exists: Boolean indicating if command exists
         - path: Full path to the command (if found as executable)
         - type: Type of command ('executable', 'builtin', or 'not found')
-        
+
     Examples:
         >>> safe_command_exists('ls')
         {
@@ -433,21 +457,21 @@ def safe_command_exists(command: str):
             "path": "/bin/ls",
             "type": "executable"
         }
-        
+
         >>> safe_command_exists('cd')
         {
             "exists": true,
             "path": null,
             "type": "builtin"
         }
-        
+
         >>> safe_command_exists('nonexistentcommand')
         {
             "exists": false,
             "path": null,
             "type": "not found"
         }
-    
+
     Notes:
         - This function will never execute the command
         - It first checks if the command is a shell builtin
@@ -459,67 +483,59 @@ def safe_command_exists(command: str):
         # Check if command is a shell builtin
         try:
             result = subprocess.run(
-                f"type -t {shlex.quote(command)}", 
-                shell=True, 
-                capture_output=True, 
-                text=True
+                f"type -t {shlex.quote(command)}",
+                shell=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0 and "builtin" in result.stdout:
-                return {
-                    "exists": True,
-                    "path": None,
-                    "type": "builtin"
-                }
+                return {"exists": True, "path": None, "type": "builtin"}
         except:
             pass
-        
+
         # Check if command exists in PATH
         try:
             result = subprocess.run(
-                f"which {shlex.quote(command)}", 
-                shell=True, 
-                capture_output=True, 
-                text=True
+                f"which {shlex.quote(command)}",
+                shell=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 return {
                     "exists": True,
                     "path": result.stdout.strip(),
-                    "type": "executable"
+                    "type": "executable",
                 }
         except:
             pass
-        
+
         # Command not found
-        return {
-            "exists": False,
-            "path": None,
-            "type": "not found"
-        }
+        return {"exists": False, "path": None, "type": "not found"}
     except Exception as e:
-        return {
-            "exists": False,
-            "path": None,
-            "type": "error",
-            "error": str(e)
-        }
+        return {"exists": False, "path": None, "type": "error", "error": str(e)}
 
 
 @register_tool(tags=["shell"])
-def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, working_directory: str = None):
+def run_command_safely(
+    command: str,
+    args: List[str] = None,
+    timeout: int = 30,
+    working_directory: str = None,
+):
     """
     Runs a command with arguments in a safer way, sanitizing inputs.
-    
+
     This tool provides a more secure way to execute shell commands by
     explicitly separating the command and its arguments, reducing risk
     of shell injection attacks.
-    
+
     Args:
         command: The command to execute
         args: List of arguments to pass to the command (default: [])
         timeout: Maximum execution time in seconds (default: 30)
         working_directory: Directory to execute command in (default: current directory)
-        
+
     Returns:
         Dictionary containing:
         - success: Boolean indicating if command executed successfully
@@ -528,7 +544,7 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
         - exit_code: Command exit code
         - execution_time: Time taken to execute in seconds
         - command_line: The exact command line that was executed
-        
+
     Examples:
         >>> run_command_safely('ls', ['-la', '/tmp'])
         {
@@ -539,7 +555,7 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
             "execution_time": 0.032,
             "command_line": "ls -la /tmp"
         }
-        
+
         >>> run_command_safely('find', ['/tmp', '-name', '*.log'])
         {
             "success": true,
@@ -549,7 +565,7 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
             "execution_time": 2.1,
             "command_line": "find /tmp -name *.log"
         }
-        
+
         >>> run_command_safely('grep', ['ERROR', '/nonexistent/file.txt'])
         {
             "success": false,
@@ -559,7 +575,7 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
             "execution_time": 0.018,
             "command_line": "grep ERROR /nonexistent/file.txt"
         }
-    
+
     Notes:
         - Arguments are passed directly to subprocess, not through a shell
         - This significantly reduces the risk of shell injection attacks
@@ -568,7 +584,7 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
         - Command is validated against available executables before running
     """
     args = args or []
-    
+
     # First check if the command exists
     command_info = safe_command_exists(command)
     if not command_info["exists"]:
@@ -578,31 +594,31 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
             "stderr": f"Command '{command}' not found",
             "exit_code": 127,  # Standard "command not found" exit code
             "execution_time": 0,
-            "command_line": f"{command} {' '.join(args)}"
+            "command_line": f"{command} {' '.join(args)}",
         }
-    
+
     # If it's a builtin, we need to run it through a shell
     if command_info["type"] == "builtin":
         cmd_line = f"{command} {' '.join(shlex.quote(arg) for arg in args)}"
         return {
             **execute_shell_command(cmd_line, timeout, working_directory),
-            "command_line": cmd_line
+            "command_line": cmd_line,
         }
-    
+
     # For regular executables, run directly with subprocess
     start_time = time.time()
     try:
         # Use the full path if we found it
         cmd_path = command_info["path"] if command_info["path"] else command
-        
+
         process = subprocess.Popen(
             [cmd_path] + args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=working_directory
+            cwd=working_directory,
         )
-        
+
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             exit_code = process.returncode
@@ -613,16 +629,16 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
             exit_code = -1
             success = False
             stderr += f"\nCommand timed out after {timeout} seconds."
-        
+
         execution_time = time.time() - start_time
-        
+
         return {
             "success": success,
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": exit_code,
             "execution_time": round(execution_time, 3),
-            "command_line": f"{command} {' '.join(args)}"
+            "command_line": f"{command} {' '.join(args)}",
         }
     except Exception as e:
         return {
@@ -631,31 +647,33 @@ def run_command_safely(command: str, args: List[str] = None, timeout: int = 30, 
             "stderr": f"Error executing command: {str(e)}",
             "exit_code": -1,
             "execution_time": round(time.time() - start_time, 3),
-            "command_line": f"{command} {' '.join(args)}"
+            "command_line": f"{command} {' '.join(args)}",
         }
 
 
 @register_tool(tags=["shell"])
-def create_temporary_script(content: str, extension: str = ".sh", make_executable: bool = True):
+def create_temporary_script(
+    content: str, extension: str = ".sh", make_executable: bool = True
+):
     """
     Creates a temporary script file and returns its path.
-    
+
     This tool generates a script file with the provided content in the system's
     temporary directory, with options to make it executable and control the file
     extension.
-    
+
     Args:
         content: The script content to write to the file
         extension: File extension to use (default: .sh)
         make_executable: Whether to make the file executable (default: True)
-        
+
     Returns:
         Dictionary containing:
         - path: Absolute path to the created temporary file
         - created: Timestamp when the file was created
         - size: Size of the file in bytes
         - is_executable: Whether the file is executable
-        
+
     Examples:
         >>> create_temporary_script('#!/bin/bash\\necho "Hello, world!"')
         {
@@ -664,7 +682,7 @@ def create_temporary_script(content: str, extension: str = ".sh", make_executabl
             "size": 32,
             "is_executable": true
         }
-        
+
         >>> create_temporary_script('print("Hello from Python")\\n', extension='.py', make_executable=False)
         {
             "path": "/tmp/tmp_scripteffg5678.py",
@@ -672,7 +690,7 @@ def create_temporary_script(content: str, extension: str = ".sh", make_executabl
             "size": 24,
             "is_executable": false
         }
-    
+
     Notes:
         - Files are created in the system's temp directory
         - For bash scripts, automatically adds shebang if missing
@@ -684,26 +702,26 @@ def create_temporary_script(content: str, extension: str = ".sh", make_executabl
         # Add shebang for shell scripts if it's missing
         if extension == ".sh" and not content.startswith("#!"):
             content = "#!/bin/bash\n" + content
-        
+
         # Create a temporary file with the specified extension
         fd, path = tempfile.mkstemp(suffix=extension, prefix="tmp_script")
-        
+
         # Write the content to the file
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             f.write(content)
-        
+
         # Make the file executable if requested
         if make_executable:
             os.chmod(path, 0o755)  # rwxr-xr-x
-        
+
         # Get file metadata
         file_stats = os.stat(path)
-        
+
         return {
             "path": path,
             "created": datetime.datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
             "size": file_stats.st_size,
-            "is_executable": os.access(path, os.X_OK)
+            "is_executable": os.access(path, os.X_OK),
         }
     except Exception as e:
         return {"error": f"Failed to create temporary script: {str(e)}"}
@@ -713,15 +731,15 @@ def create_temporary_script(content: str, extension: str = ".sh", make_executabl
 def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
     """
     Executes a pipeline of commands, feeding output between them.
-    
+
     This tool mimics Unix-style command pipelines where the output of each
     command is fed as input to the next command in the sequence.
-    
+
     Args:
         commands: List of command objects, each with:
                  - 'command': The command name (required)
                  - 'args': List of arguments (optional)
-        
+
     Returns:
         Dictionary containing:
         - success: Boolean indicating overall pipeline success
@@ -729,7 +747,7 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
         - final_stdout: Output from the final command in the pipeline
         - final_stderr: Error output from the final command
         - execution_time: Total time taken to execute the pipeline
-        
+
     Examples:
         >>> execute_pipeline([
         ...     {"command": "find", "args": ["/tmp", "-type", "f", "-name", "*.log"]},
@@ -747,7 +765,7 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
             "final_stderr": "",
             "execution_time": 1.23
         }
-        
+
         >>> execute_pipeline([
         ...     {"command": "echo", "args": ["Hello, world!"]},
         ...     {"command": "tr", "args": ["a-z", "A-Z"]}
@@ -762,7 +780,7 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
             "final_stderr": "",
             "execution_time": 0.05
         }
-    
+
     Notes:
         - This simulates shell pipelines (like 'cmd1 | cmd2 | cmd3')
         - The pipeline success is True only if all commands succeed
@@ -777,40 +795,42 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
             "stages": [],
             "final_stdout": "",
             "final_stderr": "No commands provided",
-            "execution_time": 0
+            "execution_time": 0,
         }
-    
+
     start_time = time.time()
     stages = []
     current_input = None
     overall_success = True
-    
+
     for i, cmd_info in enumerate(commands):
-        command = cmd_info.get('command')
-        args = cmd_info.get('args', [])
-        
+        command = cmd_info.get("command")
+        args = cmd_info.get("args", [])
+
         if not command:
             return {
                 "success": False,
                 "stages": stages,
                 "final_stdout": "",
                 "final_stderr": f"Command at position {i} is missing the 'command' attribute",
-                "execution_time": round(time.time() - start_time, 3)
+                "execution_time": round(time.time() - start_time, 3),
             }
-        
+
         try:
             # Check if command exists
             command_info = safe_command_exists(command)
             if not command_info["exists"]:
-                stages.append({
-                    "command": command,
-                    "exit_code": 127,
-                    "success": False,
-                    "error": f"Command not found: {command}"
-                })
+                stages.append(
+                    {
+                        "command": command,
+                        "exit_code": 127,
+                        "success": False,
+                        "error": f"Command not found: {command}",
+                    }
+                )
                 overall_success = False
                 continue
-            
+
             # Create the process
             if command_info["type"] == "builtin":
                 # For builtins, we need to use shell=True and handle the input differently
@@ -821,7 +841,7 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
                     stdin=subprocess.PIPE if current_input is not None else None,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True
+                    text=True,
                 )
             else:
                 # For regular commands, use the safe list approach
@@ -830,49 +850,44 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
                     stdin=subprocess.PIPE if current_input is not None else None,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True
+                    text=True,
                 )
-            
+
             # Send input to the process if available
             stdout, stderr = process.communicate(input=current_input)
             exit_code = process.returncode
             success = exit_code == 0
-            
+
             # Store the stage result
-            stages.append({
-                "command": command,
-                "exit_code": exit_code,
-                "success": success
-            })
-            
+            stages.append(
+                {"command": command, "exit_code": exit_code, "success": success}
+            )
+
             # Update overall success
             if not success:
                 overall_success = False
-            
+
             # Set the output for the next command
             current_input = stdout
-            
+
         except Exception as e:
-            stages.append({
-                "command": command,
-                "exit_code": -1,
-                "success": False,
-                "error": str(e)
-            })
+            stages.append(
+                {"command": command, "exit_code": -1, "success": False, "error": str(e)}
+            )
             overall_success = False
             # Continue with empty input for the next command
             current_input = ""
-    
+
     # Get the final outputs
     final_stdout = current_input or ""
-    final_stderr = stderr if 'stderr' in locals() else ""
-    
+    final_stderr = stderr if "stderr" in locals() else ""
+
     return {
         "success": overall_success,
         "stages": stages,
         "final_stdout": final_stdout,
         "final_stderr": final_stderr,
-        "execution_time": round(time.time() - start_time, 3)
+        "execution_time": round(time.time() - start_time, 3),
     }
 
 
@@ -880,10 +895,10 @@ def execute_pipeline(commands: List[Dict[str, Union[str, List[str]]]]):
 def list_processes():
     """
     Lists currently running processes on the system.
-    
+
     This tool provides a snapshot of active processes with useful information
     about each one, similar to tools like 'ps' but with structured output.
-    
+
     Returns:
         List of dictionaries, each containing:
         - pid: Process ID
@@ -894,7 +909,7 @@ def list_processes():
         - create_time: When the process was started
         - username: User who owns the process
         - cmdline: Full command line used to start the process
-        
+
     Examples:
         >>> list_processes()
         [
@@ -920,7 +935,7 @@ def list_processes():
             },
             ...
         ]
-    
+
     Notes:
         - Requires the psutil package to be installed
         - Provides a safer alternative to directly using 'ps' commands
@@ -933,14 +948,16 @@ def list_processes():
         import psutil
     except ImportError:
         return {"error": "psutil package is not available. Cannot list processes."}
-    
+
     process_list = []
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'username', 'status', 'cmdline', 'create_time']):
+        for proc in psutil.process_iter(
+            ["pid", "name", "username", "status", "cmdline", "create_time"]
+        ):
             try:
                 # Get process info as dictionary
                 proc_info = proc.info
-                
+
                 # Get CPU and memory percentages
                 with proc.oneshot():
                     try:
@@ -949,35 +966,46 @@ def list_processes():
                     except (psutil.AccessDenied, psutil.ZombieProcess):
                         cpu_percent = None
                         memory_percent = None
-                
+
                 # Format create time
-                if proc_info['create_time']:
-                    create_time = datetime.datetime.fromtimestamp(proc_info['create_time']).isoformat()
+                if proc_info["create_time"]:
+                    create_time = datetime.datetime.fromtimestamp(
+                        proc_info["create_time"]
+                    ).isoformat()
                 else:
                     create_time = None
-                
+
                 # Build the process entry
                 process_entry = {
-                    "pid": proc_info['pid'],
-                    "name": proc_info['name'],
-                    "status": proc_info['status'],
-                    "cpu_percent": round(cpu_percent, 1) if cpu_percent is not None else None,
-                    "memory_percent": round(memory_percent, 1) if memory_percent is not None else None,
+                    "pid": proc_info["pid"],
+                    "name": proc_info["name"],
+                    "status": proc_info["status"],
+                    "cpu_percent": (
+                        round(cpu_percent, 1) if cpu_percent is not None else None
+                    ),
+                    "memory_percent": (
+                        round(memory_percent, 1) if memory_percent is not None else None
+                    ),
                     "create_time": create_time,
-                    "username": proc_info['username'],
-                    "cmdline": " ".join(proc_info['cmdline']) if proc_info['cmdline'] else None
+                    "username": proc_info["username"],
+                    "cmdline": (
+                        " ".join(proc_info["cmdline"]) if proc_info["cmdline"] else None
+                    ),
                 }
-                
+
                 process_list.append(process_entry)
-                
+
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 # Skip processes that disappeared or can't be accessed
                 continue
-        
+
         # Sort by CPU usage (highest first) and limit to a reasonable number
-        process_list.sort(key=lambda x: x["cpu_percent"] if x["cpu_percent"] is not None else -1, reverse=True)
+        process_list.sort(
+            key=lambda x: x["cpu_percent"] if x["cpu_percent"] is not None else -1,
+            reverse=True,
+        )
         return process_list[:100]  # Limit to 100 processes to avoid overwhelming output
-    
+
     except Exception as e:
         return {"error": f"Failed to list processes: {str(e)}"}
 
@@ -986,15 +1014,15 @@ def list_processes():
 def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
     """
     Monitors a command's output and resource usage over time.
-    
+
     This tool executes a command and collects periodic snapshots of its
     output, CPU usage, memory consumption, and other metrics.
-    
+
     Args:
         command: The shell command to monitor
         duration: How long to monitor in seconds (default: 5)
         interval: Time between snapshots in seconds (default: 1.0)
-        
+
     Returns:
         Dictionary containing:
         - command: The command that was monitored
@@ -1004,7 +1032,7 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
         - summary: Statistics about resource usage over time
         - final_stdout: Final complete stdout from the command
         - final_stderr: Final complete stderr from the command
-        
+
     Examples:
         >>> monitor_command("ping -c 10 google.com", duration=5, interval=0.5)
         {
@@ -1038,7 +1066,7 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
             "final_stdout": "PING google.com (142.250.80.78) 56(84) bytes of data.\\n...",
             "final_stderr": ""
         }
-        
+
         >>> monitor_command("echo 'Hello'; sleep 3; echo 'World'", duration=4, interval=1.0)
         {
             "command": "echo 'Hello'; sleep 3; echo 'World'",
@@ -1055,7 +1083,7 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
                 ...
                 {
                     "timestamp": "2023-08-21T15:46:04.123",
-                    "cpu_percent": 0.1, 
+                    "cpu_percent": 0.1,
                     "memory_mb": 1.2,
                     "running_time": 4.0,
                     "output": "Hello\\nWorld\\n"
@@ -1065,7 +1093,7 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
             "final_stdout": "Hello\\nWorld\\n",
             "final_stderr": ""
         }
-    
+
     Notes:
         - The command runs for at least the specified duration, unless it finishes earlier
         - Each snapshot contains the cumulative output up to that point
@@ -1078,10 +1106,11 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
         # Check if psutil is available for resource monitoring
         try:
             import psutil
+
             psutil_available = True
         except ImportError:
             psutil_available = False
-        
+
         # Start the process
         start_time = time.time()
         process = subprocess.Popen(
@@ -1091,20 +1120,20 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,  # Line buffered
-            universal_newlines=True
+            universal_newlines=True,
         )
-        
+
         # Set up non-blocking reads
         import fcntl
         import select
         import io
-        
+
         # Make stdout and stderr non-blocking
         for pipe in [process.stdout, process.stderr]:
             fd = pipe.fileno()
             fl = fcntl.fcntl(fd, fcntl.F_GETFL)
             fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-        
+
         # Track process resources if psutil is available
         psutil_proc = None
         if psutil_available:
@@ -1112,62 +1141,62 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
                 psutil_proc = psutil.Process(process.pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 psutil_proc = None
-        
+
         # Initialize variables
         snapshots = []
         stdout_buffer = ""
         stderr_buffer = ""
         cpu_percentages = []
         memory_usages = []
-        
+
         # Monitor until duration is reached or process completes
         while time.time() - start_time < duration:
             # Check if process has completed
             if process.poll() is not None:
                 break
-            
+
             # Sleep a bit before taking a snapshot
             time.sleep(min(0.1, interval))
-            
+
             # Read available output
             readable, _, _ = select.select([process.stdout, process.stderr], [], [], 0)
-            
+
             if process.stdout in readable:
                 chunk = process.stdout.read()
                 if chunk:
                     stdout_buffer += chunk
-            
+
             if process.stderr in readable:
                 chunk = process.stderr.read()
                 if chunk:
                     stderr_buffer += chunk
-            
+
             # Take a snapshot at the specified interval
             current_time = time.time()
             if current_time - start_time >= len(snapshots) * interval:
                 snapshot = {
                     "timestamp": datetime.datetime.now().isoformat(),
                     "running_time": round(current_time - start_time, 2),
-                    "output": stdout_buffer
+                    "output": stdout_buffer,
                 }
-                
+
                 # Add resource usage metrics if available
                 if psutil_proc:
                     try:
                         cpu_percent = psutil_proc.cpu_percent()
                         memory_info = psutil_proc.memory_info()
                         memory_mb = memory_info.rss / (1024 * 1024)
-                        
+
                         snapshot["cpu_percent"] = round(cpu_percent, 1)
                         snapshot["memory_mb"] = round(memory_mb, 1)
-                        
+
                         cpu_percentages.append(cpu_percent)
                         memory_usages.append(memory_mb)
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
-                
+
                 snapshots.append(snapshot)
-        
+
         # Process completion or timeout - collect final output
         try:
             final_stdout, final_stderr = process.communicate(timeout=0.5)
@@ -1185,20 +1214,20 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
                 final_stdout, final_stderr = process.communicate()
                 stdout_buffer += final_stdout
                 stderr_buffer += final_stderr
-        
+
         # Calculate summary statistics
-        summary = {
-            "total_running_time": round(time.time() - start_time, 2)
-        }
-        
+        summary = {"total_running_time": round(time.time() - start_time, 2)}
+
         if cpu_percentages:
-            summary["avg_cpu_percent"] = round(sum(cpu_percentages) / len(cpu_percentages), 1)
+            summary["avg_cpu_percent"] = round(
+                sum(cpu_percentages) / len(cpu_percentages), 1
+            )
             summary["max_cpu_percent"] = round(max(cpu_percentages), 1)
-        
+
         if memory_usages:
             summary["avg_memory_mb"] = round(sum(memory_usages) / len(memory_usages), 1)
             summary["max_memory_mb"] = round(max(memory_usages), 1)
-        
+
         return {
             "command": command,
             "success": process.returncode == 0,
@@ -1206,30 +1235,32 @@ def monitor_command(command: str, duration: int = 5, interval: float = 1.0):
             "snapshots": snapshots,
             "summary": summary,
             "final_stdout": stdout_buffer,
-            "final_stderr": stderr_buffer
+            "final_stderr": stderr_buffer,
         }
     except Exception as e:
         return {
             "command": command,
             "success": False,
-            "error": f"Failed to monitor command: {str(e)}"
+            "error": f"Failed to monitor command: {str(e)}",
         }
 
 
 @register_tool(tags=["shell"])
-def find_and_replace_in_files(directory: str, 
-                              find_pattern: str, 
-                              replace_pattern: str, 
-                              file_extensions: List[str] = None,
-                              use_regex: bool = False,
-                              recursive: bool = True,
-                              preview: bool = True):
+def find_and_replace_in_files(
+    directory: str,
+    find_pattern: str,
+    replace_pattern: str,
+    file_extensions: List[str] = None,
+    use_regex: bool = False,
+    recursive: bool = True,
+    preview: bool = True,
+):
     """
     Find and replace text in multiple files with preview option.
-    
+
     This tool performs bulk text replacement across files, with the option
     to preview changes before applying them.
-    
+
     Args:
         directory: Base directory to search in
         find_pattern: Text pattern to find
@@ -1238,14 +1269,14 @@ def find_and_replace_in_files(directory: str,
         use_regex: Whether to interpret find_pattern as a regex (default: False)
         recursive: Whether to process subdirectories (default: True)
         preview: Only show changes without applying them (default: True)
-        
+
     Returns:
         Dictionary containing:
         - files_matched: Number of files with matches
         - total_replacements: Total number of replacements (potential or actual)
         - changes: Dictionary mapping file paths to their changes
         - applied: Whether changes were applied or just previewed
-        
+
     Examples:
         >>> # Preview replacements
         >>> find_and_replace_in_files(
@@ -1271,7 +1302,7 @@ def find_and_replace_in_files(directory: str,
             },
             "applied": false
         }
-        
+
         >>> # Apply replacements with regex
         >>> find_and_replace_in_files(
         ...     '/home/user/project/src',
@@ -1293,7 +1324,7 @@ def find_and_replace_in_files(directory: str,
             },
             "applied": true
         }
-    
+
     Notes:
         - Preview mode (default) allows seeing changes before applying them
         - When preview=False, the files are actually modified
@@ -1303,15 +1334,19 @@ def find_and_replace_in_files(directory: str,
         - Use caution when applying replacements to many files at once
     """
     import re
-    
+
     if not os.path.isdir(directory):
-        return {"error": f"Directory '{directory}' does not exist or is not a directory"}
-    
+        return {
+            "error": f"Directory '{directory}' does not exist or is not a directory"
+        }
+
     # Process file extensions
     if file_extensions:
         # Ensure all extensions start with a dot
-        file_extensions = [ext if ext.startswith('.') else f'.{ext}' for ext in file_extensions]
-    
+        file_extensions = [
+            ext if ext.startswith(".") else f".{ext}" for ext in file_extensions
+        ]
+
     # Compile regex if using regex mode
     pattern = None
     if use_regex:
@@ -1319,37 +1354,39 @@ def find_and_replace_in_files(directory: str,
             pattern = re.compile(find_pattern)
         except re.error as e:
             return {"error": f"Invalid regex pattern: {str(e)}"}
-    
+
     # Walk through files
     files_matched = 0
     total_replacements = 0
     changes = {}
-    
+
     for root, _, files in os.walk(directory):
         if not recursive and root != directory:
             continue
-            
+
         for filename in files:
             # Check file extension if specified
-            if file_extensions and not any(filename.endswith(ext) for ext in file_extensions):
+            if file_extensions and not any(
+                filename.endswith(ext) for ext in file_extensions
+            ):
                 continue
-                
+
             filepath = os.path.join(root, filename)
-            
+
             # Skip binary files
             try:
-                with open(filepath, 'rb') as f:
+                with open(filepath, "rb") as f:
                     chunk = f.read(1024)
-                    if b'\0' in chunk:  # Simple binary file check
+                    if b"\0" in chunk:  # Simple binary file check
                         continue
             except:
                 continue
-            
+
             # Process the file
             try:
-                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                
+
                 # Search and replace
                 if use_regex:
                     # For regex, we need to use regex functions
@@ -1358,54 +1395,60 @@ def find_and_replace_in_files(directory: str,
                     # For plain text, use simple string replacement
                     count = content.count(find_pattern)
                     new_content = content.replace(find_pattern, replace_pattern)
-                
+
                 # If we found matches
                 if count > 0:
                     files_matched += 1
                     total_replacements += count
-                    
+
                     # Generate line-by-line diff preview
                     line_matches = []
                     preview_lines = []
-                    
+
                     if preview:
                         original_lines = content.splitlines()
                         new_lines = new_content.splitlines()
-                        
+
                         # Compare lines to find differences
-                        for i, (old_line, new_line) in enumerate(zip(original_lines, new_lines)):
+                        for i, (old_line, new_line) in enumerate(
+                            zip(original_lines, new_lines)
+                        ):
                             if old_line != new_line:
                                 line_number = i + 1
                                 line_matches.append(line_number)
-                                preview_lines.append(f"Line {line_number}: - {old_line}")
-                                preview_lines.append(f"Line {line_number}: + {new_line}")
-                    
+                                preview_lines.append(
+                                    f"Line {line_number}: - {old_line}"
+                                )
+                                preview_lines.append(
+                                    f"Line {line_number}: + {new_line}"
+                                )
+
                     # Record the changes
                     if preview:
                         changes[filepath] = {
                             "line_matches": line_matches,
                             "preview": preview_lines,
-                            "replacements": count
+                            "replacements": count,
                         }
                     else:
                         changes[filepath] = {
                             "line_matches": line_matches,
-                            "replacements": count
+                            "replacements": count,
                         }
-                        
+
                         # Actually apply the changes
-                        with open(filepath, 'w', encoding='utf-8') as f:
+                        with open(filepath, "w", encoding="utf-8") as f:
                             f.write(new_content)
-            
+
             except Exception as e:
                 # Skip files with errors
                 continue
-    
+
     return {
         "files_matched": files_matched,
         "total_replacements": total_replacements,
         "changes": changes,
-        "applied": not preview
+        "applied": not preview,
     }
 
 
@@ -1413,16 +1456,16 @@ def find_and_replace_in_files(directory: str,
 def benchmark_command(command: str, iterations: int = 3, output: bool = False):
     """
     Benchmarks a command by running it multiple times and measuring performance.
-    
+
     This tool provides detailed timing statistics for a command by executing
     it repeatedly, similar to the 'time' command but with more comprehensive
     analysis.
-    
+
     Args:
         command: The shell command to benchmark
         iterations: Number of times to run the command (default: 3)
         output: Whether to include command output in the results (default: False)
-        
+
     Returns:
         Dictionary containing:
         - command: The command that was benchmarked
@@ -1434,7 +1477,7 @@ def benchmark_command(command: str, iterations: int = 3, output: bool = False):
         - std_dev: Standard deviation of execution times
         - output: Command output (if requested)
         - exit_codes: Exit codes from each run
-        
+
     Examples:
         >>> benchmark_command('find /home/user -name "*.txt"', iterations=5)
         {
@@ -1448,7 +1491,7 @@ def benchmark_command(command: str, iterations: int = 3, output: bool = False):
             "exit_codes": [0, 0, 0, 0, 0],
             "all_successful": true
         }
-        
+
         >>> benchmark_command('python -c "import time; time.sleep(0.1); print(\'Done\')"', output=True)
         {
             "command": "python -c \"import time; time.sleep(0.1); print('Done')\"",
@@ -1462,7 +1505,7 @@ def benchmark_command(command: str, iterations: int = 3, output: bool = False):
             "exit_codes": [0, 0, 0],
             "all_successful": true
         }
-    
+
     Notes:
         - The minimum iterations is 1, and values less than 1 will be set to 1
         - The command is executed exactly as provided, in a shell environment
@@ -1474,59 +1517,59 @@ def benchmark_command(command: str, iterations: int = 3, output: bool = False):
     """
     # Ensure at least one iteration
     iterations = max(1, iterations)
-    
+
     execution_times = []
     outputs = []
     exit_codes = []
-    
+
     for i in range(iterations):
         try:
             start_time = time.time()
-            
+
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE if output else subprocess.DEVNULL,
                 stderr=subprocess.STDOUT if output else subprocess.DEVNULL,
                 shell=True,
-                text=True
+                text=True,
             )
-            
+
             if output:
                 cmd_output, _ = process.communicate()
                 outputs.append(cmd_output)
             else:
                 process.wait()
                 cmd_output = None
-            
+
             end_time = time.time()
             execution_time = end_time - start_time
-            
+
             execution_times.append(execution_time)
             exit_codes.append(process.returncode)
-            
+
         except Exception as e:
             return {
                 "command": command,
                 "error": f"Failed to execute command: {str(e)}",
-                "iterations_completed": i
+                "iterations_completed": i,
             }
-    
+
     # Calculate statistics
     mean_time = sum(execution_times) / len(execution_times)
     min_time = min(execution_times)
     max_time = max(execution_times)
-    
+
     # Calculate standard deviation
     variance = sum((t - mean_time) ** 2 for t in execution_times) / len(execution_times)
-    std_dev = variance ** 0.5
-    
+    std_dev = variance**0.5
+
     # Round all times to 3 decimal places for readability
     execution_times = [round(t, 3) for t in execution_times]
     mean_time = round(mean_time, 3)
     min_time = round(min_time, 3)
     max_time = round(max_time, 3)
     std_dev = round(std_dev, 3)
-    
+
     result = {
         "command": command,
         "iterations": iterations,
@@ -1536,12 +1579,12 @@ def benchmark_command(command: str, iterations: int = 3, output: bool = False):
         "max_time": max_time,
         "std_dev": std_dev,
         "exit_codes": exit_codes,
-        "all_successful": all(code == 0 for code in exit_codes)
+        "all_successful": all(code == 0 for code in exit_codes),
     }
-    
+
     # Include output if requested
     if output and outputs:
         # Just include the first output to save space
         result["output"] = outputs[0]
-    
+
     return result

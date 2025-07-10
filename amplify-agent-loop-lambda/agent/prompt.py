@@ -1,17 +1,16 @@
 import json
 import os
+import random
 import traceback
 from typing import List
 
 import litellm
 from attr import dataclass
 from litellm import completion
-
-from common.secrets import get_llm_config
-from common.accounting import record_usage
+from agent.accounting import record_usage
 import boto3
-from botocore.config import Config
-from common.secrets import get_secret
+from pycommon.api.secrets import get_secret_value
+from pycommon.authz import is_rate_limited
 
 @dataclass
 class Prompt:
@@ -20,8 +19,17 @@ class Prompt:
     metadata: dict = {}
 
 
-def generate_response(model, prompt: Prompt, account_details: dict, details: dict = {}) -> str:
+def generate_response(
+    model, prompt: Prompt, account_details: dict, details: dict = {}
+) -> str:
     """Call LLM to get response"""
+
+    rate_limit = account_details.get("rate_limit")
+    if rate_limit and os.environ.get("COST_CALCULATIONS_DYNAMO_TABLE"):
+        rate_limited, message = is_rate_limited(account_details["user"], rate_limit)
+        if rate_limited:
+            print(f"Rate limit exceeded: {message}")
+            raise Exception(message)
 
     messages = prompt.messages
     tools = prompt.tools
@@ -53,8 +61,10 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
                 try:
                     tool_args = json.loads(tool.function.arguments)
                 except:
-                    print(f"Error parsing tool arguments coming from litellm: {tool.function.arguments}")
-                
+                    print(
+                        f"Error parsing tool arguments coming from litellm: {tool.function.arguments}"
+                    )
+
                 result = {
                     "tool": tool.function.name,
                     "args": tool_args,
@@ -62,7 +72,7 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
                 result = json.dumps(result)
             else:
                 result = response.choices[0].message.content
-        
+
         # print(f"--litellm Response: {response}")
         print("Recording usage for litellm response id: ", response.id)
         model_id = model.split("/")[1]
@@ -75,32 +85,50 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
 
         completion_tokens_details = usage.get("completion_tokens_details", None)
         prompt_tokens_details = usage.get("prompt_tokens_details", None)
-        
+
         if completion_tokens_details:
             # Convert to dictionary using vars() or __dict__
             try:
                 details["completion_tokens_details"] = {
-                    "reasoning_tokens": getattr(completion_tokens_details, "reasoning_tokens", 0),
-                    "text_tokens": getattr(completion_tokens_details, "text_tokens", None)
+                    "reasoning_tokens": getattr(
+                        completion_tokens_details, "reasoning_tokens", 0
+                    ),
+                    "text_tokens": getattr(
+                        completion_tokens_details, "text_tokens", None
+                    ),
                 }
             except:
-                print(f"Error converting completion_tokens_details to dictionary: {completion_tokens_details}")
-               
+                print(
+                    f"Error converting completion_tokens_details to dictionary: {completion_tokens_details}"
+                )
+
         cached_tokens = 0
         if prompt_tokens_details:
             try:
                 details["prompt_tokens_details"] = {
-                    "reasoning_tokens": getattr(prompt_tokens_details, "reasoning_tokens", 0),
+                    "reasoning_tokens": getattr(
+                        prompt_tokens_details, "reasoning_tokens", 0
+                    ),
                     "text_tokens": getattr(prompt_tokens_details, "text_tokens", None),
                     "image_tokens": getattr(prompt_tokens_details, "image_tokens", 0),
-                    "cached_tokens": getattr(prompt_tokens_details, "cached_tokens", 0)
+                    "cached_tokens": getattr(prompt_tokens_details, "cached_tokens", 0),
                 }
                 cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0)
             except:
-                print(f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}")
+                print(
+                    f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}"
+                )
 
         try:
-            token_cost = record_usage(account_details, response.id, model_id, input_tokens, output_tokens, cached_tokens, details)
+            token_cost = record_usage(
+                account_details,
+                response.id,
+                model_id,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                details,
+            )
 
         except Exception as e:
             print(f"Warning: Failed to record usage: {e}")
@@ -121,15 +149,56 @@ def generate_response(model, prompt: Prompt, account_details: dict, details: dic
 
     return result, token_cost
 
+
+def get_endpoint_data(parsed_data, model_name):
+    if model_name in ["gpt-4-1106-Preview", "gpt-4-1106-preview"]:
+        model_name = "gpt-4-turbo"
+    elif model_name in ["gpt-35-1106", "gpt-35-1106"]:
+        model_name = "gpt-35-turbo"
+    elif model_name in ["gpt-4o", "gpt-4o"]:
+        model_name = "gpt-4o"
+
+    endpoint_data = next(
+        (model for model in parsed_data["models"] if model_name in model), None
+    )
+    if not endpoint_data:
+        raise ValueError("Model name not found in the secret data")
+
+    endpoint_info = random.choice(endpoint_data[model_name]["endpoints"])
+    return endpoint_info["key"], endpoint_info["url"]
+
+
+def get_llm_config(model_name):
+    secret_name = os.environ.get("LLM_ENDPOINTS_SECRETS_NAME")
+    secret_data = get_secret_value(secret_name)
+    parsed_secret = json.loads(secret_data)
+    return get_endpoint_data(parsed_secret, model_name)
+
+
 def is_openai_model(model):
     return any(id in model for id in ["gpt", "o1", "o3"])
 
+
 def is_bedrock_model(model):
     # Common Bedrock models include anthropic.claude, amazon.titan, ai21, etc.
-    return any(provider in model for provider in ["anthropic", "claude", "amazon", "titan", "ai21", "cohere", "meta", "deepseek"])
+    return any(
+        provider in model
+        for provider in [
+            "anthropic",
+            "claude",
+            "amazon",
+            "titan",
+            "ai21",
+            "cohere",
+            "meta",
+            "deepseek",
+        ]
+    )
+
 
 def is_gemini_model(model):
     return model and "gemini" in model
+
 
 def litellm_model_str(model):
     provider_prefix = ""
@@ -146,17 +215,15 @@ def litellm_model_str(model):
         os.environ["AZURE_API_VERSION"] = version
         provider_prefix = "azure"
     elif is_bedrock_model(model):
-        region = os.environ.get('AWS_REGION', 'us-east-1')
-        
+        region = os.environ.get("AWS_REGION", "us-east-1")
+
         # Create a boto3 client for your bedrock interactions if needed
-        bedrock_client = boto3.client('bedrock-runtime', region_name=region)
-        litellm.bedrock_config = {
-            "client": bedrock_client
-        }
+        bedrock_client = boto3.client("bedrock-runtime", region_name=region)
+        litellm.bedrock_config = {"client": bedrock_client}
         provider_prefix = "bedrock"
     elif is_gemini_model(model):
         secret_name = os.environ.get("SECRETS_ARN_NAME")
-        secret_data = get_secret(secret_name)
+        secret_data = get_secret_value(secret_name)
         parsed_secret = json.loads(secret_data)
         gemini_api_key = parsed_secret.get("GEMINI_API_KEY")
         os.environ["GEMINI_API_KEY"] = gemini_api_key
@@ -165,36 +232,44 @@ def litellm_model_str(model):
     else:
         raise ValueError(f"Unsupported model: {model}")
     return f"{provider_prefix}/{model}"
-        
 
-def create_llm(access_token, model, current_user = "Agent", account_id = "general_account", details: dict = {}, advanced_model = None):
+
+def create_llm(
+    access_token,
+    model,
+    current_user="Agent",
+    account={"account_id": "general_account"},
+    details: dict = {},
+    advanced_model=None,
+):
     agent_model_str = litellm_model_str(model)
     advanced_model_str = agent_model_str
     try:
         if advanced_model:
             advanced_model_str = litellm_model_str(advanced_model)
     except Exception as e:
-        print(f"Error creating advanced model: {e}, using agent model as advanced model...")
-    
+        print(
+            f"Error creating advanced model: {e}, using agent model as advanced model..."
+        )
 
-    account_details = {
-        "user": current_user,
-        "accountId": account_id,
-        "accessToken": access_token,
-    }
+    account_details = {"user": current_user, "accessToken": access_token, **account}
 
     total_cost = 0.0
-    
+
     def llm(prompt):
         nonlocal total_cost
         model_str = agent_model_str
-        if isinstance(prompt.metadata, dict) and prompt.metadata.get("advanced_reasoning", False):
+        if isinstance(prompt.metadata, dict) and prompt.metadata.get(
+            "advanced_reasoning", False
+        ):
             print("Prompting using advanced model: ", advanced_model_str)
             model_str = advanced_model_str
 
-        result, token_cost = generate_response(model_str, prompt, account_details, details)
+        result, token_cost = generate_response(
+            model_str, prompt, account_details, details
+        )
         total_cost += token_cost
         return result
-    
+
     llm.get_total_cost = lambda: total_cost
     return llm

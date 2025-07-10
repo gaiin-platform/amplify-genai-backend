@@ -117,24 +117,31 @@ The next action to take is:
 --------------
 """
 
+
 @register_tool(tags=["planning"])
-def create_plan(action_context, _memory:Memory, action_registry:ActionRegistry):
+def create_plan(action_context, _memory: Memory, action_registry: ActionRegistry):
 
     def get_memory_message(memory):
         type = memory["type"] if "type" in ["user", "assistant", "system"] else "user"
         return {"role": type, "content": memory["content"]}
 
-    actions_message = {"role":"user", "content":f"""   
+    actions_message = {
+        "role": "user",
+        "content": f"""   
 Available Actions:    
 ------------------
 {json.dumps([a.todict() for a in action_registry.get_actions()])}
-"""}
+""",
+    }
 
     messages = [get_memory_message(m) for m in _memory.items]
 
     messages += [actions_message]
 
-    messages += [{"role": "user", "content": f"""
+    messages += [
+        {
+            "role": "user",
+            "content": f"""
 I am providing some sample plans for reference as to the content and structure of plans.
 
 {sample_plans}
@@ -143,13 +150,17 @@ Stop and think step by step. What set of actions should you tell me to perform t
 a simple and efficient way to tell me how to solve this problem? What are the key steps to follow?
 
 Write out your concrete step by step plan for me referencing the available actions by name here:
-"""}]
+""",
+        }
+    ]
 
     return prompt_llm_with_messages(action_context=action_context, prompt=messages)
 
 
 @register_tool(tags=["planning"])
-def determine_progress(action_context, _memory:Memory, action_registry:ActionRegistry):
+def determine_progress(
+    action_context, _memory: Memory, action_registry: ActionRegistry
+):
 
     def get_memory_message(memory):
         type = memory["type"] if "type" in ["user", "assistant", "system"] else "user"
@@ -157,7 +168,10 @@ def determine_progress(action_context, _memory:Memory, action_registry:ActionReg
 
     messages = [get_memory_message(m) for m in _memory.items]
 
-    messages += [{"role": "user", "content": """
+    messages += [
+        {
+            "role": "user",
+            "content": """
 Output Format:
 ------------
 The following actions have been completed:
@@ -177,6 +191,8 @@ Stop and think step by step. What was the overall plan? What actions have been c
 What should be the next action to take?
 
 Using the Output Format as your guide, and output the completed actions, remaining actions, and next action.
-"""}]
+""",
+        }
+    ]
 
     return prompt_llm_with_messages(action_context=action_context, prompt=messages)

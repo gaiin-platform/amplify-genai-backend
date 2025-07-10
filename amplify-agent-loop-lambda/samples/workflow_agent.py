@@ -17,16 +17,23 @@ from service.conversations import register_agent_conversation
 if __name__ == "__main__":
 
     if not os.getenv("ACCESS_TOKEN") or not os.getenv("CURRENT_USER"):
-        raise Exception("Unable to fetch APIs. Check that the ACCESS_TOKEN has not expired and CURRENT_USER is set.")
+        raise Exception(
+            "Unable to fetch APIs. Check that the ACCESS_TOKEN has not expired and CURRENT_USER is set."
+        )
     access_token = os.getenv("ACCESS_TOKEN")
     current_user = os.getenv("CURRENT_USER")
 
     workflow_file = "workflows/schedule.json"
-  
-    agent = workflow_agent.build_python_agent(workflow_file, model="gpt-4o-mini", access_token=access_token, current_user=current_user, additional_goals=[
-        Goal(
-            name="Always Choose a Tool",
-            description="""
+
+    agent = workflow_agent.build_python_agent(
+        workflow_file,
+        model="gpt-4o-mini",
+        access_token=access_token,
+        current_user=current_user,
+        additional_goals=[
+            Goal(
+                name="Always Choose a Tool",
+                description="""
             
             Stop and think step by step. Do I have a tool available to me? If so, YOU MUST USE IT.
             
@@ -36,16 +43,17 @@ if __name__ == "__main__":
             figure out how to use it. Look at the conversation to find the answers to input into the tool.
             
             YOU MUST CHOOSE A TOOL.
-            """
-        )
-    ])
+            """,
+            )
+        ],
+    )
 
     register_op_actions(agent.actions, access_token, current_user)
 
-    action_context_props={
+    action_context_props = {
         "event_handler": event_printer,
         "access_token": access_token,
-        "current_user": current_user
+        "current_user": current_user,
     }
 
     user_input = input("Enter a prompt for the agent: ")
@@ -53,8 +61,7 @@ if __name__ == "__main__":
     result = agent.run(user_input=user_input, action_context_props=action_context_props)
 
     register_agent_conversation(
-        access_token=access_token,
-        input=user_input,
-        memory=result)
+        access_token=access_token, input=user_input, memory=result
+    )
 
     print(result)

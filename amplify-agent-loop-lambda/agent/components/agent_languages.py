@@ -1,7 +1,14 @@
 import json
 from typing import List, Any
 
-from agent.core import AgentLanguage, Goal, Memory, Environment, Action, UnknownActionError
+from agent.core import (
+    AgentLanguage,
+    Goal,
+    Memory,
+    Environment,
+    Action,
+    UnknownActionError,
+)
 from agent.prompt import Prompt
 
 
@@ -37,9 +44,7 @@ class AgentNaturalLanguage(AgentLanguage):
         # Map all goals to a single string that concatenates their description
         # and combine into a single message of type system
         goal_instructions = "\n".join([f"{goal.description}" for goal in goals])
-        return [
-            {"role": "system", "content": goal_instructions}
-        ]
+        return [{"role": "system", "content": goal_instructions}]
 
     def format_memory(self, memory: Memory) -> List:
         """Generate response from language model"""
@@ -51,11 +56,13 @@ class AgentNaturalLanguage(AgentLanguage):
 
         return mapped_items
 
-    def construct_prompt(self,
-                         actions: List[Action],
-                         environment: Environment,
-                         goals: List[Goal],
-                         memory: Memory) -> Prompt:
+    def construct_prompt(
+        self,
+        actions: List[Action],
+        environment: Environment,
+        goals: List[Goal],
+        memory: Memory,
+    ) -> Prompt:
 
         prompt = []
         prompt += self.format_goals(goals)
@@ -63,24 +70,19 @@ class AgentNaturalLanguage(AgentLanguage):
 
         return Prompt(messages=prompt, tools=[])
 
-    def adapt_prompt_after_parsing_error(self,
-                                         prompt: Prompt,
-                                         response: str,
-                                         traceback: str,
-                                         error: Any,
-                                         retries_left: int) -> Prompt:
+    def adapt_prompt_after_parsing_error(
+        self,
+        prompt: Prompt,
+        response: str,
+        traceback: str,
+        error: Any,
+        retries_left: int,
+    ) -> Prompt:
         return prompt
-
 
     def parse_response(self, response: str) -> dict:
         """Parse LLM response into structured format by extracting the ```json block"""
-        return {
-            "tool": "terminate",
-            "args": {
-                "message": response
-            }
-        }
-
+        return {"tool": "terminate", "args": {"message": response}}
 
 
 class AgentJsonActionLanguage(AgentLanguage):
@@ -102,10 +104,10 @@ class AgentJsonActionLanguage(AgentLanguage):
         # Map all goals to a single string that concatenates their description
         # and combine into a single message of type system
         sep = "\n-------------------\n"
-        goal_instructions = "\n\n".join([f"{goal.name}:{sep}{goal.description}{sep}" for goal in goals])
-        return [
-            {"role": "system", "content": goal_instructions}
-        ]
+        goal_instructions = "\n\n".join(
+            [f"{goal.name}:{sep}{goal.description}{sep}" for goal in goals]
+        )
+        return [{"role": "system", "content": goal_instructions}]
 
     def format_memory(self, memory: Memory) -> List:
         """Generate response from language model"""
@@ -120,13 +122,19 @@ class AgentJsonActionLanguage(AgentLanguage):
     def format_actions(self, actions: List[Action]) -> List:
         """Generate response from language model"""
 
-        action_descriptions = \
-            [{"name": action.name, "description": action.description, "parameters": action.parameters} for
-             action in actions]
+        action_descriptions = [
+            {
+                "name": action.name,
+                "description": action.description,
+                "parameters": action.parameters,
+            }
+            for action in actions
+        ]
 
         return [
-            {"role":"system",
-             "content":f"""
+            {
+                "role": "system",
+                "content": f"""
 Available Tools: {json.dumps(action_descriptions, indent=4)}
 
 When you are done, terminate the conversation by using the "terminate" tool and I will 
@@ -136,15 +144,17 @@ Important!!! Every response MUST have an 'action' which is defined by outputting
 You must ALWAYS respond in this format:
 
 {AgentJsonActionLanguage.action_format}
-"""
-             }
+""",
+            }
         ]
 
-    def construct_prompt(self,
-                         actions: List[Action],
-                         environment: Environment,
-                         goals: List[Goal],
-                         memory: Memory) -> Prompt:
+    def construct_prompt(
+        self,
+        actions: List[Action],
+        environment: Environment,
+        goals: List[Goal],
+        memory: Memory,
+    ) -> Prompt:
 
         prompt = []
         prompt += self.format_goals(goals)
@@ -153,13 +163,14 @@ You must ALWAYS respond in this format:
 
         return Prompt(messages=prompt, tools=[])
 
-    def adapt_prompt_after_parsing_error(self,
-                         prompt: Prompt,
-                         response: str,
-                         traceback: str,
-                         error: Any,
-                         retries_left: int) -> Prompt:
-
+    def adapt_prompt_after_parsing_error(
+        self,
+        prompt: Prompt,
+        response: str,
+        traceback: str,
+        error: Any,
+        retries_left: int,
+    ) -> Prompt:
 
         if isinstance(error, UnknownActionError):
             feedback = f"Your last output contained an unknown action. {error}."
@@ -171,7 +182,7 @@ You must ALWAYS respond in this format:
 
         new_messages = prompt.messages + [
             {"role": "assistant", "content": f"{response}"},
-            {"role": "user", "content": feedback}
+            {"role": "user", "content": feedback},
         ]
 
         return Prompt(messages=new_messages, tools=[])
@@ -186,13 +197,13 @@ You must ALWAYS respond in this format:
             stripped_response = response.strip()
             start_index = stripped_response.find(start_marker)
             end_index = stripped_response.rfind(end_marker)
-            stripped_response = stripped_response[start_index + len(start_marker):end_index].strip()
+            stripped_response = stripped_response[
+                start_index + len(start_marker) : end_index
+            ].strip()
             return json.loads(stripped_response)
         except Exception as e:
             print(f"Agent language failed to parse response: {str(e)}")
             raise e
-
-
 
 
 class AgentFunctionCallingActionLanguage(AgentLanguage):
@@ -205,10 +216,10 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
         # Map all goals to a single string that concatenates their description
         # and combine into a single message of type system
         sep = "\n-------------------\n"
-        goal_instructions = "\n\n".join([f"{goal.name}:{sep}{goal.description}{sep}" for goal in goals])
-        return [
-            {"role": "system", "content": goal_instructions}
-        ]
+        goal_instructions = "\n\n".join(
+            [f"{goal.name}:{sep}{goal.description}{sep}" for goal in goals]
+        )
+        return [{"role": "system", "content": goal_instructions}]
 
     def format_memory(self, memory: Memory) -> List:
         """Generate response from language model"""
@@ -232,16 +243,19 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                     "description": action.description[:1024],
                     "parameters": action.parameters,
                 },
-            } for action in actions
+            }
+            for action in actions
         ]
 
         return tools
 
-    def construct_prompt(self,
-                         actions: List[Action],
-                         environment: Environment,
-                         goals: List[Goal],
-                         memory: Memory) -> Prompt:
+    def construct_prompt(
+        self,
+        actions: List[Action],
+        environment: Environment,
+        goals: List[Goal],
+        memory: Memory,
+    ) -> Prompt:
 
         prompt = []
         prompt += self.format_goals(goals)
@@ -251,18 +265,26 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
 
         return Prompt(messages=prompt, tools=tools)
 
-    def adapt_prompt_after_parsing_error(self,
-                                         prompt: Prompt,
-                                         response: str,
-                                         traceback: str,
-                                         error: Any,
-                                         retries_left: int) -> Prompt:
+    def adapt_prompt_after_parsing_error(
+        self,
+        prompt: Prompt,
+        response: str,
+        traceback: str,
+        error: Any,
+        retries_left: int,
+    ) -> Prompt:
 
         new_messages = prompt.messages + [
             {"role": "assistant", "content": f"{response}"},
-            {"role": "system", "content": "CRITICAL!!! You must ALWAYS choose a tool to use. "},
-            {"role": "user", "content": "You did not call a valid tool. "
-                                        "Please choose an available tool and output a tool call."}
+            {
+                "role": "system",
+                "content": "CRITICAL!!! You must ALWAYS choose a tool to use. ",
+            },
+            {
+                "role": "user",
+                "content": "You did not call a valid tool. "
+                "Please choose an available tool and output a tool call.",
+            },
         ]
 
         return Prompt(messages=new_messages, tools=prompt.tools)
@@ -279,19 +301,22 @@ class AgentFunctionCallingActionLanguage(AgentLanguage):
                 # if the agent dumps out a string, it is almost always because it just wants to tell
                 # the user something. In this case, we will just return the string as the message
                 # to terminate.
-                return {
-                    "tool": "terminate",
-                    "args": {"message": response}
-                }
+                return {"tool": "terminate", "args": {"message": response}}
             else:
                 print(f"Agent language failed to parse response: {response}")
-                # Added Exit logic 
+                # Added Exit logic
                 if isinstance(response, str):
                     if "EXIT_AGENT_LOOP" in response:
                         print("Agent loop terminated early")
                         return {
                             "tool": "terminate",
-                            "args": {"message": response.replace("EXIT_AGENT_LOOP", "").strip()},
-                            "error": "Agent Loop Terminated Early"
+                            "args": {
+                                "message": response.replace(
+                                    "EXIT_AGENT_LOOP", ""
+                                ).strip()
+                            },
+                            "error": "Agent Loop Terminated Early",
                         }
-                raise ValueError(f"The agent did not respond with a valid tool invocation: {str(e)}")
+                raise ValueError(
+                    f"The agent did not respond with a valid tool invocation: {str(e)}"
+                )

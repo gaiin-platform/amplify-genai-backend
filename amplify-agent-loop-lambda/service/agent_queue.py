@@ -9,10 +9,11 @@ from typing import Dict, Any, List
 from events.email_events import SESMessageHandler
 from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
-sqs = boto3.client('sqs')
-agent_queue = os.environ['AGENT_QUEUE_URL']
+sqs = boto3.client("sqs")
+agent_queue = os.environ["AGENT_QUEUE_URL"]
 
 _handlers: List[MessageHandler] = []
+
 
 def register_handler(handler: MessageHandler):
     _handlers.append(handler)
@@ -22,10 +23,10 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Process messages from SQS queue by trying registered handlers."""
     print(f"Processing SQS event: {json.dumps(event)}")
 
-    for record in event.get('Records', []):
-        receipt_handle = record.get('receiptHandle')
+    for record in event.get("Records", []):
+        receipt_handle = record.get("receiptHandle")
         try:
-            message_body = json.loads(record.get('body', '{}'))
+            message_body = json.loads(record.get("body", "{}"))
 
             print("Starting handler chain...")
             for handler in _handlers:
@@ -39,26 +40,40 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         print("Agent response:", response)
 
                         if response.get("handled"):
-                            #delete record from sqs 
+                            # delete record from sqs
                             try:
                                 sqs.delete_message(
-                                    QueueUrl=agent_queue,
-                                    ReceiptHandle=receipt_handle
+                                    QueueUrl=agent_queue, ReceiptHandle=receipt_handle
                                 )
                             except Exception as e:
                                 print(f"Error deleting message: {e}, continuing...")
 
-                                        
                             result = response.get("result")
                             if not result:
                                 print(f"Agent response missing")
-                                handler.onFailure(agent_input_event, Exception("Failed to run the agent: Agent response missing"))
-                                result = [{"role":"environment", "content":"Failed to run the agent."}]
-                            print(f"Final agent results: {json.dumps(result, separators=(',', ':'))}")
+                                handler.onFailure(
+                                    agent_input_event,
+                                    Exception(
+                                        "Failed to run the agent: Agent response missing"
+                                    ),
+                                )
+                                result = [
+                                    {
+                                        "role": "environment",
+                                        "content": "Failed to run the agent.",
+                                    }
+                                ]
+                            print(
+                                f"Final agent results: {json.dumps(result, separators=(',', ':'))}"
+                            )
                             handler.onSuccess(agent_input_event, result)
                     else:
-                        handler.onFailure(agent_input_event, Exception("No result from handler"))
-                        print(f"Ignoring event per handler instructions (e.g., return None)")
+                        handler.onFailure(
+                            agent_input_event, Exception("No result from handler")
+                        )
+                        print(
+                            f"Ignoring event per handler instructions (e.g., return None)"
+                        )
 
         except Exception as e:
             print(f"Error processing message: {e}")
@@ -67,17 +82,15 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 sqs.change_message_visibility(
                     QueueUrl=agent_queue,
                     ReceiptHandle=receipt_handle,
-                    VisibilityTimeout=0
+                    VisibilityTimeout=0,
                 )
             except Exception as e:
                 print(f"Error changing message visibility: {e}, continuing...")
             raise
-        
-        
 
     return {
-        'statusCode': 200,
-        'body': json.dumps({'message': 'Successfully processed events'})
+        "statusCode": 200,
+        "body": json.dumps({"message": "Successfully processed events"}),
     }
 
 
@@ -105,7 +118,9 @@ def process_and_invoke_agent(event: dict):
 
         # Validate required fields
         if not current_user or not session_id:
-            raise ValueError("Missing required fields: currentUser, sessionId, or prompt")
+            raise ValueError(
+                "Missing required fields: currentUser, sessionId, or prompt"
+            )
 
         # Invoke the event handler
         response = handle_event(
@@ -113,16 +128,13 @@ def process_and_invoke_agent(event: dict):
             access_token=apiKey,
             session_id=session_id,
             prompt=prompt,
-            metadata=metadata
+            metadata=metadata,
         )
 
         return response
 
     except Exception as e:
-        return {
-            "handled": False,
-            "error": str(e)
-        }
+        return {"handled": False, "error": str(e)}
 
 
 register_handler(SESMessageHandler())

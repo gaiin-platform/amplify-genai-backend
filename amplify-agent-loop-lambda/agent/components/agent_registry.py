@@ -1,5 +1,6 @@
 import json
 
+
 class AgentRegistry:
     def __init__(self):
         self.agents = {}
@@ -8,21 +9,24 @@ class AgentRegistry:
         self.agents[agent_id] = {
             "agent_id": agent_id,
             "description": agent_description,
-            "agent": agent
+            "agent": agent,
         }
 
     def get(self, agent_id):
         agent_entry = self.agents.get(agent_id, {})
-        return agent_entry.get('agent', None)
+        return agent_entry.get("agent", None)
 
     def get_all(self):
-        return [agent['agent'] for agent in self.agents]
+        return [agent["agent"] for agent in self.agents]
 
     def get_ids(self):
         return list(self.agents.keys())
 
     def get_descriptions(self):
-        return [{'agent_id': k, 'description': agent['description']} for k, agent in self.agents.items()]
+        return [
+            {"agent_id": k, "description": agent["description"]}
+            for k, agent in self.agents.items()
+        ]
 
     def __len__(self):
         return len(self.agents)

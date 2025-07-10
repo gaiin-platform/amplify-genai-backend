@@ -17,7 +17,7 @@ CRITICAL: Make sure that all strings in your JSON or python code are properly es
 Make sure that multi-line strings within your code use escaped triple quotes.
 
 CRITICAL:!!! In the workflow JSON make sure that the strings have all newlines and quotes escaped.
-"""
+""",
 )
 
 
@@ -44,7 +44,8 @@ Example of incorporating the 1st result:
 ```result
 $#1
 ```
-""")
+""",
+)
 
 PASS_RESULT_REFERENCES_TO_TOOLS = Goal(
     name="Result References",
@@ -79,7 +80,7 @@ You can nest references in lists and dictionaries like this:
 ```
     
 This allows you to pass structured data as well.
-"""
+""",
 )
 
 PREFER_WORKFLOWS = Goal(
@@ -90,7 +91,7 @@ Important! Prefer workflows when possible.
 If there is reasonable certainty about what to do and the order of steps, you should try to generate and
 execute a workflow to accomplish the task. If it fails, then you can fall back to incrementally 
 accomplishing the task.
-"""
+""",
 )
 
 LARGE_RESULTS = Goal(
@@ -98,7 +99,7 @@ LARGE_RESULTS = Goal(
     description="""
 Some results may be too big to show you in their entirety. If you don't need to see the entire result, 
 just make sure it was created. It will be shown to the user even if you can't see it completely. 
-"""
+""",
 )
 
 STOP_WHEN_STUCK = Goal(
@@ -106,14 +107,14 @@ STOP_WHEN_STUCK = Goal(
     description="""
 Do your best to solve problems. However, if there is absolutely no path forward, then tell the user that you
 are stuck and stop.
-"""
+""",
 )
 
 BAIL_OUT_ON_MANY_ERRORS = Goal(
     name="Large results",
     description="""
 If the same action causes an error more than two times, either stop or trying something else.
-"""
+""",
 )
 
 BE_DIRECT = Goal(
@@ -121,12 +122,12 @@ BE_DIRECT = Goal(
     description=""""
                 For reasoning tasks, such as summarization, inference, planning, classification, writing, etc., you should
                 perform the task directly after acquiring the necessary information.
-                """
+                """,
 )
 
 CAREFUL_ARGUMENT_SELECTION = Goal(
     name="Argument selection",
-    description="PAY CLOSE ATTENTION to ALL available arguments for each tool. CAREFULLY consider which arguments apply in the current context and would be beneficial to include. ALWAYS strive to be as COMPLETE and THOROUGH as possible when providing values for arguments. Leaving a field blank is only when 100% confident that the arg is not needed."
+    description="PAY CLOSE ATTENTION to ALL available arguments for each tool. CAREFULLY consider which arguments apply in the current context and would be beneficial to include. ALWAYS strive to be as COMPLETE and THOROUGH as possible when providing values for arguments. Leaving a field blank is only when 100% confident that the arg is not needed.",
 )
 
 
@@ -151,5 +152,5 @@ When you determine that exit is absolutely necessary, format your response (text
 EXIT_AGENT_LOOP 
 Agent Loop Early Termination: [detailed explanation of why exit is necessary, including what was tried and why it cannot be fixed]
 
-"""
+""",
 )

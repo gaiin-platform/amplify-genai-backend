@@ -1,19 +1,27 @@
 import json
 
-from agent.capabilities.common_capabilities import PassResultsCapability, TimeAwareCapability, PlanFirstCapability, \
-    CurrentUserAwareCapability
+from agent.capabilities.common_capabilities import (
+    PassResultsCapability,
+    TimeAwareCapability,
+    PlanFirstCapability,
+    CurrentUserAwareCapability,
+)
 from agent.capabilities.workflow_capability import WorkflowCapability
 from agent.capabilities.workflow_model import Workflow
-from agent.components.common_goals import CAREFUL_ARGUMENT_SELECTION, ALLOW_EARLY_EXIT_AGENT_LOOP
-from agent.components.agent_languages import AgentFunctionCallingActionLanguage, AgentJsonActionLanguage
+from agent.components.common_goals import (
+    CAREFUL_ARGUMENT_SELECTION,
+    ALLOW_EARLY_EXIT_AGENT_LOOP,
+)
+from agent.components.agent_languages import (
+    AgentFunctionCallingActionLanguage,
+    AgentJsonActionLanguage,
+)
 from agent.components.python_action_registry import PythonActionRegistry
 from agent.components.python_environment import PythonEnvironment
 from agent.components.tool import register_tool
 from agent.core import Agent, Environment, ActionRegistry, Goal, Memory
 from agent.prompt import create_llm
 from agent.tools.prompt_tools import prompt_llm_with_messages
-
-
 
 
 # sample_workflow = [
@@ -103,10 +111,6 @@ from agent.tools.prompt_tools import prompt_llm_with_messages
 # ]
 
 
-
-
-
-
 def load_workflow(file_path):
     with open(file_path, "r") as f:
         content = f.read()
@@ -125,25 +129,49 @@ def think(action_context, _memory: Memory, what_to_think_about: str):
 
     messages = AgentFunctionCallingActionLanguage().format_memory(_memory)
 
-    thoughts = prompt_llm_with_messages(action_context=action_context, prompt=[
-        {"role":"system", "content":"Stop and think step by step. Be very careful and detailed in your thinking. Be concrete and specific."},
-        *messages,
-        {"role":"user", "content":what_to_think_about}
-    ])
+    thoughts = prompt_llm_with_messages(
+        action_context=action_context,
+        prompt=[
+            {
+                "role": "system",
+                "content": "Stop and think step by step. Be very careful and detailed in your thinking. Be concrete and specific.",
+            },
+            *messages,
+            {"role": "user", "content": what_to_think_about},
+        ],
+    )
 
     return thoughts
 
 
-def build_python_agent(workflow_file, model="gpt-4o-mini", access_token=None, current_user = "Agent", additional_goals=None):
+def build_python_agent(
+    workflow_file,
+    model="gpt-4o-mini",
+    access_token=None,
+    current_user="Agent",
+    additional_goals=None,
+):
 
-    generate_response = create_llm(access_token, model, current_user) 
+    generate_response = create_llm(access_token, model, current_user)
 
     workflow = load_workflow(workflow_file)
 
-    return build_clean(PythonEnvironment(), PythonActionRegistry(), generate_response, workflow, additional_goals)
+    return build_clean(
+        PythonEnvironment(),
+        PythonActionRegistry(),
+        generate_response,
+        workflow,
+        additional_goals,
+    )
 
 
-def build_clean(environment: Environment, action_registry: ActionRegistry, generate_response, workflow, additional_goals=None):
+def build_clean(
+    environment: Environment,
+    action_registry: ActionRegistry,
+    generate_response,
+    workflow,
+    additional_goals=None,
+):
     """
     Initialize the base agent with initial actions and goals
     """
@@ -151,12 +179,11 @@ def build_clean(environment: Environment, action_registry: ActionRegistry, gener
 
     goals = [
         Goal(
-            name="REQUIRED",
-            description="YOU ARE REQUIRED TO CALL A TOOL EVERY TIME!"
+            name="REQUIRED", description="YOU ARE REQUIRED TO CALL A TOOL EVERY TIME!"
         ),
         CAREFUL_ARGUMENT_SELECTION,
         ALLOW_EARLY_EXIT_AGENT_LOOP,
-        *additional_goals
+        *additional_goals,
     ]
 
     agent = Agent(
@@ -169,11 +196,8 @@ def build_clean(environment: Environment, action_registry: ActionRegistry, gener
             TimeAwareCapability(),
             PassResultsCapability(),
             CurrentUserAwareCapability(),
-            WorkflowCapability(
-                workflow=workflow
-            )
-        ]
+            WorkflowCapability(workflow=workflow),
+        ],
     )
 
     return agent
-

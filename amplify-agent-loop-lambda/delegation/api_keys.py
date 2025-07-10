@@ -1,8 +1,12 @@
+from datetime import datetime, timezone
 from typing import Union, Dict
 import os
 import json
+import uuid
 import requests
 import boto3
+
+dynamodb = boto3.resource("dynamodb")
 
 # Define period types
 PERIOD_TYPE = ["Unlimited", "Daily", "Hourly", "Monthly"]
@@ -27,7 +31,9 @@ def format_rate_limit(limits: Dict[str, Union[str, float, None]]) -> str:
     return f"{limits['rate']:.2f}/{limits['period']}"
 
 
-def rate_limit_obj(period: str, rate: Union[str, None]) -> Dict[str, Union[str, float, None]]:
+def rate_limit_obj(
+    period: str, rate: Union[str, None]
+) -> Dict[str, Union[str, float, None]]:
     """
     Creates a rate limit object based on the given period and rate.
 
@@ -40,17 +46,27 @@ def rate_limit_obj(period: str, rate: Union[str, None]) -> Dict[str, Union[str, 
     """
     if period == UNLIMITED:
         return NO_RATE_LIMIT
-    return {
-        "period": period,
-        "rate": float(rate.replace("$", "")) if rate else None
-    }
+    return {"period": period, "rate": float(rate.replace("$", "")) if rate else None}
+
+def pascalCase(input_str):
+    return "".join(x for x in input_str.title() if not x.isspace() and x.isalnum())
 
 
-def create_api_key(token: str, user: str, selected_account: dict, delegate_input: str | None,
-                   app_name: str, app_description: str, rate_limit_period: str,
-                   rate_limit_rate: Union[str, None], include_expiration: bool,
-                   selected_date: Union[str, None], full_access: bool, options: Dict[str, bool],
-                   system_use: bool, purpose: str) -> Union[Dict, None]:
+def create_api_key(
+    token: str,
+    user: str,
+    selected_account: dict,
+    delegate_input: str | None,
+    app_name: str,
+    app_description: str,
+    rate_limit_period: str,
+    rate_limit_rate: Union[str, None],
+    include_expiration: bool,
+    selected_date: Union[str, None],
+    full_access: bool,
+    options: Dict[str, bool],
+    purpose: str,
+) -> Union[Dict, None]:
     """
     Calls the apiKeys/keys/create endpoint to generate a new API key.
 
@@ -72,46 +88,62 @@ def create_api_key(token: str, user: str, selected_account: dict, delegate_input
     Returns:
         dict or None: API response or None if an error occurs.
     """
+    name = pascalCase(app_name)
 
-    api_base = os.environ.get("API_BASE_URL", None)
-    if not api_base:
-        print("API_BASE_URL is not set.")
-        return None
+    print("create api key for agent")
+    api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
+    api_table = dynamodb.Table(api_keys_table_name)
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "data": {
-            "owner": user,
-            "account": selected_account,
-            "delegate": delegate_input if delegate_input else None,
-            "appName": app_name,
-            "appDescription": app_description,
-            "rateLimit": rate_limit_obj(rate_limit_period, rate_limit_rate),
-            "expirationDate": selected_date if include_expiration else None,
-            "accessTypes": ["full_access"] if full_access else [key for key, value in options.items() if value],
-            "systemUse": system_use and not delegate_input,
-            "purpose" : purpose
-        }
-    }
-
+    api_owner_id = f"{name}/ownerKey/{str(uuid.uuid4())}"
+    timestamp = datetime.now(timezone.utc).isoformat()
+    apiKey = 'amp-' + str(uuid.uuid4())
     try:
-        response = requests.post(f"{api_base}/apiKeys/keys/create", headers=headers, data=json.dumps(payload))
-        response.raise_for_status()
-        result = response.json()
+        print("Put entry in api keys table")
+        # Put (or update) the item for the specified user in the DynamoDB table
+        response = api_table.put_item(
+            Item={
+                'api_owner_id': api_owner_id,
+                'owner': user,
+                "delegate": delegate_input if delegate_input else None,
+                'apiKey': apiKey,
+                'active': True,
+                'createdAt': timestamp, 
+                'expirationDate' : selected_date if include_expiration else None,
+                'accessTypes': (["full_access"] if full_access
+                                else [key for key, value in options.items() if value]),
+                'account': selected_account,
+                'rateLimit': rate_limit_obj(rate_limit_period, rate_limit_rate),
+                'purpose': purpose,
+                'applicationDescription' : app_description,
+                'applicationName' : app_name
+            }
+        )
 
-        print(f"API Key Created: {result}")
-        return result
+        if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
+            print(f"API key for created successfully")
+            return {"success": True,
+                    "data": {"id": api_owner_id, "apiKey": apiKey},
+                    "message": "API key created successfully",
+                    }
+        else:
+            print(f"Failed to create API key")
+            return {"success": False, "message": "Failed to create API key"}
     except Exception as e:
-        print(f"Failed to create API key: {str(e)}")
-        return None
+        print(f"An error occurred while saving API key: {e}")
+        return {
+            "success": False,
+            "message": f"An error occurred while saving API key: {str(e)}",
+        }
 
 
-def create_agent_event_api_key(user: str, token: str, agent_event_name: str,
-                               account: str, description: str, purpose: str) -> Union[Dict, None]:
+def create_agent_event_api_key(
+    user: str,
+    token: str,
+    agent_event_name: str,
+    account: str,
+    description: str,
+    purpose: str,
+) -> Union[Dict, None]:
     """
     Creates an API key with unlimited rate limits for an agent event.
 
@@ -135,12 +167,11 @@ def create_agent_event_api_key(user: str, token: str, agent_event_name: str,
     selected_date = None  # Not used since expiration is disabled
     full_access = True  # Grant full access
     options = {}  # Not used since full_access is True
-    system_use = False  # Indicates system use
 
     return create_api_key(
         token=token,
         user=user,
-        selected_account={'id': account, 'name': 'agent_'+agent_event_name},
+        selected_account={"id": account, "name": "agent_" + agent_event_name},
         delegate_input=delegate_input,
         app_name=app_name,
         app_description=app_description,
@@ -150,11 +181,11 @@ def create_agent_event_api_key(user: str, token: str, agent_event_name: str,
         selected_date=selected_date,
         full_access=full_access,
         options=options,
-        system_use=system_use,
-        purpose=purpose
+        purpose=purpose,
     )
 
-# Requires a valid user token 
+
+# Requires a valid user token
 def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
     """
     Fetches a specific API key by its ID.
@@ -176,10 +207,7 @@ def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
         print("API Key ID is required.")
         return None
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     # Ensure API Key ID is correctly passed as a query parameter
     url = f"{api_base}/apiKeys/key/get?apiKeyId={api_key_id}"
@@ -190,7 +218,7 @@ def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
         result = response.json()
 
         print(f"Retrieved API Key: {result}")
-        return result['data']
+        return result["data"]
     except Exception as e:
         print(f"Failed to retrieve API key: {str(e)}")
         return None
@@ -212,10 +240,7 @@ def get_api_keys(token: str) -> Union[Dict, None]:
         print("API_BASE_URL is not set.")
         return None
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     try:
         response = requests.get(f"{api_base}/apiKeys/keys/get", headers=headers)
@@ -229,23 +254,28 @@ def get_api_keys(token: str) -> Union[Dict, None]:
         return None
 
 
-# direct access to the api key table 
+# direct access to the api key table
 def get_api_key_directly_by_id(api_owner_id):
-    dynamodb = boto3.resource('dynamodb')
-    api_keys_table_name = os.getenv('API_KEYS_DYNAMODB_TABLE')
+    dynamodb = boto3.resource("dynamodb")
+    api_keys_table_name = os.getenv("API_KEYS_DYNAMODB_TABLE")
     if not api_keys_table_name:
         raise ValueError("API_KEYS_DYNAMODB_TABLE is not provided.")
 
-    # retrieve api key 
+    # retrieve api key
     try:
         api_keys_table = dynamodb.Table(api_keys_table_name)
-        api_response = api_keys_table.get_item(Key={'api_owner_id': api_owner_id})
-        api_item = api_response.get('Item')
-        
+        api_response = api_keys_table.get_item(Key={"api_owner_id": api_owner_id})
+        api_item = api_response.get("Item")
+
         if not api_item:
-            return {'success': False, 'message': f"No API key found for api id: {api_owner_id}"}
-        
-        return {'success': True, 'apiKey': api_item['apiKey']}
+            return {
+                "success": False,
+                "message": f"No API key found for api id: {api_owner_id}",
+            }
+
+        return {"success": True, "apiKey": api_item["apiKey"]}
     except Exception as e:
-        return {'success': False, 'message': f"Error retrieving API key for {api_owner_id}: {str(e)}"}
-    
+        return {
+            "success": False,
+            "message": f"Error retrieving API key for {api_owner_id}: {str(e)}",
+        }

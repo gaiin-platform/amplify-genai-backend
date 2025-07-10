@@ -6,30 +6,48 @@ from agent.tools.prompt_tools import qa_check
 
 from typing import List, Dict, Union
 
-def apply_multiline_edit_operations(text: str, operations: List[Dict[str, Union[str, int, Tuple[int, int]]]]) -> str:
+
+def apply_multiline_edit_operations(
+    text: str, operations: List[Dict[str, Union[str, int, Tuple[int, int]]]]
+) -> str:
     lines = text.split("\n")
 
     # Fix sorting by always extracting the first element if line is a tuple
     def sort_key(op):
         line = op.get("line", op.get("after_line", 0))
-        return line if isinstance(line, int) else line[0]  # Use the first line for sorting
+        return (
+            line if isinstance(line, int) else line[0]
+        )  # Use the first line for sorting
 
     for op in sorted(operations, key=sort_key, reverse=True):
         try:
             if op["operation"] == "replace":
-                start, end = (op["line"], op["line"]) if isinstance(op["line"], int) else op["line"]
-                lines[start - 1:end] = op["content"].split("\n")
+                start, end = (
+                    (op["line"], op["line"])
+                    if isinstance(op["line"], int)
+                    else op["line"]
+                )
+                lines[start - 1 : end] = op["content"].split("\n")
             elif op["operation"] == "delete":
-                start, end = (op["line"], op["line"]) if isinstance(op["line"], int) else op["line"]
-                del lines[start - 1:end]
+                start, end = (
+                    (op["line"], op["line"])
+                    if isinstance(op["line"], int)
+                    else op["line"]
+                )
+                del lines[start - 1 : end]
             elif op["operation"] == "add":
-                lines.insert(op["after_line"], op["content"].strip())  # Insert after the given line
+                lines.insert(
+                    op["after_line"], op["content"].strip()
+                )  # Insert after the given line
         except Exception as e:
             pass
 
     return "\n".join(lines)
 
-def parse_multiline_edit_operations(edit_output: str) -> List[Dict[str, Union[str, int, tuple]]]:
+
+def parse_multiline_edit_operations(
+    edit_output: str,
+) -> List[Dict[str, Union[str, int, tuple]]]:
     try:
         operations = []
         lines = edit_output.strip().split("\n")
@@ -51,15 +69,27 @@ def parse_multiline_edit_operations(edit_output: str) -> List[Dict[str, Union[st
 
                     if "-" in line_info:  # Multi-line range
                         start, end = map(int, line_info.split("-"))
-                        current_operation = {"operation": "replace", "line": (start, end)}
+                        current_operation = {
+                            "operation": "replace",
+                            "line": (start, end),
+                        }
                     else:
                         line_number = int(line_info)
                         if operation == "REPLACE":
-                            current_operation = {"operation": "replace", "line": line_number}
+                            current_operation = {
+                                "operation": "replace",
+                                "line": line_number,
+                            }
                         elif operation == "ADD":
-                            current_operation = {"operation": "add", "after_line": line_number}
+                            current_operation = {
+                                "operation": "add",
+                                "after_line": line_number,
+                            }
                         elif operation == "DELETE":
-                            current_operation = {"operation": "delete", "line": line_number}
+                            current_operation = {
+                                "operation": "delete",
+                                "line": line_number,
+                            }
                 else:
                     current_content.append(line)
             except Exception as e:
@@ -74,26 +104,50 @@ def parse_multiline_edit_operations(edit_output: str) -> List[Dict[str, Union[st
     except Exception as e:
         return []
 
+
 @register_tool(tags=["structured_editing"])
-def edit_content(action_context, instructions:str, content: str) -> str:
-    line_edits, reasoning = propose_multiline_edits(action_context, instructions, content)
+def edit_content(action_context, instructions: str, content: str) -> str:
+    line_edits, reasoning = propose_multiline_edits(
+        action_context, instructions, content
+    )
     edits = parse_multiline_edit_operations(line_edits)
     modified_text = apply_multiline_edit_operations(content, edits)
     return modified_text
 
-def edit_content_to_achieve_goal(action_context, instructions:str, content: str, oracle_instructions=None) -> str:
-    qa_checks = prompt_llm_with_messages(action_context=action_context, prompt=[
-        {"role": "system", "content": oracle_instructions or "Your goal is to look at the INPUT and the user's INSTRUCTIONS. And provide a detailed step-by-step set of instructions to check if the goals of the INSTRUCTIONS have been met."},
-        {"role": "user", "content": "INPUT:\n"+content},
-        {"role": "user", "content": "INSTRUCTIONS:\n"+instructions},
-    ])
+
+def edit_content_to_achieve_goal(
+    action_context, instructions: str, content: str, oracle_instructions=None
+) -> str:
+    qa_checks = prompt_llm_with_messages(
+        action_context=action_context,
+        prompt=[
+            {
+                "role": "system",
+                "content": oracle_instructions
+                or "Your goal is to look at the INPUT and the user's INSTRUCTIONS. And provide a detailed step-by-step set of instructions to check if the goals of the INSTRUCTIONS have been met.",
+            },
+            {"role": "user", "content": "INPUT:\n" + content},
+            {"role": "user", "content": "INSTRUCTIONS:\n" + instructions},
+        ],
+    )
 
     def oracle(original_text, modified_text, reasoning):
-        return qa_check(action_context=action_context,  qa_criteria=qa_checks, thing_to_check=modified_text)
+        return qa_check(
+            action_context=action_context,
+            qa_criteria=qa_checks,
+            thing_to_check=modified_text,
+        )
 
     return edit_content_with_oracle(action_context, instructions, content, oracle)
 
-def edit_content_with_oracle(action_context, instructions:str, content: str, oracle: Callable[[str, str, str],Tuple[bool, str]], max_tries=3) -> str:
+
+def edit_content_with_oracle(
+    action_context,
+    instructions: str,
+    content: str,
+    oracle: Callable[[str, str, str], Tuple[bool, str]],
+    max_tries=3,
+) -> str:
     modified_text = content
 
     print("=========================")
@@ -102,13 +156,14 @@ def edit_content_with_oracle(action_context, instructions:str, content: str, ora
     print("=========================")
 
     for _ in range(max_tries):
-        line_edits, reasoning = propose_multiline_edits(action_context, instructions, modified_text)
+        line_edits, reasoning = propose_multiline_edits(
+            action_context, instructions, modified_text
+        )
 
         print("=========================")
         print(f"Reasoning: {reasoning}")
         print(f"Line Edits: {line_edits}")
         print("=========================")
-
 
         edits = parse_multiline_edit_operations(line_edits)
         modified_text = apply_multiline_edit_operations(modified_text, edits)
@@ -130,7 +185,10 @@ def edit_content_with_oracle(action_context, instructions:str, content: str, ora
 
     return modified_text
 
-def propose_multiline_edits(action_context, instructions: str, content: str) -> Tuple[str, str]:
+
+def propose_multiline_edits(
+    action_context, instructions: str, content: str
+) -> Tuple[str, str]:
     line_edits_system_prompt = """
 ### **Task: Generate Precise Line-Based Edits in a Structured Format**
 
@@ -242,20 +300,29 @@ Your output must be placed in a ```output markdown block.
 
     content = add_line_numbers(content)
 
-    changes_needed = prompt_llm_with_messages(action_context=action_context, prompt=[
-        {"role": "system", "content": "Your goal is to carefully look at the INPUT and to stop and think step by step about how you can improve it per the user's INSTRUCTIONS. Provide a detailed step-by-step set of instructions and reference line numbers."},
-        {"role": "user", "content": "INPUT:\n"+content},
-        {"role": "user", "content": "INSTRUCTIONS:\n"+instructions},
-    ])
+    changes_needed = prompt_llm_with_messages(
+        action_context=action_context,
+        prompt=[
+            {
+                "role": "system",
+                "content": "Your goal is to carefully look at the INPUT and to stop and think step by step about how you can improve it per the user's INSTRUCTIONS. Provide a detailed step-by-step set of instructions and reference line numbers.",
+            },
+            {"role": "user", "content": "INPUT:\n" + content},
+            {"role": "user", "content": "INSTRUCTIONS:\n" + instructions},
+        ],
+    )
 
     # Escape triple backticks for markdown
     escaped_content = content.replace("```", "\\`\\`\\`")
 
-    line_edits = prompt_llm_with_messages(action_context=action_context, prompt=[
-        {"role": "system", "content": line_edits_system_prompt},
-        {"role": "user", "content": "```input\n"+escaped_content+"\n```"},
-        {"role": "user", "content": changes_needed},
-    ])
+    line_edits = prompt_llm_with_messages(
+        action_context=action_context,
+        prompt=[
+            {"role": "system", "content": line_edits_system_prompt},
+            {"role": "user", "content": "```input\n" + escaped_content + "\n```"},
+            {"role": "user", "content": changes_needed},
+        ],
+    )
 
     line_edits = extract_markdown_block(line_edits, "output")
 
@@ -325,12 +392,11 @@ Your output must be placed in a ```output markdown block.
 # included in the prompt as well.
 # """
 
-#updated_text = edit_content_to_achieve_goal(action_context, instructions, text)
-#print(updated_text)
+# updated_text = edit_content_to_achieve_goal(action_context, instructions, text)
+# print(updated_text)
 
 
 from agent.tools.prompt_tools import prompt_llm_with_messages
-
 
 
 # from agent.prompt import generate_response
