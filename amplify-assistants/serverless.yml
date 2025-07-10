@@ -79,7 +79,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
     GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
