@@ -12,18 +12,21 @@ from llm.chat import chat_simple
 from flow.spec import validate_dict, convert_keys_to_strings_based_on_spec
 
 
-def generate_example(spec, string_instructions="Either enclose it in \"\" or make sure it is a yaml | string if it has quotes or new lines."):
+def generate_example(
+    spec,
+    string_instructions='Either enclose it in "" or make sure it is a yaml | string if it has quotes or new lines.',
+):
     def generate_value(type_desc):
-        parts = type_desc.split('-')
+        parts = type_desc.split("-")
         type_info = parts[0].strip()
-        note = (parts[1].strip() if len(parts) > 1 else None)
-        if type_info == 'bool':
+        note = parts[1].strip() if len(parts) > 1 else None
+        if type_info == "bool":
             return random.choice([True, False])
-        elif type_info == 'str':
+        elif type_info == "str":
             return f"{note} {string_instructions}"
-        elif type_info == 'int':
+        elif type_info == "int":
             return random.randint(1, 100)
-        elif type_info == 'float':
+        elif type_info == "float":
             return round(random.uniform(0, 100), 2)
         else:
             return type_info
@@ -42,16 +45,18 @@ def generate_example(spec, string_instructions="Either enclose it in \"\" or mak
     example = process_item(spec)
 
     # Add a random 'thought' field
-    example['thought'] = f"Some important thought about solving the problem step by step"
+    example["thought"] = (
+        f"Some important thought about solving the problem step by step"
+    )
 
     return example
 
 
 def format_example(example):
     def represent_str(dumper, data):
-        if '\n' in data:
-            return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
-        return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+        if "\n" in data:
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
     yaml.add_representer(str, represent_str)
 
@@ -59,14 +64,14 @@ def format_example(example):
 
 
 def find_template_vars(template):
-    pattern = r'\{\{(.*?)\}\}'
+    pattern = r"\{\{(.*?)\}\}"
     paths = re.findall(pattern, template)
     return paths, pattern
 
 
 def get_path_keys(path):
-    path = path.replace('[', '.[')
-    keys = path.split('.')
+    path = path.replace("[", ".[")
+    keys = path.split(".")
     return keys
 
 
@@ -82,8 +87,9 @@ def resolve_and_set(data, path, new_data):
     :param path: A string path like "foo.bar.baz" or "foo.bar[0].baz"
     :param new_data: The value to set at the end of the path
     """
+
     def parse_key(k):
-        if k.startswith('[') and k.endswith(']'):
+        if k.startswith("[") and k.endswith("]"):
             return int(k[1:-1])
         return k
 
@@ -94,7 +100,11 @@ def resolve_and_set(data, path, new_data):
             try:
                 key = parse_key(key)
                 if key not in result:
-                    result[key] = {} if isinstance(parse_key(keys[keys.index(key) + 1]), str) else []
+                    result[key] = (
+                        {}
+                        if isinstance(parse_key(keys[keys.index(key) + 1]), str)
+                        else []
+                    )
                 result = result[key]
             except (KeyError, IndexError, TypeError):
                 return None  # Return None if the path is invalid or cannot be set
@@ -102,6 +112,7 @@ def resolve_and_set(data, path, new_data):
     last_key = parse_key(keys[-1])
     result[last_key] = new_data
     return data
+
 
 def resolve(data, path):
     """
@@ -111,8 +122,9 @@ def resolve(data, path):
     :param path: A string path like "foo.bar.baz" or "foo.bar[0].baz"
     :return: The value at the end of the path
     """
+
     def parse_key(k):
-        if k.startswith('[') and k.endswith(']'):
+        if k.startswith("[") and k.endswith("]"):
             return int(k[1:-1])
         return k
 
@@ -138,20 +150,22 @@ def prompt_llm(prompt, system_prompt, access_token=None, model="gpt-4o"):
 
 
 def extract_yaml(response: str) -> str:
-    start_marker = '```yaml'
-    end_marker = '```'
+    start_marker = "```yaml"
+    end_marker = "```"
     start = response.find(start_marker) + len(start_marker)
     # find in reverse
     end = response.rfind(end_marker)
     return response[start:end].strip()
 
+
 def extract_json(response: str) -> str:
-    start_marker = '```json'
-    end_marker = '```'
+    start_marker = "```json"
+    end_marker = "```"
     start = response.find(start_marker) + len(start_marker)
     # find in reverse
     end = response.rfind(end_marker)
     return response[start:end].strip()
+
 
 def fill_prompt_template(context, template):
     def replace_var(match):
@@ -187,8 +201,10 @@ def with_retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
                     retries += 1
                     if retries == max_retries:
                         raise
-                    time.sleep(delay * (backoff ** retries))
+                    time.sleep(delay * (backoff**retries))
+
         return wrapper
+
     return decorator
 
 
@@ -264,29 +280,33 @@ suffix_to_fix: '"\n'
 
     try:
 
-        llm_response = prompt_llm(
-            prompt_with_yaml,
-            system_prompt)
+        llm_response = prompt_llm(prompt_with_yaml, system_prompt)
 
         # Extract YAML from the LLM response
         yaml_content = extract_yaml(llm_response)
         parsed_data = yaml.safe_load(yaml_content)
-        return parsed_data['suffix_to_fix']
+        return parsed_data["suffix_to_fix"]
     except:
         return None
 
 
 @with_retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,))
-def dynamic_prompt(context: Dict[str, Any], template: str, system_prompt: str, output_spec: Dict[str, Any], access_token=None, model=None, output_mode="yaml") -> Dict[str, Any]:
+def dynamic_prompt(
+    context: Dict[str, Any],
+    template: str,
+    system_prompt: str,
+    output_spec: Dict[str, Any],
+    access_token=None,
+    model=None,
+    output_mode="yaml",
+) -> Dict[str, Any]:
     # Fill in the template
     filled_prompt = fill_prompt_template(context, template)
     filled_system_prompt = fill_prompt_template(context, system_prompt)
 
-    #prompt_template = f"{system_prompt}\n{docstring}\nInputs:\n{input_descriptions}\nOutputs:\n{output_descriptions}"
+    # prompt_template = f"{system_prompt}\n{docstring}\nInputs:\n{input_descriptions}\nOutputs:\n{output_descriptions}"
 
-    #print(f"Prompt Template: {prompt_template}")
-
-
+    # print(f"Prompt Template: {prompt_template}")
 
     yaml_instructions = f"""
     You output with the data should be in the YAML format:
@@ -307,8 +327,11 @@ thought: <INSERT THOUGHT>
         output_mode = "plain"
         mode_instructions = ""
     elif output_mode == "json":
-        example = generate_example(output_spec, "Make sure that all quotes and newlines are escaped properly for valid json.")
-        example['thought'] = "<Insert 1-2 sentence thought of thinking step by step>"
+        example = generate_example(
+            output_spec,
+            "Make sure that all quotes and newlines are escaped properly for valid json.",
+        )
+        example["thought"] = "<Insert 1-2 sentence thought of thinking step by step>"
         mode_instructions = f"""
 You output with the data should be in the JSON format:
 \`\`\`json
@@ -347,7 +370,9 @@ You ALWAYS output a \`\`\`json code block with all new lines and quotes escaped 
 
         # Parse the YAML content
         parsed_data = yaml.safe_load(yaml_content)
-        structured_data = convert_keys_to_strings_based_on_spec(output_spec, parsed_data)
+        structured_data = convert_keys_to_strings_based_on_spec(
+            output_spec, parsed_data
+        )
     elif output_mode == "json":
         # Extract JSON from the LLM response
         json_content = extract_json(llm_response)
@@ -360,7 +385,9 @@ You ALWAYS output a \`\`\`json code block with all new lines and quotes escaped 
         # Parse the JSON content
         try:
             parsed_data = json.loads(json_content)
-            structured_data = convert_keys_to_strings_based_on_spec(output_spec, parsed_data)
+            structured_data = convert_keys_to_strings_based_on_spec(
+                output_spec, parsed_data
+            )
         except json.JSONDecodeError as e:
             print("Failed to parse:", json_content)
             print("JSON Decode Error:", e)
@@ -378,11 +405,11 @@ You ALWAYS output a \`\`\`json code block with all new lines and quotes escaped 
             print("No output spec provided. Skipping validation.")
 
         return parsed_data, {
-            'llm_response': llm_response,
-            'prompt': template,
-            'system_prompt': system_prompt,
-            'filled_prompt': filled_prompt,
-            'filled_system_prompt': system_data_prompt
+            "llm_response": llm_response,
+            "prompt": template,
+            "system_prompt": system_prompt,
+            "filled_prompt": filled_prompt,
+            "filled_system_prompt": system_data_prompt,
         }
     except ValidationError as e:
         print("Validation Error:", e)
