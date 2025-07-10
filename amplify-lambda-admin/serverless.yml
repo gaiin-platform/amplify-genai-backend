@@ -43,7 +43,7 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-configs
     AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-admin-logs
     ADMINS: ${self:custom.stageVars.ADMINS}

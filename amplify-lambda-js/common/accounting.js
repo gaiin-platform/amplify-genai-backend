@@ -1,7 +1,6 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import axios from 'axios';
 import { DynamoDBClient, PutItemCommand, QueryCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import {getLogger} from "./logging.js";
@@ -31,10 +30,13 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         return false;
     }
 
+    // Move apiKeyId declaration to function scope
+    const apiKeyId = getApiKeyId(account);
+
     try {
         const accountId = account.accountId || 'general_account';
 
-        if (account.accessToken.startsWith("amp-")) details = {...details, api_key: account.accessToken};
+        if (apiKeyId) details = {...details, api_key_id: apiKeyId};
 
         const item = {
             id: { S: `${uuidv4()}` },
@@ -92,8 +94,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
         // Create the accountInfo (secondary key)
         const coaString = account.accountId || 'general_account';
-        const apiKey = account.accessToken.startsWith("amp-") ? account.accessToken : 'NA';
-        const accountInfo = `${coaString}#${apiKey}`;
+        const apiKeyIdInfo = apiKeyId || 'NA';
+        const accountInfo = `${coaString}#${apiKeyIdInfo}`;
 
         // First update: Ensure dailyCost and hourlyCost are initialized
         const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList), record_type = if_not_exists(record_type, :recordType)`;
@@ -141,3 +143,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
     return true;
 };
+
+const getApiKeyId = (account) => {
+    if (account.accessToken.startsWith("amp-") && account.apiKeyId) return account.apiKeyId;
+    return null;
+}
