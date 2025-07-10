@@ -1,4 +1,4 @@
-add_charge = {
+add_charge_schema = {
     "type": "object",
     "properties": {
         "accountId": {"type": "string"},
