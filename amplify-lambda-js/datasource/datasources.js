@@ -97,9 +97,10 @@ export const getImageBase64Content = async (dataSource) => {
             });
         
         const data = await streamToString(response.Body);
+        logger.debug("Base64 encoded image retrieved")
         return data;
     } catch (error) {
-        logger.error(error, {bucket: bucket, key: key});
+        logger.error("Error retrieving base64 encoded image", error);
         return null;
     }
 
@@ -112,7 +113,7 @@ export const isDocument = ds =>
     (ds && ds.key && ds.key.startsWith("s3://"));
 
 
-    export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
+export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
 
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
@@ -385,6 +386,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
         }
+        console.log("IMAGE: body.imageSources", body.imageSources);
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
@@ -409,6 +411,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
+        console.log("IMAGE: ds_with_keys", image_ds_keys);
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
@@ -509,16 +512,41 @@ const getChunkAggregator = (maxTokens, options) => {
 export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxTokens, options) => {
     logger.debug("Chunking/Formatting data from: " + dataSource.id);
 
-    if (content && content.content && content.content.length > 0) {
-        const firstLocation = content.content[0].location ? content.content[0].location : null;
+    // Handle both content structures:
+    // 1. Normal: { name: "...", content: [...] }
+    // 2. Filtered: [...]  (direct array from getExtractedRelevantContext)
+    let contentArray;
+    let contentName;
+    
+    if (Array.isArray(content)) {
+        // Direct array case (filtered content)
+        contentArray = content;
+        contentName = dataSource.id;
+    } else if (content && content.content && Array.isArray(content.content)) {
+        // Normal case with nested structure
+        contentArray = content.content;
+        contentName = content.name;
+    } else {
+        // Fallback for other cases
+        return formatAndChunkDataSource(tokenCounter, dataSource, {
+            content: [{
+                content: content,
+                location: {},
+                dataSource
+            }]
+        }, maxTokens);
+    }
+
+    if (contentArray.length > 0) {
+        const firstLocation = contentArray[0].location ? contentArray[0].location : null;
 
         let contentFormatter;
         if (firstLocation && firstLocation.slide) {
             logger.debug("Formatting data from: " + dataSource.id + " as slides");
-            contentFormatter = c => 'File: ' + content.name + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + contentName + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.page) {
             logger.debug("Formatting data from: " + dataSource.id + " as pages");
-            contentFormatter = c => 'File: ' + content.name + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + contentName + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.row_number) {
             logger.debug("Formatting data from: " + dataSource.id + " as rows");
             contentFormatter = c => c.content;
@@ -534,9 +562,9 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         let state = {chunks, currentChunk, currentTokenCount, locations};
 
         const aggregator = getChunkAggregator(maxTokens, options);
-        const formattedSourceName = "Source:" + content.name + " Type:" + dataSource.type + "\n-------------\n";
+        const formattedSourceName = "Source:" + contentName + " Type:" + dataSource.type + "\n-------------\n";
 
-        for (const part of content.content) {
+        for (const part of contentArray) {
             const formattedContent = contentFormatter(part);
             const contentTokenCount = tokenCounter(formattedContent);
             state = aggregator(dataSource, state, formattedSourceName, formattedContent, part.location || {}, contentTokenCount);

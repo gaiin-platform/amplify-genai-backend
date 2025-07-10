@@ -36,7 +36,8 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
     const response = await axios.post(ragEndpoint, ragRequest, {
         headers: {
             'Authorization': `Bearer ${token}`
-        }
+        },
+        timeout: 180000 // 3 minutes timeout in milliseconds
     });
 
     logger.debug("RAG response status", response.status);

@@ -61,6 +61,17 @@ export const getUserAvailableModels = async (accessToken) => {
 
     const model_data = {...data.data, models: modelsMap};
 
+    // Apply ensureNumericProperties to all model_data properties except 'models'
+    for (const key in model_data) {
+        if (key !== 'models' && model_data[key]) {
+            try {
+                model_data[key] = ensureNumericProperties(model_data[key]);
+            } catch (error) {
+               console.error("Error ensuring numeric properties for ", model_data[key], "\nError: ", error);
+            }
+        }
+    }
+
     // if default is null, we will override it with the user chosen model in router.
     if (!model_data.advanced) model_data.advanced = model_data.default;
     if (!model_data.cheapest) model_data.cheapest = model_data.default;

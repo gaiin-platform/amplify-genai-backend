@@ -30,10 +30,11 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         return false;
     }
 
+    // Move apiKeyId declaration to function scope
+    const apiKeyId = getApiKeyId(account);
+
     try {
         const accountId = account.accountId || 'general_account';
-
-        const apiKeyId = getApiKeyId(account);
 
         if (apiKeyId) details = {...details, api_key_id: apiKeyId};
 
