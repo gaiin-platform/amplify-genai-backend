@@ -267,6 +267,9 @@ resources:
           -
             AttributeName: requestId
             KeyType: RANGE
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
         TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}
     DatasourceRegistryDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

@@ -92,7 +92,7 @@ provider:
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     CONVERSATION_METADATA_TABLE: ${self:service}-${sls:stage}-conversation-metadata
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     MAX_CHUNKS: 1000
     PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
@@ -102,6 +102,7 @@ provider:
     #AWS_REGION optional for /chat/service.py 
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     DEP_REGION: ${self:custom.stageVars.DEP_REGION}
+    STAGE: ${sls:stage}
 
 
   iam:
@@ -216,8 +217,7 @@ functions:
           path: files/upload
           method: post
           cors: true
-    environment:
-        FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
+
     timeout: 9    
 
   download_file:
@@ -437,7 +437,6 @@ functions:
                 - RagDocumentIndexQueue
                 - Arn
     environment:
-        FILE_UPLOAD_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/s3/metadata/encryption #must start with /
         RAG_CHUNK_DOCUMENT_QUEUE_URL:
           Ref: RagChunkDocumentQueue
   
@@ -482,7 +481,15 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - schedule: cron(0 0 ? * SUN *) # Run every Sunday at midnight          
-  
+
+  cleanup_missed_rag_secrets:
+    handler: rag/rag_secrets.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 300
+    events:
+      - schedule: cron(0 3 * * ? *) # Run daily at 3 AM UTC
+
 resources:
   Resources:
     LambdaIAMPolicy:
@@ -495,15 +502,13 @@ resources:
             - Effect: Allow
               Action:
                 - ssm:GetParameter
-                - ssm:DescribeParameters
                 - ssm:PutParameter
+                - ssm:DeleteParameter
+                - ssm:DescribeParameters
+                - ssm:GetParametersByPath
               Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/s3/metadata/encryption        
-            - Effect: Allow
-              Action:
-                - ssm:GetParameter
-              Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:*                
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*            
             - Effect: Allow
               Action:
                 - s3:ListBucket

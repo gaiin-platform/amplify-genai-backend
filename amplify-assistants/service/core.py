@@ -1,5 +1,5 @@
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+# Copyright (c) 2024 Vanderbilt University
+# Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 from datetime import datetime, timedelta
 import hashlib
@@ -9,42 +9,49 @@ import time
 import boto3
 import json
 import uuid
-import csv
-import io
 import requests
 import xmltodict
 from bs4 import BeautifulSoup
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
-from common.validate import validated
-from common.ops import op
-from common.encoders import CombinedEncoder
 from urllib.parse import urlparse
+from decimal import Decimal
+from pycommon.const import APIAccessType
+from pycommon.api.files import upload_file
+from pycommon.api.amplify_users import are_valid_amplify_users
+from pycommon.api.files import delete_file
 
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
-from common.data_sources import (
+from pycommon.api.data_sources import (
     get_data_source_keys,
     translate_user_data_sources_to_hash_data_sources,
 )
-from common.encoders import CombinedEncoder, DecimalEncoder
-from common.object_permissions import (
+
+
+from pycommon.api.object_permissions import (
     update_object_permissions,
     can_access_objects,
     simulate_can_access_objects,
 )
 
-from common.validate import validated
-from common.ops import op
 
-from decimal import Decimal
-
-from common.amplify_groups import (
+from pycommon.api.amplify_groups import (
     verify_member_of_ast_admin_group,
     verify_user_in_amp_group,
 )
+
+from pycommon.api.ops import api_tool
+from pycommon.authz import validated, setup_validated, add_api_access_types
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
+
+setup_validated(rules, get_permission_checker)
+add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value])
+
+from pycommon.encoders import CustomPydanticJSONEncoder, LossyDecimalEncoder
 
 
 SYSTEM_TAG = "amplify:system"
@@ -63,6 +70,9 @@ RESERVED_TAGS = [
     AMPLIFY_API_DOC_HELPER_TAG,
 ]
 
+
+def is_group_sys_user(data):
+    return data.get("purpose", '') == "group"
 
 # used for system users who have access to a group. Group assistants are based on group permissions
 # currently the data returned is best for our amplify wordpress plugin
@@ -187,8 +197,7 @@ def check_user_can_update_assistant(assistant, user_id):
     return False
 
 
-
-@op(
+@api_tool(
     path="/assistant/delete",
     name="deleteAssistant",
     method="POST",
@@ -202,14 +211,36 @@ def check_user_can_update_assistant(assistant, user_id):
         }
     }
     """,
-    params={
-        "assistantId": "String. Required. Unique identifier of the assistant to delete. Example: 'astp/3209457834985793094'."
-    }
+    parameters={
+        "type": "object",
+        "properties": {
+            "assistantId": {
+                "type": "string",
+                "description": "Unique identifier of the assistant to delete. Example: 'astp/3209457834985793094'.",
+            }
+        },
+        "required": ["assistantId"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the assistant deletion was successful",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result of the deletion",
+            },
+        },
+        "required": ["success", "message"],
+    },
 )
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
-    if "assistants" not in access and "full_access" not in access:
+    access_token = data["access_token"]
+    if APIAccessType.ASSISTANTS.value not in access and APIAccessType.FULL_ACCESS.value not in access:
         return {
             "success": False,
             "message": "API key does not have access to assistant functionality",
@@ -244,6 +275,7 @@ def delete_assistant(event, context, current_user, name, data):
         existing_assistant = get_most_recent_assistant_version(
             assistants_table, assistant_public_id
         )
+
         if not check_user_can_delete_assistant(existing_assistant, current_user):
             print(
                 f"User {current_user} is not authorized to delete assistant {assistant_public_id}"
@@ -258,13 +290,27 @@ def delete_assistant(event, context, current_user, name, data):
         # Query for all paths belonging to this assistant
         response = lookup_table.query(
             IndexName="AssistantIdIndex",
-            KeyConditionExpression=Key("assistantId").eq(assistant_public_id)
+            KeyConditionExpression=Key("assistantId").eq(assistant_public_id),
         )
-        
+
         # Delete each path entry
         for item in response.get("Items", []):
             release_assistant_path(item["astPath"], assistant_public_id, current_user)
-        
+
+        astIconDs = existing_assistant.get("data", {}).get("astIcon")
+        if (astIconDs):
+            key = astIconDs.get("key") or astIconDs.get("metadata").get("contentKey")
+            print(f"Deleting assistant Icon file: {key}")
+            delete_file(access_token, key)
+
+        # delete asistant specific data sources - those with ds with ds.metadata.type starts with "assistant-
+        dataSources = existing_assistant.get("dataSources", [])
+
+        for ds in dataSources:
+            if (ds.get("metadata", {}).get("type", "").startswith("assistant")):
+                print(f"Deleting assistant specific data source: {ds.get('id')}")
+                delete_file(access_token, ds.get("id"))
+
         # Now delete the assistant itself
         delete_assistant_by_public_id(assistants_table, assistant_public_id)
         # remove permissions
@@ -273,14 +319,14 @@ def delete_assistant(event, context, current_user, name, data):
         )
         delete_assistant_permissions_by_id(existing_assistant["id"], current_user)
         print(f"Assistant {assistant_public_id} and all associated paths deleted successfully.")
+
         return {"success": True, "message": "Assistant deleted successfully."}
     except Exception as e:
         print(f"Error deleting assistant: {e}")
         return {"success": False, "message": "Failed to delete assistant."}
 
 
-
-@op(
+@api_tool(
     path="/assistant/list",
     name="listAssistants",
     method="GET",
@@ -315,13 +361,72 @@ def delete_assistant(event, context, current_user, name, data):
         ]
     }
     """,
-    params={}
+    parameters={"type": "object", "properties": {}, "required": []},
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the assistants retrieval was successful",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result",
+            },
+            "data": {
+                "type": "array",
+                "description": "Array of assistant objects",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "assistantId": {
+                            "type": "string",
+                            "description": "Unique identifier of the assistant",
+                        },
+                        "version": {
+                            "type": "integer",
+                            "description": "Version number of the assistant",
+                        },
+                        "instructions": {
+                            "type": "string",
+                            "description": "Instructions for the assistant",
+                        },
+                        "disclaimerHash": {
+                            "type": "string",
+                            "description": "Hash of the disclaimer",
+                        },
+                        "coreHash": {
+                            "type": "string",
+                            "description": "Core hash of the assistant",
+                        },
+                        "user": {
+                            "type": "string",
+                            "description": "User who created the assistant",
+                        },
+                        "uri": {
+                            "type": ["string", "null"],
+                            "description": "URI associated with the assistant",
+                        },
+                        "createdAt": {
+                            "type": "string",
+                            "description": "Creation timestamp",
+                        },
+                        "dataSources": {
+                            "type": "array",
+                            "description": "Data sources associated with the assistant",
+                            "items": {"type": "object"},
+                        },
+                    },
+                },
+            },
+        },
+        "required": ["success", "message", "data"],
+    },
 )
-
 @validated(op="list")
 def list_assistants(event, context, current_user, name, data):
     access = data["allowed_access"]
-    if "assistants" not in access and "full_access" not in access:
+    if APIAccessType.ASSISTANTS.value not in access and APIAccessType.FULL_ACCESS.value not in access:
         return {
             "success": False,
             "message": "API key does not have access to assistant functionality",
@@ -344,7 +449,7 @@ def list_assistants(event, context, current_user, name, data):
     assistant_ids = [assistant["id"] for assistant in assistants]
 
     access_rights = {}
-    if not data[ "is_group_sys_user" ]:  # saves us the call, access is determined by group members access list
+    if not is_group_sys_user(data):  # saves us the call, access is determined by group members access list
         access_rights = simulate_can_access_objects(
             data["access_token"], assistant_ids, ["read", "write"]
         )
@@ -389,26 +494,26 @@ def list_user_assistants(user_id):
     while True:
         # Build the query parameters
         query_params = {
-            'IndexName': "UserNameIndex",
-            'KeyConditionExpression': Key("user").eq(user_id),
+            "IndexName": "UserNameIndex",
+            "KeyConditionExpression": Key("user").eq(user_id),
         }
 
         # If there is a last evaluated key, include it in the query
         if last_evaluated_key:
-            query_params['ExclusiveStartKey'] = last_evaluated_key
+            query_params["ExclusiveStartKey"] = last_evaluated_key
         response = assistants_table.query(**query_params)
 
         assistants.extend(response.get("Items", []))
 
         # Check if there's more data to retrieve
-        last_evaluated_key = response.get('LastEvaluatedKey')
+        last_evaluated_key = response.get("LastEvaluatedKey")
 
         if not last_evaluated_key:
             print("No more data to retrieve")
             # No more data to retrieve
             break
 
-    # filter out old versions 
+    # filter out old versions
     return get_latest_assistants(assistants)
 
 
@@ -416,14 +521,17 @@ def get_latest_assistants(assistants):
     latest_assistants = {}
     for assistant in assistants:
         # Set version to 1 if it doesn't exist
-        assistant.setdefault('version', 1)
-        assistant_id = assistant.get('assistantId', None)
+        assistant.setdefault("version", 1)
+        assistant_id = assistant.get("assistantId", None)
         # will exclude system ast since they dont have assistantId
-        if (assistant_id and (assistant_id not in latest_assistants or latest_assistants[assistant_id]['version'] < assistant['version'])):
+        if assistant_id and (
+            assistant_id not in latest_assistants
+            or latest_assistants[assistant_id]["version"] < assistant["version"]
+        ):
             latest_assistants[assistant_id] = assistant
-    
+
     return list(latest_assistants.values())
-    
+
 
 def get_assistant(assistant_id):
     """
@@ -452,7 +560,7 @@ def get_assistant(assistant_id):
         return None
 
 
-@op(
+@api_tool(
     path="/assistant/create",
     name="createOrUpdateAssistant",
     method="POST",
@@ -483,21 +591,89 @@ def get_assistant(assistant_id):
         }
     }
     """,
-    params={
-        "name": "String. Required. Name of the assistant. Example: 'Sample Assistant 3'.",
-        "description": "String. Required. Description of the assistant's purpose.",
-        "assistantId": "String. Optional. If provided, updates an existing assistant. Example: 'astp/3io4u5ipy34jkelkdfweiorwur'. prefixed with astp",
-        "tags": "Array of strings. Required. Tags to categorize the assistant.",
-        "instructions": "String. Required. Detailed instructions on how the assistant should respond.",
-        "disclaimer": "String. Optional. Disclaimer for the assistant's responses.",
-        "dataSources": "Array of objects. Required. List of data sources the assistant can use. You can obtain ful data source objects by calling the /files/query endpoint",
-    }
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Name of the assistant. Example: 'Sample Assistant 3'.",
+            },
+            "description": {
+                "type": "string",
+                "description": "Description of the assistant's purpose.",
+            },
+            "assistantId": {
+                "type": "string",
+                "description": "If provided, updates an existing assistant. Example: 'astp/3io4u5ipy34jkelkdfweiorwur'. prefixed with astp",
+            },
+            "tags": {
+                "type": "array",
+                "description": "Tags to categorize the assistant.",
+                "items": {"type": "string"},
+            },
+            "instructions": {
+                "type": "string",
+                "description": "Detailed instructions on how the assistant should respond.",
+            },
+            "disclaimer": {
+                "type": "string",
+                "description": "Disclaimer for the assistant's responses.",
+            },
+            "dataSources": {
+                "type": "array",
+                "description": "List of data sources the assistant can use. You can obtain ful data source objects by calling the /files/query endpoint",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "type": {"type": "string"},
+                        "key": {"type": "string"},
+                        "metadata": {"type": "object"},
+                    },
+                },
+            },
+        },
+        "required": ["name", "description", "tags", "instructions", "dataSources"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the assistant creation/update was successful",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result",
+            },
+            "data": {
+                "type": "object",
+                "properties": {
+                    "assistantId": {
+                        "type": "string",
+                        "description": "Public identifier of the assistant",
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Internal database ID of the assistant",
+                    },
+                    "version": {
+                        "type": "integer",
+                        "description": "Version number of the assistant",
+                    },
+                },
+                "required": ["assistantId", "id", "version"],
+            },
+        },
+        "required": ["success", "message", "data"],
+    },
 )
-
 @validated(op="create")
 def create_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
-    if "assistants" not in access and "full_access" not in access:
+    access_token = data["access_token"]
+    if APIAccessType.ASSISTANTS.value not in access and APIAccessType.FULL_ACCESS.value not in access:
         return {
             "success": False,
             "message": "API key does not have access to assistant functionality",
@@ -525,17 +701,17 @@ def create_assistant(event, context, current_user, name, data):
     data_sources = extracted_data.get("dataSources", [])
     tools = extracted_data.get("tools", [])
     provider = extracted_data.get("provider", "amplify")
-    is_group_sys_user = data["is_group_sys_user"]
+    is_group_user = is_group_sys_user(data)
 
     # Identify and store website URLs
     website_data_sources = []
     standard_data_sources = []
 
     for source in data_sources:
-        if (
-            source.get("type") == "website/url"
-            or source.get("type") == "website/sitemap"
-        ):
+        print(f"source: {source}")
+        if (source.get("type") in ["website/url", "website/sitemap"]
+            and not source.get("key")): # hasnt been scraped into a ds yet
+            print(f"Website data source to be scraped: {source}")
             website_data_sources.append(source)
         else:
             standard_data_sources.append(source)
@@ -560,54 +736,24 @@ def create_assistant(event, context, current_user, name, data):
                     "scanFrequency": scan_frequency,
                     "lastScanned": None,
                 }
-            )
+            ) 
 
             try:
                 # Attempt immediate scraping
-                scraped_data = scrape_website_content(url, is_sitemap, current_user)
-                if scraped_data.get("success") and scraped_data.get("data", {}).get(
-                    "dataSourceKey"
-                ):
-                    scraped_key = scraped_data["data"]["dataSourceKey"]
+                scraped_data = scrape_website_content(url, access_token, is_sitemap)
+                scraped_web_ds = scraped_data.get("data", {}).get("dataSources")
+                if scraped_data.get("success") and scraped_web_ds:
+                    for ds in scraped_web_ds:
+                        ds.get("metadata").update({"isSitemap": is_sitemap, "scanFrequency": scan_frequency})
+                        ds['key'] = ds['id']
 
-                    # Add scraped content as a data source
-                    scraped_data_source = {
-                        "id": scraped_key,  # This is now the content_key
-                        "name": f"Scraped content from {url}",
-                        "type": "application/json",
-                        "metadata": {
-                            "sourceUrl": url,
-                            "isSitemap": is_sitemap,
-                            "scrapedAt": datetime.now().isoformat(),
-                            "scanFrequency": scan_frequency,
-                            "isScrapedContent": True,
-                        },
-                    }
-                    scraped_data_sources.append(scraped_data_source)
+                    scraped_data_sources += scraped_web_ds
 
-                    # Set permissions for the scraped content immediately after creating it
-                    try:
-                        update_object_permissions(
-                            access_token=data["access_token"],
-                            shared_with_users=[current_user],
-                            keys=[scraped_key],
-                            object_type="datasource",
-                            principal_type="user",
-                            permission_level="owner",
-                            policy="",
-                        )
-                        print(
-                            f"Set owner permissions for scraped content: {scraped_key}"
-                        )
-                    except Exception as perm_error:
-                        print(
-                            f"Error setting permissions for scraped content: {perm_error}"
-                        )
             except Exception as e:
                 print(f"Error initially scraping website {url}: {str(e)}")
 
     # Permissions handling for non-group users
-    if not is_group_sys_user:
+    if not is_group_user:
         # Process standard data sources (excluding website URLs which don't need permission checks)
         filtered_ds = []
         tag_data_sources = []
@@ -645,14 +791,12 @@ def create_assistant(event, context, current_user, name, data):
                 }
 
         # Combine all types of data sources for the final assistant
-        final_data_sources = (
-            filtered_ds + tag_data_sources + scraped_data_sources
-        )
+        final_data_sources = filtered_ds + tag_data_sources + scraped_data_sources
     else:
         # For group system users, use all data sources as-is
-        final_data_sources = (
-            standard_data_sources + scraped_data_sources
-        )
+        final_data_sources = standard_data_sources + scraped_data_sources
+    
+    print(f"final_data_sources: {final_data_sources}")
 
     # Create or update the assistant with the final data sources
     return create_or_update_assistant(
@@ -670,36 +814,91 @@ def create_assistant(event, context, current_user, name, data):
         provider=provider,
         uri=uri,
         assistant_public_id=assistant_public_id,
-        is_group_sys_user=is_group_sys_user,
+        is_group_user=is_group_user,
     )
 
 
-@op(
+@api_tool(
     path="/assistant/share",
     name="shareAssistant",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Share an Amplify assistant with other users on the platform.
+    description="""Share an assistant with another user.
 
     Example request:
     {
+        "assistantId": "astp/3io4u5ipy34jkelkdfweiorwur",
+        "userEmail": "user@example.com",
+        "permissions": "read"
+    }
+
+    Example response:
+    {
+        "success": true,
+        "message": "Assistant shared successfully with user@example.com.",
         "data": {
-            "assistantId": "ast/8934572093982034020-9",
-            "recipientUsers": ["yourEmail@vanderbilt.edu"],
-            "note": "Sharing label"
+            "sharedWith": "user@example.com",
+            "permissions": "read",
+            "sharedAt": "2024-07-15T18:58:24.912235"
         }
     }
     """,
-    params={
-        "assistantId": "String. Required. Unique identifier of the assistant to share. Example: 'ast/8934572093982034020-9'. prefixed with ast",
-        "recipientUsers": "Array of strings. Required. List of email addresses of the users to share the assistant with. Example: ['user1@example.com', 'user2@example.com'].",
-        "note": "String. Optional. A note to include with the shared assistant. Example: 'Sharing this assistant for project collaboration.'"
-    }
+    parameters={
+        "type": "object",
+        "properties": {
+            "assistantId": {
+                "type": "string",
+                "description": "The ID of the assistant to share. Example: 'astp/3io4u5ipy34jkelkdfweiorwur'",
+            },
+            "userEmail": {
+                "type": "string",
+                "description": "Email address of the user to share the assistant with",
+            },
+            "permissions": {
+                "type": "string",
+                "description": "Permission level for the shared assistant. Example: 'read' or 'write'",
+            },
+        },
+        "required": ["assistantId", "userEmail", "permissions"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the sharing operation was successful",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result",
+            },
+            "data": {
+                "type": "object",
+                "properties": {
+                    "sharedWith": {
+                        "type": "string",
+                        "description": "Email address of the user the assistant was shared with",
+                    },
+                    "permissions": {
+                        "type": "string",
+                        "description": "Permission level granted to the user",
+                    },
+                    "sharedAt": {
+                        "type": "string",
+                        "description": "Timestamp when the assistant was shared",
+                    },
+                },
+                "required": ["sharedWith", "permissions", "sharedAt"],
+            },
+        },
+        "required": ["success", "message", "data"],
+    },
 )
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
-    if "share" not in access and "full_access" not in access:
+    access_token = data["access_token"]
+    if APIAccessType.SHARE.value not in access and APIAccessType.FULL_ACCESS.value not in access:
         return {
             "success": False,
             "message": "API key does not have access to share functionality",
@@ -714,11 +913,17 @@ def share_assistant(event, context, current_user, name, data):
 
     share_to_s3 = extracted_data.get("shareToS3", data["api_accessed"])
 
+    valid_users, _ = are_valid_amplify_users(access_token, recipient_users)
+
+    if len(valid_users) == 0:
+        return {"success": False, "message": "No valid users to share with."}
+    
+
     return share_assistant_with(
-        access_token=data["access_token"],
+        access_token=access_token,
         current_user=current_user,
         assistant_key=assistant_key,
-        recipient_users=recipient_users,
+        recipient_users=valid_users,
         access_type=access_type,
         note=note,
         share_to_S3=share_to_s3,
@@ -974,7 +1179,7 @@ def save_assistant(
     tags,
     uri=None,
     assistant_public_id=None,
-    is_group_sys_user=False,
+    is_group_user=False,
 ):
     """
     Saves the assistant data to the DynamoDB table.
@@ -1020,7 +1225,7 @@ def save_assistant(
 
     # to differentiate Group ast because when a group member chats with it they wont have access directly but the group system user will
     # so the object access relies on looking up if a user is a member of that group and the group system user has perms
-    ast_prefix = "astg" if is_group_sys_user else "ast"
+    ast_prefix = "astg" if is_group_user else "ast"
     assistant_database_id = f"{ast_prefix}/{str(uuid.uuid4())}"
 
     # Create an assistantId
@@ -1176,7 +1381,7 @@ def create_or_update_assistant(
     provider,
     uri,
     assistant_public_id=None,
-    is_group_sys_user=False,
+    is_group_user=False,
 ):
     """
     Creates a new assistant in the DynamoDB table and sets the appropriate permissions.
@@ -1205,7 +1410,7 @@ def create_or_update_assistant(
         assistants_table, assistant_public_id
     )
 
-    principal_type = "group" if is_group_sys_user else "user"
+    principal_type = "group" if is_group_user else "user"
 
     if existing_assistant:
 
@@ -1248,23 +1453,13 @@ def create_or_update_assistant(
             tags,
             uri,
             assistant_public_id,
-            is_group_sys_user,
+            is_group_user,
         )
         new_item["version"] = new_version
 
         # Collect all data source keys, including scraped content
-        all_data_source_keys = []
-        scraped_data_source_keys = []
-
-        # Process all data sources to collect their keys
-        for source in data_sources:
-            if "id" in source:
-                all_data_source_keys.append(source["id"])
-                if source.get("metadata", {}).get(
-                    "isScrapedContent", False
-                ) or source.get("metadata", {}).get("sourceUrl"):
-                    scraped_data_source_keys.append(source["id"])
-
+        all_data_source_keys = [source["id"] for source in data_sources]
+        
         # Set permissions for the assistant
         if not update_object_permissions(
             access_token,
@@ -1272,11 +1467,10 @@ def create_or_update_assistant(
             [new_item["id"], new_item["assistantId"]],
             "assistant",
             principal_type,
-            "owner",
-        ):
+            "owner"):
             print(f"Error updating permissions for assistant {new_item['id']}")
-        else:
-            print(f"Successfully updated permissions for assistant {new_item['id']}")
+
+        print(f"Successfully updated permissions for assistant {new_item['id']}")
 
         # Set permissions for all data sources, including scraped content
         if all_data_source_keys:
@@ -1289,13 +1483,9 @@ def create_or_update_assistant(
                 "owner",
             )
             if not update_result:
-                print(
-                    f"Error updating permissions for data sources: {all_data_source_keys}"
-                )
+                print(f"Error updating permissions for data sources: {all_data_source_keys}")
             else:
-                print(
-                    f"Successfully updated permissions for data sources: {all_data_source_keys}"
-                )
+                print(f"Successfully updated permissions for data sources: {all_data_source_keys}")
 
         # Update permissions for the new version to ensure the user retains edit rights
         try:
@@ -1306,18 +1496,18 @@ def create_or_update_assistant(
                     "principal_id": user_that_owns_the_assistant,
                     "permission_level": "owner",  # Give the user full ownership rights
                     "principal_type": principal_type,  # For individual users or groups
-                    "object_type": "assistant"    # The type of object being accessed
+                    "object_type": "assistant",  # The type of object being accessed
                 }
             )
-            print(f"Successfully added direct permissions for {principal_type} {user_that_owns_the_assistant} on assistant version {new_item['id']}")
+            print( f"Successfully added direct permissions for {principal_type} {user_that_owns_the_assistant} on assistant version {new_item['id']}" )
         except Exception as e:
             print(f"Error adding permissions for assistant version: {str(e)}")
-        
+
         # Update the latest alias to point to the new version
         update_assistant_latest_alias(assistant_public_id, new_item["id"], new_version)
 
         # print(f"Indexing assistant {new_item['id']} for RAG")
-        # save_assistant_for_rag(new_item)
+
         print(f"Added RAG entry for {new_item['id']}")
 
         # Return success response
@@ -1346,19 +1536,11 @@ def create_or_update_assistant(
             tags,
             uri,
             None,
-            is_group_sys_user,
+            is_group_user,
         )
 
         # Set permissions for all data sources, including scraped content
-        all_data_source_keys = []
-        scraped_sources = []
-
-        # Collect all data source keys
-        for data_source in data_sources:
-            if "id" in data_source:
-                all_data_source_keys.append(data_source["id"])
-                if data_source.get("metadata", {}).get("sourceUrls"):
-                    scraped_sources.append(data_source)
+        all_data_source_keys = [source["id"] for source in data_sources]
 
         if not update_object_permissions(
             access_token,
@@ -1369,8 +1551,8 @@ def create_or_update_assistant(
             "owner",
         ):
             print(f"Error updating permissions for assistant {new_item['id']}")
-        else:
-            print(f"Successfully updated permissions for assistant {new_item['id']}")
+
+        print(f"Successfully updated permissions for assistant {new_item['id']}")
 
         # Set permissions for all data sources
         if all_data_source_keys:
@@ -1383,44 +1565,15 @@ def create_or_update_assistant(
                 "owner",
             )
 
-        # Special handling for scraped content
-        for scraped_source in scraped_sources:
-            scraped_key = scraped_source["id"]
-            try:
-                # Ensure owner permissions for scraped content
-                update_object_permissions(
-                    access_token=access_token,
-                    shared_with_users=[user_that_owns_the_assistant],
-                    keys=[scraped_key],
-                    object_type="datasource",
-                    principal_type=principal_type,
-                    permission_level="owner",
-                    policy="",
-                )
-                print(f"Set owner permissions for scraped content: {scraped_key}")
-            except Exception as perm_error:
-                print(f"Error setting permissions for scraped content: {perm_error}")
-
-        # Also add direct permissions in DynamoDB
         try:
-            # Add direct permissions entry in DynamoDB for both IDs
-            object_access_table.put_item(
+            for object_id in [new_item["id"], new_item[ "assistantId"]]:
+                object_access_table.put_item(
                 Item={
-                    "object_id": new_item["id"],  # The ID of the new assistant version
+                    "object_id": object_id,  
                     "principal_id": user_that_owns_the_assistant,
                     "permission_level": "owner",  # Give the user full ownership rights
                     "principal_type": principal_type,  # For individual users or groups
-                    "object_type": "assistant"    # The type of object being accessed
-                }
-            )
-            
-            object_access_table.put_item(
-                Item={
-                    "object_id": new_item["assistantId"],  # The public ID of the assistant
-                    "principal_id": user_that_owns_the_assistant,
-                    "permission_level": "owner",  # Give the user full ownership rights
-                    "principal_type": principal_type,  # For individual users or groups
-                    "object_type": "assistant"    # The type of object being accessed
+                    "object_type": "assistant",  # The type of object being accessed
                 }
             )
             print(f"Successfully added direct permissions for {principal_type} {user_that_owns_the_assistant} on assistant {new_item['id']} and {new_item['assistantId']}")
@@ -1465,21 +1618,23 @@ def get_assistant_hashes(
     # This will be used to check if the assistant already exists
     # and to check if the assistant has been updated
     core_sha256 = hashlib.sha256(
-        json.dumps(core_details, sort_keys=True, cls=CombinedEncoder).encode()
+        json.dumps(core_details, sort_keys=True, cls=CustomPydanticJSONEncoder).encode()
     ).hexdigest()
     datasources_sha256 = hashlib.sha256(
-        json.dumps(data_sources.sort(key=lambda x: x["id"]), cls=CombinedEncoder).encode()
+        json.dumps(
+            data_sources.sort(key=lambda x: x["id"]), cls=CustomPydanticJSONEncoder
+        ).encode()
     ).hexdigest()
     instructions_sha256 = hashlib.sha256(
-        json.dumps(instructions, sort_keys=True, cls=CombinedEncoder).encode()
+        json.dumps(instructions, sort_keys=True, cls=CustomPydanticJSONEncoder).encode()
     ).hexdigest()
     disclaimer_sha256 = hashlib.sha256(
-        json.dumps(disclaimer, sort_keys=True, cls=CombinedEncoder).encode()
+        json.dumps(disclaimer, sort_keys=True, cls=CustomPydanticJSONEncoder).encode()
     ).hexdigest()
     core_details["assistant"] = assistant_name
     core_details["description"] = description
     full_sha256 = hashlib.sha256(
-        json.dumps(core_details, sort_keys=True, cls=CombinedEncoder).encode()
+        json.dumps(core_details, sort_keys=True, cls=CustomPydanticJSONEncoder).encode()
     ).hexdigest()
     return (
         core_sha256,
@@ -1555,89 +1710,6 @@ def update_assistant_alias_by_type(assistant_public_id, new_id, version, alias_t
     except ClientError as e:
         print(f"Error updating assistant alias: {e}")
 
-# legacy function, no longer used
-# def generate_assistant_chunks_metadata(assistant):
-#     output = {
-#         "chunks": [
-#             {
-#                 "content": f"{assistant['description']}",
-#                 "locations": [
-#                     {
-#                         "assistantId": assistant["assistantId"],
-#                         "version": assistant["version"],
-#                         "updatedAt": assistant["updatedAt"],
-#                         "createdAt": assistant["createdAt"],
-#                         "tags": assistant["tags"],
-#                     }
-#                 ],
-#                 "indexes": [0],
-#                 "char_index": 0,
-#             },
-#             {
-#                 "content": f"{assistant['name']}: {assistant['description']}. {', '.join(assistant['tags'])}",
-#                 "locations": [
-#                     {
-#                         "assistantId": assistant["assistantId"],
-#                         "version": assistant["version"],
-#                         "updatedAt": assistant["updatedAt"],
-#                         "createdAt": assistant["createdAt"],
-#                         "tags": assistant["tags"],
-#                     }
-#                 ],
-#                 "indexes": [0],
-#                 "char_index": 0,
-#             },
-#             {
-#                 "content": assistant["instructions"],
-#                 "locations": [
-#                     {
-#                         "assistantId": assistant["assistantId"],
-#                         "version": assistant["version"],
-#                         "updatedAt": assistant["updatedAt"],
-#                         "createdAt": assistant["createdAt"],
-#                         "tags": assistant["tags"],
-#                     }
-#                 ],
-#                 "indexes": [0],
-#                 "char_index": 0,
-#             },
-#             {
-#                 "content": f"{assistant['name']}: {assistant['instructions']}. {', '.join(assistant['tags'])}",
-#                 "locations": [
-#                     {
-#                         "assistantId": assistant["assistantId"],
-#                         "version": assistant["version"],
-#                         "updatedAt": assistant["updatedAt"],
-#                         "createdAt": assistant["createdAt"],
-#                         "tags": assistant["tags"],
-#                     }
-#                 ],
-#                 "indexes": [0],
-#                 "char_index": 0,
-#             },
-#         ],
-#         "src": assistant["id"],
-#     }
-#     return output
-
-
-# def save_assistant_for_rag(assistant):
-#     try:
-#         key = assistant["id"]
-#         assistant_chunks = generate_assistant_chunks_metadata(assistant)
-#         chunks_bucket = os.environ["S3_RAG_CHUNKS_BUCKET_NAME"]
-
-#         s3 = boto3.client("s3")
-#         print(f"Saving assistant description to {key}-assistant.chunks.json")
-#         chunks_key = f"assistants/{key}-assistant.chunks.json"
-#         s3.put_object(
-#             Bucket=chunks_bucket,
-#             Key=chunks_key,
-#             Body=json.dumps(assistant_chunks, cls=CombinedEncoder),
-#         )
-#         print(f"Uploaded chunks to {chunks_bucket}/{chunks_key}")
-#     except Exception as e:
-#         print(f"Error saving assistant for RAG: {e}")
 
 
 # queries GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE (updated at the end of every conversation via amplify-lambda-js/common/chat/controllers/sequentialChat.js)
@@ -1663,7 +1735,7 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
 
         conversations = response["Items"]
         # print(f"Found {len(conversations)} conversations for assistant {assistant_id}")
-        # print(f"Conversations: {json.dumps(conversations, cls=CombinedEncoder)}")
+        # print(f"Conversations: {json.dumps(conversations, cls=CustomPydanticJSONEncoder)}")
 
         while "LastEvaluatedKey" in response:
             response = table.query(
@@ -1675,7 +1747,7 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
 
         return {
             "statusCode": 200,
-            "body": json.dumps(conversations, cls=CombinedEncoder),
+            "body": json.dumps(conversations, cls=CustomPydanticJSONEncoder),
         }
 
     except ClientError as e:
@@ -1898,7 +1970,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             s3.put_object(
                 Bucket=bucket_name,
                 Key=filename,
-                Body=json.dumps(conversations, cls=CombinedEncoder),
+                Body=json.dumps(conversations, cls=CustomPydanticJSONEncoder),
                 ContentType="application/json",
             )
 
@@ -1913,7 +1985,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
         return {
             "statusCode": 200,
-            "body": json.dumps(response_data, cls=CombinedEncoder),
+            "body": json.dumps(response_data, cls=CustomPydanticJSONEncoder),
         }
 
     except ClientError as e:
@@ -1973,7 +2045,7 @@ def save_user_rating(event, context, current_user, name, data):
                     ),
                     "updatedAttributes": response.get("Attributes"),
                 },
-                cls=DecimalEncoder,
+                cls=LossyDecimalEncoder,
             ),
         }
 
@@ -1988,114 +2060,172 @@ def save_user_rating(event, context, current_user, name, data):
         }
 
 
-@op(
-    path="/assistant/add_path",
+@api_tool(
+    path="/assistant/path/add",
     name="addAssistantPath",
     method="POST",
     tags=["standaloneAst"],
-    description="""Add or update a path for an Amplify assistant.
-
-    Example request:
-    {
-        "data": {
-            "assistantId": "astp/3209457834985793094",
-            "astPath": "my/assistant/path",
-        }
-    }
-    """,
-    params={
-        "assistantId": "String. Required. Unique identifier of the assistant. Example: 'astp/3209457834985793094'.",
-        "astPath": "String. Required. Path to assign to the assistant. Example: 'my/assistant/path'.",
-    }
+    description="""Add or update a path for an Amplify assistant.""",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "The API path to add. Example: '/api/v1/example'",
+            },
+            "assistantId": {
+                "type": "string",
+                "description": "ID of the assistant to add the path to. Example: 'astp/3io4u5ipy34jkelkdfweiorwur'",
+            },
+            "method": {
+                "type": "string",
+                "description": "HTTP method for the path. Example: 'GET', 'POST', 'PUT', 'DELETE'",
+            },
+            "description": {
+                "type": "string",
+                "description": "Description of the endpoint functionality",
+            },
+        },
+        "required": ["path", "assistantId", "method"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the path was added successfully",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result",
+            },
+            "data": {
+                "type": "object",
+                "properties": {
+                    "pathId": {
+                        "type": "string",
+                        "description": "Unique identifier for the added path",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "The API path that was added",
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method for the path",
+                    },
+                    "assistantId": {
+                        "type": "string",
+                        "description": "ID of the assistant the path was added to",
+                    },
+                },
+                "required": ["pathId", "path", "method", "assistantId"],
+            },
+        },
+        "required": ["success", "message", "data"],
+    },
 )
 @validated(op="add_assistant_path")
 def add_assistant_path(event, context, current_user, name, data):
-    is_group_sys_user = data["is_group_sys_user"]
+    is_group_user = is_group_sys_user(data)
+    access_token = data["access_token"]
     print(f"Adding path to assistant with data: {data}")
-    
+
     # Extract the assistant ID and path from the data
-    data = data['data']
+    data = data["data"]
     ast_path = data["astPath"]
     assistant_id = data["assistantId"]
-    is_public = data['isPublic']
-    access_to = data.get('accessTo',{})
-    amplify_groups = access_to.get('amplifyGroups', [])
-    users = access_to.get('users', [])
-    
+    is_public = data["isPublic"]
+    access_to = data.get("accessTo", {})
+    amplify_groups = access_to.get("amplifyGroups", [])
+    users, _ = are_valid_amplify_users(access_token, access_to.get("users", []))
+
     print(f"Adding path '{ast_path}' to assistant '{assistant_id}'")
-    
+
     # Get DynamoDB resources
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
     lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
-    
+
     try:
         # First, find the current version of the assistant
-        existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
-        
+        existing_assistant = get_most_recent_assistant_version(
+            assistants_table, assistant_id
+        )
+
         if not existing_assistant:
             return {
                 "success": False,
                 "message": f"Assistant not found: {assistant_id}",
             }
-        
+
         # Check if the user has permission to update this assistant
         if not check_user_can_update_assistant(existing_assistant, current_user):
             return {
                 "success": False,
                 "message": "You do not have permission to update this assistant.",
             }
-        
+
         # Check if the new path already exists but belongs to a different assistant
         path_history = []
-        prevAstPath = None #used to path history
+        prevAstPath = None  # used to path history
         try:
             existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
             if "Item" in existing_path_response:
                 existing_item = existing_path_response["Item"]
                 existing_assistant_id = existing_item.get("assistantId")
                 if existing_assistant_id:
-                    if (existing_assistant_id != assistant_id):
+                    if existing_assistant_id != assistant_id:
                         return {
                             "success": False,
                             "message": f"Path '{ast_path}' is already in use by another assistant.",
                         }
-                    prevAstPath = existing_item.get("astPath") 
+                    prevAstPath = existing_item.get("astPath")
                 path_history = existing_item.get("pathHistory", [])
 
         except Exception as e:
             print(f"Error checking for existing path: {str(e)}")
-     
-        if (not prevAstPath): #prevent losing path history when path is updated
+
+        if not prevAstPath:  # prevent losing path history when path is updated
             try:
-            # Query for the current path entry for this assistant
+                # Query for the current path entry for this assistant
                 response = lookup_table.query(
                     IndexName="AssistantIdIndex",
                     KeyConditionExpression=Key("assistantId").eq(assistant_id),
-                    Limit=1  # We just need the most recent one
+                    Limit=1,  # We just need the most recent one
                 )
-                
+
                 # If we found an existing path entry for this assistant, get its path history
                 if response.get("Items") and len(response["Items"]) > 0:
                     current_path_item = response["Items"][0]
-                    
+
                     path_history = current_path_item.get("pathHistory", [])
                     prevAstPath = current_path_item.get("astPath")
                     print("previous AstPath", prevAstPath)
             except Exception as e:
                 print(f"Error retrieving current path history: {str(e)}")
                 # Continue with empty path history if we can't find the existing one
-        
+
         created_at = datetime.now().isoformat()
-        
-        if path_history and len(path_history) > 1 and \
-           path_history[-1]["path"] == ast_path and \
-           path_history[-1]["changedBy"] == current_user and \
-           path_history[-1]["assistant_id"] == assistant_id:
+
+        if (
+            path_history
+            and len(path_history) > 1
+            and path_history[-1]["path"] == ast_path
+            and path_history[-1]["changedBy"] == current_user
+            and path_history[-1]["assistant_id"] == assistant_id
+        ):
             path_history[-1]["changedAt"] = created_at
         else:
             # Otherwise append a new entry to the history
-            path_history.append({"path": ast_path, "assistant_id": assistant_id, "changedAt": created_at, "changedBy": current_user})
+            path_history.append(
+                {
+                    "path": ast_path,
+                    "assistant_id": assistant_id,
+                    "changedAt": created_at,
+                    "changedBy": current_user,
+                }
+            )
 
         # Add an entry to the lookup table
         lookup_item = {
@@ -2109,24 +2239,23 @@ def add_assistant_path(event, context, current_user, name, data):
             "accessTo": {
                 "amplifyGroups": amplify_groups,
                 "users": users,
-            }
-            
+            },
         }
-        
+
         # Add the entry to the lookup table
         lookup_table.put_item(Item=lookup_item)
         print(f"Added lookup entry for path '{ast_path}' to assistant '{assistant_id}'")
-        
+
         # Now create a new version of the assistant with the path saved in its definition
         assistant_version = existing_assistant.get("version", 1)
-        
+
         # Clone the existing assistant data or initialize if not present
         assistant_data = existing_assistant.get("data", {})
         if assistant_data is None:
             assistant_data = {}
         # Update the path in the assistant data
         assistant_data["astPath"] = ast_path
-        
+
         # Increment the version number
         new_version = assistant_version + 1
 
@@ -2148,112 +2277,167 @@ def add_assistant_path(event, context, current_user, name, data):
             assistant_id,
             False,
         )
-       
+
         # Update permissions for the new version to ensure the user retains edit rights
         try:
             # Determine the principal type (user for non-system users)
-            principal_type = "group" if is_group_sys_user else "user"
-            
+            principal_type = "group" if is_group_user else "user"
+
             # Add direct permissions entry in DynamoDB for the new version ID
-            object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
+            object_access_table = dynamodb.Table(
+                os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE")
+            )
             object_access_table.put_item(
                 Item={
                     "object_id": new_item["id"],  # The ID of the new assistant version
                     "principal_id": current_user,
                     "permission_level": "owner",  # Give the user full ownership rights
                     "principal_type": principal_type,  # For individual users or groups
-                    "object_type": "assistant"    # The type of object being accessed
+                    "object_type": "assistant",  # The type of object being accessed
                 }
             )
-            print(f"Successfully added direct permissions for {principal_type} {current_user} on assistant version {new_item['id']}")
+            print(
+                f"Successfully added direct permissions for {principal_type} {current_user} on assistant version {new_item['id']}"
+            )
         except Exception as e:
             print(f"Error adding permissions for assistant version: {str(e)}")
-        
+
         # Update the latest alias to point to the new version
         update_assistant_latest_alias(assistant_id, new_item["id"], new_version)
-        
+
         # Now that we've successfully saved the new path, remove ALL previous paths for this assistant except the new one
         try:
             # Query for all paths belonging to this assistant
             response = lookup_table.query(
                 IndexName="AssistantIdIndex",
-                KeyConditionExpression=Key("assistantId").eq(assistant_id)
+                KeyConditionExpression=Key("assistantId").eq(assistant_id),
             )
-            
+
             paths_to_release = []
             for item in response.get("Items", []):
                 # Skip the new path we just added
                 if item["astPath"] != ast_path:
                     paths_to_release.append(item["astPath"])
-            
+
             # Remove all old paths
             for path_to_release in paths_to_release:
                 release_assistant_path(path_to_release, assistant_id, current_user)
-            
-            print(f"Removed {len(paths_to_release)} previous path(s) associated with assistant {assistant_id}")
+
+            print(
+                f"Removed {len(paths_to_release)} previous path(s) associated with assistant {assistant_id}"
+            )
         except Exception as e:
             print(f"Error removing previous paths: {str(e)}")
             # Continue anyway - we've already saved the new path successfully
-        
+
         return {
             "success": True,
             "message": "Assistant path updated successfully",
             "data": {
                 "assistantId": assistant_id,
                 "astPath": ast_path,
-                "version": new_version
-            }
+                "version": new_version,
+            },
         }
-    
+
     except Exception as e:
         print(f"Error adding assistant path: {str(e)}")
         import traceback
+
         traceback.print_exc()
         return {
             "success": False,
-            "message": f"Failed to add path to assistant: {str(e)}"
+            "message": f"Failed to add path to assistant: {str(e)}",
         }
 
 
-@op(
+@api_tool(
     path="/assistant/lookup",
     name="lookupAssistant",
     method="POST",
     tags=["standaloneAst"],
-    description="""Look up an Amplify assistant by path.
-
-    Example request:
-    {
-        "data": {
-            "astPath": "my/assistant/path"
-        }
-    }
-
-    Example response:
-    {
-        "success": true,
-        "message": "Assistant found",
-        "data": {
-            "assistantId": "astp/34098509834509809348",
-            "astPath": "my/assistant/path",
-            "public": true,
-            "pathFromDefinition": "my/assistant/path"
-        }
-    }
-    """,
-    params={
-        "astPath": "String. Required. Path to look up the assistant. Example: 'my/assistant/path'."
-    }
+    description="""Lookup an assistant by its ID or path.""",
+    parameters={
+        "type": "object",
+        "properties": {
+            "assistantId": {
+                "type": "string",
+                "description": "ID of the assistant to lookup. Example: 'astp/3io4u5ipy34jkelkdfweiorwur'",
+            },
+            "path": {
+                "type": "string",
+                "description": "Alternative lookup by path. Example: 'my/assistant/path'",
+            },
+        },
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the lookup was successful",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result",
+            },
+            "data": {
+                "type": "object",
+                "properties": {
+                    "assistantId": {
+                        "type": "string",
+                        "description": "Public identifier of the assistant",
+                    },
+                    "name": {"type": "string", "description": "Name of the assistant"},
+                    "description": {
+                        "type": "string",
+                        "description": "Description of the assistant's purpose",
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": "Instructions for the assistant",
+                    },
+                    "disclaimer": {
+                        "type": "string",
+                        "description": "Disclaimer for the assistant's responses",
+                    },
+                    "dataSources": {
+                        "type": "array",
+                        "description": "List of data sources used by the assistant",
+                        "items": {"type": "object"},
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "description": "Timestamp when the assistant was created",
+                    },
+                    "version": {
+                        "type": "integer",
+                        "description": "Version number of the assistant",
+                    },
+                },
+                "required": [
+                    "assistantId",
+                    "name",
+                    "description",
+                    "instructions",
+                    "dataSources",
+                    "createdAt",
+                    "version",
+                ],
+            },
+        },
+        "required": ["success", "message", "data"],
+    },
 )
 @validated(op="lookup")
 def lookup_assistant_path(event, context, current_user, name, data):
-    token = data['access_token']
+    token = data["access_token"]
     try:
         # Get the astPath from the request data
         ast_path = data.get("data", {}).get("astPath")
-        
+
         print(f"Looking up assistant with path: '{ast_path}', type: {type(ast_path)}")
-        
+
         if not ast_path:
             print("No astPath provided in the request")
             return {
@@ -2264,33 +2448,35 @@ def lookup_assistant_path(event, context, current_user, name, data):
                         "message": "astPath is required",
                         "data": None,
                     },
-                    cls=CombinedEncoder,
-                )
+                    cls=CustomPydanticJSONEncoder,
+                ),
             }
-        
+
         # Convert the path to lowercase to match frontend behavior
         ast_path = ast_path.lower() if isinstance(ast_path, str) else ast_path
         print(f"Using lowercase path for lookup: '{ast_path}'")
-        
+
         # Get DynamoDB resource
         dynamodb = boto3.resource("dynamodb")
         lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
-        
+
         # Print the table name for debugging
         table_name = os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
         print(f"Using lookup table: {table_name}")
-        
+
         # Look up the assistant in the table
         print(f"Querying DynamoDB with Key={{'astPath': '{ast_path}'}}")
         response = lookup_table.get_item(Key={"astPath": ast_path})
-        
+
         # Log the raw response
-        print(f"DynamoDB response: {json.dumps(response, cls=CombinedEncoder)}")
-        
+        print(
+            f"DynamoDB response: {json.dumps(response, cls=CustomPydanticJSONEncoder)}"
+        )
+
         # Check if the item exists
         if "Item" not in response:
             print(f"No item found for path: '{ast_path}'")
-            
+
             return {
                 "statusCode": 404,
                 "body": json.dumps(
@@ -2299,10 +2485,10 @@ def lookup_assistant_path(event, context, current_user, name, data):
                         "message": f"No assistant found for path: {ast_path}",
                         "data": None,
                     },
-                    cls=CombinedEncoder,
-                )
+                    cls=CustomPydanticJSONEncoder,
+                ),
             }
-        
+
         # Get the item from the response
         item = response["Item"]
 
@@ -2317,94 +2503,109 @@ def lookup_assistant_path(event, context, current_user, name, data):
                         "message": f"Path is no longer associated with an assistant",
                         "data": None,
                     },
-                    cls=CombinedEncoder,
-                )
+                    cls=CustomPydanticJSONEncoder,
+                ),
             }
-        
-        # Update lastAccessed 
+
+        # Update lastAccessed
         current_time = datetime.now().isoformat()
-        try:    
+        try:
             # Update the item with access tracking information
             lookup_table.update_item(
                 Key={"astPath": ast_path},
                 UpdateExpression="SET lastAccessed = :time",
-                ExpressionAttributeValues={
-                    ":time": current_time
-                }
+                ExpressionAttributeValues={":time": current_time},
             )
-            print(f"Updated access tracking for path '{ast_path}': lastAccessed={current_time}, lastAccessedBy={current_user}")
+            print(
+                f"Updated access tracking for path '{ast_path}': lastAccessed={current_time}, lastAccessedBy={current_user}"
+            )
         except Exception as update_error:
             # Log the error but continue - don't fail the lookup just because tracking failed
             print(f"Error updating access tracking: {str(update_error)}")
-        
+
         # Initialize accessTo outside the conditional block
         accessTo = item.get("accessTo", {})
-        
+
         # Check if the assistant is public or if the user has access
         if not item.get("public", False):
             # check if user is listed in the entry or are part of the amplify groups
-            if (current_user != item.get("createdBy") and \
-                current_user not in accessTo.get("users", [])) and \
-                not verify_user_in_amp_group(token, accessTo.get("amplifyGroups", [])):
-                    return {"statusCode": 403,
-                            "body": json.dumps(
-                                {
-                                    "success": False,
-                                    "message": "User is not authorized to access this assistant",
-                                    "data": None,
-                                },
-                                cls=CombinedEncoder,
-                            )}
-        
+            if (
+                current_user != item.get("createdBy")
+                and current_user not in accessTo.get("users", [])
+            ) and not verify_user_in_amp_group(
+                token, accessTo.get("amplifyGroups", [])
+            ):
+                return {
+                    "statusCode": 403,
+                    "body": json.dumps(
+                        {
+                            "success": False,
+                            "message": "User is not authorized to access this assistant",
+                            "data": None,
+                        },
+                        cls=CustomPydanticJSONEncoder,
+                    ),
+                }
 
         # Get the assistant definition to include the astPath
         assistant_id = item.get("assistantId")
         assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
-        assistant_definition = get_most_recent_assistant_version(assistants_table, assistant_id)
+        assistant_definition = get_most_recent_assistant_version(
+            assistants_table, assistant_id
+        )
 
         group_id = assistant_definition.get("data", {}).get("groupId", None)
-        if (group_id and group_id != current_user):
-            #check group membership for group ast admin group
+        if group_id and group_id != current_user:
+            # check group membership for group ast admin group
             print("Checking if user is a member of the ast group: ", group_id)
             is_member = verify_member_of_ast_admin_group(token, group_id)
-            if (not is_member):
-                return {"statusCode": 403,
-                            "body": json.dumps(
-                                {
-                                    "success": False,
-                                    "message": "User is not authorized to access the group associated with this assistant",
-                                    "data": None,
-                                },
-                                cls=CombinedEncoder,
-                            )}
+            if not is_member:
+                return {
+                    "statusCode": 403,
+                    "body": json.dumps(
+                        {
+                            "success": False,
+                            "message": "User is not authorized to access the group associated with this assistant",
+                            "data": None,
+                        },
+                        cls=CustomPydanticJSONEncoder,
+                    ),
+                }
             print("User is a member of the ast group: ", group_id)
 
-
-        
         # Create response with path information from both lookup table and assistant definition
         response_data = {
             "assistantId": assistant_id,
             "astPath": ast_path,
             "public": item.get("public", False),
-            "accessTo": accessTo
+            "accessTo": accessTo,
         }
-        
+
         # Add path from assistant definition if available
-        if assistant_definition and assistant_definition.get("data") and assistant_definition["data"].get("astPath"):
-            response_data["pathFromDefinition"] = assistant_definition["data"]["astPath"]
-        
+        if (
+            assistant_definition
+            and assistant_definition.get("data")
+            and assistant_definition["data"].get("astPath")
+        ):
+            response_data["pathFromDefinition"] = assistant_definition["data"][
+                "astPath"
+            ]
+
         # Add assistant name to the response if available
         if assistant_definition:
             # First check if name is at the top level of the definition
             if "name" in assistant_definition:
                 response_data["name"] = assistant_definition["name"]
             # As a fallback, check if name exists in data
-            elif assistant_definition.get("data") and "name" in assistant_definition["data"]:
+            elif (
+                assistant_definition.get("data")
+                and "name" in assistant_definition["data"]
+            ):
                 response_data["name"] = assistant_definition["data"]["name"]
-            
+
             # Also include the full definition for the frontend to use
             response_data["definition"] = assistant_definition
-        
+
         return {
             "statusCode": 200,
             "body": json.dumps(
@@ -2413,8 +2614,8 @@ def lookup_assistant_path(event, context, current_user, name, data):
                     "message": "Assistant found",
                     "data": response_data,
                 },
-                cls=CombinedEncoder,
-            )
+                cls=CustomPydanticJSONEncoder,
+            ),
         }
     except Exception as e:
         print(f"Error looking up assistant: {str(e)}")
@@ -2426,44 +2627,52 @@ def lookup_assistant_path(event, context, current_user, name, data):
                     "message": f"Error looking up assistant: {str(e)}",
                     "data": None,
                 },
-                cls=CombinedEncoder,
-            )
+                cls=CustomPydanticJSONEncoder,
+            ),
         }
 
+
 def release_assistant_path(ast_path, assistant_id, current_user):
-    print(f"Attempting to release path '{ast_path}' for {assistant_id} from lookup table")
-    if (not ast_path or not assistant_id):
+    print(
+        f"Attempting to release path '{ast_path}' for {assistant_id} from lookup table"
+    )
+    if not ast_path or not assistant_id:
         print("No ast_path or assistant_id provided... no action taken")
         return
     dynamodb = boto3.resource("dynamodb")
     lookup_table = dynamodb.Table(os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE"))
-    
+
     try:
-        print(f"Realeasing '{ast_path}' from lookup table")
+        print(f"Releasing '{ast_path}' from lookup table")
         existing_path_response = lookup_table.get_item(Key={"astPath": ast_path})
         if "Item" in existing_path_response:
             existing_item = existing_path_response["Item"]
-            
+
             # verify data matches our records before releasing
             if existing_item.get("assistantId") != assistant_id:
-                print(f"Path '{ast_path}' is not associated with assistant {assistant_id}... no action taken")
+                print(
+                    f"Path '{ast_path}' is not associated with assistant {assistant_id}... no action taken"
+                )
                 return
-            
+
             path_history = existing_item.get("pathHistory", [])
-            path_history.append({"path": ast_path, "assistant_id": None, 
-                                 "changedAt": datetime.now().isoformat(), 
-                                 "changedBy": current_user})
-            
+            path_history.append(
+                {
+                    "path": ast_path,
+                    "assistant_id": None,
+                    "changedAt": datetime.now().isoformat(),
+                    "changedBy": current_user,
+                }
+            )
+
             # Update the lookup table to REMOVE the assistantId attribute entirely
             # This is better than setting to empty string which causes index issues
             lookup_table.update_item(
                 Key={"astPath": ast_path},
                 UpdateExpression="REMOVE assistantId SET pathHistory = :history",
-                ExpressionAttributeValues={
-                    ":history": path_history
-                }
+                ExpressionAttributeValues={":history": path_history},
             )
-                   
+
             print(f"Path successfully released from lookup table")
         else:
             print(f"Path '{ast_path}' not found in lookup table... no action taken")
@@ -2471,57 +2680,62 @@ def release_assistant_path(ast_path, assistant_id, current_user):
         print(f"Error removing path '{ast_path}' from lookup table: {str(e)}")
 
 
-@validated(op="share_assistant")  
+@validated(op="share_assistant")
 def request_assistant_to_public_ast(event, context, current_user, name, data):
-    data = data['data']
-    assistant_id = data['assistantId']
+    data = data["data"]
+    assistant_id = data["assistantId"]
 
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
     object_access_table = dynamodb.Table(os.environ.get("OBJECT_ACCESS_DYNAMODB_TABLE"))
-    
+
     try:
         # First, find the current version of the assistant
         print("Looking up assistant: ", assistant_id)
-        existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
-        
+        existing_assistant = get_most_recent_assistant_version(
+            assistants_table, assistant_id
+        )
+
         if not existing_assistant:
             return {
                 "success": False,
                 "message": f"Assistant not found: {assistant_id}",
             }
-        
-        if (not existing_assistant.get("data", {}).get("availableOnRequest")):
-                print("Assistant is not available for public request: ", assistant_id)
-                return {
-                    "success": False,
-                    "message": f"Assistant is not available for public request: {assistant_id}",
-                }
-    
+
+        if not existing_assistant.get("data", {}).get("availableOnRequest"):
+            print("Assistant is not available for public request: ", assistant_id)
+            return {
+                "success": False,
+                "message": f"Assistant is not available for public request: {assistant_id}",
+            }
+
         print("Updating assistant permissions for user: ", current_user)
-        object_access_table.put_item(Item={
-                    'object_id': assistant_id,
-                    'principal_id': current_user,
-                    'principal_type':  'user',
-                    'object_type': 'assistant',
-                    'permission_level': 'read',  
-                    'policy': None
-            })
-    
-            
+        object_access_table.put_item(
+            Item={
+                "object_id": assistant_id,
+                "principal_id": current_user,
+                "principal_type": "user",
+                "object_type": "assistant",
+                "permission_level": "read",
+                "policy": None,
+            }
+        )
+
         data_sources = get_data_source_keys(existing_assistant["dataSources"])
         print("Updating permissions for ast datasources")
-        
+
         for ds in data_sources:
-            object_access_table.put_item(Item={
-                    'object_id': ds,
-                    'principal_id': current_user,
-                    'principal_type':  'user',
-                    'object_type': 'datasource',
-                    'permission_level': 'read',  
-                    'policy': None
-            })
-            
+            object_access_table.put_item(
+                Item={
+                    "object_id": ds,
+                    "principal_id": current_user,
+                    "principal_type": "user",
+                    "object_type": "datasource",
+                    "permission_level": "read",
+                    "policy": None,
+                }
+            )
+
         print(f"Creating alias for user {current_user} for assistant {assistant_id}")
         create_assistant_alias(
             current_user,
@@ -2529,15 +2743,14 @@ def request_assistant_to_public_ast(event, context, current_user, name, data):
             existing_assistant["id"],
             existing_assistant["version"],
             "latest",
-            )
+        )
         print(f"Successfully created alias for user {current_user}")
 
         return {
             "success": True,
             "message": f"Assistant id is now available for chat requests via api access: {assistant_id}",
         }
-            
-        
+
     except Exception as e:
         print(f"Error verifying assistant id: {str(e)}")
         return {
@@ -2548,22 +2761,26 @@ def request_assistant_to_public_ast(event, context, current_user, name, data):
 
 @validated(op="lookup")
 def validate_assistant_id(event, context, current_user, name, data):
-    data = data['data']
-    assistant_id = data['assistantId']
+    data = data["data"]
+    assistant_id = data["assistantId"]
 
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
-    
+
     try:
         # First, find the current version of the assistant
-        existing_assistant = get_most_recent_assistant_version(assistants_table, assistant_id)
-        
+        existing_assistant = get_most_recent_assistant_version(
+            assistants_table, assistant_id
+        )
+
         if not existing_assistant:
+            print(f"Assistant not found: {assistant_id}")
             return {
                 "success": False,
                 "message": f"Assistant not found: {assistant_id}",
             }
-        
+
+        print(f"Assistant id is a valid assistant: {assistant_id}")
         return {
             "success": True,
             "message": f"Assistant id is a valid assistant: {assistant_id}",
@@ -2576,7 +2793,7 @@ def validate_assistant_id(event, context, current_user, name, data):
         }
 
 
-def scrape_website_content(url, is_sitemap=False, user_id=None, max_pages=10):
+def scrape_website_content(url, access_token, is_sitemap=False, max_pages=10):
     """Helper function to scrape a website and return the data source key"""
     try:
         print(f"Attempting to scrape {'sitemap' if is_sitemap else 'website'}: {url}")
@@ -2596,25 +2813,35 @@ def scrape_website_content(url, is_sitemap=False, user_id=None, max_pages=10):
             urls_to_scrape = [url]
             print(f"Set up to scrape single URL: {url}")
 
-        # Scrape content from URLs
-        scraped_data = []
-        for url in urls_to_scrape:
-            print(f"Fetching and parsing URL: {url}")
-            content = fetch_and_parse_url(url)
+        # Scrape content from URLs - each URL gets its own data source
+        scraped_ds = []
+        for url_to_scrape in urls_to_scrape:
+            print(f"Fetching and parsing URL: {url_to_scrape}")
+            content = fetch_and_parse_url(url_to_scrape)
             if content:
-                print(f"Successfully parsed content from {url}")
-                scraped_data.append(
-                    {
-                        "url": url,
-                        "content": content,
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                )
+                print(f"Successfully parsed content from {url_to_scrape}")
+                
+                current_data = {
+                    "url": url_to_scrape, 
+                    "url_name": extract_name_from_url(url_to_scrape),
+                    "scrapedAt": datetime.now().isoformat(),
+                    "content": content
+                }
+
+                # Save each URL as its own data source
+                try:
+                    data_source_data = save_scraped_content(current_data, access_token)
+                    scraped_ds.append(data_source_data)
+                    print(f"Saved data source for {url_to_scrape} with ID: {data_source_data.get('id')}")
+                except Exception as save_error:
+                    print(f"Error saving scraped content for {url_to_scrape}: {save_error}")
+                    # Continue with other URLs even if one fails
+                    continue
             else:
-                print(f"Failed to parse content from {url}")
+                print(f"Failed to parse content from {url_to_scrape}")
 
         # Check if any URLs were successfully scraped
-        if not scraped_data:
+        if not scraped_ds:
             print("No content was successfully scraped from any URL")
             return {
                 "success": False,
@@ -2622,29 +2849,17 @@ def scrape_website_content(url, is_sitemap=False, user_id=None, max_pages=10):
                 "error": "All URL requests failed or returned no content",
             }
 
-        print(f"Successfully scraped {len(scraped_data)} URLs, saving content")
+        print(f"Successfully scraped {len(scraped_ds)} URLs, each saved as individual data sources")
 
-        # Create data source
-        try:
-            data_source_key = save_scraped_content(scraped_data, user_id)
-            print(f"Saved scraped content with key: {data_source_key}")
-
-            return {
-                "success": True,
-                "message": f"Successfully scraped {len(scraped_data)} URLs",
-                "data": {
-                    "dataSourceKey": data_source_key,  # This is now file_key
-                    "urlsScraped": len(scraped_data),
-                    "scrapedUrls": [item["url"] for item in scraped_data],
-                },
-            }
-        except Exception as save_error:
-            print(f"Error saving scraped content: {save_error}")
-            return {
-                "success": False,
-                "message": f"Error saving scraped content: {str(save_error)}",
-                "error": str(save_error),
-            }
+        return {
+            "success": True,
+            "message": f"Successfully scraped {len(scraped_ds)} URLs",
+            "data": {
+                "dataSourceKeys": [item["id"] for item in scraped_ds],  # Return array of individual data sources
+                "dataSources": scraped_ds,
+                "urlsScraped": len(scraped_ds),
+            },
+        }
 
     except Exception as e:
         print(f"Error scraping website: {e}")
@@ -2825,154 +3040,82 @@ def fetch_and_parse_url(url):
         print(f"Error processing URL {url}: {e}")
         return None
 
-
-def save_scraped_content(scraped_data, user_id):
-    """Save scraped content to S3 and create entry in DynamoDB."""
-    # Generate unique ID
-    timestamp = datetime.now().strftime("%Y-%m-%d")
-    unique_id = str(uuid.uuid4())
-
-    # Original file key for the raw data
-    file_key = f"{user_id}/{timestamp}/{unique_id}.json"
-
-    # Content key for the processed chunks data
-    content_key = f"{user_id}/{timestamp}/{unique_id}.content.json"
-
-    # Save to S3
-    bucket_name = os.environ["ASSISTANTS_FILES_BUCKET_NAME"]
-
-    # Create metadata with account information
-    account_data = {
-        "user": user_id,
-        "account": "general_account",  # Default account
-        "api_key": None,
-    }
-
-    # Get encryption key and encrypt metadata
-    encrypted_metadata = ""
-    try:
-        ssm_client = boto3.client("ssm")
-        parameter_name = os.environ.get("FILE_UPLOAD_ENCRYPTION_PARAMETER")
-        if parameter_name:
-            response = ssm_client.get_parameter(
-                Name=parameter_name, WithDecryption=True
-            )
-            key = response["Parameter"]["Value"].encode()
-            from cryptography.fernet import Fernet
-            import base64
-
-            fernet = Fernet(key)
-            data_str = json.dumps(account_data)
-            encrypted_data = fernet.encrypt(data_str.encode())
-            encrypted_metadata = base64.b64encode(encrypted_data).decode("utf-8")
-    except Exception as e:
-        print(f"Warning: Error encrypting metadata: {e}")
-
-    # Save raw data to S3 - FIXED: Use CombinedEncoder directly
-    s3.put_object(
-        Bucket=bucket_name,
-        Key=file_key,
-        Body=json.dumps(scraped_data, cls=CombinedEncoder),  # Use CombinedEncoder here
-        ContentType="application/json",
-        Metadata={"encrypted_metadata": encrypted_metadata},
+def save_scraped_content(scraped_data, access_token):
+    print(f"Saving scraped content as DS: {scraped_data['url']}")
+    timestamp = scraped_data["scrapedAt"]
+    file_resp = upload_file(
+        access_token = access_token,
+        file_name = f"{scraped_data['url_name']}_{timestamp}.json",
+        file_contents = json.dumps(scraped_data['content']),
+        file_type = "application/json",
+        tags = ["website", "scraped"],
+        data_props = {"type": "assistant-web-content", # assistant- type prevent them from appearing in the file manager
+                      "sourceUrl": scraped_data["url"],
+                      "scrapedAt": timestamp,
+                      "isScrapedContent": True}, 
+                      
+        enter_rag_pipeline = True,
+        groupId = None, # note: group system user would be the one making the request, no need to provide the groupId in this case
     )
-    print(f"Raw data saved to S3: {bucket_name}/{file_key}")
-
-    # Format scraped content for the RAG system
-    formatted_content = {"chunks": [], "src": file_key}
-
-    for i, item in enumerate(scraped_data):
-        content_text = ""
-        if isinstance(item["content"], dict) and "text" in item["content"]:
-            content_text = item["content"]["text"]
-        elif isinstance(item["content"], str):
-            content_text = item["content"]
-        else:
-            content_text = str(item["content"])
-
-        formatted_content["chunks"].append(
-            {
-                "content": content_text,
-                "locations": [{"url": item["url"], "scrapedAt": item["timestamp"]}],
-                "indexes": [i],
-                "char_index": 0,
-            }
-        )
-
-    # Save the RAG-formatted content to S3 - FIXED: Use CombinedEncoder here too
-    s3.put_object(
-        Bucket=bucket_name,
-        Key=content_key,
-        Body=json.dumps(
-            formatted_content, cls=CombinedEncoder
-        ),  # Use CombinedEncoder here
-        ContentType="application/json",
-        Metadata={"encrypted_metadata": encrypted_metadata},
-    )
-    print(f"Formatted content saved to S3: {bucket_name}/{content_key}")
-
-    # Create hash entry - CRITICAL for RAG pipeline
-    hash_files_table = dynamodb.Table(os.environ["HASH_FILES_DYNAMO_TABLE"])
-    hash_entry = {
-        "id": unique_id,
-        "user": user_id,
-        "originalKey": file_key,
-        "textLocationKey": content_key,
-        "createdAt": int(time.time() * 1000),
-        "content_type": "application/json",
-        "filename": f"scraped_websites_{timestamp}.json",
-        "metadata": {
-            "scrapedUrls": [item["url"] for item in scraped_data],
-            "scrapedAt": datetime.now().isoformat(),
-            # "urlCount": int(len(scraped_data)),
-        },
-    }
-    hash_files_table.put_item(Item=hash_entry)
-    print(f"Hash entry created pointing {unique_id} → {content_key}")
-
-    # Create entry in FILES_DYNAMO_TABLE - this is critical for the RAG system to find the file
-    files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
-    file_metadata = {
-        "id": file_key,  # CRITICAL: Use file_key, not content_key for this entry
-        "name": f"scraped_websites_{timestamp}.json",
-        "type": "application/json",
-        "tags": ["website", "scraped"],
-        "data": {
-            "sourceUrls": [item["url"] for item in scraped_data],
-            "scrapedAt": datetime.now().isoformat(),
-            # "urlCount": int(len(scraped_data)),
-        },
-        "knowledgeBase": "default",
-        "createdAt": datetime.now().isoformat(),
-        "updatedAt": datetime.now().isoformat(),
-        "createdBy": user_id,
-        "updatedBy": user_id,
-    }
-
-    # Always create the FILES_DYNAMO_TABLE entry and fail if it doesn't work
-    files_table.put_item(Item=file_metadata)
-    print(f"Files table entry created for {file_key}")
-
-    # Return the file_key that should be used as the data source ID
-    return file_key  # IMPORTANT: Return file_key, not content_key
+    if not file_resp:
+        raise Exception("Failed to upload scraped content as a file")
+    
+    print("DS content saved to s3 with key: ", file_resp['id'])
+    return {"id": file_resp['id'], # s3 key
+            "name": file_resp['name'],
+            "metadata": file_resp['data'], 
+            "tags": file_resp['tags'], 
+            "type": file_resp['type']} 
+              
 
 
-@op(
+@api_tool(
     path="/assistant/rescan_websites",
     name="rescanWebsites",
     method="POST",
     tags=["apiDocumentation"],
-    description="""Rescan websites associated with an assistant.
-
-    Example request:
-    {
-        "data": {
-            "assistantId": "ast/38940562397049823"
-        }
-    }
-    """,
-    params={
-        "assistantId": "String. Required. ID of the assistant to update website content for."
+    description="""Rescan websites associated with an assistant.""",
+    parameters={
+        "type": "object",
+        "properties": {
+            "assistantId": {
+                "type": "string",
+                "description": "ID of the assistant to update website content for.",
+            }
+        },
+        "required": ["assistantId"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the website rescan was initiated successfully",
+            },
+            "message": {
+                "type": "string",
+                "description": "Status message describing the result",
+            },
+            "data": {
+                "type": "object",
+                "properties": {
+                    "assistantId": {
+                        "type": "string",
+                        "description": "ID of the assistant",
+                    },
+                    "websitesProcessed": {
+                        "type": "integer",
+                        "description": "Number of websites processed",
+                    },
+                    "scanStartedAt": {
+                        "type": "string",
+                        "description": "Timestamp when the rescan was started",
+                    },
+                },
+                "required": ["assistantId", "websitesProcessed", "scanStartedAt"],
+            },
+        },
+        "required": ["success", "message", "data"],
     },
 )
 @validated(op="rescan_websites")
@@ -2982,6 +3125,7 @@ def rescan_websites(event, context, current_user, name, data=None):
     If data is provided, only rescan websites for the specified assistant.
     If no data, scan all assistants that are due for update.
     """
+    access_token = data["access_token"]
     try:
         assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
@@ -2994,7 +3138,7 @@ def rescan_websites(event, context, current_user, name, data=None):
                 return {"success": False, "message": "Assistant not found"}
 
             assistant = response["Item"]
-            result = process_assistant_websites(assistant, current_user)
+            result = process_assistant_websites(assistant, access_token)
 
             return {
                 "success": result["success"],
@@ -3024,7 +3168,7 @@ def rescan_websites(event, context, current_user, name, data=None):
                         continue
 
                 # Process websites for this assistant
-                result = process_assistant_websites(assistant, assistant["user"])
+                result = process_assistant_websites(assistant, access_token)
                 results.append({"assistantId": assistant["id"], "result": result})
 
             return {
@@ -3038,7 +3182,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         return {"success": False, "message": f"Failed to rescan websites: {str(e)}"}
 
 
-def process_assistant_websites(assistant, user_id):
+def process_assistant_websites(assistant, access_token):
     """Process websites for an assistant and update data sources."""
     try:
         website_urls = assistant.get("websiteUrls", [])
@@ -3050,79 +3194,64 @@ def process_assistant_websites(assistant, user_id):
                     "success": True,
                     "message": "No websites to process for this assistant",
                 }
+            
+        def setup_url_data(url, content):
+            return {"url": url, 
+                    "url_name": extract_name_from_url(url),
+                    "scrapedAt": datetime.now().isoformat(),
+                    "content": content
+                }
 
         # Scrape content from URLs
-        scraped_data = []
+        scraped_ds = []
         for website_data in website_urls:
             url = website_data.get("url", "")
             is_sitemap = website_data.get("isSitemap", False)
             max_pages = website_data.get("maxPages", 10)
 
             if is_sitemap:
+                # For sitemaps, extract all sub-URLs and create separate data sources for each
                 urls = extract_urls_from_sitemap(url, max_pages)
                 for sub_url in urls:
                     content = fetch_and_parse_url(sub_url)
                     if content:
-                        scraped_data.append(
-                            {
-                                "url": sub_url,
-                                "content": content,
-                                "timestamp": datetime.now().isoformat(),
-                            }
-                        )
+                        # Create separate data object for each sub-URL
+                        current_data = setup_url_data(sub_url, content)
+                        
+                        # Save each sub-URL as its own data source
+                        try:
+                            data_source_data = save_scraped_content(current_data, access_token)
+                            scraped_ds.append(data_source_data)
+                        except Exception as save_error:
+                            print(f"Error saving scraped content for {sub_url}: {save_error}")
+                            continue
             else:
+                # For single URLs, create one data source
                 content = fetch_and_parse_url(url)
                 if content:
-                    scraped_data.append(
-                        {
-                            "url": url,
-                            "content": content,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                    )
+                    current_data = setup_url_data(url, content)
+                    # Save single URL as data source
+                    try:
+                        data_source_data = save_scraped_content(current_data, access_token)
+                        scraped_ds.append(data_source_data)
+                    except Exception as save_error:
+                        print(f"Error saving scraped content for {url}: {save_error}")
+                        continue
 
-        if not scraped_data:
+        if not scraped_ds:
             return {
                 "success": False,
                 "message": "Failed to scrape any content from the websites",
             }
 
-        # Create data source
-        data_source_key = save_scraped_content(scraped_data, user_id)
-
-        # Update file metadata in FILES_DYNAMO_TABLE
-        files_table = dynamodb.Table(os.environ.get("FILES_DYNAMO_TABLE"))
-
-        timestamp = datetime.now().strftime("%Y-%m-%d")
-        files_table.put_item(
-            Item={
-                "id": data_source_key,
-                "name": f"scraped_websites_{timestamp}.json",
-                "type": "application/json",
-                "tags": ["website", "scraped"],
-                "data": {
-                    "sourceUrls": [item["url"] for item in scraped_data],
-                    "scrapedAt": datetime.now().isoformat(),
-                    # "urlCount": int(len(scraped_data)),
-                },
-                "knowledgeBase": "default",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-                "createdBy": user_id,
-                "updatedBy": user_id,
-            }
-        )
 
         # Update assistant with the new data source
         assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
         # Get the most recent version
-        assistant_id = assistant["id"]
         assistant_public_id = assistant.get("assistantId")
 
         if assistant_public_id:
-            from service.core import get_most_recent_assistant_version
-
             latest_assistant = get_most_recent_assistant_version(
                 assistants_table, assistant_public_id
             )
@@ -3132,19 +3261,7 @@ def process_assistant_websites(assistant, user_id):
                 data_sources = latest_assistant.get("dataSources", [])
 
                 # Add new scraped content
-                data_sources.append(
-                    {
-                        "id": data_source_key,  # This is the file_key now, not content_key
-                        "name": f"Scraped content from {len(scraped_data)} URLs",
-                        "type": "application/json",
-                        "metadata": {
-                            "sourceUrls": [item["url"] for item in scraped_data],
-                            "scrapedAt": datetime.now().isoformat(),
-                            # "urlCount": int(len(scraped_data)),
-                            "isScrapedContent": True,
-                        },
-                    }
-                )
+                data_sources += scraped_ds
 
                 # Update lastWebsiteScan timestamp
                 assistants_table.update_item(
@@ -3158,10 +3275,11 @@ def process_assistant_websites(assistant, user_id):
 
                 return {
                     "success": True,
-                    "message": f"Successfully updated assistant with scraped content from {len(scraped_data)} URLs",
+                    "message": f"Successfully updated assistant with scraped content from {len(scraped_ds)} URLs",
                     "data": {
-                        "dataSourceKey": data_source_key,
-                        "urlsScraped": len(scraped_data),
+                        "dataSourceKeys": [ds["id"] for ds in scraped_ds],
+                        "dataSources": scraped_ds,
+                        "urlsScraped": len(scraped_ds),
                     },
                 }
 
@@ -3177,113 +3295,7 @@ def process_assistant_websites(assistant, user_id):
             "message": f"Failed to process assistant websites: {str(e)}",
         }
 
-
-def process_assistant_websites(assistant, user_id):
-    """Process websites for an assistant and update data sources."""
-    try:
-        website_urls = assistant.get("websiteUrls", [])
-        if not website_urls:
-            return {
-                "success": True,
-                "message": "No websites to process for this assistant",
-            }
-
-        # Scrape content from URLs
-        scraped_data = []
-        for url in website_urls:
-            is_sitemap = url.endswith(".xml") or "sitemap" in url.lower()
-
-            if is_sitemap:
-                urls = extract_urls_from_sitemap(url)
-                for sub_url in urls:
-                    content = fetch_and_parse_url(sub_url)
-                    if content:
-                        scraped_data.append(
-                            {
-                                "url": sub_url,
-                                "content": content,
-                                "timestamp": datetime.now().isoformat(),
-                            }
-                        )
-            else:
-                content = fetch_and_parse_url(url)
-                if content:
-                    scraped_data.append(
-                        {
-                            "url": url,
-                            "content": content,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                    )
-
-        if not scraped_data:
-            return {
-                "success": False,
-                "message": "Failed to scrape any content from the websites",
-            }
-
-        # Create data source
-        data_source_key = save_scraped_content(scraped_data, user_id)
-
-        # Update assistant with the new data source
-        assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
-
-        # Get the most recent version
-        assistant_id = assistant["id"]
-        assistant_public_id = assistant.get("assistantId")
-
-        if assistant_public_id:
-            from service.core import get_most_recent_assistant_version
-
-            latest_assistant = get_most_recent_assistant_version(
-                assistants_table, assistant_public_id
-            )
-
-            if latest_assistant:
-                # Create a new version with updated dataSources
-                data_sources = latest_assistant.get("dataSources", [])
-
-                # Add new scraped content
-                data_sources.append(
-                    {
-                        "id": data_source_key,
-                        "name": "Scraped Websites",
-                        "type": "application/json",
-                    }
-                )
-
-                # Update lastWebsiteScan timestamp
-                assistants_table.update_item(
-                    Key={"id": latest_assistant["id"]},
-                    UpdateExpression="set lastWebsiteScan = :scan, dataSources = :ds",
-                    ExpressionAttributeValues={
-                        ":scan": datetime.now().isoformat(),
-                        ":ds": data_sources,
-                    },
-                )
-
-                return {
-                    "success": True,
-                    "message": f"Successfully updated assistant with scraped content from {len(scraped_data)} URLs",
-                    "data": {
-                        "dataSourceKey": data_source_key,
-                        "urlsScraped": len(scraped_data),
-                    },
-                }
-
-        return {
-            "success": False,
-            "message": "Failed to update assistant with scraped content",
-        }
-
-    except Exception as e:
-        print(f"Error processing assistant websites: {e}")
-        return {
-            "success": False,
-            "message": f"Failed to process assistant websites: {str(e)}",
-        }
-
-
+\
 @validated(op="scrape_website")
 def scrape_website(event, context, current_user, name, data):
     """
@@ -3293,4 +3305,62 @@ def scrape_website(event, context, current_user, name, data):
     is_sitemap = data["data"].get("isSitemap", False)
     max_pages = data["data"].get("maxPages", 10)
 
-    return scrape_website_content(url, is_sitemap, current_user, max_pages)
+    return scrape_website_content(url, data["access_token"], is_sitemap, max_pages)
+
+
+def extract_name_from_url(url):
+    """
+    Extract a clean name from a URL by removing protocol, www, domain extensions, etc.
+    
+    Examples:
+    - "https://www.example.com" -> "example"
+    - "https://docs.github.com/en/actions" -> "docs-github"
+    - "https://api.openai.com/v1/chat/completions" -> "api-openai"
+    - "https://stackoverflow.com/questions/12345" -> "stackoverflow"
+    - "https://subdomain.example.co.uk/path" -> "subdomain-example"
+    """
+    if not url:
+        return "unknown"
+    
+    try:
+        # Parse the URL
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        
+        # Remove www. prefix
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        
+        # Split domain into parts
+        domain_parts = domain.split('.')
+        
+        # Remove common TLDs and keep meaningful parts
+        # Common TLDs to remove
+        tlds = {'com', 'org', 'net', 'edu', 'gov', 'co', 'uk', 'ca', 'au', 'de', 'fr', 'jp', 'cn', 'io', 'ai', 'ly', 'me', 'tv'}
+        
+        # Filter out TLDs and empty parts
+        meaningful_parts = []
+        for part in domain_parts:
+            if part and part not in tlds:
+                meaningful_parts.append(part)
+        
+        # If we have meaningful parts, join them with hyphens
+        if meaningful_parts:
+            name = '-'.join(meaningful_parts)
+        else:
+            # Fallback: use the first part of the domain
+            name = domain_parts[0] if domain_parts else 'unknown'
+        
+        # Clean up the name: remove special characters, limit length
+        name = re.sub(r'[^a-zA-Z0-9\-]', '', name)
+        name = re.sub(r'-+', '-', name)  # Replace multiple hyphens with single
+        name = name.strip('-')  # Remove leading/trailing hyphens
+        
+        # Limit length and ensure it's not empty
+        if len(name) > 50:
+            name = name[:50]
+        
+        return name if name else 'unknown'
+        
+    except Exception:
+        return 'unknown'

@@ -190,7 +190,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         icon: "aperture",
     });
 
-    if (ragDataSources.length > 0){
+    if (ragDataSources.length > 0) {
         sendStatusEventToStream(responseStream, ragStatus);
         forceFlush(responseStream);
     }
@@ -200,18 +200,28 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         await getContextMessages(params, chatRequestOrig, ragDataSources) :
         {messages:[], sources:[]};
 
-    if(ragDataSources.length > 0){
-        sendStateEventToStream(responseStream, {
-          sources: {
-              rag:{
-                  sources: sources
-              }
-          }
-        });
+    if (ragDataSources.length > 0) {
+        if (sources.length > 0) {
+            sendStateEventToStream(responseStream, {
+            sources: {
+                rag:{
+                    sources: sources
+                }
+            }
+            });
+        } else {
+            logger.error("Rag Error: No sources found");
+            ragStatus.message = "Rag ran into an unexpected error";
+            if (!params.options.skipDocumentCache) {
+                logger.debug("File caching will be used instead...");
+                conversationDataSources = ragDataSources;
+            }
+        }
 
         ragStatus.inProgress = false;
         sendStatusEventToStream(responseStream, ragStatus);
         forceFlush(responseStream);
+            
     }
 
     // Remove any non-standard attributes on messages
@@ -344,7 +354,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 chatRequest:chatRequestOrig
             };
 
-           const statuses = dataSources.map(dataSource => {
+           const statuses = [...dataSources, ...conversationDataSources].map(dataSource => {
                 const status = newStatus({
                     inProgress: true,
                     sticky: false,
@@ -353,8 +363,8 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                 });
                 return status;
             });
-
-           statuses.forEach(status => {
+            
+           statuses.map(async (status) => {
                 sendStatusEventToStream(responseStream, status);
                 forceFlush(responseStream);
             });

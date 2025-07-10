@@ -1,0 +1,55 @@
+update_models_schema = {
+    "type": "object",
+    "properties": {
+        "models": {
+            "type": "object",
+            "patternProperties": {
+                "^.*$": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "name": {"type": "string"},
+                        "provider": {"type": "string"},
+                        "description": {"type": "string"},
+                        "isAvailable": {"type": "boolean"},
+                        "isBuiltIn": {"type": "boolean"},
+                        "systemPrompt": {"type": "string"},
+                        "supportsSystemPrompts": {"type": "boolean"},
+                        "supportsImages": {"type": "boolean"},
+                        "supportsReasoning": {"type": "boolean"},
+                        "inputContextWindow": {"type": "number"},
+                        "outputTokenLimit": {"type": "number"},
+                        "inputTokenCost": {"type": "number"},
+                        "outputTokenCost": {"type": "number"},
+                        "cachedTokenCost": {"type": "number"},
+                        "exclusiveGroupAvailability": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": [
+                        "id",
+                        "name",
+                        "provider",
+                        "description",
+                        "isAvailable",
+                        "supportsImages",
+                        "supportsReasoning",
+                        "inputContextWindow",
+                        "outputTokenLimit",
+                        "inputTokenCost",
+                        "outputTokenCost",
+                        "cachedTokenCost",
+                        "exclusiveGroupAvailability",
+                        "systemPrompt",
+                        "supportsSystemPrompts",
+                        "isBuiltIn",
+                    ],
+                    "additionalProperties": False,
+                }
+            },
+            "required": [],
+        },
+    },
+    "required": ["models"],
+}

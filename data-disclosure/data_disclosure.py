@@ -5,12 +5,16 @@ from botocore.exceptions import ClientError
 import os
 import json
 from datetime import datetime
-from common.validate import validated
-from common.encoders import DecimalEncoder
-from common.auth_admin import verify_user_as_admin
+from pycommon.encoders import SafeDecimalEncoder
+from pycommon.api.auth_admin import verify_user_as_admin
 from botocore.config import Config
 import fitz
-# from markitdown import MarkItDown
+from pycommon.authz import validated, setup_validated, add_api_access_types
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
+from pycommon.const import APIAccessType
+setup_validated(rules, get_permission_checker)
+add_api_access_types([APIAccessType.DATA_DISCLOSURE.value])
 
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -38,38 +42,32 @@ def get_latest_version_details(table):
     return latest_version_details
 
 
-
 @validated(op="upload")
 def get_presigned_data_disclosure(event, context, current_user, name, data):
     # Authorize the User
-    if not verify_user_as_admin(data['access_token'], "Upload Data Disclosure"):
+    if not verify_user_as_admin(data["access_token"], "Upload Data Disclosure"):
         return {"success": False, "message": "User is not an authorized admin."}
     data = data["data"]
     content_md5 = data.get("md5")
     content_type = data.get("contentType")
-    # fileKey = data.get('fileName', 'data_disclosure.docx')
-    fileKey = data.get('fileName')
-    # latestDDname = data.get("latestDDname", None)
-    # if (latestDDname):
-    #     params['Metadata'] = {'latestdatadisclosure' : latestDDname}
+    fileKey = data.get("fileName")
 
-    config = Config(
-        signature_version='s3v4'  # Force AWS Signature Version 4
-    )
-    s3_client = boto3.client('s3', config=config)
+    config = Config(signature_version="s3v4")  # Force AWS Signature Version 4
+    s3_client = boto3.client("s3", config=config)
     bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
 
     try:
         # Generate a presigned URL for put_object
         print("Presigned url generated")
         presigned_url = s3_client.generate_presigned_url(
-            'put_object',
-            Params={ 'Bucket': bucket_name,
-                'Key': fileKey,
-                'ContentType': content_type,
-                'ContentMD5': content_md5
+            "put_object",
+            Params={
+                "Bucket": bucket_name,
+                "Key": fileKey,
+                "ContentType": content_type,
+                "ContentMD5": content_md5,
             },
-            ExpiresIn=3600  # URL expires in 1 hour
+            ExpiresIn=3600,  # URL expires in 1 hour
         )
 
         print("\n", presigned_url)
@@ -77,11 +75,13 @@ def get_presigned_data_disclosure(event, context, current_user, name, data):
         return {"success": True, "presigned_url": presigned_url}
     except ClientError as e:
         print(f"Error generating presigned URL: {str(e)}")
-        return {"success": False, "message": f"Error generating presigned URL: {str(e)}"}
+        return {
+            "success": False,
+            "message": f"Error generating presigned URL: {str(e)}",
+        }
 
 
-
-def convert_pdf (pdf_local_path): 
+def convert_pdf(pdf_local_path):
     try:
         doc = fitz.open(pdf_local_path)
         page_contents = []
@@ -89,9 +89,16 @@ def convert_pdf (pdf_local_path):
             page_text = page.get_text("text")
             # Convert the text into <p class="MsoNormal"> paragraphs
             # Split by newlines and wrap each line in a <p>
-            lines = page_text.split('\n\n')
-            formatted_lines = [f'<p class=MsoNormal style="text-align:justify">{line}</p>' for line in lines if line.strip()]
-            page_html = f"<h2 class=MsoNormal style='text-align:justify'><b>Page {page.number+1}</b></h2>" + "".join(formatted_lines)
+            lines = page_text.split("\n\n")
+            formatted_lines = [
+                f'<p class=MsoNormal style="text-align:justify">{line}</p>'
+                for line in lines
+                if line.strip()
+            ]
+            page_html = (
+                f"<h2 class=MsoNormal style='text-align:justify'><b>Page {page.number+1}</b></h2>"
+                + "".join(formatted_lines)
+            )
             page_contents.append(page_html)
         doc.close()
 
@@ -158,7 +165,6 @@ div.WordSection1 {{
         return generate_error_response(500, "Error converting PDF to HTML")
 
 
-
 def convert_uploaded_data_disclosure(event, context):
     s3 = boto3.client("s3")
     dynamodb = boto3.resource("dynamodb")
@@ -173,43 +179,40 @@ def convert_uploaded_data_disclosure(event, context):
         print(f"Error parsing event: {e}")
         return generate_error_response(400, "Invalid event format, cannot find PDF key")
 
-    #extract time stamp from dd name
+    # extract time stamp from dd name
     prefix = "data_disclosure_"
     suffix = ".pdf"
 
     if pdf_key.startswith(prefix) and pdf_key.endswith(suffix):
-        timestamp = pdf_key[len(prefix):-len(suffix)]
+        timestamp = pdf_key[len(prefix) : -len(suffix)]
     else:
         raise ValueError("latest_dd_name is not in the expected format.")
 
     print(f"PDF Key: {pdf_key}")
     pdf_local_path = "/tmp/input.pdf"
-    
+
     try:
         s3.download_file(bucket_name, pdf_key, pdf_local_path)
         print(f"File downloaded successfully to {pdf_local_path}")
     except Exception as e:
         print(f"Error downloading PDF from S3: {e}")
         return generate_error_response(500, "Error downloading PDF from S3")
-    
+
     if not os.path.exists(pdf_local_path):
         print(f"File not found at {pdf_local_path} after download")
         return generate_error_response(500, "File download failed")
 
     html_content = convert_pdf(pdf_local_path)
-    if (not isinstance(html_content, str)):
+    if not isinstance(html_content, str):
         return html_content
-
-    # md = MarkItDown()
-    # result = md.convert("test.xlsx")
-
-    # html_content = result.text_content
 
     # Update DynamoDB with new version info, including references to both HTML and PDF
     print("Update DynamoDB with new version info")
     versions_table = dynamodb.Table(versions_table_name)
     latest_version_details = get_latest_version_details(versions_table)
-    new_version = 0 if not latest_version_details else int(latest_version_details["version"]) + 1
+    new_version = (
+        0 if not latest_version_details else int(latest_version_details["version"]) + 1
+    )
     print("version number: ", new_version)
 
     # Save the new version information in the DataDisclosureVersionsTable
@@ -232,7 +235,6 @@ def convert_uploaded_data_disclosure(event, context):
     except Exception as e:
         print(e)
         return generate_error_response(500, "Error uploading data disclosure")
-    
 
 
 # helper function to get the latest version number
@@ -281,7 +283,7 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
 # Save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
 @validated(op="save_data_disclosure_decision")
 def save_data_disclosure_decision(event, context, current_user, name, data):
-    data = data['data']
+    data = data["data"]
     email = data.get("email")
     accepted_data_disclosure = data.get("acceptedDataDisclosure")
 
@@ -353,7 +355,7 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
                     "pdf_pre_signed_url": pdf_pre_signed_url,
                     "html_content": html_content,
                 },
-                cls=DecimalEncoder,
+                cls=SafeDecimalEncoder,
             ),
             "headers": {"Content-Type": "application/json"},
         }

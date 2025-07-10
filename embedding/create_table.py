@@ -1,36 +1,37 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+# Copyright (c) 2024 Vanderbilt University
+# Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import psycopg2
 from psycopg2 import sql
 import os
 import logging
 import json
-from common.credentials import get_credentials
+from pycommon.api.credentials import get_credentials
 
 # Setting up logging to capture information for CloudWatch
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('create_db')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("create_db")
+
 
 def create_table():
-    
 
     # Retrieving environment variables
-    pg_host = os.environ['RAG_POSTGRES_DB_WRITE_ENDPOINT']
-    pg_user = os.environ['RAG_POSTGRES_DB_USERNAME']
-    pg_database = os.environ['RAG_POSTGRES_DB_NAME']
-    rag_pg_password = os.environ['RAG_POSTGRES_DB_SECRET']
+    pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
+    pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
+    pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
+    rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 
     pg_password = get_credentials(rag_pg_password)
 
     # Database connection parameters
     db_params = {
-        'dbname': pg_database,
-        'user': pg_user,
-        'password': pg_password,
-        'host': pg_host,
-        'port': 3306,  # Non-standard port for RDS PostgreSQL; this is intentional as per the user's environment
+        "dbname": pg_database,
+        "user": pg_user,
+        "password": pg_password,
+        "host": pg_host,
+        "port": 3306,  # Non-standard port for RDS PostgreSQL; this is intentional as per the user's environment
     }
 
     # SQL commands to create the embeddings table and related components
@@ -102,8 +103,8 @@ def create_table():
             logger.info("Database connection closed.")
 
     logger.info("Table 'embeddings' created successfully.")
-    
+
     return {
-        'statusCode': 200,
-        'body': json.dumps('Lambda function executed successfully!')
-    }   
+        "statusCode": 200,
+        "body": json.dumps("Lambda function executed successfully!"),
+    }

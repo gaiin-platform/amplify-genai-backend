@@ -97,9 +97,10 @@ export const getImageBase64Content = async (dataSource) => {
             });
         
         const data = await streamToString(response.Body);
+        logger.debug("Base64 encoded image retrieved")
         return data;
     } catch (error) {
-        logger.error(error, {bucket: bucket, key: key});
+        logger.error("Error retrieving base64 encoded image", error);
         return null;
     }
 
@@ -112,7 +113,7 @@ export const isDocument = ds =>
     (ds && ds.key && ds.key.startsWith("s3://"));
 
 
-    export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
+export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
 
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
@@ -385,6 +386,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
         }
+        console.log("IMAGE: body.imageSources", body.imageSources);
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
@@ -409,6 +411,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
+        console.log("IMAGE: ds_with_keys", image_ds_keys);
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
@@ -509,16 +512,41 @@ const getChunkAggregator = (maxTokens, options) => {
 export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxTokens, options) => {
     logger.debug("Chunking/Formatting data from: " + dataSource.id);
 
-    if (content && content.content && content.content.length > 0) {
-        const firstLocation = content.content[0].location ? content.content[0].location : null;
+    // Handle both content structures:
+    // 1. Normal: { name: "...", content: [...] }
+    // 2. Filtered: [...]  (direct array from getExtractedRelevantContext)
+    let contentArray;
+    let contentName;
+    
+    if (Array.isArray(content)) {
+        // Direct array case (filtered content)
+        contentArray = content;
+        contentName = dataSource.id;
+    } else if (content && content.content && Array.isArray(content.content)) {
+        // Normal case with nested structure
+        contentArray = content.content;
+        contentName = content.name;
+    } else {
+        // Fallback for other cases
+        return formatAndChunkDataSource(tokenCounter, dataSource, {
+            content: [{
+                content: content,
+                location: {},
+                dataSource
+            }]
+        }, maxTokens);
+    }
+
+    if (contentArray.length > 0) {
+        const firstLocation = contentArray[0].location ? contentArray[0].location : null;
 
         let contentFormatter;
         if (firstLocation && firstLocation.slide) {
             logger.debug("Formatting data from: " + dataSource.id + " as slides");
-            contentFormatter = c => 'File: ' + content.name + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + contentName + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.page) {
             logger.debug("Formatting data from: " + dataSource.id + " as pages");
-            contentFormatter = c => 'File: ' + content.name + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + contentName + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.row_number) {
             logger.debug("Formatting data from: " + dataSource.id + " as rows");
             contentFormatter = c => c.content;
@@ -534,9 +562,9 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         let state = {chunks, currentChunk, currentTokenCount, locations};
 
         const aggregator = getChunkAggregator(maxTokens, options);
-        const formattedSourceName = "Source:" + content.name + " Type:" + dataSource.type + "\n-------------\n";
+        const formattedSourceName = "Source:" + contentName + " Type:" + dataSource.type + "\n-------------\n";
 
-        for (const part of content.content) {
+        for (const part of contentArray) {
             const formattedContent = contentFormatter(part);
             const contentTokenCount = tokenCounter(formattedContent);
             state = aggregator(dataSource, state, formattedSourceName, formattedContent, part.location || {}, contentTokenCount);
@@ -713,7 +741,7 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
     
     if (extractRelevantContext) {
         try {
-            const filteredContent = await getExtractRelevantContext(resolutionEnv, {...result});
+            const filteredContent = await getExtractedRelevantContext(resolutionEnv, {...result});
             if (!filteredContent) return null;
             const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
             const originalTotalTokens = dataSource?.metadata?.totalTokens;
@@ -738,7 +766,7 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
  * @param dataSource
  * @returns {Promise<*[]|*>}
  */
-const getExtractRelevantContext = async (resolutionEnv, context) => {
+const getExtractedRelevantContext = async (resolutionEnv, context) => {
     const params = resolutionEnv.params;
     const chatBody = resolutionEnv.chatRequest;
     const userMessage = chatBody.messages.slice(-1)[0].content;
@@ -878,23 +906,105 @@ export const combineNeighboringLocations = (contentArray) => {
 
     // Helper function to get a sortable key from location
     const getLocationKey = (location) => {
-        if (location.line_number !== undefined) return location.line_number;
-        if (location.page !== undefined) return location.page;
-        if (location.slide !== undefined) return location.slide;
-        if (location.row_number !== undefined) return location.row_number;
-        return 0; // fallback
+        if (!location || typeof location !== 'object') {
+            return { primary: 0, secondary: 0, type: 'single', format: 'fallback' };
+        }
+
+        // Word documents: section + paragraph (hierarchical)
+        if (location.section_number !== undefined && location.paragraph_number !== undefined) {
+            return { 
+                primary: location.section_number, 
+                secondary: location.paragraph_number,
+                tertiary: location.section_title || '',
+                type: 'hierarchical',
+                format: 'section-paragraph'
+            };
+        }
+        
+        // Excel: sheet + row (hierarchical)
+        if (location.sheet_number !== undefined && location.row_number !== undefined) {
+            return { 
+                primary: location.sheet_number, 
+                secondary: location.row_number,
+                tertiary: location.sheet_name || '',
+                type: 'hierarchical',
+                format: 'sheet-row'
+            };
+        }
+
+        // Single dimension numeric locations
+        if (location.line_number !== undefined) return { primary: location.line_number, type: 'single', format: 'line' };
+        if (location.page_number !== undefined) return { primary: location.page_number, type: 'single', format: 'page' };
+        if (location.slide_number !== undefined) return { primary: location.slide_number, type: 'single', format: 'slide' };
+        if (location.row_number !== undefined) return { primary: location.row_number, type: 'single', format: 'row' };
+        if (location.paragraph_number !== undefined) return { primary: location.paragraph_number, type: 'single', format: 'paragraph' };
+        if (location.section_number !== undefined) return { primary: location.section_number, type: 'single', format: 'section' };
+        if (location.sheet_number !== undefined) return { primary: location.sheet_number, type: 'single', format: 'sheet' };
+        
+        // String-based location keys (no consecutive grouping possible)
+        if (location.section_title !== undefined) return { primary: location.section_title, type: 'string', format: 'section_title' };
+        if (location.sheet_name !== undefined) return { primary: location.sheet_name, type: 'string', format: 'sheet_name' };
+        
+        return { primary: 0, type: 'single', format: 'fallback' };
     };
 
     // Helper function to check if two locations are consecutive
     const areConsecutive = (loc1, loc2) => {
         const key1 = getLocationKey(loc1);
         const key2 = getLocationKey(loc2);
-        return Math.abs(key1 - key2) <= 1;
+        
+        // Must be same type and format to be consecutive
+        if (key1.type !== key2.type || key1.format !== key2.format) {
+            return false;
+        }
+        
+        if (key1.type === 'hierarchical') {
+            // Must be in same primary location (same section/sheet)
+            if (key1.primary !== key2.primary) return false;
+            
+            // Check if secondary keys are consecutive
+            return Math.abs(key1.secondary - key2.secondary) <= 1;
+        }
+        
+        if (key1.type === 'single') {
+            // Only check consecutive for numeric types
+            return Math.abs(key1.primary - key2.primary) <= 1;
+        }
+        
+        if (key1.type === 'string') {
+            // For strings, they are only "consecutive" if they're identical
+            return key1.primary === key2.primary;
+        }
+        
+        return false;
     };
 
-    // Sort content by location key
+    // Helper function to create a composite sort key
+    const createSortKey = (location) => {
+        const key = getLocationKey(location);
+        
+        if (key.type === 'hierarchical') {
+            // Create a composite key for hierarchical sorting
+            return `${key.format}_${String(key.primary).padStart(10, '0')}_${String(key.secondary).padStart(10, '0')}`;
+        }
+        
+        if (key.type === 'single') {
+            return `${key.format}_${String(key.primary).padStart(10, '0')}`;
+        }
+        
+        if (key.type === 'string') {
+            return `${key.format}_${key.primary}`;
+        }
+        
+        return `${key.format}_${String(key.primary).padStart(10, '0')}`;
+    };
+
+    // Sort content by location key with proper hierarchical ordering
     const sortedContent = [...contentArray].sort((a, b) => {
-        return getLocationKey(a.location) - getLocationKey(b.location);
+        const sortKeyA = createSortKey(a.location);
+        const sortKeyB = createSortKey(b.location);
+        
+        return sortKeyA.localeCompare(sortKeyB);
     });
 
     const combined = [];
