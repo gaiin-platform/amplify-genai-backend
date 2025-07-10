@@ -4,16 +4,16 @@ def get_permission_checker(user, ptype, op, data):
             user, ptype, op
         )
     )
-    
+
     if op == "route":
         return lambda for_user, with_data: True
 
     return permissions_by_state_type.get(ptype, {}).get(
         op, lambda for_user, with_data: False
-    ) 
+    )
 
 
-def can_execute_custom_auto(user, data): 
+def can_execute_custom_auto(user, data):
     return True
 
 
@@ -26,8 +26,7 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/google/integrations" : {
-        "get" : lambda for_user, with_data: True,
+    "/google/integrations": {
+        "get": lambda for_user, with_data: True,
     },
-
 }
