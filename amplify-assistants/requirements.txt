@@ -21,7 +21,7 @@ jiter==0.8.2
     # via openai
 jose==1.0.0
     # via -r requirements.in
-openai==1.59.4
+openai==1.95.1
     # via -r requirements.in
 pillow==11.1.0
     # via -r requirements.in
