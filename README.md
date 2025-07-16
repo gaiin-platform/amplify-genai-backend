@@ -18,60 +18,6 @@ Variables should be configured inside your `amplify-genai-backend/<environment>/
 
 ## Deployment Process
 
-## Working with the `pycommon` Submodule
-
-This repository includes a Git submodule named `pycommon`. When cloning or working with this repository, keep the following in mind:
-
-### Cloning with Submodules
-
-To clone the repository and initialize submodules in one step, use:
-
-```bash
-git clone --recurse-submodules git@github.com:gaiin-platform/amplify-genai-backend.git
-```
-
-If you've already cloned the repository without submodules, initialize and update them with:
-
-```bash
-git submodule update --init --recursive
-```
-
-### Updating the Submodule
-
-To fetch the latest changes from the submodule's remote branch:
-
-```bash
-git submodule update --remote
-```
-
-Alternatively, from the root directory:
-
-```bash
-git submodule update --remote pycommon
-git add pycommon
-git commit -m "Update pycommon submodule"
-```
-
-### Pinning the Submodule to a Branch
-
-By default, submodules are pinned to a specific commit. To track a branch (e.g., `main`) instead, set the submodule to follow a branch:
-
-```bash
-git config -f .gitmodules submodule.pycommon.branch main
-git submodule update --remote pycommon
-```
-
-Commit the updated `.gitmodules` file:
-
-```bash
-git add .gitmodules pycommon
-git commit -m "Pin pycommon submodule to main branch"
-```
-
-**Note:** Even when tracking a branch, submodules are always checked out at a specific commit in your repository. To update to the latest commit on the tracked branch, run `git submodule update --remote` and commit the change.
-
-For more details, see the [Git Submodules documentation](https://git-scm.com/book/en/v2/Git-Tools-Submodules).
-
 
 ### Deploying All Services From the Repository Root
 

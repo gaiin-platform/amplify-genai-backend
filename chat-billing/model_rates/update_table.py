@@ -8,6 +8,7 @@ from decimal import Decimal
 # Initialize a DynamoDB client with Boto3
 dynamodb = boto3.resource("dynamodb")
 
+
 def load_model_rate_table(model_data):
     # Retrieve the environment variable for the table name
     table_name = os.environ["MODEL_RATE_TABLE"]
@@ -28,12 +29,14 @@ def load_model_rate_table(model_data):
                 model_id = csv_item["ModelID"]
 
                 existing_item = model_data.get(model_id, {})
-                if (check_old_data_by_col(existing_item.keys())):
+                if check_old_data_by_col(existing_item.keys()):
                     print(f"ModelID {model_id} is outdated/missing, adding new row")
                     response = table.put_item(Item=csv_item)
                 else:
-                    print(f"ModelID {model_id} is up to date, updating existing col if missing")
-                    updated_item = dict(existing_item) 
+                    print(
+                        f"ModelID {model_id} is up to date, updating existing col if missing"
+                    )
+                    updated_item = dict(existing_item)
                     for key, value in csv_item.items():
                         if key not in existing_item:
                             print("Updating column: ", key)
@@ -50,14 +53,22 @@ def load_model_rate_table(model_data):
     return True
 
 
-old_cols = ["ModelID", "InputCostPerThousandTokens", "ModelName", "OutputCostPerThousandTokens", "Provider"]
+old_cols = [
+    "ModelID",
+    "InputCostPerThousandTokens",
+    "ModelName",
+    "OutputCostPerThousandTokens",
+    "Provider",
+]
+
 
 def check_old_data_by_col(model_cols):
     return not model_cols or sorted(model_cols) == sorted(old_cols)
 
+
 def parse_csv_row(row_dict):
     """
-    Converts the raw CSV row (string-based) into a typed dict 
+    Converts the raw CSV row (string-based) into a typed dict
     (Decimal for numbers, bool for 'TRUE'/'FALSE', etc.)
     """
     item = {}
@@ -76,11 +87,11 @@ def parse_csv_row(row_dict):
         else:
             # Convert known numeric columns to Decimal
             if k in {
-                "InputCostPerThousandTokens", 
-                "OutputCostPerThousandTokens", 
-                "CachedCostPerThousandTokens", 
-                "InputContextWindow", 
-                "OutputTokenLimit"
+                "InputCostPerThousandTokens",
+                "OutputCostPerThousandTokens",
+                "CachedCostPerThousandTokens",
+                "InputContextWindow",
+                "OutputTokenLimit",
             }:
                 item[k] = Decimal(v_str)
             else:
@@ -90,19 +101,18 @@ def parse_csv_row(row_dict):
     return item
 
 
-
 def get_csv_model_ids():
     """
-    Opens the CSV file (model_rate_values.csv) and returns a set of model IDs 
+    Opens the CSV file (model_rate_values.csv) and returns a set of model IDs
     found in the CSV.
     """
     import os
     import csv
-    
+
     # Define the path to the CSV file relative to this file
     dir_path = os.path.dirname(os.path.realpath(__file__))
     csv_file_path = os.path.join(dir_path, "model_rate_values.csv")
-    
+
     model_ids = set()
     with open(csv_file_path, newline="") as csvfile:
         reader = csv.DictReader(csvfile)

@@ -60,7 +60,6 @@ provider:
     OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY} #When using the OpenAI API, you need to provide the ARN of the secret that contains the API key, the secret should be named OPENAI_API_KEY.
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
-    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE:  amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}
     ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
@@ -80,14 +79,12 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
     GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-lambda/${sls:stage}/s3/metadata/encryption #must start with /
-
 
   iam:
     role:
@@ -195,7 +192,6 @@ functions:
   #   timeout: 420 # 7 min
   #   url: true
     
-
   delete_ast_thread:
     handler: openaiazure/assistant.delete_assistant_thread
     events:

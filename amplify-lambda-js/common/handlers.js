@@ -7,6 +7,7 @@ import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { TokenV1 } from './api_utils.js';
 
 // Since __dirname is not available in ES module scope, you have to construct the path differently.
 const __filename = fileURLToPath(import.meta.url);
@@ -105,13 +106,20 @@ const api_authenticator = async (apiKey, event) => {
     }
 
     try {
+        // determine if we have a new or old key type
+        let lookupValue = apiKey;
+        if (lookupValue.substring(0, 7) === "amp-v1-") {
+            // this is a new key, we need to look up the hash
+            const tokenV1 = new TokenV1(lookupValue);
+            lookupValue = tokenV1.key; // hash
+        }
 
         const command = new QueryCommand({
             TableName: apiTable,
             IndexName: 'ApiKeyIndex',
             KeyConditionExpression: 'apiKey = :apiKeyVal',
             ExpressionAttributeValues: {
-                ':apiKeyVal': { S: apiKey }
+                ':apiKeyVal': { S: lookupValue }
             }
         });
         
@@ -200,7 +208,7 @@ const api_authenticator = async (apiKey, event) => {
         requestBody.options.api_accessed = true;
         requestBody.options.rateLimit = apiData.rateLimit;
         // Return the validated user and additional data
-        return {user: currentUser, body: requestBody, accessToken: apiKey};
+        return {user: currentUser, body: requestBody, accessToken: apiKey, apiKeyId: apiData.api_owner_id}; 
 
     } catch (error) {
         console.error("Error during DynamoDB operation:", error);

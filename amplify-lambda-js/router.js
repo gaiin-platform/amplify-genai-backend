@@ -176,6 +176,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                     user: params.user,
                     accessToken: params.accessToken,
                     accountId: options.accountId,
+                    apiKeyId: params.apiKeyId
                 },
                 model,
                 requestId,

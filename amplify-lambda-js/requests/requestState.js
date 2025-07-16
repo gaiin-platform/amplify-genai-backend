@@ -111,13 +111,17 @@ export const updateKillswitch = async (user, requestId, killswitch) => {
         throw new Error("REQUEST_STATE_DYNAMO_TABLE is not provided in the environment variables.");
     }
 
+    // Calculate TTL: current time + 1 day (86400 seconds)
+    const ttl = Math.floor(Date.now() / 1000) + 86400;
+
     const command = new PutItemCommand({
         TableName: requestsTable,
         Item: {
             user: {S: user},
             requestId: {S: requestId},
             exit: {BOOL: killswitch},
-            lastUpdatedTime: {N: "" + new Date().getTime()}
+            lastUpdatedTime: {N: "" + new Date().getTime()},
+            ttl: {N: "" + ttl}
         }
     });
     logger.debug("Exit - killswitch value: ", killswitch);

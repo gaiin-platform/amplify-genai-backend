@@ -84,7 +84,7 @@ provider:
     S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
     GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
     EMBEDDING_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
 
         #Stand Alone Vars references from local vars file
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
@@ -95,15 +95,15 @@ provider:
     PRIVATE_SUBNET_ONE: ${self:custom.stageVars.PRIVATE_SUBNET_ONE}
     PRIVATE_SUBNET_TWO: ${self:custom.stageVars.PRIVATE_SUBNET_TWO}
     VPC_CIDR: ${self:custom.stageVars.VPC_CIDR}
-    QA_MODEL_NAME: ${self:custom.stageVars.QA_MODEL_NAME}
     API_VERSION: ${self:custom.stageVars.API_VERSION}
     OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY}
-    EMBEDDING_MODEL_NAME: ${self:custom.stageVars.EMBEDDING_MODEL_NAME}
     ENDPOINTS_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     REGION: ${self:provider.region}
+    STAGE: ${sls:stage}
+    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
     
     
@@ -219,6 +219,8 @@ functions:
           path: /embedding/sqs/get
           method: get
           cors: true
+    environment:
+      EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
 
   delete_embeddings:
     runtime: python3.11
@@ -259,6 +261,7 @@ resources:
               Action:
                 - secretsmanager:GetSecretValue
                 - s3:GetObject  # for accessing S3
+                - s3:HeadObject # for reading S3 object metadata
                 - s3:ListBucket # for listing objects in S3
                 - dynamodb:Query
                 - dynamodb:Scan
@@ -300,11 +303,21 @@ resources:
                 - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
+                - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
             - Effect: Allow
               Action:
                 - sqs:SendMessage
               Resource:
                 - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-document-chunk-queue"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+                - ssm:DeleteParameter
+                - ssm:DescribeParameters
+              Resource: 
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*
 
     RagPostgresDbSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
