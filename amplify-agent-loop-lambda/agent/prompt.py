@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import traceback
 from typing import List
 
@@ -176,7 +177,7 @@ def get_llm_config(model_name):
 
 
 def is_openai_model(model):
-    return any(id in model for id in ["gpt", "o1", "o3"])
+    return model and ("gpt" in model or re.match(r'^o\d', model))
 
 
 def is_bedrock_model(model):
