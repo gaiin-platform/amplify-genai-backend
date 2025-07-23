@@ -104,7 +104,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    const isOmodel = modelId.includes("o1") || modelId.includes("o3");
+    const isOmodel = /^o\d/.test(modelId);
 
 
     if (isOmodel) {
