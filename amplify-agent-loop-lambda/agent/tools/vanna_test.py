@@ -202,14 +202,12 @@ def test_amplify_vanna():
         db_config = DB_CONFIG[db_type]
         database = db_config["database"]
         schema = db_config["schema"]
-        table = db_config["table"]
 
         # Adjust the information schema query based on database type
         if db_type == "snowflake":
             schema_query = f"""
             SELECT * FROM {database}.INFORMATION_SCHEMA.COLUMNS
             WHERE table_schema = '{schema}'
-            AND table_name = '{table}'
             """
         else:
             raise ValueError(f"Unsupported database type for schema query: {db_type}")
@@ -218,29 +216,32 @@ def test_amplify_vanna():
 
         # Process schema information for the LLM
         schema_info = {}
-        # Get only the specified table
-        unique_tables = [table]
-        print(f"Processing table: {unique_tables[0]}")
+        # Get all unique tables from the schema
+        unique_tables = df_information_schema["TABLE_NAME"].unique()
+        # Limit to 3 tables
+        unique_tables = unique_tables[:3]
+        print(
+            f"Processing {len(unique_tables)} tables in schema {schema} (limited to 3 tables)"
+        )
 
-        # Get all columns for this table
-        table_columns = df_information_schema[
-            df_information_schema["TABLE_NAME"] == unique_tables[0]
-        ]["COLUMN_NAME"].tolist()
+        for table_name in unique_tables:
+            print(f"Processing table: {table_name}")
+            # Get all columns for this table
+            table_columns = df_information_schema[
+                df_information_schema["TABLE_NAME"] == table_name
+            ]
 
-        for _, row in df_information_schema[
-            df_information_schema["TABLE_NAME"].isin(unique_tables)
-        ].iterrows():
-            table_name = row["TABLE_NAME"]
-            column_name = row["COLUMN_NAME"]
+            for _, row in table_columns.iterrows():
+                column_name = row["COLUMN_NAME"]
 
-            # Handle different database types' column naming conventions
-            if db_type == "snowflake":
-                column_info = f"{column_name} ({row['DATA_TYPE']})"
-            else:
-                column_info = f"{column_name} ({row['COLUMN_TYPE']})"
-            if table_name not in schema_info:
-                schema_info[table_name] = []
-            schema_info[table_name].append(column_info)
+                # Handle different database types' column naming conventions
+                if db_type == "snowflake":
+                    column_info = f"{column_name} ({row['DATA_TYPE']})"
+                else:
+                    column_info = f"{column_name} ({row['COLUMN_TYPE']})"
+                if table_name not in schema_info:
+                    schema_info[table_name] = []
+                schema_info[table_name].append(column_info)
 
         # Set the schema information in the LLM
         vn.set_db_schema(schema_info)
@@ -263,12 +264,12 @@ def test_amplify_vanna():
         # Add DDL schema
         print("Adding DDL schema...")
         try:
-            # Get table information
+            # Get table information for only our limited set of tables
             tables_query = f"""
             SELECT TABLE_NAME
             FROM {database}.INFORMATION_SCHEMA.TABLES 
             WHERE TABLE_SCHEMA = '{schema}'
-            AND TABLE_NAME = '{table}'
+            AND TABLE_NAME IN ({','.join([f"'{t}'" for t in unique_tables])})
             """
             tables = vn.run_sql(tables_query)
 
@@ -315,18 +316,16 @@ def test_amplify_vanna():
         print("Adding documentation...")
         try:
             documentation = "Database Schema Documentation:\n\n"
-            table_name = unique_tables[0]
-            table_docs = df_information_schema[
-                df_information_schema["TABLE_NAME"] == table_name
-            ]
-            documentation += f"Table: {table_name}\n"
-            documentation += (
-                "Description: College Scorecard merged data for 2022-2023\n"
-            )
-            documentation += "Columns:\n"
-            for _, row in table_docs.iterrows():
-                documentation += f"- {row['COLUMN_NAME']} ({row['DATA_TYPE']}): {row.get('COLUMN_COMMENT', 'No description available')}\n"
-            documentation += "\n"
+            for table_name in unique_tables:
+                table_docs = df_information_schema[
+                    df_information_schema["TABLE_NAME"] == table_name
+                ]
+                documentation += f"Table: {table_name}\n"
+                documentation += "Description: Table in the database\n"
+                documentation += "Columns:\n"
+                for _, row in table_docs.iterrows():
+                    documentation += f"- {row['COLUMN_NAME']} ({row['DATA_TYPE']}): {row.get('COLUMN_COMMENT', 'No description available')}\n"
+                documentation += "\n"
             vn.train(documentation=documentation)
         except Exception as e:
             print(f"Warning: Could not add documentation: {str(e)}")
@@ -337,77 +336,97 @@ def test_amplify_vanna():
             # Create a set to track added queries
             added_queries = set()
 
-            # Get column names for this table
-            columns = df_information_schema[
-                df_information_schema["TABLE_NAME"] == table_name
-            ]["COLUMN_NAME"].tolist()
+            for table_name in unique_tables:
+                # Get column names for this table
+                columns = df_information_schema[
+                    df_information_schema["TABLE_NAME"] == table_name
+                ]["COLUMN_NAME"].tolist()
 
-            # Create a dynamic example query using the first 5 columns
-            example_columns = columns[:5]
-            example_query = f"""
-            SELECT 
-                {', '.join(example_columns)}
-            FROM {database}.{schema}.{table_name}
-            LIMIT 5;
-            """
+                # Create a dynamic example query using the first 5 columns
+                example_columns = columns[:5]
+                if example_columns:  # Only create query if we have columns
+                    example_query = f"""
+                    SELECT 
+                        {', '.join(example_columns)}
+                    FROM {database}.{schema}.{table_name}
+                    LIMIT 5;
+                    """
 
-            try:
-                vn.train(sql=example_query)
-                added_queries.add(example_query)
-                print(f"Added example query for {table_name}")
-            except Exception as e:
-                print(
-                    f"Warning: Error during example query training for table {table_name}: {str(e)}"
-                )
+                    try:
+                        vn.train(sql=example_query)
+                        added_queries.add(example_query)
+                        print(f"Added example query for {table_name}")
+                    except Exception as e:
+                        print(
+                            f"Warning: Error during example query training for table {table_name}: {str(e)}"
+                        )
         except Exception as e:
             print(f"Warning: Error during example query generation: {str(e)}")
 
         print("Schema training completed.")
 
-        # Test a simple question
-        question = f"Show me the first 5 rows from the {table} table"
-        print(f"\nTesting query: {question}")
+        # Test a simple question for each table
+        for table_name in unique_tables:
+            # Get the columns we used in the example query for this table
+            table_columns = df_information_schema[
+                df_information_schema["TABLE_NAME"] == table_name
+            ]["COLUMN_NAME"].tolist()[
+                :5
+            ]  # Use first 5 columns as in example query
 
-        # Use ask() instead of generate_sql()
-        result = vn.ask(question=question)
-        if not result:
-            print(
-                "\nCould not generate a valid SQL query. Trying a more specific question..."
+            # Create fully qualified table name
+            fully_qualified_table = f"{database}.{schema}.{table_name}"
+
+            question = (
+                f"Show me the first 5 rows from the {fully_qualified_table} table"
             )
-            # Try a more specific question with the actual table name
-            question = f"Show me the first 5 rows from the {table} table in {database} database"
-            print(f"\nTesting query: {question}")
+            print(f"\nTesting query for {table_name}: {question}")
+
+            # Use ask() instead of generate_sql()
             result = vn.ask(question=question)
-
-        if result:
-            print(f"\nGenerated SQL:\n{result}")
-            try:
-                # Clean up any remaining markdown or formatting
-                clean_sql = result.replace("```sql", "").replace("```", "").strip()
-
-                # Add schema qualification to the table name
-                clean_sql = clean_sql.replace(
-                    f"FROM {table}",
-                    f"FROM {database}.{schema}.{table}",
+            if not result:
+                print(
+                    f"\nCould not generate a valid SQL query for {table_name}. Trying a more specific question..."
                 )
+                # Try a more specific question with the actual table name and columns
+                columns_str = ", ".join(table_columns)
+                question = f"Show me the first 5 rows of {columns_str} from the {fully_qualified_table} table"
+                print(f"\nTesting query: {question}")
+                result = vn.ask(question=question)
 
-                # Print the final SQL for debugging
-                print(f"\nExecuting SQL:\n{clean_sql}")
-
-                results = vn.run_sql(clean_sql)
-                print(f"\nQuery Results:\n{results}")
-            except Exception as e:
-                print(f"Error running query: {str(e)}")
-                # Add more detailed error information
-                print("\nTrying to list available tables in the current schema...")
+            if result:
+                print(f"\nGenerated SQL:\n{result}")
                 try:
-                    tables = vn.run_sql(f"SHOW TABLES IN SCHEMA {database}.{schema}")
-                    print("\nAvailable tables:")
-                    print(tables)
-                except Exception as e2:
-                    print(f"Error listing tables: {str(e2)}")
-        else:
-            print("\nCould not generate a valid SQL query for either question.")
+                    # Clean up any remaining markdown or formatting
+                    clean_sql = result.replace("```sql", "").replace("```", "").strip()
+
+                    # Ensure the table name is fully qualified
+                    if not clean_sql.upper().startswith(
+                        f"SELECT * FROM {database}.{schema}."
+                    ):
+                        clean_sql = clean_sql.replace(
+                            f"FROM {table_name}", f"FROM {fully_qualified_table}"
+                        ).replace(
+                            f"FROM {schema}.{table_name}",
+                            f"FROM {fully_qualified_table}",
+                        )
+
+                    # Print the final SQL for debugging
+                    print(f"\nExecuting SQL:\n{clean_sql}")
+
+                    results = vn.run_sql(clean_sql)
+                    print(f"\nQuery Results:\n{results}")
+                except Exception as e:
+                    print(f"Error running query: {str(e)}")
+                    print(f"\nTrying to list columns for table {table_name}...")
+                    try:
+                        columns = vn.run_sql(f"SHOW COLUMNS IN {fully_qualified_table}")
+                        print("\nAvailable columns:")
+                        print(columns)
+                    except Exception as e2:
+                        print(f"Error listing columns: {str(e2)}")
+            else:
+                print(f"\nCould not generate a valid SQL query for {table_name}.")
 
     except Exception as e:
         print(f"Error during database operations: {str(e)}")
