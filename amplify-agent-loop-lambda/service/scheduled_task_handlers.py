@@ -26,13 +26,14 @@ from pycommon.api.ops import api_tool
             },
             "taskType": {
                 "type": "string",
-                "description": "Type of task ('actionSet' or 'assistant')",
+                "description": "Type of task ('actionSet', 'assistant', 'apiTool')",
             },
             "objectInfo": {
                 "type": "object",
                 "properties": {
                     "objectId": {"type": "string"},
                     "objectName": {"type": "string"},
+                    "data" : {"type": "object"}
                 },
                 "required": ["objectId", "objectName"],
                 "description": "Information about the associated object",
@@ -117,6 +118,7 @@ def create_scheduled_task_handler(
     time_zone=None,
 ):
     try:
+        print(f"Creating scheduled task with object_info: {object_info}")
         task_id = create_scheduled_task(
             current_user=current_user,
             task_name=task_name,

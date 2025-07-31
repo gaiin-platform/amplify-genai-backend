@@ -243,6 +243,10 @@ class TasksMessageHandler(MessageHandler):
                 operations.append(operation)
 
             return {"operations": operations}
+        elif object_type == "apiTool":
+            # object_info.data.op should be in the expected operation format
+            print(f"Processing apiTool with object_info: {object_info}")
+            return {"operations": [object_info.get("data", {}).get("op", {})]}
 
 
 def task_completed(user_id, task_id, task_data, result):
