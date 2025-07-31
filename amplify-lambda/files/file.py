@@ -18,7 +18,7 @@ import boto3
 import rag.util
 from boto3.dynamodb.conditions import Key
 from rag.rag_secrets import store_ds_secrets_for_rag
-from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
+from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources, extract_key
 from pycommon.api.object_permissions import can_access_objects
 from pycommon.api.embeddings import delete_embeddings
 from pycommon.api.amplify_groups import verify_member_of_ast_admin_group
@@ -1615,6 +1615,7 @@ def delete_file(event, context, current_user, name, data):
 
         data = data.get("data", {})
         key = data.get("key")
+        key = extract_key(key)
 
         if not key or not current_user:
             raise ValueError("'key' and 'name' are required")
@@ -1650,8 +1651,8 @@ def delete_file(event, context, current_user, name, data):
             if "Item" not in hash_response:
                 print(f"File not found in hash files table")
                 # applicable to files who have never been processed by RAG
-                print("Deleting entry from user files table only")
                 if current_user in key:
+                    print("Deleting entry from user files table only")
                     # if they are owner then delete from user files
                     delete_file_from_table(key)
                     return {

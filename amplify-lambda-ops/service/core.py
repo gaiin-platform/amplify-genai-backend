@@ -117,6 +117,161 @@ def get_ops(event, context, current_user, name, data):
     return fetch_user_ops(current_user, tag)
 
 
+@api_tool(
+    path="/ops/get_op",
+    tags=["ops", "default"],
+    name="getOperationByName",
+    description="Get a specific operation by its name/id within a given tag.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "tag": {"type": "string", "description": "The tag to search within."},
+            "op_name": {"type": "string", "description": "The operation name/id to find."},
+            "system_op": {"type": "boolean", "description": "Whether to search in system operations (default: false)."}
+        },
+        "required": ["tag", "op_name"],
+    },
+    output={
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": "Whether the operation was successful",
+            },
+            "message": {"type": "string", "description": "Success or error message"},
+            "data": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique identifier for the operation",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the operation",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of what the operation does",
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method (GET, POST, etc.)",
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "URL/path for the operation",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags associated with the operation",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Type of operation (e.g., 'built_in')",
+                    },
+                    "includeAccessToken": {
+                        "type": "boolean",
+                        "description": "Whether the operation requires an access token",
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": "Input schema for the operation parameters",
+                    },
+                    "output": {
+                        "type": "object",
+                        "description": "Output schema for the operation response",
+                    },
+                    "permissions": {
+                        "type": "object",
+                        "description": "Permissions required for the operation",
+                    },
+                },
+                "description": "The found operation with its complete metadata",
+            },
+        },
+        "required": ["success", "message"],
+    },
+)
+@validated(op="get")
+def get_op_by_name(event, context, current_user, name, data):
+    data = data["data"]
+    tag = data["tag"]
+    op_name = data["op_name"]
+    system_op = data.get("system_op", False)
+    
+    # Determine the user based on system_op flag
+    user = "system" if system_op else current_user
+    
+    # Get the DynamoDB table name from the environment variable
+    table_name = os.environ.get("OPS_DYNAMODB_TABLE")
+    if not table_name:
+        return {
+            "success": False,
+            "message": "DynamoDB table name is not set in environment variables",
+        }
+
+    print(f"Finding operation '{op_name}' for user '{user}' with tag '{tag}'")
+
+    # Build the DynamoDB query parameters
+    query_params = {
+        "TableName": table_name,
+        "KeyConditionExpression": "#usr = :user AND tag = :tag",
+        "ExpressionAttributeValues": {":user": {"S": user}, ":tag": {"S": tag}},
+        "ExpressionAttributeNames": {"#usr": "user"},
+    }
+
+    all_items = []
+    last_evaluated_key = None
+
+    # Loop to handle pagination
+    while True:
+        # Add the ExclusiveStartKey if we have a LastEvaluatedKey from previous query
+        if last_evaluated_key:
+            query_params["ExclusiveStartKey"] = last_evaluated_key
+
+        # Execute the DynamoDB query
+        response = dynamodb.query(**query_params)
+
+        # Add current batch to our results
+        all_items.extend(response["Items"])
+
+        # Check if there are more results
+        last_evaluated_key = response.get("LastEvaluatedKey")
+        if not last_evaluated_key:
+            break
+
+    # Extract the data from the DynamoDB response
+    data_from_dynamo = [item["ops"] for item in all_items]
+    data_from_dynamo = [
+        TypeDeserializer().deserialize(item) for item in data_from_dynamo
+    ]
+    # Flatten the list of operations
+    data_from_dynamo = [op for sublist in data_from_dynamo for op in sublist]
+
+    # Search for the operation with matching id
+    found_op = None
+    for op in data_from_dynamo:
+        if op.get("id") == op_name:
+            found_op = op
+            break
+
+    if found_op:
+        print(f"Found operation: {found_op}")
+        return {
+            "success": True,
+            "message": "Successfully found the requested operation",
+            "data": found_op,
+        }
+    else:
+        print(f"Operation '{op_name}' not found for user '{user}' with tag '{tag}'")
+        return {
+            "success": False,
+            "message": f"Operation '{op_name}' not found for the specified tag and user",
+        }
+
+
 def fetch_user_ops(current_user, tag):
     # Get the DynamoDB table name from the environment variable
     table_name = os.environ.get("OPS_DYNAMODB_TABLE")

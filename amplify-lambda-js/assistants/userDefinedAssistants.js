@@ -324,7 +324,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
             }
 
 
-            if(assistant.data && assistant.data.dataSourceOptions) {
+            if (assistant.data && assistant.data.dataSourceOptions) {
 
                 const dataSourceMetadataForInsertion = [];
                 const available = await getDataSourcesByUse(params, body, ds);
@@ -445,7 +445,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 return;
 
-            } else if(assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
+            } else if (assistant.data && assistant.data.operations && assistant.data.operations.length > 0) {
                 if (assistant.data.opsLanguageVersion !== "custom") {
                     const opsLanguageVersion = assistant.data.opsLanguageVersion || "v1";
                     const langVersion = opsLanguages[opsLanguageVersion];
@@ -481,6 +481,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
             const messagesWithoutSystem = body.messages.filter(
                 (message) => message.role !== "system"
             );
+
+            if (assistant.data?.integrationDriveData) {
+                const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
+                // console.log("Drive datasources: ", driveDatasources);
+                assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
+            }
 
             const groupType = body.options.groupType;
             if (groupType) {
@@ -580,4 +586,23 @@ export const fillInAssistant = (assistant, assistantBase) => {
         }
     };
 
+}
+
+
+function extractDriveDatasources(data) {
+    if (!data) return [];
+    return Object.values(data)
+        .filter(providerData => providerData && typeof providerData === 'object')
+        .flatMap(providerData => [
+            // Extract from files
+            ...(providerData.files ? Object.values(providerData.files) : []),
+            // Extract from folders
+            ...(providerData.folders ? 
+                Object.values(providerData.folders).flatMap(folderFiles => 
+                    Object.values(folderFiles)
+                ) : []
+            )
+        ])
+        .map(fileMetadata => fileMetadata.datasource)
+        .filter(datasource => datasource && datasource.id);
 }

@@ -68,6 +68,13 @@ if [ -d "./tmp_pycommon/pycommon/llm" ]; then
     echo "LLM modules copied"
 fi
 
+# Copy encoders.py as a single file
+if [ -f "./tmp_pycommon/pycommon/encoders.py" ]; then
+    echo "Copying encoders.py..."
+    cp ./tmp_pycommon/pycommon/encoders.py python/pycommon/ 2>/dev/null || echo "encoders.py not found"
+    echo "Encoders module copied"
+fi
+
 # Create minimal main __init__.py (overwrite the one from GitHub)
 cat > python/pycommon/__init__.py << 'EOF'
 # Minimal pycommon module exports for RAG functionality
@@ -75,10 +82,12 @@ cat > python/pycommon/__init__.py << 'EOF'
 
 from . import api
 from . import llm
+from . import encoders
 
 __all__ = [
     "api",
     "llm",
+    "encoders",
 ]
 EOF
 
