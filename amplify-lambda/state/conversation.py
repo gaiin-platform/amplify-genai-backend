@@ -11,7 +11,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 import boto3
 import boto3.dynamodb.conditions
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pycommon.api.ops import api_tool
 
 
@@ -246,7 +246,21 @@ def pick_conversation_attributes(conversation, include_timestamp=False):
 
 @validated("read")
 def get_all_conversations(event, context, current_user, name, data):
-    conversations = get_all_complete_conversations(current_user)
+    # Check for days query parameter
+    query_params = event.get("queryStringParameters", {}) or {}
+    days_param = query_params.get("days")
+    days = None
+    
+    if days_param:
+        try:
+            days_value = int(days_param)
+            # If days is 0 or negative, treat as "get all" (days = None)
+            if days_value > 0:
+                days = days_value
+        except ValueError:
+            return {"success": False, "message": "Days parameter must be a valid number"}
+    
+    conversations = get_all_complete_conversations(current_user, days)
     if conversations == None:
         return {"success": False, "message": "Failed to retrieve conversations from S3"}
     elif len(conversations) == 0:
@@ -288,20 +302,39 @@ def get_empty_conversations(event, context, current_user, name, data):
     }
 
 
-def get_all_complete_conversations(current_user):
+def get_all_complete_conversations(current_user, days=None):
     s3 = boto3.client("s3")
     conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
     user_prefix = current_user + "/"
+
+    # Calculate cutoff date if days parameter is provided
+    cutoff_date = None
+    if days is not None:
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        print(f"Filtering conversations newer than: {cutoff_date}")
 
     try:
         # List all objects in the bucket with the given prefix
         response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
         if "Contents" not in response:
             return []
+        
+        print(f"Number of conversations in list obj: {len(response['Contents'])}")
 
+        filtered_objects = []
+        
+        # Filter objects by date if cutoff_date is specified
+        if cutoff_date:
+            for obj in response["Contents"]:
+                if (obj["LastModified"] >= cutoff_date):
+                    filtered_objects.append(obj) 
+            print(f"Number of conversations after date filtering: {len(filtered_objects)}")
+        else:
+            filtered_objects = response["Contents"]
+
+           
         conversations = []
-        print("Number of conversation in list obj: ", len(response["Contents"]))
-        for obj in response["Contents"]:
+        for obj in filtered_objects:
             conversation_key = obj["Key"]
             # Get each conversation object
             try:
