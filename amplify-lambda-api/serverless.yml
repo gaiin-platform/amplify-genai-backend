@@ -50,6 +50,7 @@ provider:
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
 
 
   iam:
@@ -141,6 +142,15 @@ functions:
           path: apiKeys/api_documentation/upload
           method: post
           cors: true
+  
+  tools_op:
+    handler: tools_ops.api_tools_handler
+    timeout: 30
+    events:
+      - http:
+          path: apiKeys/register_ops
+          method: post
+          cors: true
         
 
 resources:
@@ -165,7 +175,9 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"  
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*" 
             - Effect: Allow
               Action:
                 - s3:GetObject

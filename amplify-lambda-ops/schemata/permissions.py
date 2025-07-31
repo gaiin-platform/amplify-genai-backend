@@ -9,7 +9,7 @@ def get_permission_checker(user, ptype, op, data):
     )
 
 
-def can_get_ops(user, data):
+def can_get(user, data):
     """
     Sample permission checker
     :param user: the user to check
@@ -36,8 +36,10 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/ops/get": {"get": can_get_ops},
-    "/ops/get_all": {"get": can_get_ops},
+    "/ops/get": {"get": can_get},
+    "/ops/get_all": {"get": can_get},
     "/ops/register": {"write": can_write},
     "/ops/delete": {"delete": can_delete},
+    "/ops/get_op": {"get": can_get},
+    "/ops/register_ops": {"register_ops": can_write},
 }
