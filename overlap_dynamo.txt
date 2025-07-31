@@ -1,0 +1,84 @@
+Via the reverse engineering process and the normal parsing process these are the tables that I found in the yaml files:
+
+amplify-v6-admin-dev-admin-configs 
+amplify-v6-admin-dev-admin-logs 
+amplify-v6-agent-loop-dev-agent-state 
+amplify-v6-amplify-js-dev-datasource-registry 
+amplify-v6-amplify-js-dev-request-state 
+amplify-v6-artifacts-dev-user-artifacts 
+amplify-v6-assistants-dev-assistant-aliases 
+amplify-v6-assistants-dev-assistant-lookup 
+amplify-v6-assistants-dev-assistant-thread-runs 
+amplify-v6-assistants-dev-assistant-threads 
+amplify-v6-assistants-dev-assistants 
+amplify-v6-assistants-dev-code-interpreter-assistants
+amplify-v6-assistants-dev-group-assistant-conversations 
+amplify-v6-chat-billing-dev-additional-charges 
+amplify-v6-lambda-dev 
+amplify-v6-lambda-dev-accounting 
+amplify-v6-lambda-dev-accounts 
+amplify-v6-lambda-dev-assistants 
+amplify-v6-lambda-dev-chat-usage 
+amplify-v6-lambda-dev-chat-usage-archive 
+amplify-v6-lambda-dev-cost-calculations 
+amplify-v6-lambda-dev-hash-files 
+amplify-v6-lambda-dev-history-cost-calculations 
+amplify-v6-lambda-dev-user-files 
+amplify-v6-lambda-dev-user-tags 
+amplify-v6-lambda-ops-dev-ops 
+amplify-v6-object-access-dev-amplify-group-logs 
+amplify-v6-object-access-dev-amplify-groups 
+amplify-v6-object-access-dev-api-keys 
+amplify-v6-object-access-dev-cognito-users 
+amplify-v6-object-access-dev-object-access 
+amplify-v6-chat-billing-dev-history-usage 
+amplify-v6-chat-billing-dev-model-rates
+amplify-v6-data-disclosure-dev-acceptance 
+amplify-v6-data-disclosure-dev-versions 
+amplify-v6-embedding-dev-embedding-progress 
+amplify-v6-lambda-dev-conversation-metadata 
+amplify-v6-lambda-dev-db-connections 
+
+Not present List:
+
+amplify-tf-state-dev
+amplify-v6-agent-js-dev-agent-state
+amplify-v6-agent-loop-dev-agent-event-templates
+amplify-v6-agent-loop-dev-email-allowed-senders
+amplify-v6-agent-loop-dev-scheduled-tasks
+amplify-v6-agent-loop-dev-workflow-registry
+amplify-v6-assistants-api-dev-job-status
+amplify-v6-assistants-api-dev-oauth-state
+amplify-v6-assistants-api-dev-op-log
+amplify-v6-assistants-api-dev-user-oauth-integrations
+amplify-v6-lambda-basic-ops-dev-dynamic-code
+amplify-v6-lambda-basic-ops-dev-user-storage
+amplify-v6-lambda-basic-ops-dev-work-records
+amplify-v6-lambda-basic-ops-dev-work-sessions
+amplify-v6-lambda-personal-db-dev-personal-db
+amplify-v6-lambda-personal-sql-dev-personal-sql
+amplify-v6-lambda-personal-sql-dev-personal-sql-metadata
+amplify-v6-memory-dev-memory
+amplify-v6-se-dev-ai-code
+amplify-v6-se-dev-ops-common-data
+resource-migration-checkpoints-dev
+resource-migration-failures-dev
+resource-migration-success-dev
+
+Empty Tables:
+amplify-v6-agent-js-dev-agent-state 2
+amplify-v6-amplify-js-dev-datasource-registry 1
+amplify-v6-assistants-api-dev-job-status 2
+amplify-v6-chat-billing-dev-history-usage 1
+amplify-v6-lambda-basic-ops-dev-dynamic-code 2
+amplify-v6-lambda-basic-ops-dev-work-records 2
+amplify-v6-lambda-basic-ops-dev-work-sessions 2
+amplify-v6-lambda-dev-assistants 1
+amplify-v6-lambda-dev-chat-usage-archive 1
+amplify-v6-lambda-personal-db-dev-personal-db 2
+amplify-v6-lambda-personal-sql-dev-personal-sql 2
+amplify-v6-lambda-personal-sql-dev-personal-sql-metadata 2
+amplify-v6-se-dev-ops-common-data 2
+fast-agents-github-commits-dev null
+fast-agents-github-prs-dev null
+fast-agents-github-refs-dev null

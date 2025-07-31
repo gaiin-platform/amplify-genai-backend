@@ -4,9 +4,9 @@ import re
 from botocore.exceptions import NoCredentialsError
 from pathlib import Path
 
-def get_all_dynamodb_tables(region_name='default'):
+def get_all_dynamodb_tables(region_name='us-east-1'):
     session = boto3.Session(profile_name='default') # Replace with your profile
-    client = session.client('dynamodb', region_name='default') # Replace with your region
+    client = session.client('dynamodb', region_name='us-east-1') # Replace with your region
 
     table_names = []
     paginator = client.get_paginator('list_tables')
