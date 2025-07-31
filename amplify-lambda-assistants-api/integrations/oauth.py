@@ -651,7 +651,8 @@ def get_available_integrations():
                     for integration in integrations
                     if integration.get("isAvailable", False)
                 ]
-                data[provider] = filtered_list
+                if filtered_list:
+                    data[provider] = filtered_list
 
         return data
 
