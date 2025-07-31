@@ -17,14 +17,15 @@ from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.amplify_groups import verify_user_in_amp_group
-from pycommon.api.ops_reqs import register_ops
-from base_ast_group_ops import ops
 from pycommon.api.embeddings import check_embedding_completion
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import NO_RATE_LIMIT
 setup_validated(rules, get_permission_checker)
+
+import asyncio
+import aiohttp
 
 
 # Setup AWS DynamoDB access
@@ -1207,9 +1208,9 @@ def create_amplify_assistants(event, context, current_user, name, data):
         for ast_def in assistants
     ]
 
-    result = register_ops(token, ops)
+    result = asyncio.run(register_ops(token))
 
-    if not result:
+    if not result.get("success", False):
         return {"success": False, "message": "Failed to register ops"}
 
     print("Adding assistants")
@@ -1220,7 +1221,6 @@ def create_amplify_assistants(event, context, current_user, name, data):
             return ast_result
 
     return {"success": True, "data": {"id": group_id}}
-
 
 def clean_old_keys():
     """
@@ -1338,3 +1338,72 @@ def delete_group_files(group_id, access_token):
             "deleted_count": 0,
             "failed_count": 0
         }
+
+
+async def register_ops(token):
+    # temp implementation
+    api_doc_ops = ["assistant", "state", "apiKeys", "models", "embedding"]
+    data = {"data": {"command": "register"}}
+    
+    base_url = os.environ.get("API_BASE_URL")
+    if not base_url:
+        print("API_BASE_URL environment variable not set")
+        return {"success": False, "error": "API_BASE_URL not configured"}
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    
+    async def make_register_call(session, path):
+        url = f"{base_url}/{path}/register_ops"
+        try:
+            async with session.post(url, json=data, headers=headers) as response:
+                result = await response.json()
+                print(f"Register ops call to {path}: {response.status}")
+                # Check for success in the response body, not just HTTP status
+                is_successful = result.get("success", False) if result else False
+                print(f"Register ops call to {path}: {result}")
+                return {
+                    "path": path,
+                    "status": response.status,
+                    "success": is_successful,
+                    "result": result
+                }
+        except Exception as e:
+            print(f"Failed to register ops for {path}: {str(e)}")
+            return {
+                "path": path,
+                "status": None,
+                "success": False,
+                "error": str(e)
+            }
+    
+    # Make all calls concurrently
+    async with aiohttp.ClientSession() as session:
+        tasks = [make_register_call(session, path) for path in api_doc_ops]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Process results
+    successful_ops = []
+    failed_ops = []
+    
+    for result in results:
+        if isinstance(result, Exception):
+            failed_ops.append({"error": str(result)})
+        elif result.get("success"):
+            successful_ops.append(result["path"])
+        else:
+            failed_ops.append(result)
+    
+    print(f"Successfully registered ops for: {successful_ops}")
+    if failed_ops:
+        print(f"Failed to register ops for: {failed_ops}")
+    
+    return {
+        "success": len(failed_ops) == 0,
+        "successful_ops": successful_ops,
+        "failed_ops": failed_ops,
+        "total_attempted": len(api_doc_ops)
+    }
+
