@@ -81,7 +81,13 @@ def list_messages(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
 
-        params = {"$top": top, "$skip": skip, "$orderby": "receivedDateTime desc"}
+        params = {
+            "$top": top, 
+            "$skip": skip, 
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
+            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+        }
 
         if filter_query:
             params["$filter"] = filter_query
@@ -92,7 +98,7 @@ def list_messages(
             handle_graph_error(response)
 
         messages = response.json().get("value", [])
-        return [format_message(msg) for msg in messages]
+        return [format_message(msg, detailed=False, include_body=False) for msg in messages]
 
     except requests.RequestException as e:
         raise OutlookError(f"Network error while listing messages: {str(e)}")
@@ -123,18 +129,24 @@ def get_message_details(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/messages/{message_id}"
 
-        params = {}
+        # Build select fields based on include_body parameter
         if include_body:
-            params["$select"] = (
-                "id,subject,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments"
-            )
+            select_fields = "id,subject,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,categories"
+        else:
+            select_fields = "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,hasAttachments,categories"
+
+        params = {
+            "$select": select_fields,
+            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+        }
 
         response = session.get(url, params=params)
 
         if not response.ok:
             handle_graph_error(response)
-
-        return format_message(response.json(), detailed=True)
+        
+        # Pass include_body to format_message so it knows whether to process body content
+        return format_message(response.json(), detailed=True, include_body=include_body)
 
     except requests.RequestException as e:
         raise OutlookError(f"Network error while fetching message: {str(e)}")
@@ -289,8 +301,186 @@ def get_attachments(
         raise OutlookError(f"Network error while getting attachments: {str(e)}")
 
 
-def format_message(message: Dict, detailed: bool = False) -> Dict:
+def parse_msip_label(extended_properties: List[Dict]) -> Dict:
+    """
+    Parse Microsoft Information Protection label from extended properties
+    
+    Args:
+        extended_properties: List of singleValueExtendedProperties from Graph API
+        
+    Returns:
+        Dict containing sensitivity level and label information
+    """
+    sensitivity_info = {
+        "level": 1,
+        "label": "normal",
+        "is_sensitive": False
+    }
+    
+    if not extended_properties:
+        return sensitivity_info
+    
+    # print(f"DEBUG: Extended properties found: {len(extended_properties)}")
+    
+    # Check for MSIP labels property
+    for prop in extended_properties:
+        prop_id = prop.get("id", "")
+        prop_value = prop.get("value", "")
+        
+        # print(f"DEBUG: Property ID: {prop_id}, Value: {prop_value}")
+        
+        # Check for MSIP labels property
+        if "msip_labels" in prop_id.lower():
+            if prop_value:
+                
+                # Parse the structured MSIP label data
+                # Format: MSIP_Label_<guid>_Name=Level 4 Critical;MSIP_Label_<guid>_...
+                
+                # Extract the Name field from the MSIP label
+                name_match = None
+                if "_Name=" in prop_value:
+                    # Find the Name field
+                    parts = prop_value.split(';')
+                    for part in parts:
+                        if '_Name=' in part:
+                            name_match = part.split('_Name=')[1]
+                            break
+                
+                if name_match:
+                    label_lower = name_match.lower()
+                    
+                    # Level 4 (Critical/Confidential) - check for level 4 or critical keywords
+                    if any(keyword in label_lower for keyword in [
+                        "level 4", "critical", "confidential", "restricted", "secret", 
+                        "highly confidential", "classified", "sensitive", "proprietary"
+                    ]):
+                        sensitivity_info.update({
+                            "level": 4,
+                            "label": "confidential",
+                            "is_sensitive": True
+                        })
+                        print(f"DEBUG: Detected level 4 sensitivity from MSIP label name")
+                    
+                    # Level 3 (Private/Internal) - check for level 3 or internal keywords
+                    elif any(keyword in label_lower for keyword in [
+                        "level 3", "internal", "private", "company", "organization"
+                    ]):
+                        sensitivity_info.update({
+                            "level": 3,
+                            "label": "private",
+                            "is_sensitive": False
+                        })
+                        print(f"DEBUG: Detected level 3 sensitivity from MSIP label name")
+                    
+                    # Level 2 (Personal) - check for level 2 or personal keywords
+                    elif any(keyword in label_lower for keyword in [
+                        "level 2", "personal"
+                    ]):
+                        sensitivity_info.update({
+                            "level": 2,
+                            "label": "personal",
+                            "is_sensitive": False
+                        })
+                        print(f"DEBUG: Detected level 2 sensitivity from MSIP label name")
+                    
+                    # Level 1 (Public/Normal) - check for level 1 or public keywords
+                    elif any(keyword in label_lower for keyword in [
+                        "level 1", "public", "non-sensitive", "general", "unrestricted"
+                    ]):
+                        sensitivity_info.update({
+                            "level": 1,
+                            "label": "normal",
+                            "is_sensitive": False
+                        })
+                        print(f"DEBUG: Detected level 1 (public) sensitivity from MSIP label name")
+                    
+                    else:
+                        print(f"DEBUG: MSIP label name found but no sensitivity keywords matched: {name_match}")
+                    
+                    # Store both the extracted name and the full metadata
+                    sensitivity_info["displayName"] = name_match
+                    sensitivity_info["fullMetadata"] = prop_value
+                    
+                else:
+                    # print(f"DEBUG: Could not extract Name field from MSIP label metadata")
+                    # Fallback to searching the entire metadata string for patterns
+                    metadata_lower = prop_value.lower()
+                    if any(keyword in metadata_lower for keyword in ["level 4", "critical", "confidential"]):
+                        sensitivity_info.update({
+                            "level": 4,
+                            "label": "confidential", 
+                            "is_sensitive": True
+                        })
+                        print(f"DEBUG: Detected level 4 sensitivity from full metadata fallback")
+                    elif any(keyword in metadata_lower for keyword in ["level 3", "internal", "private"]):
+                        sensitivity_info.update({
+                            "level": 3,
+                            "label": "private",
+                            "is_sensitive": False
+                        })
+                        print(f"DEBUG: Detected level 3 sensitivity from full metadata fallback")
+                    elif any(keyword in metadata_lower for keyword in ["level 2", "personal"]):
+                        sensitivity_info.update({
+                            "level": 2,
+                            "label": "personal",
+                            "is_sensitive": False
+                        })
+                        print(f"DEBUG: Detected level 2 sensitivity from full metadata fallback")
+                    else:
+                        # If we have MSIP metadata but can't parse it, check if this is a known sensitive GUID
+                        # The GUID 123ebcca-f57c-4bc1-a7cd-943e207777a8 appears to be your Level 4 label
+                        if "123ebcca-f57c-4bc1-a7cd-943e207777a8" in prop_value:
+                            sensitivity_info.update({
+                                "level": 4,
+                                "label": "confidential",
+                                "is_sensitive": True
+                            })
+                            print(f"DEBUG: Detected level 4 sensitivity from known GUID pattern")
+                        else:
+                            print(f"DEBUG: MSIP metadata found but could not determine sensitivity level")
+                    
+                    # Store the metadata we have
+                    sensitivity_info["fullMetadata"] = prop_value
+                
+                break
+    
+    # print(f"DEBUG: Final sensitivity info: {sensitivity_info}")
+    return sensitivity_info
+
+
+def format_message(message: Dict, detailed: bool = False, include_body: bool = True) -> Dict:
     """Format message data consistently"""
+    
+    # Parse Microsoft Information Protection label from extended properties
+    extended_properties = message.get("singleValueExtendedProperties", [])
+    sensitivity_info = parse_msip_label(extended_properties)
+    
+    # Fallback: Check categories for sensitivity indicators if no MSIP label found
+    if sensitivity_info["level"] == 1:
+        categories = message.get("categories", [])
+        if categories:
+            category_text = " ".join(categories).lower()
+            if "confidential" in category_text or "restricted" in category_text:
+                sensitivity_info.update({
+                    "level": 4,
+                    "label": "confidential",
+                    "is_sensitive": True
+                })
+            elif "private" in category_text:
+                sensitivity_info.update({
+                    "level": 3,
+                    "label": "private",
+                    "is_sensitive": False
+                })
+            elif "personal" in category_text:
+                sensitivity_info.update({
+                    "level": 2,
+                    "label": "personal",
+                    "is_sensitive": False
+                })
+    
+    is_level_4_sensitive = sensitivity_info["is_sensitive"]
+    
     formatted = {
         "id": message["id"],
         "subject": message.get("subject", ""),
@@ -300,29 +490,48 @@ def format_message(message: Dict, detailed: bool = False) -> Dict:
         "importance": message.get("importance", "normal"),
         "isDraft": message.get("isDraft", False),
         "isRead": message.get("isRead", False),
+        "sensitivity": sensitivity_info["level"],
+        "sensitivityLabel": sensitivity_info["label"],
     }
 
+    # Add attention note for level 4 sensitive emails
+    if is_level_4_sensitive:
+        formatted["attentionNote"] = "This email contains sensitive data and cannot be viewed."
+
     if detailed:
-        formatted.update(
-            {
-                "body": message.get("body", {}).get("content", ""),
-                "bodyType": message.get("body", {}).get("contentType", "text"),
-                "toRecipients": [
-                    r.get("emailAddress", {}).get("address", "")
-                    for r in message.get("toRecipients", [])
-                ],
-                "ccRecipients": [
-                    r.get("emailAddress", {}).get("address", "")
-                    for r in message.get("ccRecipients", [])
-                ],
-                "bccRecipients": [
-                    r.get("emailAddress", {}).get("address", "")
-                    for r in message.get("bccRecipients", [])
-                ],
-                "categories": message.get("categories", []),
-                "webLink": message.get("webLink", ""),
-            }
-        )
+        detailed_fields = {
+            "toRecipients": [
+                r.get("emailAddress", {}).get("address", "")
+                for r in message.get("toRecipients", [])
+            ],
+            "ccRecipients": [
+                r.get("emailAddress", {}).get("address", "")
+                for r in message.get("ccRecipients", [])
+            ],
+            "bccRecipients": [
+                r.get("emailAddress", {}).get("address", "")
+                for r in message.get("bccRecipients", [])
+            ],
+            "categories": message.get("categories", []),
+            "webLink": message.get("webLink", ""),
+        }
+        
+        # Only include body content if requested and available
+        if include_body and "body" in message:
+            # For level 4 sensitive emails, redact the body content
+            if is_level_4_sensitive:
+                detailed_fields["body"] = "Non-viewable sensitive content"
+                detailed_fields["bodyType"] = "text"
+            else:
+                detailed_fields["body"] = message.get("body", {}).get("content", "")
+                detailed_fields["bodyType"] = message.get("body", {}).get("contentType", "text")
+        elif include_body:
+            # Body was requested but not available in response
+            detailed_fields["body"] = ""
+            detailed_fields["bodyType"] = "text"
+        # If include_body is False, don't add body fields at all
+        
+        formatted.update(detailed_fields)
 
     return formatted
 
@@ -586,7 +795,7 @@ def move_message(
         response = session.post(url, json=payload)
         if not response.ok:
             handle_graph_error(response)
-        return format_message(response.json(), detailed=True)
+        return format_message(response.json(), detailed=True, include_body=False)
     except requests.RequestException as e:
         raise OutlookError(f"Network error while moving message: {str(e)}")
 
@@ -744,13 +953,19 @@ def search_messages(
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/messages"
-        params = {"$top": top, "$skip": skip, "$search": f'"{search_query}"'}
+        params = {
+            "$top": top, 
+            "$skip": skip, 
+            "$search": f'"{search_query}"',
+            "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
+            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+        }
         # The Graph API requires the ConsistencyLevel header set to eventual when using $search
         session.headers.update({"ConsistencyLevel": "eventual"})
         response = session.get(url, params=params)
         if not response.ok:
             handle_graph_error(response)
         messages = response.json().get("value", [])
-        return [format_message(msg) for msg in messages]
+        return [format_message(msg, detailed=False, include_body=False) for msg in messages]
     except requests.RequestException as e:
         raise OutlookError(f"Network error while searching messages: {str(e)}")
