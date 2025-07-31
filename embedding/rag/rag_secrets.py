@@ -1,7 +1,7 @@
 import json
 import os
-import boto3
 from pycommon.api.secrets import store_secret_parameter, get_secret_parameter, delete_secret_parameter
+from pycommon.encoders import SmartDecimalEncoder
 
 
 def get_parameter_name(ds_key):
@@ -27,7 +27,7 @@ def store_ds_secrets_for_rag(ds_key, user_details):
         parameter_name = get_parameter_name(ds_key)
         
         # Convert user_details to JSON string for storage
-        secrets_json = json.dumps(user_details)
+        secrets_json = json.dumps(user_details, cls=SmartDecimalEncoder)
         
         print(f"Storing RAG secrets for document: {ds_key} as parameter: {parameter_name}")
         
