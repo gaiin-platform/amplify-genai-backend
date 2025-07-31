@@ -16,6 +16,7 @@ from .compressed_conversation_schema import compressed_conversation_schema
 from .register_conversation_schema import register_conversation_schema
 from .conversation_ids_schema import conversation_ids_schema
 from .save_settings_schema import save_settings_schema
+from .tools_op_schema import tools_op_schema
 
 rules = {
     "validators": {
@@ -56,6 +57,7 @@ rules = {
         "/state/settings/save": {"save": save_settings_schema},
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
+        "/state/register_ops": {"register_ops": tools_op_schema}, 
     },
     "api_validators": {
         "/state/share": {"read": {}},
@@ -71,9 +73,11 @@ rules = {
         "/state/conversation/register": {
             "conversation_upload": register_conversation_schema
         },
+        "/state/accounts/get": {"get": {}},
         "/state/conversation/get/metadata": {"read": {}},
         "/state/conversation/get/since/{timestamp}": {"read": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/files/delete": {"delete": file_delete_schema},
+        "/state/register_ops": {"register_ops": tools_op_schema}, 
     },
 }

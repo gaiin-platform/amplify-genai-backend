@@ -72,7 +72,7 @@ provider:
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    
+    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
 
   iam:
     role:
@@ -127,7 +127,17 @@ functions:
           path: /default_models
           method: get
           cors: true
-
+  
+  tools_op:
+    handler: tools_ops.api_tools_handler
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: models/register_ops
+          method: post
+          cors: true
   
 resources:
   Resources:
@@ -163,6 +173,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
     # model rates needed for usage cost calculations
     ModelRateTable:
       Type: 'AWS::DynamoDB::Table'
