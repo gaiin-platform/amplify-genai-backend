@@ -95,4 +95,5 @@ permissions_by_state_type = {
     "/state/settings/save": {"save": can_save},
     "/state/settings/get": {"get": can_read},
     "/files/reprocess/rag": {"upload": can_upload},
+    "/state/register_ops": {"register_ops": can_save}, 
 }

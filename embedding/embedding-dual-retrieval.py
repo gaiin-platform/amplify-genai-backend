@@ -72,11 +72,11 @@ def get_top_similar_qas(query_embedding, src_ids, limit=5):
 
             # Prepare SQL query and parameters based on whether src_ids are provided
             query_params = [embedding_literal, limit]  # query_embedding is already a list of floats
-            src_clause = ""
-
+            src_ids_array = "{}"
             if src_ids:
                 # Convert src_ids list to a format suitable for the ANY clause in PostgreSQL
                 src_ids_array = "{" + ",".join(map(str, src_ids)) + "}"
+
 
             query_params.insert(
                 1, src_ids_array
@@ -123,7 +123,7 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
             assert isinstance(
                 query_embedding, list
             ), "Expected query_embedding to be a list of floats"
-
+            src_ids_array = "{}"
             if src_ids:
                 # Convert src_ids list to a format suitable for the ANY clause in PostgreSQL
                 src_ids_array = "{" + ",".join(map(str, src_ids)) + "}"
@@ -570,6 +570,10 @@ def check_embedding_completion(src_ids, account_data):
 
 
 def manually_queue_embedding(src_id, account_data):
+    if not "global/" in src_id:
+        print(f"Skipping non-global document {src_id}")
+        return {"success": False}
+
     try:
         if not store_ds_secrets_for_rag(src_id, account_data)['success']:
             return {

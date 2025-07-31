@@ -35,4 +35,5 @@ permissions_by_state_type = {
     "/supported_models/update": {"update": can_update},
     "/supported_models/get": {"read": can_read},
     "/default_models": {"read": can_read},
+    "/models/register_ops": {"register_ops": can_update}, 
 }

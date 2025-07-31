@@ -77,6 +77,10 @@ def can_rescan_websites(user, data):
     return True
 
 
+def can_process_drive_sources(user, data):
+    return True
+
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -115,4 +119,6 @@ permissions_by_state_type = {
     "/assistant/validate/assistant_id": {"lookup": can_lookup_assistant},
     "/assistant/scrape_website": {"scrape_website": can_scrape_website},
     "/assistant/rescan_websites": {"rescan_websites": can_rescan_websites},
+    "/assistant/process_drive_sources": {"process_drive_sources": can_process_drive_sources},
+     "/assistant/register_ops": {"register_ops": can_list_assistant},
 }

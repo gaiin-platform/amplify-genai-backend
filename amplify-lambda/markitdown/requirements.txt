@@ -21,3 +21,6 @@ nltk==3.8.1
 pymupdf==1.25.1
     # via -r requirements.in
 
+# Required for pycommon modules and rag/core
+pydantic>=2.0.0
+

@@ -102,6 +102,7 @@ provider:
     #AWS_REGION optional for /chat/service.py 
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     DEP_REGION: ${self:custom.stageVars.DEP_REGION}
+    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
     STAGE: ${sls:stage}
 
 
@@ -112,6 +113,17 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
 
 functions:
+
+  tools_op:
+    handler: tools_ops.api_tools_handler
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: state/register_ops
+          method: post
+          cors: true
 
   chat_endpoint:
     handler: chat/service.chat_endpoint
@@ -533,6 +545,7 @@ resources:
                 - s3:DeleteObject
                 - s3:ListBucket
                 - s3:GetObjectAttributes
+                - s3:HeadObject
                 - s3:CreateBucket
                 - s3:GetBucketNotification
                 - s3:PutBucketNotification
@@ -598,6 +611,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
 
     StateBucket:
       Type: AWS::S3::Bucket

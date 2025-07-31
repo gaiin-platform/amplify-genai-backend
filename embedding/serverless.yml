@@ -104,6 +104,7 @@ provider:
     REGION: ${self:provider.region}
     STAGE: ${sls:stage}
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
     
     
@@ -132,8 +133,8 @@ functions:
       RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
-  
-         
+      OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+
 
   process_chunk_for_embedding:
       runtime: python3.11
@@ -240,7 +241,16 @@ functions:
           method: post
           cors: true
 
-        
+  tools_op:
+    handler: tools_ops.api_tools_handler
+    timeout: 30
+    layers:
+     - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: embedding/register_ops
+          method: post
+          cors: true
 
 resources:
   Conditions:
@@ -304,6 +314,9 @@ resources:
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
+
             - Effect: Allow
               Action:
                 - sqs:SendMessage

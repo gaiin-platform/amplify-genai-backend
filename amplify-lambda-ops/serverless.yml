@@ -52,8 +52,6 @@ provider:
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
-
-
   iam:
     role:
       managedPolicies:
@@ -69,6 +67,14 @@ functions:
           path: ops/get
           method: post
           cors: true
+        
+  get_op:
+    handler: service/core.get_op_by_name
+    events:
+      - http:
+          path: ops/get_op
+          method: post
+          cors: true
   
   get_all_ops:
     handler: service/core.get_all_ops
@@ -78,7 +84,7 @@ functions:
           method: get
           cors: true
 
-  register_ops:
+  write_ops:
     handler: service/core.write_ops
     events:
       - http:
@@ -91,6 +97,15 @@ functions:
     events:
       - http:
           path: ops/delete
+          method: post
+          cors: true
+
+  tools_op: 
+    handler: tools_ops.api_tools_handler
+    timeout: 30
+    events:
+      - http:
+          path: ops/register_ops
           method: post
           cors: true
 

@@ -137,7 +137,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
 
     logger.debug("Getting data sources by use", dataSources);
 
-    if((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
+    if ((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
             dataSources: []
@@ -342,10 +342,7 @@ export const getDataSourcesByTag = async (params, body, tag) => {
  * @returns {Promise<unknown extends (object & {then(onfulfilled: infer F): any}) ? (F extends ((value: infer V, ...args: any) => any) ? Awaited<V> : never) : unknown[]|*[]>}
  */
 export const resolveDataSourceAliases = async (params, body, dataSources) => {
-
-    if(!dataSources){
-        return [];
-    }
+    if (!dataSources) return [];
 
     const results = dataSources.map(async (ds) => {
         if (ds.id && ds.id.startsWith("tag://")) {
@@ -610,6 +607,7 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
  */
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
     const toResolve = dataSources ? dataSources.filter(ds => !isImage(ds)) : [];
+    if (toResolve.length === 0) return [];
     dataSources = await resolveDataSourceAliases(params, body, toResolve);
 
     const translated = await Promise.all(dataSources.map(async (ds) => {
