@@ -8,16 +8,34 @@ const opFormats = {
 Operations:
 {{#each __assistantOps}}
 {{{id}}}: {{{description}}}
-{{#each params}}\n  {{{name}}}:{{{description}}}{{/each}}
+{{#if parameters}}
+{{#if parameters.properties}}
+{{#each parameters.properties}}
+  {{{@key}}}: {{{description}}}{{#if type}} ({{type}}){{/if}}
+{{/each}}
+{{else}}
+{{#each parameters}}
+  {{{name}}}: {{{description}}}{{#if type}} ({{type}}){{/if}}
+{{/each}}
+{{/if}}
+{{/if}}
 {{/each}}
 `,
     "urlFormat": `
 Operations:
 {{#each __assistantOps}}
 {{{url}}}: {{{description}}}
-{{#each params}}
-  {{{name}}}: {{{description}}}
+{{#if parameters}}
+{{#if parameters.properties}}
+{{#each parameters.properties}}
+  {{{@key}}}: {{{description}}}{{#if type}} ({{type}}){{/if}}
 {{/each}}
+{{else}}
+{{#each parameters}}
+  {{{name}}}: {{{description}}}{{#if type}} ({{type}}){{/if}}
+{{/each}}
+{{/if}}
+{{/if}}
 {{/each}}
 `,
     "integrationsFormat": `
