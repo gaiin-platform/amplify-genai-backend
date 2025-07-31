@@ -90,6 +90,17 @@ functions:
           path: integrations/user/files
           method: post
 
+  uploadIntegrationFiles:
+    handler: integrations/drive_files.drive_files_to_data_sources
+    timeout: 300
+    events:
+      - http:
+          path: integrations/user/files/upload
+          method: post
+    environment:
+      OAUTH_ENCRYPTION_PARAMETER: /${self:service}/${sls:stage}/oauth/integrations/encryption #must start with /
+
+
   downloadIntegrationFile:
     handler: integrations/drive_files.download_integration_file
     timeout: 30
@@ -128,6 +139,7 @@ functions:
           path: assistant-api/execute-custom-auto
           method: post
           cors: true
+
   get_job_result:
     handler: service/core.get_job_result
     timeout: 30

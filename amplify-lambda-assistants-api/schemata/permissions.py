@@ -41,10 +41,14 @@ permissions_by_state_type = {
     "/integrations/user/files/download": {
         "download_file": lambda for_user, with_data: True
     },
+    "/integrations/user/files/upload": {
+        "upload_files": lambda for_user, with_data: True
+    },
     "/integrations/oauth/register_secret": {
         "register_secret": lambda for_user, with_data: True
     },
     "/integrations/oauth/refresh_token": {
         "refresh_token": lambda for_user, with_data: True
     },
+
 }

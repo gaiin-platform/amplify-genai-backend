@@ -5,6 +5,7 @@ from .job_set_result_schema import job_set_result_schema
 from .oauth_user_get_schema import oauth_user_get_schema
 from .integration_user_files_schema import integration_user_files_schema
 from .integration_user_files_download_schema import integration_user_files_download_schema
+from .integration_drive_files_ds_schema import integration_drive_files_ds_schema
 from .oauth_register_secret_schema import oauth_register_secret_schema
 from .oauth_user_refresh_token_schema import oauth_user_refresh_token_schema
 
@@ -22,6 +23,7 @@ rules = {
         "/integrations/oauth/user/get": oauth_user_get_schema,
         "/integrations/user/files": integration_user_files_schema,
         "/integrations/user/files/download": integration_user_files_download_schema,
+        "/integrations/user/files/upload": integration_drive_files_ds_schema,
         "/integrations/oauth/register_secret": oauth_register_secret_schema,
         "/integrations/oauth/refresh_token": oauth_user_refresh_token_schema,
     },
@@ -34,7 +36,9 @@ rules = {
         "/assistant-api/set-job-result": job_set_result_schema,
         "/integrations/oauth/user/list": {"list_integrations": {}},
         "/integrations/oauth/user/get": oauth_user_get_schema,
+        "/integrations/user/files": integration_user_files_schema,
         "/integrations/user/files/download": integration_user_files_download_schema,
+        "/integrations/user/files/upload": integration_drive_files_ds_schema,
         "/integrations/oauth/refresh_token": oauth_user_refresh_token_schema,
     }
 }
