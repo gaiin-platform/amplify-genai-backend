@@ -27,6 +27,8 @@ def convert_dictionaries(input_list):
             file_data.append(item["size"])
         if item.get("webContentLink"):
             file_data.append(item["webContentLink"])
+        if item.get("parents"):
+            file_data.append(item["parents"])
         result.append(file_data)
     return result
 
@@ -319,7 +321,7 @@ def list_files(current_user, folder_id=None, access_token=None):
             service.files()
             .list(
                 q=query,
-                fields="nextPageToken, files(id, name, mimeType, size, webContentLink)",
+                fields="nextPageToken, files(id, name, mimeType, size, webContentLink, parents)",
                 pageToken=page_token,
             )
             .execute()
