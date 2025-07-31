@@ -8,7 +8,7 @@ integrations_list = [
     {
         "name": "OneDrive",
         "id": "microsoft_drive",
-        "icon": "BrandGoogleDrive",
+        "icon": "BrandMicrosoftOneDrive",
         "description": "This integration allows assistants to manage files and folders in your OneDrive, enabling document storage and sharing through Microsoft Graph API.",
     },
     {
