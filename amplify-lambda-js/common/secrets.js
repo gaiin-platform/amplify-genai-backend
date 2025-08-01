@@ -67,6 +67,22 @@ const secret_data = await getSecret(secret_name);
 const parsed_secret = JSON.parse(secret_data);
 
 // The get_llm_config function converted to JavaScript
-export const getLLMConfig = async (model_name) => {
+export const getLLMConfig = async (model_name, model_provider) => {
+    if (model_provider === "OpenAI") {
+        const url = "https://api.openai.com/v1/chat/completions";
+        const key = await getOpenAIApiKey();
+        return {url, key};
+    }
     return getEndpointData(parsed_secret, model_name);
 };
+
+const getOpenAIApiKey = async () => {
+    const secret = await getSecret(process.env.SECRETS_ARN_NAME);
+    try {
+        const apiKey = JSON.parse(secret).OPENAI_API_KEY;
+        return apiKey;
+    } catch (error) {
+        logger.error("Error getting OpenAI API key:", error);
+        return null;
+    }
+}
