@@ -17,7 +17,7 @@ httpcore==1.0.7
     #   httpx
 httpx==0.28.1
     # via -r requirements.in
-pillow==11.1.0
+pillow==11.3.0
     # via -r requirements.in
 pyyaml==6.0.2
     # via -r requirements.in
