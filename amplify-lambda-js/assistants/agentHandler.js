@@ -98,6 +98,19 @@ export const handleAgentInteraction = async (llm, params, body, assistant = null
     });
     llm.forceFlush();
 
+    if (typeof result === 'string') {
+        try {
+            result = JSON.parse(result);
+        } catch (error) {
+            console.error('Failed to parse result as JSON:', error);
+            result = {
+                error: "Failed to parse result as JSON",
+                success: false,
+                rawResult: result
+            }
+        }
+    }
+
     if (result.success) {
         let responseFromAssistant = result.data.result.findLast(msg => msg.role === 'assistant').content;
 
@@ -122,6 +135,25 @@ export const handleAgentInteraction = async (llm, params, body, assistant = null
         };
 
         await llm.prompt(summaryRequest, []);
+    }
+    else {
+        let responseFromAssistant = JSON.stringify(result);
+
+        const summaryRequest = {
+            ...body,
+            messages: [
+                {
+                    role: "user",
+                    content:
+                        `The user's prompt was: ${body.messages.slice(-1)[0].content}` +
+                        `\n\nA log of the assistant's reasoning / work:\n---------------------\n${responseFromAssistant}` +
+                        `\n\n---------------------` +
+                        `\n\nRespond to the user.`
+                }]
+        };
+
+        await llm.prompt(summaryRequest, []);
+
     }
 
     return result;
