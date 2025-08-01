@@ -666,9 +666,7 @@ compressed_conversation_schema = {
                             "type": "string"
                         },
                         "date": {
-                            "type": "string",
-                            "format": "date",
-                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                            "type": "string"
                         },
                         "name": {
                             "type": "string"
@@ -792,6 +790,12 @@ validators = {
     "/state/conversation/get/empty": {
         "read" : {}
     },
+    "/state/conversation/get/metadata": {
+        "read" : {}
+    },
+    "/state/conversation/get/since/{timestamp}": {
+        "read" : {}
+    },
     "/state/conversation/delete_multiple": {   
         "delete_multiple_conversations": conversation_ids_schema
     },
@@ -846,6 +850,12 @@ api_validators = {
     },
     "/state/conversation/register" : {
         "conversation_upload": register_conversation_schema
+    },
+    "/state/conversation/get/metadata": {
+        "read": {}
+    },
+    "/state/conversation/get/since/{timestamp}": {
+        "read": {}
     },
     "/files/reprocess/rag": {
         "upload": key_request_schema

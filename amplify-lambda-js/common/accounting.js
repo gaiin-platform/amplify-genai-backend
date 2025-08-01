@@ -96,7 +96,7 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const accountInfo = `${coaString}#${apiKey}`;
 
         // First update: Ensure dailyCost and hourlyCost are initialized
-        const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList)`;
+        const initializeExpression = `SET dailyCost = if_not_exists(dailyCost, :zero), hourlyCost = if_not_exists(hourlyCost, :emptyList), record_type = if_not_exists(record_type, :recordType)`;
 
         const initializeCommand = new UpdateItemCommand({
             TableName: costDynamoTableName,
@@ -107,7 +107,8 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             UpdateExpression: initializeExpression,
             ExpressionAttributeValues: {
                 ":zero": { N: "0" },
-                ":emptyList": { L: Array(24).fill({ N: "0" }) }
+                ":emptyList": { L: Array(24).fill({ N: "0" }) },
+                ":recordType": { S: "cost" }
             }
         });
 
