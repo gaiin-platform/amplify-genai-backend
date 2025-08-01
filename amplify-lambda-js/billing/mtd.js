@@ -497,3 +497,131 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
         };
     }
 };
+
+export const listUserMtdCostsHandler = async (event, context, callback) => {
+    const startTime = Date.now();
+    logger.info("=== LIST USER MTD COSTS REQUEST STARTED ===");
+    
+    try {
+        logger.info("Extracting params from event");
+        const params = await extractParams(event);
+
+        if (params.statusCode) {
+            logger.error("Failed to extract params", { statusCode: params.statusCode });
+            return params; // This is an error response from extractParams
+        }
+
+        const { body, user } = params;
+        logger.info("Request initiated by user", { user, requestBody: body });
+
+        // No admin check needed - users can access their own data
+        logger.info("Starting cost data retrieval for user", { user });
+        
+        // Query the cost table directly for this specific user
+        const queryParams = {
+            TableName: costDynamoTableName,
+            KeyConditionExpression: 'id = :email',
+            ExpressionAttributeValues: {
+                ':email': user,
+            },
+        };
+
+        logger.info("Querying cost table for user", { 
+            tableName: costDynamoTableName, 
+            user: user
+        });
+
+        const queryCommand = new QueryCommand(queryParams);
+        const result = await dynamoDB.send(queryCommand);
+        
+        logger.info("User cost query completed", { 
+            itemsFound: result.Items?.length || 0
+        });
+
+        if (!result.Items || result.Items.length === 0) {
+            logger.info("No cost data found for user", { user });
+            return {
+                statusCode: 404,
+                body: JSON.stringify({ 
+                    error: 'No cost data found for user',
+                    email: user,
+                    dailyCost: 0,
+                    monthlyCost: 0,
+                    totalCost: 0,
+                    accounts: []
+                }),
+            };
+        }
+
+        // Aggregate costs for this user
+        logger.info("Starting cost aggregation for user");
+        const aggregationStartTime = Date.now();
+        
+        let totalDailyCost = 0;
+        let totalMonthlyCost = 0;
+        const accounts = [];
+        
+        result.Items.forEach(item => {
+            const accountInfo = item.accountInfo || 'Unknown Account';
+            const dailyCost = parseFloat(item.dailyCost) || 0;
+            const monthlyCost = parseFloat(item.monthlyCost) || 0;
+            
+            totalDailyCost += dailyCost;
+            totalMonthlyCost += monthlyCost;
+            
+            // Add account information
+            accounts.push({
+                accountInfo: accountInfo,
+                dailyCost: dailyCost,
+                monthlyCost: monthlyCost,
+                totalCost: dailyCost + monthlyCost
+            });
+        });
+
+        const totalCost = totalDailyCost + totalMonthlyCost;
+        
+        const aggregationDuration = Date.now() - aggregationStartTime;
+        logger.info("Cost aggregation completed", { 
+            recordsProcessed: result.Items.length,
+            totalCost: totalCost,
+            aggregationDuration
+        });
+
+        const userCostData = {
+            email: user,
+            dailyCost: totalDailyCost,
+            monthlyCost: totalMonthlyCost,
+            totalCost: totalCost,
+            accounts: accounts
+        };
+
+        const totalDuration = Date.now() - startTime;
+        
+        const response = {
+            statusCode: 200,
+            body: JSON.stringify(userCostData),
+        };
+        
+        logger.info("=== LIST USER MTD COSTS REQUEST COMPLETED ===", {
+            totalDuration,
+            accountsCount: accounts.length,
+            totalCost: totalCost,
+            requestedBy: user
+        });
+        
+        return response;
+        
+    } catch (error) {
+        const totalDuration = Date.now() - startTime;
+        logger.error("=== LIST USER MTD COSTS REQUEST FAILED ===", { 
+            error: error.message, 
+            stack: error.stack,
+            totalDuration,
+            requestedBy: user || 'unknown'
+        });
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: 'Internal server error' }),
+        };
+    }
+};

@@ -4,7 +4,7 @@
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {getLogger} from "./common/logging.js";
 import {LLM} from "./common/llm.js";
-import {getChatFn, getCheapestModel, getAdvancedModel} from "./common/params.js"
+import {getChatFn, ModelTypes, getModelByType} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {resolveDataSources} from "./datasource/datasources.js";
@@ -124,9 +124,11 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             //default to user model in case there is no defined cheapest or advanced models 
             params.cheapestModel = user_model_data.cheapest ?? model;
             params.advancedModel = user_model_data.advanced ?? model;
+            params.documentCachingModel = user_model_data.documentCaching ?? model;
 
-            options.cheapestModel = getCheapestModel(params);
-            options.advancedModel = getAdvancedModel(params);
+            options.cheapestModel = getModelByType(params, ModelTypes.CHEAPEST);
+            options.advancedModel = getModelByType(params, ModelTypes.ADVANCED);
+            options.documentCachingModel = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
 
             // ensure the model id in the body and options is consitent with the changes 
             let body = {...params.body, options: options, model: model.id}; 
@@ -174,6 +176,7 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                     user: params.user,
                     accessToken: params.accessToken,
                     accountId: options.accountId,
+                    apiKeyId: params.apiKeyId
                 },
                 model,
                 requestId,
@@ -206,7 +209,6 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                 responseStream);
             chatSegment.close();
             
-            await deleteRequestState(params.user, requestId);
 
             if(doTrace) {
                 trace(requestId, ["response"], {stream: responseStream.trace})

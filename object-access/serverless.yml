@@ -71,10 +71,10 @@ provider:
     AMPLIFY_GROUPS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-groups
     AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-amplify-group-logs
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}  
+    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-
 
   iam:
     role:
@@ -187,7 +187,7 @@ functions:
           method: post
           cors: true
 
-  update_members:
+  update_group_members:
     handler: groups.update_members
     layers:
       - Ref: PythonRequirementsLambdaLayer
@@ -350,6 +350,8 @@ resources:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-amplify-group-logs"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files/index/*"
             - Effect: Allow
               Action:
                 - cognito-idp:ListUsers

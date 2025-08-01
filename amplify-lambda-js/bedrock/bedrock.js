@@ -16,8 +16,8 @@ export const chatBedrock = async (chatBody, writable) => {
     delete body.options; 
     const currentModel = options.model;
 
-    const systemPrompts = [{"text": options.prompt.trim() || BLANK_MSG}];
-    if (currentModel.systemPrompt.trim()) {
+    const systemPrompts = [{"text": options.prompt?.trim() || BLANK_MSG}];
+    if (currentModel.systemPrompt?.trim()) {
         systemPrompts.push({ "text": currentModel.systemPrompt });
     }
 

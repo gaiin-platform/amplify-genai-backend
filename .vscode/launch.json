@@ -14,6 +14,15 @@
             ],
             "program": "${workspaceFolder}/amplify-lambda-js/local/localServer.js"
             // "runtimeVersion": "20.11.1"
+        },
+        { // For local testing of amplify-lambda/rag/core.py file text extraction
+            "name": "Python: RAG Core",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/amplify-lambda/rag/core.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/amplify-lambda"
         }
     ]
 }

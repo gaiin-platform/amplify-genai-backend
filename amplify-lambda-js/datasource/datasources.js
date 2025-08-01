@@ -8,6 +8,8 @@ import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
+import { getModelByType, ModelTypes, getChatFn, setModel} from "../common/params.js";
+import { LLM } from "../common/llm.js";
 
 const logger = getLogger("datasources");
 
@@ -95,9 +97,10 @@ export const getImageBase64Content = async (dataSource) => {
             });
         
         const data = await streamToString(response.Body);
+        logger.debug("Base64 encoded image retrieved")
         return data;
     } catch (error) {
-        logger.error(error, {bucket: bucket, key: key});
+        logger.error("Error retrieving base64 encoded image", error);
         return null;
     }
 
@@ -110,7 +113,7 @@ export const isDocument = ds =>
     (ds && ds.key && ds.key.startsWith("s3://"));
 
 
-    export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
+export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
 
 /**
  * This function looks at the data sources in the chat request and all of the data sources in the conversation
@@ -134,7 +137,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
 
     logger.debug("Getting data sources by use", dataSources);
 
-    if((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
+    if ((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
         return {
             ragDataSources: [],
             dataSources: []
@@ -339,10 +342,7 @@ export const getDataSourcesByTag = async (params, body, tag) => {
  * @returns {Promise<unknown extends (object & {then(onfulfilled: infer F): any}) ? (F extends ((value: infer V, ...args: any) => any) ? Awaited<V> : never) : unknown[]|*[]>}
  */
 export const resolveDataSourceAliases = async (params, body, dataSources) => {
-
-    if(!dataSources){
-        return [];
-    }
+    if (!dataSources) return [];
 
     const results = dataSources.map(async (ds) => {
         if (ds.id && ds.id.startsWith("tag://")) {
@@ -383,6 +383,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
         }
+        console.log("IMAGE: body.imageSources", body.imageSources);
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
@@ -407,6 +408,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
+        console.log("IMAGE: ds_with_keys", image_ds_keys);
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
@@ -507,16 +509,41 @@ const getChunkAggregator = (maxTokens, options) => {
 export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxTokens, options) => {
     logger.debug("Chunking/Formatting data from: " + dataSource.id);
 
-    if (content && content.content && content.content.length > 0) {
-        const firstLocation = content.content[0].location ? content.content[0].location : null;
+    // Handle both content structures:
+    // 1. Normal: { name: "...", content: [...] }
+    // 2. Filtered: [...]  (direct array from getExtractedRelevantContext)
+    let contentArray;
+    let contentName;
+    
+    if (Array.isArray(content)) {
+        // Direct array case (filtered content)
+        contentArray = content;
+        contentName = dataSource.id;
+    } else if (content && content.content && Array.isArray(content.content)) {
+        // Normal case with nested structure
+        contentArray = content.content;
+        contentName = content.name;
+    } else {
+        // Fallback for other cases
+        return formatAndChunkDataSource(tokenCounter, dataSource, {
+            content: [{
+                content: content,
+                location: {},
+                dataSource
+            }]
+        }, maxTokens);
+    }
+
+    if (contentArray.length > 0) {
+        const firstLocation = contentArray[0].location ? contentArray[0].location : null;
 
         let contentFormatter;
         if (firstLocation && firstLocation.slide) {
             logger.debug("Formatting data from: " + dataSource.id + " as slides");
-            contentFormatter = c => 'File: ' + content.name + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + contentName + ' Slide: ' + c.location.slide + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.page) {
             logger.debug("Formatting data from: " + dataSource.id + " as pages");
-            contentFormatter = c => 'File: ' + content.name + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
+            contentFormatter = c => 'File: ' + contentName + ' Page: ' + c.location.page + '\n--------------\n' + c.content;
         } else if (firstLocation && firstLocation.row_number) {
             logger.debug("Formatting data from: " + dataSource.id + " as rows");
             contentFormatter = c => c.content;
@@ -532,9 +559,9 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
         let state = {chunks, currentChunk, currentTokenCount, locations};
 
         const aggregator = getChunkAggregator(maxTokens, options);
-        const formattedSourceName = "Source:" + content.name + " Type:" + dataSource.type + "\n-------------\n";
+        const formattedSourceName = "Source:" + contentName + " Type:" + dataSource.type + "\n-------------\n";
 
-        for (const part of content.content) {
+        for (const part of contentArray) {
             const formattedContent = contentFormatter(part);
             const contentTokenCount = tokenCounter(formattedContent);
             state = aggregator(dataSource, state, formattedSourceName, formattedContent, part.location || {}, contentTokenCount);
@@ -580,6 +607,7 @@ export const formatAndChunkDataSource = (tokenCounter, dataSource, content, maxT
  */
 export const translateUserDataSourcesToHashDataSources = async (params, body, dataSources) => {
     const toResolve = dataSources ? dataSources.filter(ds => !isImage(ds)) : [];
+    if (toResolve.length === 0) return [];
     dataSources = await resolveDataSourceAliases(params, body, toResolve);
 
     const translated = await Promise.all(dataSources.map(async (ds) => {
@@ -699,15 +727,331 @@ export const getContent = async (chatRequest, params, dataSource) => {
  * @param options
  * @returns {Promise<*[]|*>}
  */
-export const getContexts = async (resolutionEnv, dataSource, maxTokens, options) => {
+export const getContexts = async (resolutionEnv, dataSource, maxTokens, options, extractRelevantContext = false) => {
     const tokenCounter = resolutionEnv.tokenCounter;
     const sourceType = extractProtocol(dataSource.id);
 
     logger.debug("Get contexts with options", options);
-
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
 
     const result = await getContent(resolutionEnv.chatRequest, resolutionEnv.params, dataSource);
+    
+    if (extractRelevantContext) {
+        try {
+            const filteredContent = await getExtractedRelevantContext(resolutionEnv, {...result});
+            if (!filteredContent) return null;
+            const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
+            const originalTotalTokens = dataSource?.metadata?.totalTokens;
+            const filteredTotalTokens = filteredContent.totalTokens;
+            logger.debug(`Original document total tokens: ${originalTotalTokens} \nFiltered document tokens: ${filteredTotalTokens}\n${Math.round(filteredTotalTokens/originalTotalTokens*100)}% of original`);
+            formattedContext[0].content = combineNeighboringLocations(filteredContent.content);
+  
+            return formattedContext;
+        } catch (error) {
+            logger.error("Error extracting relevant context:", error);
+            logger.debug("Dumping entire document context as a fallback...");
+        }
+    }
+
     return formatAndChunkDataSource(tokenCounter, dataSource, result, maxTokens, options);
 }
+
+/**
+ * Extracts the relevant context from the document.
+ * @param resolutionEnv
+ * @param context
+ * @param dataSource
+ * @returns {Promise<*[]|*>}
+ */
+const getExtractedRelevantContext = async (resolutionEnv, context) => {
+    const params = resolutionEnv.params;
+    const chatBody = resolutionEnv.chatRequest;
+    const userMessage = chatBody.messages.slice(-1)[0].content;
+    // Use a cheaper model for document analysis with built-in caching
+    
+    const model = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
+    
+    // Create parameters for the LLM with caching enabled
+    const llmParams = setModel ({
+        ...params,
+        options: {
+            skipRag: true,
+            ragOnly: false,
+            dataSourceOptions:{},
+        }
+    }, model);
+    
+    // Initialize LLM for document analysis
+    const chatFn = async (body, writable, context) => {
+        return await getChatFn(model, body, writable, context);
+    };
+    
+    const llm = new LLM(chatFn, llmParams, null);
+
+    // Create a mapped version of the context content for easier lookups
+    const contentByIndex = {};
+    context.content.forEach((c, idx) => {
+        contentByIndex[idx] = c;
+    });
+    
+    // Create a clean representation of the document for the LLM
+    const documentLines = context.content.map((item, idx) => 
+        `[${idx}] ${item.content.replace(/\n/g, ' ')}`
+    ).join('\n');
+    
+    // Create a clear, structured prompt for the LLM
+    const updatedBody = {
+        ...chatBody,
+        messages: [{
+            role: 'system',
+            content: `You are a precise document analyzer specializing in finding only the most relevant information. 
+Your task is to identify the exact indexes of document fragments that would help answer a user's question.
+
+IMPORTANT INSTRUCTIONS:
+1. The document fragments are labeled with indexes like [0], [1], [2], etc.
+2. Only select fragments that contain information DIRECTLY relevant to answering the user's question.
+3. Output ONLY a JSON array of index numbers (as integers), nothing else.
+4. If no fragments are relevant, return an empty array: []
+5. DO NOT explain your reasoning - provide ONLY the array of indexes.
+
+Example outputs:
+- For relevant fragments: [3, 4, 7, 12]
+- For no relevant fragments: []`
+          },{
+            role: 'user',
+            content: `USER QUESTION:
+${userMessage}
+
+DOCUMENT FRAGMENTS (with indexes):
+${documentLines}
+
+Return ONLY the indexes of fragments that contain information directly relevant to answering the question.
+Expected format: [0, 1, 5] or [] if nothing is relevant.`
+          }],
+        imageSources: [],
+        model: model.id,
+        max_tokens: 300, // Lower token limit, we only need the array
+        options: {
+            ...chatBody.options,
+            model,
+            skipRag: true,
+            ragOnly: false,
+            skipDocumentCache: true,
+            prompt: `Return ONLY a list with indexes: ex. [0, 1, 5] or [] if nothing is relevant.`
+        }
+    };
+
+    // Use a simpler prompt for data
+    const extraction = await llm.promptForData(
+        updatedBody,
+        [],
+        '', // prompt already in messages
+        {
+            "relevantIndexes": "Array of integer indexes indicating relevant document fragments",
+        },
+        null,
+        (r) => {
+            // Ensure we get a valid array of numbers
+            if (!r.relevantIndexes) {
+                return null;
+            }
+            try {
+                const indexes = JSON.parse(r.relevantIndexes);
+                return indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+            } catch (e) {
+                logger.error("Error parsing relevant indexes:", e);
+                return null;
+            }
+        },
+        2 // Fewer retries for faster response
+    );
+ 
+    // Handle case where no relevant content was found
+    if (!extraction.relevantIndexes) {
+        logger.debug("Error extracting relevant content in llm call, dumping entire document context as a fallback...");
+        return context; // Return unchanged context if nothing relevant found
+    } else if  (extraction.relevantIndexes.length === 0) {
+        logger.debug("No datasource content was relevant to the query");
+        return null;
+    }
+    const indexes = JSON.parse(extraction.relevantIndexes);
+    // Filter the content to only include relevant items
+    const filteredContent = indexes.map(idx => contentByIndex[idx]).filter(Boolean);
+
+    // Create a new context with only the relevant content
+    const filteredContext = {
+        ...context,
+        content: filteredContent,
+        originalContent: context.content,
+        totalTokens: filteredContent.reduce((acc, item) => acc + item.tokens, 0)
+    };
+    
+    // Pass the filtered content through the standard formatting/chunking process
+    return filteredContext;
+
+}
+
+/**
+ * Combines content items that have consecutive/neighboring locations into single items
+ * to reduce the number of items in the list while preserving all location information.
+ * 
+ * @param {Array} contentArray - Array of content objects with content, location properties
+ * @returns {Array} - Array of combined content objects with locations array
+ */
+export const combineNeighboringLocations = (contentArray) => {
+    if (!contentArray || contentArray.length === 0) return [];
+
+    // Helper function to get a sortable key from location
+    const getLocationKey = (location) => {
+        if (!location || typeof location !== 'object') {
+            return { primary: 0, secondary: 0, type: 'single', format: 'fallback' };
+        }
+
+        // Word documents: section + paragraph (hierarchical)
+        if (location.section_number !== undefined && location.paragraph_number !== undefined) {
+            return { 
+                primary: location.section_number, 
+                secondary: location.paragraph_number,
+                tertiary: location.section_title || '',
+                type: 'hierarchical',
+                format: 'section-paragraph'
+            };
+        }
+        
+        // Excel: sheet + row (hierarchical)
+        if (location.sheet_number !== undefined && location.row_number !== undefined) {
+            return { 
+                primary: location.sheet_number, 
+                secondary: location.row_number,
+                tertiary: location.sheet_name || '',
+                type: 'hierarchical',
+                format: 'sheet-row'
+            };
+        }
+
+        // Single dimension numeric locations
+        if (location.line_number !== undefined) return { primary: location.line_number, type: 'single', format: 'line' };
+        if (location.page_number !== undefined) return { primary: location.page_number, type: 'single', format: 'page' };
+        if (location.slide_number !== undefined) return { primary: location.slide_number, type: 'single', format: 'slide' };
+        if (location.row_number !== undefined) return { primary: location.row_number, type: 'single', format: 'row' };
+        if (location.paragraph_number !== undefined) return { primary: location.paragraph_number, type: 'single', format: 'paragraph' };
+        if (location.section_number !== undefined) return { primary: location.section_number, type: 'single', format: 'section' };
+        if (location.sheet_number !== undefined) return { primary: location.sheet_number, type: 'single', format: 'sheet' };
+        
+        // String-based location keys (no consecutive grouping possible)
+        if (location.section_title !== undefined) return { primary: location.section_title, type: 'string', format: 'section_title' };
+        if (location.sheet_name !== undefined) return { primary: location.sheet_name, type: 'string', format: 'sheet_name' };
+        
+        return { primary: 0, type: 'single', format: 'fallback' };
+    };
+
+    // Helper function to check if two locations are consecutive
+    const areConsecutive = (loc1, loc2) => {
+        const key1 = getLocationKey(loc1);
+        const key2 = getLocationKey(loc2);
+        
+        // Must be same type and format to be consecutive
+        if (key1.type !== key2.type || key1.format !== key2.format) {
+            return false;
+        }
+        
+        if (key1.type === 'hierarchical') {
+            // Must be in same primary location (same section/sheet)
+            if (key1.primary !== key2.primary) return false;
+            
+            // Check if secondary keys are consecutive
+            return Math.abs(key1.secondary - key2.secondary) <= 1;
+        }
+        
+        if (key1.type === 'single') {
+            // Only check consecutive for numeric types
+            return Math.abs(key1.primary - key2.primary) <= 1;
+        }
+        
+        if (key1.type === 'string') {
+            // For strings, they are only "consecutive" if they're identical
+            return key1.primary === key2.primary;
+        }
+        
+        return false;
+    };
+
+    // Helper function to create a composite sort key
+    const createSortKey = (location) => {
+        const key = getLocationKey(location);
+        
+        if (key.type === 'hierarchical') {
+            // Create a composite key for hierarchical sorting
+            return `${key.format}_${String(key.primary).padStart(10, '0')}_${String(key.secondary).padStart(10, '0')}`;
+        }
+        
+        if (key.type === 'single') {
+            return `${key.format}_${String(key.primary).padStart(10, '0')}`;
+        }
+        
+        if (key.type === 'string') {
+            return `${key.format}_${key.primary}`;
+        }
+        
+        return `${key.format}_${String(key.primary).padStart(10, '0')}`;
+    };
+
+    // Sort content by location key with proper hierarchical ordering
+    const sortedContent = [...contentArray].sort((a, b) => {
+        const sortKeyA = createSortKey(a.location);
+        const sortKeyB = createSortKey(b.location);
+        
+        return sortKeyA.localeCompare(sortKeyB);
+    });
+
+    const combined = [];
+    let currentGroup = [sortedContent[0]];
+
+    for (let i = 1; i < sortedContent.length; i++) {
+        const current = sortedContent[i];
+        const previous = currentGroup[currentGroup.length - 1];
+
+        if (areConsecutive(previous.location, current.location)) {
+            // Add to current group
+            currentGroup.push(current);
+        } else {
+            // Start new group - first combine the current group
+            if (currentGroup.length === 1) {
+                // Single item, keep original structure but wrap location in array
+                combined.push({
+                    content: currentGroup[0].content,
+                    locations: [currentGroup[0].location]
+                });
+            } else {
+                // Multiple items, combine them
+                const combinedContent = currentGroup.map(item => item.content).join(' ');
+                const combinedLocations = currentGroup.map(item => item.location);
+                combined.push({
+                    content: combinedContent,
+                    locations: combinedLocations
+                });
+            }
+            
+            // Start new group with current item
+            currentGroup = [current];
+        }
+    }
+
+    // Handle the last group
+    if (currentGroup.length === 1) {
+        combined.push({
+            content: currentGroup[0].content,
+            locations: [currentGroup[0].location]
+        });
+    } else {
+        const combinedContent = currentGroup.map(item => item.content).join(' ');
+        const combinedLocations = currentGroup.map(item => item.location);
+        combined.push({
+            content: combinedContent,
+            locations: combinedLocations
+        });
+    }
+
+    return combined;
+};
