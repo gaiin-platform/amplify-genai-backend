@@ -67,7 +67,7 @@ export const getChatFn = (model, body, writable, context) => {
 
 
 export const isOpenAIModel = (modelId) => {
-    return ["gpt", "o1", "o3", "o4"].some(id => modelId.includes(id));
+    return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
 }
 
 export const isGeminiModel = (modelId) => {
