@@ -43,7 +43,7 @@ register_ops_schema = {
                         "items": {"type": "string"},
                     },
                 },
-                "required": ["id", "method", "url", "name", "params"],
+                "required": ["id", "method", "url", "name"],
                 "additionalProperties": True,
             },
         },
