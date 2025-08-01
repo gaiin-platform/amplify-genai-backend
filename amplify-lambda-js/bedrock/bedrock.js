@@ -52,7 +52,13 @@ export const chatBedrock = async (chatBody, writable) => {
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
                         }
-
+        const guardrailArn = process.env.BEDROCK_GUARDRAIL_ARN;
+        if (guardrailArn) {
+            input.guardrailConfig = {
+                "guardrailIdentifier": guardrailArn,
+                "guardrailVersion": 'DRAFT'
+            };
+        }
         if (currentModel.supportsSystemPrompts) {
             input.system = systemPrompts;
         } else {
