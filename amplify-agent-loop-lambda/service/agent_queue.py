@@ -1,5 +1,6 @@
 import json
 import os
+import requests
 from events.event_handler import MessageHandler
 from service.handlers import handle_event
 import boto3
@@ -11,6 +12,7 @@ from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 sqs = boto3.client("sqs")
 agent_queue = os.environ["AGENT_QUEUE_URL"]
+agent_fat_container_url = os.environ.get("AGENT_FAT_CONTAINER_URL")
 
 _handlers: List[MessageHandler] = []
 
@@ -96,13 +98,13 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 def process_and_invoke_agent(event: dict):
     """
-    Processes an event, ensures it follows the expected format, and invokes `handlers.handle_event`.
+    Processes an event, ensures it follows the expected format, and invokes the fat container.
 
     Args:
         event (dict): The event dictionary containing user session details, prompt, metadata, and files.
 
     Returns:
-        dict: The response from `handlers.handle_event`.
+        dict: The response from the fat container.
     """
     try:
         print("Processing event prompt: ", event.get("prompt"))
@@ -122,18 +124,54 @@ def process_and_invoke_agent(event: dict):
                 "Missing required fields: currentUser, sessionId, or prompt"
             )
 
-        # Invoke the event handler
-        response = handle_event(
-            current_user=current_user,
-            access_token=apiKey,
-            session_id=session_id,
-            prompt=prompt,
-            metadata=metadata,
-        )
+        # Prepare the request payload for the fat container
+        payload = {
+            "currentUser": current_user,
+            "sessionId": session_id,
+            "prompt": prompt,
+            "metadata": metadata
+        }
 
-        return response
+        # Make HTTP call to fat container
+        if agent_fat_container_url:
+            endpoint_url = f"{agent_fat_container_url.rstrip('/')}/vu-agent/handle-event"
+            print(f"Calling fat container at: {endpoint_url}")
+            
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {apiKey}"
+            }
+            
+            response = requests.post(
+                endpoint_url,
+                json={"data": payload},
+                headers=headers,
+                timeout=890  # Slightly less than Lambda timeout
+            )
+            
+            if response.status_code == 200:
+                resp = response.json()
+                return resp.get("data", {"handled": False})
 
+            print(f"Fat container returned status {response.status_code}: {response.text}")
+            return {"handled": False, "error": f"HTTP {response.status_code}: {response.text}"}
+        else:
+            # Fallback to direct function call if URL not available
+            print("Fat container URL not found, falling back to direct function call")
+            response = handle_event(
+                current_user=current_user,
+                access_token=apiKey,
+                session_id=session_id,
+                prompt=prompt,
+                metadata=metadata,
+            )
+            return response
+
+    except requests.exceptions.RequestException as e:
+        print(f"HTTP request failed: {e}")
+        return {"handled": False, "error": f"Request failed: {str(e)}"}
     except Exception as e:
+        print(f"Error processing event: {e}")
         return {"handled": False, "error": str(e)}
 
 
