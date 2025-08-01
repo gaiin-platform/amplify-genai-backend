@@ -18,6 +18,7 @@ Variables should be configured inside your `amplify-genai-backend/<environment>/
 
 ## Deployment Process
 
+
 ### Deploying All Services From the Repository Root
 
 To deploy a service directly from the root of the repository, use the command structure below, replacing `service-name` with your specific service name and `stage` with the appropriate deployment stage ('dev', 'staging', 'prod'):

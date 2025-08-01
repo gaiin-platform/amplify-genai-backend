@@ -7,15 +7,13 @@ import {
     StreamResultCollector,
     sendResultToStream,
     findResult,
-    sendToStream,
+    endStream as terminateStream,
     sendStatusEventToStream, sendOutOfOrderModeEventToStream, sendStateEventToStream
 } from "./streams.js";
-import {chat} from "../azure/openai.js";
 import {transform} from "./chat/events/openaifn.js";
 import {geminiTransform} from "./chat/events/gemini.js";
 import {parseValue} from "./incrementalJsonParser.js";
-import {setModel, setUser, isGeminiModel, getChatFn} from "./params.js";
-import {getLLMConfig} from "./secrets.js";
+import {setModel, isGeminiModel, getChatFn} from "./params.js";
 
 
 export const getDefaultLLM = async (model, stream = null, user = "default") => {
@@ -149,6 +147,19 @@ export class LLM {
             }));
     }
 
+    endStream() {
+        if (this.responseStream) {
+            terminateStream(this.responseStream);
+            try {
+                if (!this.responseStream.writableEnded) {
+                    this.responseStream.end();
+                }
+            } catch (err) {
+                console.error('Error while terminating stream:', err);
+            }
+        }   
+    }
+
     /**
      * Determines if promptForXYZ functions should pass the result through to the response stream
      * in addition to returning the result.
@@ -269,7 +280,7 @@ export class LLM {
         const systemPrompt = `
 Analyze the task or question and output the requested data.
 
-You output with the data should be in the format:
+Your output with the data should be in the format:
 \`\`\`data
 thought: <INSERT THOUGHT>
 ${dataDescs}

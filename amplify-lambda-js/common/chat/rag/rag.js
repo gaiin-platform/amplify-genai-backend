@@ -6,7 +6,7 @@ import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {LLM} from "../../llm.js";
-import {getChatFn, getCheapestModel} from "../../params.js";
+import {getChatFn, getModelByType, ModelTypes} from "../../params.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
 
@@ -20,6 +20,10 @@ const limiter = new Bottleneck({
 const ragEndpoint = process.env.API_BASE_URL + '/embedding-dual-retrieval';
 
 async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupDataSourcesKeys, count) {
+    if (ragDataSourceKeys.length === 0 && ragGroupDataSourcesKeys.length === 0) {
+        logger.debug("WARNING: No RAG data sources found, something when wrong, most likely from key to global translation");
+        return {data: {result: []}};
+    }
     const ragRequest = {
         data: {
             dataSources: ragDataSourceKeys,
@@ -36,7 +40,8 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
     const response = await axios.post(ragEndpoint, ragRequest, {
         headers: {
             'Authorization': `Bearer ${token}`
-        }
+        },
+        timeout: 180000 // 3 minutes timeout in milliseconds
     });
 
     logger.debug("RAG response status", response.status);
@@ -46,7 +51,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 
 
 export const getContextMessages = async (params, chatBody, dataSources) => {
-    const model = getCheapestModel(params);
+    const model = getModelByType(params, ModelTypes.CHEAPEST);
     const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
 
     const chatFn = async (body, writable, context) => {
@@ -67,7 +72,8 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
             ...chatBody.options,
             model,
             skipRag: true, // Prevent the use of documents
-            ragOnly: true  // in any way
+            ragOnly: true,  // in any way
+            skipDocumentCache: true // Prevent the use of the documents - advanced rag
         }
     }
 
@@ -115,7 +121,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
         const keyLookup = {};
         const ragGroupDataSourcesKeys = {};
         const ragDataSourceKeys = [];
-        dataSources.forEach(ds => {
+        dataSources.forEach(async ds => {
             const key = extractKey(ds.id);
             if (ds.groupId) {
                 // If the dataSource has a groupId, add it to the groupDataSources object
@@ -125,6 +131,10 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 ragGroupDataSourcesKeys[ds.groupId].push(key);
             } else {
                 ragDataSourceKeys.push(key)
+                // call the check-completion endpoint to ensure the embeddings are complete if not itll start
+                // doing it here buys us time for any missing embeddings to complete
+                // note: group data sources are always embedded and prechecked elsewhere
+                checkEmbeddingCompletion(token, [key], params.requestId);
             }
             keyLookup[key] = ds;
         });
@@ -180,10 +190,11 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                                 score: score || 0.5,
                                 name: ds.name,
                                 key,
-                                contentKey: ds.metadata.userDataSourceId ?? ds.key,
+                                contentKey: ds.metadata?.userDataSourceId ?? ds.key,
                                 groupId: ds.groupId,
                                 type: ds.type,
                                 locations,
+                                url: ds.metadata?.sourceUrl,
                                 indexes,
                                 charIndex,
                                 user,
@@ -262,5 +273,45 @@ ${content}
     } catch (e) {
         logger.error("Error getting context messages from RAG", e);
         return {messages: [], sources: []};
+    }
+}
+
+export const checkEmbeddingCompletion = async (token, dataSourceIds, requestId) => {
+    const checkEmbeddingsEndpoint = process.env.API_BASE_URL + '/embedding/check-completion';
+
+    const request = {
+        data: {dataSources: dataSourceIds}
+    }
+
+    logger.debug("Checking embedding completion for data sources ", dataSourceIds);
+
+    try {
+        const response = await axios.post(checkEmbeddingsEndpoint, request, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (response.status === 200) {
+            
+            // If response contains failed_ids, trace it
+            if (response.data && response.data.failed_ids && response.data.failed_ids.length > 0) {
+                trace(requestId, ["rag", "embeddings_check_failed"], {
+                    request: request,
+                    failed_ids: response.data.failed_ids
+                });
+                
+                logger.warn("Some datasources failed embedding", {
+                    datasources: response.data.failed_ids
+                });
+            }
+            
+            return response?.data?.success;
+        } else {
+            logger.error("Embedding check failed with status", response.status);
+            return response;
+        }
+    } catch (error) {
+        logger.error("Error checking embedding completion", error);
     }
 }
