@@ -2,7 +2,7 @@ git+https://github.com/gaiin-platform/pycommon.git@pre-release/v0.0.1
 jose==1.0.0
 Pillow==10.1.0
 pyyaml==6.0.2
-tiktoken==0.6.0
+tiktoken==0.9.0
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
