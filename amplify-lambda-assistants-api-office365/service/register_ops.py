@@ -36,7 +36,7 @@ def integration_config_trigger(event, context):
         print(f"New keys: {new_keys}")
 
         # If the provider key was absent before and is now present, register ops.
-        if PROVIDER not in old_keys and PROVIDER in new_keys or True:
+        if PROVIDER not in old_keys and PROVIDER in new_keys:
             print(f"Registering {PROVIDER} ops (provider key added)")
             result = register_ops()
             if not result.get("success"):
