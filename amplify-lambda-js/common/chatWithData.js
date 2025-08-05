@@ -212,10 +212,11 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         } else {
             logger.error("Rag Error: No sources found");
             ragStatus.message = "Rag ran into an unexpected error";
-            if (!params.options.skipDocumentCache) {
-                logger.debug("File caching will be used instead...");
-                conversationDataSources = ragDataSources;
-            }
+            // TODO: Think through this logic better
+            // if (!params.options.skipDocumentCache) {
+            //     logger.debug("File caching will be used instead...");
+            //     conversationDataSources = ragDataSources;
+            // }
         }
 
         ragStatus.inProgress = false;
