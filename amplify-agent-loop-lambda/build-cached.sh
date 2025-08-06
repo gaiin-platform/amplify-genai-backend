@@ -13,15 +13,23 @@ else
     REPOSITORY_URI="$DEV_REPOSITORY_URI"
 fi
 
-IMAGE_TAG_FAT="${STAGE}-agent-router-fat"
-IMAGE_TAG_SLIM="${STAGE}-agent-router"
+# Add timestamp to ensure unique tag for each build
+TIMESTAMP=$(date +%s)
+BASE_TAG_FAT="${STAGE}-agent-router-fat"
+BASE_TAG_SLIM="${STAGE}-agent-router"
+IMAGE_TAG_FAT="${BASE_TAG_FAT}-${TIMESTAMP}"
+IMAGE_TAG_SLIM="${BASE_TAG_SLIM}-${TIMESTAMP}"
 CACHE_TAG="${STAGE}-agent-router-cache"
+
+# Export the timestamp for serverless.yml to use
+echo "export DEPLOY_TIMESTAMP=$TIMESTAMP" > deploy-timestamp.env
 
 echo "Building container image for stage: $STAGE with dependency caching"
 echo "Repository: $REPOSITORY_URI"
 echo "Image tag fat: $IMAGE_TAG_FAT"
 echo "Image tag slim: $IMAGE_TAG_SLIM"
 echo "Cache tag: $CACHE_TAG"
+echo "Timestamp: $TIMESTAMP"
 
 # Enable Docker BuildKit explicitly
 export DOCKER_BUILDKIT=1
