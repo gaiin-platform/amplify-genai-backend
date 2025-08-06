@@ -1,0 +1,29 @@
+[
+   {
+    "tool":"think",
+   "instructions":"Think about scheduling",
+    "values":{"what_to_think_about":"Stop and think step by step. Based on the email, when is the other party asking to meet? Based on the email, when do we need to schedule? What are the constraints? What are the preferences?"},
+     "args": {}
+    },
+  {
+    "instructions":"Lookup the availability of the user between the earliest / latest dates. Try to schedule with at least 24hrs advance notice.",
+    "tool": "getFreeTimeSlots",
+    "args": {}
+  },
+  {
+    "instructions":"Pay attention to and try to honor preferences / constraints on scheduling from the email and the user. Avoid holidays. Stop and think step by step. What dates / times work for the user based on the availability you found the user's constraints, and the constraints from the email. Remember, we are scheduling the meeting on behalf of the user. We need to send an email from the current user to the other people. Address the email to the person that emailed the user. Provide a nicely formatted reply email to the original email but DO NOT use markdown. Use plain text. Make sure the email is to the person who sent the email to the user and that it includes the times that work for the user. Stop and think step by step.",
+    "tool": "composeEmailDraft",
+    "args": {
+      "to": "<fill in the emails separated by commas (NOT the user)>",
+      "body": "<Provide an email with the list of options that work>"
+    }
+  },
+  {
+    "stepName": "done",
+    "tool": "terminate",
+    "instructions": "Terminate the conversation and list the proposed times in the message.",
+    "args": {
+      "message": "<fill in with the proposed dates / times>"
+    }
+  }
+]
