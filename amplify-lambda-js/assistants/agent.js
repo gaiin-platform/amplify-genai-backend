@@ -4,7 +4,7 @@ import axios from "axios";
 export const invokeAgent = async function(accessToken, sessionId, requestId, prompt, metadata={}) {
     const endpoint = process.env.AGENT_ENDPOINT;
 
-    console.log("Invoking agent with sessionId:", sessionId);
+    console.log("Invoking agent with sessionId:", sessionId, " and Endpoint:", endpoint);
 
     try {
         const response = await axios.post(

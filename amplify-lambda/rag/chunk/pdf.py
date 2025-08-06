@@ -1,6 +1,5 @@
-
-#Copyright (c) 2024 Vanderbilt University  
-#Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
+# Copyright (c) 2024 Vanderbilt University
+# Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import io
 import pypdfium2 as pdfium
@@ -17,7 +16,9 @@ class PDFHandler(TextExtractionHandler):
             num_pages = len(pdf)  # Get the number of pages in the document
 
             for page_index in range(num_pages):
-                page_number = page_index + 1  # Convert zero-based index to one-based page numbering for display
+                page_number = (
+                    page_index + 1
+                )  # Convert zero-based index to one-based page numbering for display
 
                 page = pdf[page_index]  # Load the page using zero-based indexing
                 textpage = page.get_textpage()
@@ -29,9 +30,9 @@ class PDFHandler(TextExtractionHandler):
                     continue
 
                 chunk = {
-                        'content': text,
-                        'location': {'page': page_number},
-                        'canSplit': True
+                    "content": text,
+                    "location": {"page": page_number},
+                    "canSplit": True,
                 }
                 chunks.append(chunk)
 
@@ -47,13 +48,15 @@ class PDFHandler(TextExtractionHandler):
         with io.BytesIO(file_content) as f:
             pdf = pdfium.PdfDocument(f)
 
-            min_chunk_size = split_params.get('min_chunk_size', 100)
+            min_chunk_size = split_params.get("min_chunk_size", 100)
 
             chunks = []
             num_pages = len(pdf)  # Get the number of pages in the document
 
             for page_index in range(num_pages):
-                page_number = page_index + 1  # Convert zero-based index to one-based page numbering for display
+                page_number = (
+                    page_index + 1
+                )  # Convert zero-based index to one-based page numbering for display
 
                 page = pdf[page_index]  # Load the page using zero-based indexing
                 textpage = page.get_textpage()
@@ -68,10 +71,7 @@ class PDFHandler(TextExtractionHandler):
                 if len(text) > min_chunk_size:
                     chunks.extend(self.intelligent_split(text, split_params))
                 else:
-                    chunk = {
-                        'content': text,
-                        'location': {'page': page_number}
-                    }
+                    chunk = {"content": text, "location": {"page": page_number}}
                     chunks.append(chunk)
 
                 # pypdfium2 might not require explicit page close, depending on API implementation details
@@ -82,9 +82,12 @@ class PDFHandler(TextExtractionHandler):
 
             # Add page information to each chunk
             for chunk in chunks:
-                chunk['location'] = {'page': page_index + 1}  # Update this according to how you wish to handle the page info
+                chunk["location"] = {
+                    "page": page_index + 1
+                }  # Update this according to how you wish to handle the page info
 
             return chunks
+
     # def handle(self, file_content, key, split_params):
     #     min_chunk_size = split_params.get('min_chunk_size', 100)
     #

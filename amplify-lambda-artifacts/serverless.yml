@@ -49,7 +49,7 @@ provider:
     ARTIFACTS_DYNAMODB_TABLE:  ${self:service}-${sls:stage}-user-artifacts
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:

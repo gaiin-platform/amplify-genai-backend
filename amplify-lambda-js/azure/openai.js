@@ -80,16 +80,12 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     }
     
 
-    if(tools){
-        data.tools = tools;
-    }
-    if(tool_choice){
-        data.tool_choice = tool_choice;
-    }
+    if (tools) data.tools = tools;
+    if (tool_choice) data.tool_choice = tool_choice;
 
     if (data.imageSources) delete data.imageSources;
     
-    const config = await endpointProvider(modelId);
+    const config = await endpointProvider(modelId, model.provider);
 
     const url = config.url;
     const isOpenAiEndpoint = isOpenAIEndpoint(url);
@@ -104,7 +100,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    const isOmodel = modelId.includes("o1") || modelId.includes("o3");
+    const isOmodel = /^o\d/.test(modelId);
 
 
     if (isOmodel) {

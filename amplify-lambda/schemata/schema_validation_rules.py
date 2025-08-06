@@ -1,21 +1,22 @@
-from . import add_charge_schema
-from . import share_schema
-from . import share_load_schema
-from . import set_metadata_schema
-from . import file_upload_schema
-from . import key_request_schema
-from . import file_delete_schema
-from . import file_set_tags_schema
-from . import user_delete_tag_schema
-from . import create_tags_schema
-from . import file_query_schema
-from . import chat_input_schema
-from . import convert_schema
-from . import save_accounts_schema
-from . import compressed_conversation_schema
-from . import register_conversation_schema
-from . import conversation_ids_schema
-from . import save_settings_schema
+from .add_charge_schema import add_charge_schema
+from .share_schema import share_schema
+from .share_load_schema import share_load_schema
+from .set_metadata_schema import set_metadata_schema
+from .file_upload_schema import file_upload_schema
+from .key_request_schema import key_request_schema
+from .file_delete_schema import file_delete_schema
+from .file_set_tags_schema import file_set_tags_schema
+from .user_delete_tag_schema import user_delete_tag_schema
+from .create_tags_schema import create_tags_schema
+from .file_query_schema import file_query_schema
+from .chat_input_schema import chat_input_schema
+from .convert_schema import convert_schema
+from .save_accounts_schema import save_accounts_schema
+from .compressed_conversation_schema import compressed_conversation_schema
+from .register_conversation_schema import register_conversation_schema
+from .conversation_ids_schema import conversation_ids_schema
+from .save_settings_schema import save_settings_schema
+from .tools_op_schema import tools_op_schema
 
 rules = {
     "validators": {
@@ -56,6 +57,7 @@ rules = {
         "/state/settings/save": {"save": save_settings_schema},
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
+        "/state/register_ops": {"register_ops": tools_op_schema}, 
     },
     "api_validators": {
         "/state/share": {"read": {}},
@@ -71,8 +73,11 @@ rules = {
         "/state/conversation/register": {
             "conversation_upload": register_conversation_schema
         },
+        "/state/accounts/get": {"get": {}},
         "/state/conversation/get/metadata": {"read": {}},
         "/state/conversation/get/since/{timestamp}": {"read": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
+        "/files/delete": {"delete": file_delete_schema},
+        "/state/register_ops": {"register_ops": tools_op_schema}, 
     },
 }
