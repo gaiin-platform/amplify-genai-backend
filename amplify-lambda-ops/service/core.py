@@ -24,7 +24,7 @@ def get_all_ops(event, context, current_user, name, data):
 
 @api_tool(
     path="/ops/get",
-    tags=["ops", "default"],
+    tags=["ops"],
     name="getOperations",
     description="Get a list of available operations for an assistant.",
     parameters={
@@ -119,7 +119,7 @@ def get_ops(event, context, current_user, name, data):
 
 @api_tool(
     path="/ops/get_op",
-    tags=["ops", "default"],
+    tags=["ops"],
     name="getOperationByName",
     description="Get a specific operation by its name/id within a given tag.",
     parameters={

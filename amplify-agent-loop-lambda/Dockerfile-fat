@@ -1,0 +1,82 @@
+FROM public.ecr.aws/lambda/python:3.11
+
+# Install system dependencies
+RUN yum -y update && \
+    yum -y install \
+        gcc gcc-c++ make \
+        libffi-devel \
+        cairo-devel \
+        gobject-introspection-devel \
+        glib2-devel \
+        xz \
+        git \
+        wget \
+        unzip \
+        tar \
+        curl \
+        which \
+        python3 \
+        python3-devel \
+        ImageMagick \
+        poppler-utils \
+        xpdf \
+        libGL \
+        && yum clean all
+
+RUN yum -y install xz && \
+    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz && \
+    tar -xf ffmpeg.tar.xz && \
+    dir=$(find . -maxdepth 1 -type d -name "ffmpeg-*-static") && \
+    cp "$dir/ffmpeg" /usr/bin/ffmpeg && \
+    cp "$dir/ffprobe" /usr/bin/ffprobe && \
+    chmod +x /usr/bin/ffmpeg /usr/bin/ffprobe && \
+    rm -rf "$dir" ffmpeg.tar.xz
+
+# Install Pandoc (static binary)
+RUN curl -L https://github.com/jgm/pandoc/releases/download/3.2/pandoc-3.2-linux-amd64.tar.gz -o pandoc.tar.gz && \
+    tar -xzf pandoc.tar.gz && \
+    cp -r pandoc-3.2/bin/* /usr/local/bin/ && \
+    rm -rf pandoc*
+
+
+ENV PATH="/usr/local/bin:${PATH}" \
+    NPM_CONFIG_PREFIX=/usr/local
+
+RUN curl -fsSL https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz -o node.tar.xz && \
+    yum install -y xz && \
+    tar -xf node.tar.xz && \
+    cp -r node-v16.20.2-linux-x64/{bin,include,lib,share} /usr/local/ && \
+    rm -rf node.tar.xz node-v16.20.2-linux-x64 && \
+    node -v && npm -v && \
+    npm install -g markitdown && \
+    which markitdown && \
+    ls -l /usr/local/bin/markitdown && \
+    chmod 755 /usr/local/bin/markitdown
+
+# Install uv (much faster than pip)
+RUN pip install uv
+
+# Set working directory
+WORKDIR /var/task
+
+# Copy Python dependencies
+COPY agent-requirements-fat.txt  ./
+
+
+RUN    uv pip install --system --no-cache-dir \
+        --only-binary=numpy \
+        --only-binary=tables \
+        --only-binary=sqlite-utils \
+        --only-binary=mtcnn \
+        --only-binary=scikit-image \
+        --only-binary=scikit-learn \
+        --only-binary=scipy \
+        --only-binary=matplotlib \
+        --only-binary=xgboost \
+        -r agent-requirements-fat.txt
+
+# Copy application code
+COPY . .
+
+# Let AWS Lambda handle RIC
+CMD ["service.core.route"]
