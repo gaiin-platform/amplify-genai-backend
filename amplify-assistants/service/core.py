@@ -711,7 +711,7 @@ def create_assistant(event, context, current_user, name, data):
             for i in range(len(filtered_ds)):
                 source = filtered_ds[i]
                 if "://" not in source["id"]:
-                    filtered_ds[i]["id"] = source.get("key", source["id"])
+                    filtered_ds[i]["id"] = source.get("key", source.get("id", ""))
 
             print(f"Final data sources before translation: {filtered_ds}")
 
