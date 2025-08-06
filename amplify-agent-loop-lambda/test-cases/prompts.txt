@@ -1,0 +1,1 @@
+Fetch the Vanderbilt home page, convert it to json with the format [{'topic':...}, ...], and then run code to calculate the min, max, and average number of characters per topic string.

@@ -1,5 +1,4 @@
-set_metdata_schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
+set_metadata_schema = {
     "type": "object",
     "properties": {
         "id": {

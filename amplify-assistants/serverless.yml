@@ -60,7 +60,6 @@ provider:
     OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY} #When using the OpenAI API, you need to provide the ARN of the secret that contains the API key, the secret should be named OPENAI_API_KEY.
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
     LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
-    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
     HASH_FILES_DYNAMO_TABLE:  amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
     ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}
     ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
@@ -80,14 +79,13 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
     GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
     S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
-    FILE_UPLOAD_ENCRYPTION_PARAMETER: /amplify-${self:custom.stageVars.DEP_NAME}-lambda/${sls:stage}/s3/metadata/encryption #must start with /
-
+    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
 
   iam:
     role:
@@ -108,7 +106,7 @@ functions:
 
   create_ast:
     handler: service/core.create_assistant
-    timeout: 30
+    timeout: 300
     events:
       - http:
           path: assistant/create
@@ -195,7 +193,6 @@ functions:
   #   timeout: 420 # 7 min
   #   url: true
     
-
   delete_ast_thread:
     handler: openaiazure/assistant.delete_assistant_thread
     events:
@@ -214,7 +211,7 @@ functions:
           cors: true
 
   get_group_ast_conversations:
-    handler: service/core.get_group_assistant_conversations
+    handler: service/group_ast_data.get_group_assistant_conversations
     timeout: 30
     events:
       - http:
@@ -223,7 +220,7 @@ functions:
           cors: true
   
   get_group_convs_data:
-    handler: service/core.get_group_conversations_data
+    handler: service/group_ast_data.get_group_conversations_data
     timeout: 30
     events:
       - http:
@@ -232,7 +229,7 @@ functions:
           cors: true
           
   get_astg_system_user:
-    handler: service/core.retrieve_astg_for_system_use
+    handler: service/group_ast_data.retrieve_astg_for_system_use
     events:
       - http:
           path: assistant/get/system_user
@@ -240,7 +237,7 @@ functions:
           cors: true
   
   get_group_ast_dashboards:
-    handler: service/core.get_group_assistant_dashboards
+    handler: service/group_ast_data.get_group_assistant_dashboards
     timeout: 30
     events:
       - http:
@@ -249,7 +246,7 @@ functions:
           cors: true
 
   save_user_rating:
-    handler: service/core.save_user_rating
+    handler: service/group_ast_data.save_user_rating
     timeout: 30
     events:
       - http:
@@ -258,7 +255,7 @@ functions:
           cors: true
 
   lookup_ast_path:
-    handler: service/core.lookup_assistant_path
+    handler: service/standalone_ast_path.lookup_assistant_path
     timeout: 30
     events:
       - http:
@@ -267,7 +264,7 @@ functions:
           cors: true
 
   add_ast_path:
-    handler: service/core.add_assistant_path
+    handler: service/standalone_ast_path.add_assistant_path
     timeout: 30
     events:
       - http:
@@ -276,7 +273,7 @@ functions:
           cors: true
 
   scrape_website:
-    handler: service/core.scrape_website
+    handler: service/scrape_websites.scrape_website
     timeout: 300
     events:
       - http:
@@ -285,16 +282,32 @@ functions:
           cors: true
 
   rescan_websites:
-    handler: service/core.rescan_websites
+    handler: service/scrape_websites.rescan_websites
     timeout: 300
     events:
       - http:
           path: assistant/rescan_websites
           method: post
           cors: true
-      - schedule: 
-          rate: cron(0 0 * * ? *) # Daily at midnight
-          enabled: true
+
+  reprocess_drive_sources:
+    handler: service/drive_datasources.process_drive_sources
+    timeout: 300
+    events:
+      - http:
+          path: assistant/process_drive_sources
+          method: post
+          cors: true
+
+  tools_op:
+    handler: tools_ops.api_tools_handler
+    timeout: 30
+    events:
+      - http:
+          path: assistant/register_ops
+          method: post
+          cors: true
+
 
 resources:
   Resources:
@@ -636,6 +649,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
 
             - Effect: Allow
               Action:

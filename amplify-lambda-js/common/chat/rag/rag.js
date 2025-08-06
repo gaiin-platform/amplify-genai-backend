@@ -20,6 +20,10 @@ const limiter = new Bottleneck({
 const ragEndpoint = process.env.API_BASE_URL + '/embedding-dual-retrieval';
 
 async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupDataSourcesKeys, count) {
+    if (ragDataSourceKeys.length === 0 && ragGroupDataSourcesKeys.length === 0) {
+        logger.debug("WARNING: No RAG data sources found, something when wrong, most likely from key to global translation");
+        return {data: {result: []}};
+    }
     const ragRequest = {
         data: {
             dataSources: ragDataSourceKeys,
@@ -36,7 +40,8 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
     const response = await axios.post(ragEndpoint, ragRequest, {
         headers: {
             'Authorization': `Bearer ${token}`
-        }
+        },
+        timeout: 180000 // 3 minutes timeout in milliseconds
     });
 
     logger.debug("RAG response status", response.status);
@@ -185,10 +190,11 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                                 score: score || 0.5,
                                 name: ds.name,
                                 key,
-                                contentKey: ds.metadata.userDataSourceId ?? ds.key,
+                                contentKey: ds.metadata?.userDataSourceId ?? ds.key,
                                 groupId: ds.groupId,
                                 type: ds.type,
                                 locations,
+                                url: ds.metadata?.sourceUrl,
                                 indexes,
                                 charIndex,
                                 user,

@@ -28,7 +28,7 @@ custom:
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs22.x
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
@@ -164,6 +164,15 @@ functions:
           path: billing/list-all-user-mtd-costs
           method: post
           cors: true
+        
+  list_user_mtd_costs:
+    handler: billing/mtd.listUserMtdCostsHandler
+    memorySize: 128
+    events:
+      - http:
+          path: billing/list-user-mtd-costs
+          method: post
+          cors: true
 
 
 resources:
@@ -267,6 +276,9 @@ resources:
           -
             AttributeName: requestId
             KeyType: RANGE
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
         TableName: ${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}
     DatasourceRegistryDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
