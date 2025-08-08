@@ -132,7 +132,8 @@ DB_CONFIG = config["db_config"]
 def query_database(
     question: str,
     connection_id: str = "default",
-    current_user: Optional[str] = None,
+    _current_user: Optional[str] = None,
+    _attached_database_connection_id: Optional[str] = None,
     db_type: Optional[str] = None,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -159,7 +160,8 @@ def query_database(
     Parameters:
         question (str): The natural language question to ask about the data
         connection_id (str, optional): The connection ID to use from DynamoDB configuration. Defaults to "default"
-        current_user (str, optional): The current user ID to filter DynamoDB configurations. Only configurations matching this user will be used.
+        _current_user (str, optional): The current user ID to filter DynamoDB configurations. Only configurations matching this user will be used.
+        _attached_database_connection_id (str, optional): The database connection ID attached to the conversation. Takes precedence over connection_id.
         db_type (str, optional): Override the database type from DynamoDB configuration
         database (str, optional): Override the database name from DynamoDB configuration
         schema (str, optional): Override the schema name from DynamoDB configuration
@@ -362,9 +364,12 @@ def query_database(
             AmplifyLLM.__init__(self, config=config)
 
     try:
+        # Use attached database connection ID if provided, otherwise use the passed connection_id
+        effective_connection_id = _attached_database_connection_id or connection_id
+        
         # Get database configuration from DynamoDB
         try:
-            db_config_from_dynamo = get_db_config(connection_id, current_user)
+            db_config_from_dynamo = get_db_config(effective_connection_id, _current_user)
         except ValueError as e:
             return {
                 "success": False,

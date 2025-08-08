@@ -626,6 +626,10 @@ def handle_event(
             "llm": llm,
             "work_directory": work_directory,
         }
+        
+        # Add attached database connection ID from metadata if present
+        if metadata and metadata.get("attached_database_connection_id"):
+            action_context_props["attached_database_connection_id"] = metadata["attached_database_connection_id"]
         if api_key_id:
             action_context_props["api_key_id"] = api_key_id
 
