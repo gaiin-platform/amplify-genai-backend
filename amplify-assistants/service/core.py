@@ -624,7 +624,11 @@ def create_assistant(event, context, current_user, name, data):
             # Check if this is a new URL to scrape (no key) or existing scraped content (has key)
             if not source.get("key"):
                 # This is a NEW website URL that needs scraping
-                url = source.get("id", "")
+                url = source.get("metadata", {}).get("sourceUrl", "")
+                if not url:
+                    url = source.get("id", '')
+                    if (url and "metadata" in source):
+                        source["metadata"]["sourceUrl"] = url
                 
                 # Check if this URL is already being tracked
                 existing_entry = next((entry for entry in all_website_urls if entry.get("url") == url), None)
@@ -632,6 +636,7 @@ def create_assistant(event, context, current_user, name, data):
                     # Add new website URL to tracking
                     website_url_entry = {
                         "url": url,
+                        "sourceUrl": url,
                         "isSitemap": source.get("type") == "website/sitemap",
                         "type": source.get("type"),
                         **source.get("metadata", {}),  # Take frontend metadata as-is
@@ -656,9 +661,10 @@ def create_assistant(event, context, current_user, name, data):
     if website_data_sources:
         for website_source in website_data_sources:
             # Extract URL and metadata
-            url = website_source.get("id", "")
+            metadata = website_source.get("metadata", {})
+            url = metadata.get("sourceUrl", "") or website_source.get("id", "")
             is_sitemap = website_source.get("type") == "website/sitemap"
-            scan_frequency = website_source.get("metadata", {}).get("scanFrequency")
+            scan_frequency = metadata.get("scanFrequency")
 
             try:
                 # imported here to avoid circular import
@@ -668,7 +674,7 @@ def create_assistant(event, context, current_user, name, data):
                 scraped_web_ds = scraped_data.get("data", {}).get("dataSources")
                 if scraped_data.get("success") and scraped_web_ds:
                     for ds in scraped_web_ds:
-                        ds.get("metadata").update({"scanFrequency": scan_frequency})
+                        ds.get("metadata").update({"scanFrequency": scan_frequency, "contentKey": ds['id']})
                         ds['key'] = ds['id']
 
                     scraped_data_sources += scraped_web_ds
@@ -711,7 +717,7 @@ def create_assistant(event, context, current_user, name, data):
             for i in range(len(filtered_ds)):
                 source = filtered_ds[i]
                 if "://" not in source["id"]:
-                    filtered_ds[i]["id"] = source.get("key", source["id"])
+                    filtered_ds[i]["id"] = source.get("key", source.get("id", ""))
 
             print(f"Final data sources before translation: {filtered_ds}")
 
@@ -1402,7 +1408,14 @@ def create_or_update_assistant(
         new_item["version"] = new_version
 
         # Collect all data source keys, including scraped content
-        all_data_source_keys = [source["id"] for source in data_sources]
+        # Note: scraped content could still be processing through the rag pipeline
+        # therefore we dont have the globals to update the permissions, 
+        # we dont need to anyway
+        all_data_source_keys = [
+            source["id"] for source in data_sources 
+            if not source["id"].startswith("s3://") and 
+               source.get("metadata", {}).get("type") != "assistant-web-content"
+        ]
         
         # Set permissions for the assistant
         if not update_object_permissions(
