@@ -15,16 +15,14 @@ import {geminiTransform} from "./chat/events/gemini.js";
 import {parseValue} from "./incrementalJsonParser.js";
 import {setModel, isGeminiModel, getChatFn} from "./params.js";
 
-
-export const getDefaultLLM = async (model, stream = null, user = "default") => {
+// account object expected  to have user, accessToken, apiKeyId, accountId
+export const getDefaultLLM = async (model, stream = null, account) => {
     const chatFn = async (body, writable, context) => {
         return await getChatFn(model, body, writable, context);
     }
 
     let params = {
-        account: {
-            user
-        },
+        account,
         options: {
             model
         }
