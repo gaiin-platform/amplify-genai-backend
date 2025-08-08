@@ -113,7 +113,8 @@ const defaultAnalysisSchema = {
     required: ["category", "systemRating"] // , "reasoning"
 };
 
-export async function analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user, performCategoryAnalysis = true) {
+export async function analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    const user = account.user
     const data = chatRequest.options;
     const conversationId = data.conversationId;
     const assistantId = data.assistantId;
@@ -172,18 +173,14 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
         const model = advancedModel;
 
         // set up llm 
-        let llm = await getDefaultLLM(model, resultCollector, user);
-        //we need to ensure the chatFn is adjusted according to the model 
-        const chatFn = async (body, writable, context) => {
-            return await getChatFn(model, body, writable, context);
-        }
-        llm = llm.clone(chatFn);
+        let llm = await getDefaultLLM(model, resultCollector, account);
 
         const analysisPrompt = performCategoryAnalysis
             ? `Analyze the following conversation and determine its ${hasCategories ? "category and " : ""}system rating:
 Prompt: ${userPrompt}
 AI Response: ${llmResponse}
-Provide ${hasCategories ? "a category from the predefined list, " : ""}a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`
+${hasCategories ? `Available categories: ${categories.join(', ')}
+Choose the most appropriate category from this list. ` : ""}Provide ${hasCategories ? "a category from the available categories and " : ""}a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`
             : `Analyze the following conversation and determine its system rating:
 Prompt: ${userPrompt}
 AI Response: ${llmResponse}
@@ -194,7 +191,7 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                 {
                     role: "system",
                     content: performCategoryAnalysis
-                        ? `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to ${hasCategories ? "categorize the conversation and " : ""}rate the quality of the AI response.`
+                        ? `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to ${hasCategories ? "categorize the conversation and " : ""}rate the quality of the AI response.${hasCategories ? ` When categorizing, you must choose from the provided list of categories only.` : ""}`
                         : `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to rate the quality of the AI response.`
                 },
                 {
@@ -203,17 +200,67 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                 }
             ],
             options: {
-                model: model
+                model: model,
+                rateLimit: chatRequest.options?.rateLimit,
+                ...account
             }
         };
 
         try {
-            const analysis = await llm.promptForJson(
+            const analysis = await llm.promptForData(
                 updatedChatBody,
-                analysisSchema,
                 [],
-                resultCollector
+                '', // prompt already in messages
+                performCategoryAnalysis ? {
+                    "category": "String category from the predefined list",
+                    "systemRating": "Integer rating from 1-5 based on AI response quality"
+                } : {
+                    "systemRating": "Integer rating from 1-5 based on AI response quality"
+                },
+                null,
+                (r) => {
+                    // Validate and parse the response
+                    if (!r.systemRating) {
+                        return null;
+                    }
+                    
+                    try {
+                        const systemRating = parseInt(r.systemRating);
+                        if (isNaN(systemRating) || systemRating < 1 || systemRating > 5) {
+                            logger.error("Invalid system rating:", r.systemRating);
+                            return null;
+                        }
+                        
+                        const result = { systemRating };
+                        
+                        // Only validate category if category analysis is enabled
+                        if (performCategoryAnalysis) {
+                            if (!r.category) {
+                                logger.error("Missing category in analysis result");
+                                return null;
+                            }
+                            // Validate category against allowed values if we have them
+                            if (hasCategories && !categories.includes(r.category)) {
+                                logger.error("Invalid category:", r.category);
+                                return null;
+                            }
+                            result.category = r.category;
+                        }
+                        
+                        return result;
+                    } catch (e) {
+                        logger.error("Error parsing analysis result:", e);
+                        return null;
+                    }
+                },
+                2 // Fewer retries for faster response
             );
+
+            // Handle case where analysis failed
+            if (!analysis) {
+                logger.error("Error analyzing conversation, skipping analysis..");
+                return;
+            }
 
             // Extract relevant values from analysis
             const systemRating = analysis.systemRating;

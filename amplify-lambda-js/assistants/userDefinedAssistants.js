@@ -275,7 +275,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
             const suffixMessages = [];
             const extraMessages = [];
 
-            if(params && params.options){
+            if (params && params.options){
                 if(params.options.timeZone) {
                     extraMessages.push({
                         role: "user",
@@ -290,11 +290,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
-            if (assistant.data && assistant.data.trackConversations) {
-                body.options.trackConversations = true;
-            }
 
-            if(assistant.data && assistant.data.messageOptions) {
+            if (assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
 
                     const messageIdMapping = {};
@@ -499,6 +496,10 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             if (assistant.data && assistant.data.supportConvAnalysis) {
                 body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
+            }
+
+            if (assistant.data && assistant.data.trackConversations) {
+                body.options.trackConversations = true;
             }
 
             const instructions = await fillInTemplate(
