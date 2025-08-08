@@ -703,4 +703,4 @@ def reset_embedding_status_to_starting(src_id):
             
     except Exception as e:
         logging.error(f"[RESET_STATUS] ❌ Failed to reset embedding status for {src_id}: {str(e)}")
-        # Don't raise the exception - let the manual queue continue even if reset fails
+        raise e
