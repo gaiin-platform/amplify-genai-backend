@@ -153,7 +153,7 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
             analyzeAndRecordGroupAssistantConversation(
                 chatRequest,
                 llmResponse,
-                user,
+                account,
                 performCategoryAnalysis
             ).catch(error => {
                 logger.debug('Error in analyzeAndRecordGroupAssistantConversation:', error);
