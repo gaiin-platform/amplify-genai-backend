@@ -29,10 +29,90 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
 
 from service.core import get_most_recent_assistant_version
 
+def sanitize_and_validate_url(url):
+    """
+    Sanitize and validate a URL before scraping.
+    
+    Returns:
+        tuple: (is_valid, sanitized_url, error_message)
+    """
+    if not url or not isinstance(url, str):
+        return False, None, "URL is empty or not a string"
+    
+    # Strip whitespace
+    url = url.strip()
+    
+    if not url:
+        return False, None, "URL is empty after stripping whitespace"
+    
+    # Add protocol if missing
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    try:
+        # Parse URL to validate structure
+        parsed = urlparse(url)
+        
+        # Check if we have a valid scheme and netloc
+        if not parsed.scheme or not parsed.netloc:
+            return False, None, "Invalid URL structure - missing scheme or domain"
+        
+        # Check for valid schemes
+        if parsed.scheme not in ['http', 'https']:
+            return False, None, f"Unsupported URL scheme: {parsed.scheme}"
+        
+        # Check for valid domain (basic validation)
+        domain = parsed.netloc.lower()
+        
+        # Remove port if present for validation
+        if ':' in domain:
+            domain = domain.split(':')[0]
+        
+        # Basic domain validation - must contain at least one dot and valid characters
+        if '.' not in domain:
+            return False, None, "Invalid domain - must contain at least one dot"
+        
+        # Check for valid domain characters
+        if not re.match(r'^[a-zA-Z0-9.-]+$', domain):
+            return False, None, "Invalid domain - contains invalid characters"
+        
+        # Check domain parts
+        domain_parts = domain.split('.')
+        for part in domain_parts:
+            if not part:  # Empty part (e.g., double dots)
+                return False, None, "Invalid domain - contains empty parts"
+            if len(part) > 63:  # DNS label length limit
+                return False, None, "Invalid domain - label too long"
+        
+        # Reconstruct the URL to ensure it's properly formatted
+        sanitized_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if parsed.query:
+            sanitized_url += f"?{parsed.query}"
+        if parsed.fragment:
+            sanitized_url += f"#{parsed.fragment}"
+        print(f"Url is valid: {sanitized_url}")
+        return True, sanitized_url, None
+        
+    except Exception as e:
+        return False, None, f"URL parsing error: {str(e)}"
+
 def scrape_website_content(url, access_token, is_sitemap=False, max_pages=10):
     """Helper function to scrape a website and return the data source key"""
     try:
         print(f"Attempting to scrape {'sitemap' if is_sitemap else 'website'}: {url}")
+        
+        # Validate and sanitize the URL first
+        is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url)
+        if not is_valid:
+            return {
+                "success": False,
+                "message": f"Invalid URL: {error_msg}",
+                "error": error_msg,
+            }
+        
+        # Use the sanitized URL for scraping
+        url = sanitized_url
+        print(f"Using sanitized URL: {url}")
 
         # Determine if single URL or sitemap
         urls_to_scrape = []
@@ -52,6 +132,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=10):
         # Scrape content from URLs - each URL gets its own data source
         scraped_ds = []
         for url_to_scrape in urls_to_scrape:
+            # Note: URLs from sitemaps are already validated during extraction
             print(f"Fetching and parsing URL: {url_to_scrape}")
             content = fetch_and_parse_url(url_to_scrape)
             if content:
@@ -133,10 +214,22 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=10):
             url_entries = sitemap_dict["urlset"]["url"]
             # Handle single URL case
             if isinstance(url_entries, dict):
-                urls.append(url_entries["loc"])
+                url_loc = url_entries["loc"]
+                # Validate the extracted URL
+                is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url_loc)
+                if is_valid:
+                    urls.append(sanitized_url)
+                else:
+                    print(f"Skipping invalid URL from sitemap: {url_loc} - {error_msg}")
             else:
                 for url_entry in url_entries[:max_pages]:
-                    urls.append(url_entry["loc"])
+                    url_loc = url_entry["loc"]
+                    # Validate the extracted URL
+                    is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url_loc)
+                    if is_valid:
+                        urls.append(sanitized_url)
+                    else:
+                        print(f"Skipping invalid URL from sitemap: {url_loc} - {error_msg}")
 
         return urls[:max_pages]
 
@@ -494,6 +587,16 @@ def process_assistant_websites(assistant, access_token):
             
             print(f"Processing URL: {url} (sitemap: {is_sitemap})")
             
+            # Validate and sanitize the URL first
+            is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url)
+            if not is_valid:
+                print(f"Skipping invalid URL: {url} - {error_msg}")
+                continue
+            
+            # Use the sanitized URL for scraping
+            url = sanitized_url
+            print(f"Using sanitized URL: {url}")
+            
             # Track scraped data sources for this specific URL
             url_scraped_ds = []
 
@@ -502,6 +605,7 @@ def process_assistant_websites(assistant, access_token):
                 urls = extract_urls_from_sitemap(url, max_pages)
                 print(f"  Extracted {len(urls)} URLs from sitemap")
                 for sub_url in urls:
+                    # Note: URLs from sitemaps are already validated during extraction
                     content = fetch_and_parse_url(sub_url)
                     if content:
                         # Create separate data object for each sub-URL
