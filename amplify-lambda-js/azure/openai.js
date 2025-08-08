@@ -100,7 +100,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
-    const isOmodel = /^o\d/.test(modelId);
+    const isOmodel = /^o\d/.test(modelId) || /^gpt-5/.test(modelId);
 
 
     if (isOmodel) {
