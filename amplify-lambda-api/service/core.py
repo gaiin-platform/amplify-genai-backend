@@ -57,7 +57,7 @@ def get_api_keys(user):
         if "Items" in response and response["Items"]:
             print(f"API keys found for user {user}")
             for item in response["Items"]:
-                item['needs_rotation'] = item.get("active", False) and (item.get('apiKey', '').startswith('amp-') or item.get('apiKey') == 'MIGRATED')
+                item['needs_rotation'] = item.get("active", False) and (not item.get("purpose")) and (item.get('apiKey', '').startswith('amp-') or item.get('apiKey') == 'MIGRATED')
                 del item['apiKey']
                 # delegate will not be able to see account coa
                 if user == item.get("delegate"):
