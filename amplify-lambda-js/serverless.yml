@@ -156,6 +156,16 @@ functions:
           method: post
           cors: true
 
+  billing_groups_costs:
+    handler: billing/mtd.billingGroupsCostsHandler
+    memorySize: 256
+    timeout: 60
+    events:
+      - http:
+          path: billing/billing-groups-costs
+          method: post
+          cors: true
+
   list_all_user_mtd_costs:
     handler: billing/mtd.listAllUserMtdCostsHandler
     memorySize: 128
