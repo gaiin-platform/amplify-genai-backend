@@ -15,10 +15,12 @@ rules = {
         "/amplifymin/pptx_templates/upload": {"upload": upload_pptx_schema},
         "/amplifymin/verify_amp_member": {"read": verify_in_amp_group_schema},
         "/amplifymin/amplify_groups/list": {"read": {}},
+        "/amplifymin/amplify_groups/affiliated": {"read": {}},
         "/amplifymin/user_app_configs": {"read": {}},
     },
     "api_validators": {
         "/amplifymin/auth": {"read": auth_as_admin_schema},
         "/amplifymin/verify_amp_member": {"read": verify_in_amp_group_schema},
+        "/amplifymin/amplify_groups/affiliated": {"read": {}},
     },
 }
