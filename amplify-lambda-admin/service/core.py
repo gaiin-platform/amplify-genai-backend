@@ -827,11 +827,78 @@ def get_all_amplify_groups():
 
 
 @validated(op="read")
+def get_user_affiliated_groups(event, context, current_user, name, data):
+    try:
+        all_groups = get_all_amplify_groups()
+        if not all_groups:
+            return {"success": False, "message": "No Amplify Groups Found"}
+        
+        affiliated_groups = find_all_user_groups(current_user, all_groups)
+        return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
+    except Exception as e:
+        print(f"Error retrieving user affiliated groups: {str(e)}")
+        return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
+
+
+def find_all_user_groups(current_user, all_groups):
+    """
+    Find all groups a user is affiliated with (direct and indirect membership).
+    
+    Returns a list of group names the user belongs to.
+    """
+    affiliated = []
+    
+    # Phase 1: Find all groups where user is a direct member
+    direct_groups = set()
+    for group_name, group_data in all_groups.items():
+        members = group_data.get("members", [])
+        if current_user in members:
+            direct_groups.add(group_name)
+            affiliated.append(group_name)
+    
+    # Phase 2: Find all groups that include user's groups (directly or indirectly)
+    # Use BFS to find all groups that eventually include user's direct groups
+    for group_name, group_data in all_groups.items():
+        if group_name not in direct_groups:  # Skip already found direct groups
+            visited = set()
+            if group_includes_user_groups(group_name, direct_groups, all_groups, visited):
+                affiliated.append(group_name)
+    
+    return affiliated
+
+
+def group_includes_user_groups(group_name, user_direct_groups, all_groups, visited):
+    """
+    Check if a group includes any of the user's direct groups through its includeFromOtherGroups chain.
+    """
+    if group_name not in all_groups or group_name in visited:
+        return False
+    
+    visited.add(group_name)
+    group_data = all_groups[group_name]
+    
+    # Check if this group directly includes any of user's direct groups
+    includes = group_data.get("includeFromOtherGroups", [])
+    for included_group in includes:
+        if included_group in user_direct_groups:
+            return True
+        # Recursively check if included group eventually includes user's groups
+        if group_includes_user_groups(included_group, user_direct_groups, all_groups, visited):
+            return True
+    
+    return False
+
+
+@validated(op="read")
 def verify_is_in_amp_group(event, context, current_user, name, data):
     amp_groups = data["data"]["groups"]
-    isMember = is_in_amp_group(current_user, amp_groups)
-    print(f"User {current_user} is in group: {isMember}")
-    return {"success": True, "isMember": isMember}
+    try:
+        isMember = is_in_amp_group(current_user, amp_groups)
+        print(f"User {current_user} is in group: {isMember}")
+        return {"success": True, "isMember": isMember}
+    except Exception as e:
+        print(f"Error verifying is in amp group: {str(e)}")
+        return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
 
 
 def is_in_amp_group(current_user, check_amplify_groups):
@@ -848,6 +915,9 @@ def is_in_amp_group(current_user, check_amplify_groups):
     """
 
     all_amplify_groups = get_all_amplify_groups()
+    if all_amplify_groups is None:
+        raise Exception("No Amplify Groups Found")
+    
     if not all_amplify_groups or len(all_amplify_groups) == 0:
         return False
 
