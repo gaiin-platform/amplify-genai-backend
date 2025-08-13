@@ -118,11 +118,6 @@ def load_config(current_user: str = None):
     return load_config_from_dynamodb(current_user)
 
 
-# Load configuration
-config = load_config()
-DB_CONFIG = config["db_config"]
-
-
 @register_tool(
     tags=["default", "database", "data", "query", "sql"],
     status="querying_database",
@@ -131,20 +126,7 @@ DB_CONFIG = config["db_config"]
 )
 def query_database(
     question: str,
-    connection_id: str = "default",
-    _current_user: Optional[str] = None,
-    _attached_database_connection_id: Optional[str] = None,
-    db_type: Optional[str] = None,
-    database: Optional[str] = None,
-    schema: Optional[str] = None,
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    user: Optional[str] = None,
-    password: Optional[str] = None,
-    warehouse: Optional[str] = None,
-    account: Optional[str] = None,
-    project: Optional[str] = None,
-    location: Optional[str] = None,
+    connection_id: str,
     action_context: Optional[ActionContext] = None,
 ) -> Dict:
     """
@@ -159,21 +141,8 @@ def query_database(
 
     Parameters:
         question (str): The natural language question to ask about the data
-        connection_id (str, optional): The connection ID to use from DynamoDB configuration. Defaults to "default"
-        _current_user (str, optional): The current user ID to filter DynamoDB configurations. Only configurations matching this user will be used.
-        _attached_database_connection_id (str, optional): The database connection ID attached to the conversation. Takes precedence over connection_id.
-        db_type (str, optional): Override the database type from DynamoDB configuration
-        database (str, optional): Override the database name from DynamoDB configuration
-        schema (str, optional): Override the schema name from DynamoDB configuration
-        host (str, optional): Override the database host from DynamoDB configuration
-        port (int, optional): Override the database port from DynamoDB configuration
-        user (str, optional): Override the database username from DynamoDB configuration
-        password (str, optional): Override the database password from DynamoDB configuration
-        warehouse (str, optional): Override the warehouse name from DynamoDB configuration (for Snowflake)
-        account (str, optional): Override the account identifier from DynamoDB configuration (for Snowflake)
-        project (str, optional): Override the project ID from DynamoDB configuration (for BigQuery)
-        location (str, optional): Override the location from DynamoDB configuration (for BigQuery)
-        action_context (ActionContext, optional): The context for the action, including access token and user info
+        connection_id (str): The connection ID to use from DynamoDB configuration
+        action_context (ActionContext, optional): System context (automatically provided)
 
     Returns:
         Dict containing:
@@ -184,6 +153,17 @@ def query_database(
         - explanation (str): Natural language explanation of the results
         - relevant_tables (List[str]): List of tables used in the query
         - relevant_columns (List[str]): List of columns used in the query
+
+    Example usage:
+        query_database(
+            question="Show me all customers from New York", 
+            connection_id="my_db_connection"
+        )
+        
+        query_database(
+            question="What are the top 10 products by revenue?", 
+            connection_id="sales_db"
+        )
     """
 
     # Import vanna modules inside the function
@@ -364,12 +344,14 @@ def query_database(
             AmplifyLLM.__init__(self, config=config)
 
     try:
-        # Use attached database connection ID if provided, otherwise use the passed connection_id
-        effective_connection_id = _attached_database_connection_id or connection_id
-        
+        # Get current user from action context if available
+        current_user = None
+        if action_context and hasattr(action_context, 'user_id'):
+            current_user = action_context.user_id
+
         # Get database configuration from DynamoDB
         try:
-            db_config_from_dynamo = get_db_config(effective_connection_id, _current_user)
+            db_config_from_dynamo = get_db_config(connection_id, current_user)
         except ValueError as e:
             return {
                 "success": False,
@@ -380,30 +362,6 @@ def query_database(
                 "relevant_tables": [],
                 "relevant_columns": [],
             }
-
-        # Override with any explicitly provided parameters
-        if db_type:
-            db_config_from_dynamo["db_type"] = db_type
-        if database:
-            db_config_from_dynamo["database"] = database
-        if schema:
-            db_config_from_dynamo["schema"] = schema
-        if host:
-            db_config_from_dynamo["host"] = host
-        if port:
-            db_config_from_dynamo["port"] = port
-        if user:
-            db_config_from_dynamo["user"] = user
-        if password:
-            db_config_from_dynamo["password"] = password
-        if warehouse:
-            db_config_from_dynamo["warehouse"] = warehouse
-        if account:
-            db_config_from_dynamo["account"] = account
-        if project:
-            db_config_from_dynamo["project"] = project
-        if location:
-            db_config_from_dynamo["location"] = location
 
         # Extract database type from configuration
         db_type = db_config_from_dynamo.get("db_type", "snowflake")
