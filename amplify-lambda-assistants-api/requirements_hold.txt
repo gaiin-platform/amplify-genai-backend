@@ -64,7 +64,7 @@ jsonschema-specifications==2024.10.1
     #   jsonschema
 oauthlib==3.2.2
     # via requests-oauthlib
-pillow==11.1.0
+pillow==11.3.0
     # via -r requirements.in
 proto-plus==1.25.0
     # via google-api-core
