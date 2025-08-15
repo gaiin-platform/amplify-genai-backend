@@ -3,7 +3,11 @@ import boto3
 import os
 import logging
 from typing import Dict, Any
-from common.validate import validated
+from pycommon.authz import validated, setup_validated
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
+
+setup_validated(rules, get_permission_checker)
 
 # Configure logging for serverless offline with more detailed format
 logging.basicConfig(

@@ -2,7 +2,11 @@ import json
 import os
 import logging
 import boto3
-from common.validate import validated
+from pycommon.authz import validated, setup_validated
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
+
+setup_validated(rules, get_permission_checker)
 
 # Configure logging
 logger = logging.getLogger()
