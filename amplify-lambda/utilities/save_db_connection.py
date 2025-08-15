@@ -4,7 +4,11 @@ import uuid
 import boto3
 from datetime import datetime
 from botocore.exceptions import ClientError
-from common.validate import validated
+from pycommon.authz import validated, setup_validated
+from schemata.schema_validation_rules import rules
+from schemata.permissions import get_permission_checker
+
+setup_validated(rules, get_permission_checker)
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["DB_CONNECTIONS_TABLE"])
