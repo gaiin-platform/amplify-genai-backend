@@ -314,7 +314,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             if (usage) {                                                                     // currently no cached tokens 
                 recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, 0, details);
             }
-            result = bedrockConverseTransform(event);
+            result = bedrockConverseTransform(event, responseStream);
         } else if (isGeminiModel(model.id)) {            
             result = geminiTransform(event);
             const usage = geminiUsageTransform(event);
