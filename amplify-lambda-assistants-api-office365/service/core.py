@@ -154,6 +154,7 @@ from integrations.o365.word_doc import (
 
 from service.routes import route_data
 import re
+import copy
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 
@@ -168,6 +169,82 @@ from pycommon.authz import validated
 def camel_to_snake(name):
     snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
     return snake
+
+
+def fix_data_types(data, func_schema):
+    """
+    Attempts to fix data types to match the expected schema.
+    Returns a copy of the data with type corrections applied.
+    """
+    
+    fixed_data = copy.deepcopy(data)
+    
+    if not func_schema or "properties" not in func_schema:
+        return fixed_data
+        
+    if "data" not in fixed_data or not isinstance(fixed_data["data"], dict):
+        return fixed_data
+    
+    properties = func_schema["properties"]
+    
+    for field_name, field_value in fixed_data["data"].items():
+        if field_name not in properties:
+            continue
+            
+        expected_type = properties[field_name].get("type")
+        if not expected_type:
+            continue
+            
+        try:
+            # Skip if already correct type
+            if expected_type == "string" and isinstance(field_value, str):
+                continue
+            elif expected_type == "integer" and isinstance(field_value, int):
+                continue
+            elif expected_type == "number" and isinstance(field_value, (int, float)):
+                continue
+            elif expected_type == "boolean" and isinstance(field_value, bool):
+                continue
+            elif expected_type in ["array", "object"]:
+                continue  # Don't attempt to fix complex types
+                
+            # Attempt type conversion
+            if expected_type == "integer":
+                if isinstance(field_value, str):
+                    try:
+                        # Handle negative numbers and standard integer strings
+                        if field_value.lstrip('-').isdigit():
+                            fixed_data["data"][field_name] = int(field_value)
+                    except ValueError:
+                        pass
+                elif isinstance(field_value, float) and field_value.is_integer():
+                    fixed_data["data"][field_name] = int(field_value)
+                    
+            elif expected_type == "number":
+                if isinstance(field_value, str):
+                    try:
+                        fixed_data["data"][field_name] = float(field_value)
+                    except ValueError:
+                        pass
+                        
+            elif expected_type == "boolean":
+                if isinstance(field_value, str):
+                    if field_value.lower() in ["true", "1", "yes", "on"]:
+                        fixed_data["data"][field_name] = True
+                    elif field_value.lower() in ["false", "0", "no", "off"]:
+                        fixed_data["data"][field_name] = False
+                elif isinstance(field_value, (int, float)):
+                    fixed_data["data"][field_name] = bool(field_value)
+                    
+            elif expected_type == "string":
+                if not isinstance(field_value, str):
+                    fixed_data["data"][field_name] = str(field_value)
+                    
+        except (ValueError, TypeError, AttributeError):
+            # If conversion fails, leave the original value
+            continue
+    
+    return fixed_data
 
 
 def common_handler(operation, *required_params, **optional_params):
@@ -223,7 +300,16 @@ def route_request(event, context, current_user, name, data):
             print("Request data validated")
         except ValidationError as e:
             print("Validation error: ", str(e))
-            raise ValueError(f"Invalid request: {str(e)}")
+            print("Attempting to fix data types...")
+            
+            try:
+                fixed_data = fix_data_types(data, func_schema)
+                validate(fixed_data, wrapper_schema)
+                print("Data types fixed and validation successful")
+                data = fixed_data
+            except (ValidationError, ValueError, TypeError) as fix_error:
+                print(f"Type fixing failed: {str(fix_error)}")
+                raise ValueError(f"Invalid request: {str(e)}")
 
         service = "/microsoft/integrations/"
         # If no op parameter, try to extract from the path
