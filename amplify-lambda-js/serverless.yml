@@ -77,7 +77,8 @@ provider:
     AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
     AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
     S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
-
+    BEDROCK_GUARDRAIL_ID: ${self:custom.stageVars.BEDROCK_GUARDRAIL_ID, ''}
+    BEDROCK_GUARDRAIL_VERSION: ${self:custom.stageVars.BEDROCK_GUARDRAIL_VERSION, ''}
     
   iam:
     role:
@@ -265,6 +266,13 @@ resources:
                 - s3:GetObject
               Resource:
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeGuardrail
+                - bedrock:ApplyGuardrail
+              Resource:
+                - "arn:aws:bedrock:*:${aws:accountId}:guardrail/${self:provider.environment.BEDROCK_GUARDRAIL_ID, '*'}"
+                - "arn:aws:bedrock:*:${aws:accountId}:guardrail-profile/*"
     
     RequestStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
