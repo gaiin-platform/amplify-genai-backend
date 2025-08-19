@@ -920,11 +920,7 @@ def extract_data_sources_from_messages(
     parameters={
         "type": "object",
         "properties": {
-            "sessionId": {"type": "string", "description": "The session ID."},
-            "requestStartTime": {
-                "type": "string", 
-                "description": "Optional ISO timestamp when the current request started - used to determine if stored results are from before this request"
-            }
+            "sessionId": {"type": "string", "description": "The session ID."}
         },
         "required": ["sessionId"],
     },
@@ -974,7 +970,7 @@ def extract_data_sources_from_messages(
         "required": ["success"],
     },
 )
-def get_latest_agent_state(current_user, session_id, request_start_time=None):
+def get_latest_agent_state(current_user, session_id):
     try:
         # Initialize AWS clients
         dynamodb = boto3.resource("dynamodb")
@@ -996,35 +992,25 @@ def get_latest_agent_state(current_user, session_id, request_start_time=None):
 
         latest_item = items[0]
 
+        # Check if this result has already been consumed
+        if "consumedAt" in latest_item and latest_item["consumedAt"]:
+            return {"success": False, "error": "No fresh results available"}
+
         # Check if the memory column is populated (indicating result is complete)
         if "memory" in latest_item and latest_item["memory"]:
             print(f"Agent result is complete, fetching conversation from S3")
 
-            # Check if request start time is newer than the stored timestamp
-            # This handles the race condition where a newer request might be in progress
-            if request_start_time:
-                try:
-                    request_dt = datetime.fromisoformat(request_start_time.replace("Z", "+00:00"))
-                    stored_timestamp = latest_item.get("timestamp")
-                    
-                    if stored_timestamp:
-                        stored_dt = datetime.fromisoformat(stored_timestamp.replace("Z", "+00:00"))
-                        
-                        # If stored timestamp is older than or equal to request start time,
-                        # it means we don't have newer data than the request - return inProgress
-                        if stored_dt <= request_dt:
-                            print(f"Stored timestamp {stored_timestamp} is older than or equal to request start time {request_start_time}")
-                            print("Returning inProgress=true as no newer data is available")
-                            return {
-                                "success": True,
-                                "inProgress": True,
-                                "session": session_id
-                            }
-                        else:
-                            print(f"Stored timestamp {stored_timestamp} is newer than request start time {request_start_time}")
-                            print("Proceeding to return complete results as we have newer data")
-                except (ValueError, TypeError) as e:
-                    print(f"Error parsing timestamps: {e}. Proceeding with normal flow.")
+            # Mark this result as consumed
+            try:
+                table.update_item(
+                    Key={"user": current_user, "sessionId": session_id},
+                    UpdateExpression="SET consumedAt = :timestamp",
+                    ConditionExpression="attribute_exists(#ts)",
+                    ExpressionAttributeNames={"#ts": "timestamp"},
+                    ExpressionAttributeValues={":timestamp": datetime.utcnow().isoformat()}
+                )
+            except Exception as e:
+                print(f"Warning: Failed to mark result as consumed: {e}")
 
             # Extract S3 location from memory
             memory = latest_item["memory"]
