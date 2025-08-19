@@ -134,9 +134,16 @@ export class StreamMultiplexer {
                     }
                     
                     // Process regular data events
+                    let dataContent = null;
                     if (eventText.startsWith('data:')) {
+                        dataContent = eventText.slice(6).trim();
+                    } else if (eventText.includes('\ndata:')) {
+                        const dataIndex = eventText.indexOf('\ndata:');
+                        dataContent = eventText.slice(dataIndex + 6).trim();
+                    }
+                    
+                    if (dataContent !== null) {
                         try {
-                            const dataContent = eventText.slice(6).trim();
                             
                             // logger.debug("Parsing Event...");
                             let eventObj = JSON.parse(dataContent);

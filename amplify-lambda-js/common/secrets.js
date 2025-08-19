@@ -69,7 +69,7 @@ const parsed_secret = JSON.parse(secret_data);
 // The get_llm_config function converted to JavaScript
 export const getLLMConfig = async (model_name, model_provider) => {
     if (model_provider === "OpenAI") {
-        const url = "https://api.openai.com/v1/chat/completions";
+        const url = "https://api.openai.com/v1/responses";
         const key = await getSecretApiKey("OPENAI_API_KEY");
         return {url, key};
     }

@@ -23,10 +23,27 @@ export const translateModelToOpenAI = (modelId) => {
     return modelId;
 }
 
+export const translateDataToResponseBody = (data) => {
+    const messages = [...data.messages];
+    data.input = messages;
+    data.max_output_tokens = data.max_tokens || data.max_completion_tokens || 1000;
+    if (data.max_output_tokens < 16) data.max_output_tokens = 16;
+    delete data.messages;
+    delete data.max_tokens;
+    delete data.max_completion_tokens;
+    delete data.stream_options;
+    delete data.temperature;
+    delete data.n;
+    return data;
+}
+
 const isOpenAIEndpoint = (url) => {
     return url.startsWith("https://api.openai.com");
 }
 
+const isCompletionsEndpoint = (url) => {
+    return url.includes("/completions");
+}
 
 export const chat = async (endpointProvider, chatBody, writable) => {
     let body = {...chatBody};
@@ -89,6 +106,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     const url = config.url;
     const isOpenAiEndpoint = isOpenAIEndpoint(url);
+    const isCompletionEndpoint = isCompletionsEndpoint(url);
 
     const headers = isOpenAiEndpoint ?
         {
@@ -100,17 +118,31 @@ export const chat = async (endpointProvider, chatBody, writable) => {
             'api-key': config.key,
         };
 
+    if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
+
     const isOmodel = /^o\d/.test(modelId) || /^gpt-5/.test(modelId);
 
-
     if (isOmodel) {
-        data = {max_completion_tokens: model.outputTokenLimit,
+        data = {[isCompletionEndpoint ? "max_completion_tokens" : "max_output_tokens"]: model.outputTokenLimit,
                 messages: data.messages, model: modelId, stream: true
                 }
     }
-    if (model.supportsReasoning) data.reasoning_effort = options.reasoningLevel ?? "low";
+    if (model.supportsReasoning) {
+        const reasoningLvl = options.reasoningLevel ?? "low";
+        if (isCompletionEndpoint) {
+            data.reasoning_effort = reasoningLvl;
+        } else {
+            data.reasoning = {effort: reasoningLvl, summary: "auto"};
+        }
+    }
     
-    if (isOpenAiEndpoint) data.model = translateModelToOpenAI(body.model);
+    if (!isCompletionEndpoint) {
+        data = translateDataToResponseBody(data);
+        // if contains a url the 
+        if (containsUrlQuery(data.messages)) {
+            data.tools = [{"type": "web_search_preview"}];
+        }
+    }
 
     logger.debug("Calling OpenAI API with url: "+url);
 
@@ -208,7 +240,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
         });
     }
     let statusTimer = null;
-    const statusInterval = 8000;
+    const statusInterval = model.supportsReasoning ? 15000: 8000;
     const handleSendStatusMessage = () => {
         // console.log("Sending status message...");
         sendStatusMessage(writable);
@@ -221,6 +253,35 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     return streamAxiosResponseToWritable(url, writable, statusTimer);
 }
 
+const containsUrlQuery = (messages) => {
+    if (!Array.isArray(messages)) return false;
+
+    const isLikelyUrl = (text) => {
+        if (typeof text !== 'string' || text.length === 0) return false;
+        if (/^data:/i.test(text)) return false;
+        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>"'()]+|(?:\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?:\/[^^\s<>"'()]*)?)/i;
+        return urlPattern.test(text);
+    };
+
+    return messages.some((message) => {
+        const content = message && message.content;
+        if (typeof content === 'string') {
+            return isLikelyUrl(content);
+        }
+        if (Array.isArray(content)) {
+            return content.some((part) => {
+                if (!part) return false;
+                if (typeof part === 'string') return isLikelyUrl(part);
+                // Only look at text-bearing parts
+                if ((part.type === 'text' || part.type === 'input_text') && typeof part.text === 'string') {
+                    return isLikelyUrl(part.text);
+                }
+                return false;
+            });
+        }
+        return false;
+    });
+}
 
 async function includeImageSources(dataSources, messages, model, responseStream) {
     if (!dataSources || dataSources.length === 0)  return messages;
