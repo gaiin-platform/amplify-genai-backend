@@ -5,9 +5,9 @@ import { getLogger } from "../../logging.js";
 
 const logger = getLogger("gemini-events");
 
-export const geminiTransform = (event) => {
+export const geminiTransform = (event, responseStream = null) => {
     // First try the OpenAI transform since Gemini's OpenAI compatibility mode has a similar format
-    const openAiResult = openAiTransform(event);
+    const openAiResult = openAiTransform(event, responseStream);
     if (openAiResult) {
         return openAiResult;
     }
