@@ -139,7 +139,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     if (!isCompletionEndpoint) {
         data = translateDataToResponseBody(data);
         // if contains a url the 
-        if (containsUrlQuery(data.messages)) {
+        if (isOpenAiEndpoint && containsUrlQuery(data.input)) {
             data.tools = [{"type": "web_search_preview"}];
         }
     }
@@ -148,10 +148,19 @@ export const chat = async (endpointProvider, chatBody, writable) => {
 
     trace(options.requestId, ["chat","openai"], {modelId, url, data})
 
-    function streamAxiosResponseToWritable(url, writableStream, statusTimer) {
+    function streamAxiosResponseToWritable(url, writableStream, statusTimer, retryWithoutTools = false) {
         return new Promise((resolve, reject) => {
+            // Use a copy of data for this attempt
+            let requestData = {...data};
+            
+            // If retrying, remove tools
+            if (retryWithoutTools && requestData.tools) {
+                delete requestData.tools;
+                logger.debug("Retrying request without tools");
+            }
+            
             axios({
-                data,
+                data: requestData,
                 headers: headers,
                 method: 'post',
                 url: url,
@@ -217,7 +226,17 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                 })
                 .catch((e)=>{
                     if (statusTimer) clearTimeout(statusTimer);
-                    sendErrorMessage(writableStream, e.response.status, e.response.statusText);
+                    
+                    // If we have tools and haven't already retried, try again without tools
+                    if (!retryWithoutTools && data.tools && data.tools.length > 0) {
+                        logger.debug("Request failed with tools, retrying without tools");
+                        streamAxiosResponseToWritable(url, writableStream, statusTimer, true)
+                            .then(resolve)
+                            .catch(reject);
+                        return;
+                    }
+                    
+                    sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
                     if (e.response && e.response.data) {
                         console.log("Error invoking OpenAI API: ",e.response.statusText);
 
