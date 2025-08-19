@@ -373,8 +373,9 @@ def update_drive_item(
         url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}"
         response = session.patch(url, json=updates)
         if not response.ok:
+            print(f"Drive item update failed. Status: {response.status_code}, Response: {response.text}")
             handle_graph_error(response)
-        format_drive_item(response.json())
+        return format_drive_item(response.json())
     except requests.RequestException as e:
         raise DriveError(f"Network error while updating drive item: {str(e)}")
 

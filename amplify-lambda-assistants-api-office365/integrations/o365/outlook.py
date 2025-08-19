@@ -81,16 +81,23 @@ def list_messages(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
 
-        params = {
-            "$top": top, 
-            "$skip": skip, 
-            "$orderby": "receivedDateTime desc",
-            "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
-            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
-        }
-
+        # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
         if filter_query:
-            params["$filter"] = filter_query
+            # When filtering, use minimal parameters to avoid complexity error
+            params = {
+                "$filter": filter_query,
+                "$top": top
+                # Skip $skip, $select, $orderby, and $expand to avoid "too complex" error
+            }
+        else:
+            # When not filtering, use full parameter set
+            params = {
+                "$top": top, 
+                "$skip": skip,
+                "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
+                "$orderby": "receivedDateTime desc",
+                "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+            }
 
         response = session.get(url, params=params)
 
@@ -270,7 +277,7 @@ def delete_message(current_user: str, message_id: str, access_token: str) -> Dic
 
 
 def get_attachments(
-    current_user: str, message_id: str, access_token: str
+    current_user: str, message_id: str, access_token: str = None
 ) -> List[Dict]:
     """
     Gets attachments for a specific message.
@@ -299,6 +306,116 @@ def get_attachments(
 
     except requests.RequestException as e:
         raise OutlookError(f"Network error while getting attachments: {str(e)}")
+
+
+def download_attachment(
+    current_user: str, message_id: str, attachment_id: str, access_token: str = None
+) -> Dict:
+    """
+    Downloads an attachment from a specific message.
+    
+    For files under 7MB, returns base64-encoded content directly.
+    For larger files, returns a temporary download URL to avoid API Gateway limits.
+
+    Args:
+        current_user: User identifier
+        message_id: Message ID
+        attachment_id: Attachment ID
+        access_token: Optional OAuth token
+
+    Returns:
+        Dict with attachment content/URL and metadata
+
+    Raises:
+        MessageNotFoundError: If message doesn't exist
+        AttachmentError: If attachment doesn't exist or download fails
+        OutlookError: For other failures
+    
+    Notes:
+        - API Gateway has 10MB response limit, base64 adds ~33% overhead
+        - Files >7MB return download URLs instead of content
+        - Supports fileAttachment types only
+        - itemAttachment and referenceAttachment return appropriate guidance
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        
+        # Get attachment metadata
+        metadata_url = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}"
+        metadata_response = session.get(metadata_url)
+
+        if not metadata_response.ok:
+            if metadata_response.status_code == 404:
+                raise AttachmentError("Attachment not found")
+            handle_graph_error(metadata_response)
+
+        attachment_metadata = metadata_response.json()
+        attachment_type = attachment_metadata.get("@odata.type")
+        file_size = attachment_metadata.get("size", 0)
+        
+        # API Gateway limit consideration: 10MB response limit
+        # Base64 adds ~33% overhead, so 7MB is safe limit
+        SIZE_LIMIT_BYTES = 7 * 1024 * 1024  # 7MB
+        
+        if attachment_type == "#microsoft.graph.fileAttachment":
+            result = {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": attachment_metadata.get("contentType"),
+                "size": file_size,
+                "isInline": attachment_metadata.get("isInline", False),
+                "lastModifiedDateTime": attachment_metadata.get("lastModifiedDateTime")
+            }
+            
+            if file_size <= SIZE_LIMIT_BYTES:
+                # Small file - return base64 content directly
+                content_url = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}/$value"
+                content_response = session.get(content_url)
+                
+                if content_response.ok:
+                    import base64
+                    result["contentBytes"] = base64.b64encode(content_response.content).decode('utf-8')
+                    result["deliveryMethod"] = "direct_content"
+                else:
+                    # Fallback to contentBytes from metadata
+                    result["contentBytes"] = attachment_metadata.get("contentBytes")
+                    result["deliveryMethod"] = "metadata_content"
+            else:
+                # Large file - return download URL to avoid API Gateway limits
+                result["downloadUrl"] = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}/$value"
+                result["deliveryMethod"] = "download_url"
+                result["note"] = f"File too large ({file_size:,} bytes) for direct API response. Use downloadUrl with authentication headers."
+                
+            return result
+            
+        elif attachment_type == "#microsoft.graph.itemAttachment":
+            return {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": "application/outlook-item",
+                "size": file_size,
+                "isInline": False,
+                "lastModifiedDateTime": attachment_metadata.get("lastModifiedDateTime"),
+                "deliveryMethod": "unsupported",
+                "error": "Item attachments (embedded Outlook items) require special handling"
+            }
+            
+        elif attachment_type == "#microsoft.graph.referenceAttachment":
+            return {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": "reference/link",
+                "isInline": False,
+                "sourceUrl": attachment_metadata.get("sourceUrl"),
+                "providerType": attachment_metadata.get("providerType"),
+                "deliveryMethod": "external_link",
+                "note": "Reference attachment - use sourceUrl to access the cloud-stored file"
+            }
+        else:
+            raise AttachmentError(f"Unsupported attachment type: {attachment_type}")
+
+    except requests.RequestException as e:
+        raise OutlookError(f"Network error while downloading attachment: {str(e)}")
 
 
 def parse_msip_label(extended_properties: List[Dict]) -> Dict:
@@ -931,17 +1048,17 @@ def search_messages(
     current_user: str,
     search_query: str,
     top: int = 10,
-    skip: int = 0,
     access_token: str = None,
 ) -> List[Dict]:
     """
     Searches messages for a given query string using the Microsoft Graph API's $search parameter.
+    
+    Note: Microsoft Graph API does not support pagination (skip) with search queries.
 
     Args:
         current_user: User identifier
         search_query: A string search query (e.g., "meeting")
-        top: Maximum number of messages to return
-        skip: Number of messages to skip for pagination
+        top: Maximum number of messages to return (1-100)
         access_token: Optional access token
 
     Returns:
@@ -955,7 +1072,6 @@ def search_messages(
         url = f"{GRAPH_ENDPOINT}/me/messages"
         params = {
             "$top": top, 
-            "$skip": skip, 
             "$search": f'"{search_query}"',
             "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
             "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
