@@ -899,12 +899,12 @@ def share_calendar(
         current_user: The user's identifier
         calendar_id: Calendar ID
         user_email: Email of the user to share with
-        role: Permission level ('read', 'write', 'owner')
+        role: Permission level ('freeBusyRead', 'limitedRead', 'read')
 
     Returns:
         Permission details
     """
-    role_map = {"read": "reader", "write": "writer", "owner": "owner"}
+    role_map = {"freeBusyRead": "freeBusyRead", "limitedRead": "limitedRead", "read": "read"}
 
     if role not in role_map:
         raise ValueError(f"Invalid role. Must be one of: {list(role_map.keys())}")

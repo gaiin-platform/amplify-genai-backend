@@ -35,7 +35,8 @@ from integrations.o365.outlook import (
     get_message_details,
     send_mail,
     delete_message,
-    get_attachments,
+    get_attachments as get_attachments_outlook,
+    download_attachment,
     update_message,
     create_draft,
     send_draft,
@@ -118,7 +119,7 @@ from integrations.o365.calendar import (
     create_recurring_event,
     update_recurring_event,
     add_attachment,
-    get_attachments,
+    get_attachments as get_attachments_calendar,
     delete_attachment,
     get_calendar_permissions,
     share_calendar,
@@ -909,7 +910,25 @@ def delete_message_handler(current_user, data):
     },
 )
 def get_attachments_handler(current_user, data):
-    return common_handler(get_attachments, message_id=None)(current_user, data)
+    return common_handler(get_attachments_outlook, message_id=None)(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/download_attachment",
+    tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
+    name="microsoftDownloadAttachment",
+    description="Downloads a specific attachment from a message. Files under 7MB return base64 content directly. Larger files return download URLs to avoid API Gateway limits.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "message_id": {"type": "string", "description": "Message ID"},
+            "attachment_id": {"type": "string", "description": "Attachment ID"}
+        },
+        "required": ["message_id", "attachment_id"],
+    },
+)
+def download_attachment_handler(current_user, data):
+    return common_handler(download_attachment, message_id=None, attachment_id=None)(current_user, data)
 
 
 @api_tool(
@@ -2302,7 +2321,7 @@ def delete_attachment_handler(current_user, data):
     path="/microsoft/integrations/search_messages",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftSearchMessages",
-    description="Searches messages for a given query string.",
+    description="Searches messages for a given query string. Note: Pagination with skip is not supported in search queries.",
     parameters={
         "type": "object",
         "properties": {
@@ -2312,20 +2331,14 @@ def delete_attachment_handler(current_user, data):
                 "minimum": 1,
                 "maximum": 100,
                 "default": 10,
-                "description": "Maximum messages",
-            },
-            "skip": {
-                "type": "integer",
-                "minimum": 0,
-                "default": 0,
-                "description": "Pagination offset",
+                "description": "Maximum messages to return",
             },
         },
         "required": ["search_query"],
     },
 )
 def search_messages_handler(current_user, data):
-    return common_handler(search_messages, search_query=None, top=10, skip=0)(
+    return common_handler(search_messages, search_query=None, top=10)(
         current_user, data
     )
 
@@ -2632,7 +2645,7 @@ def calendar_add_attachment_handler(current_user, data):
     },
 )
 def get_event_attachments_handler(current_user, data):
-    return common_handler(get_attachments, event_id=None)(current_user, data)
+    return common_handler(get_attachments_calendar, event_id=None)(current_user, data)
 
 
 @api_tool(
@@ -2676,7 +2689,7 @@ def get_calendar_permissions_handler(current_user, data):
     path="/microsoft/integrations/share_calendar",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="microsoftShareCalendar",
-    description="Shares a calendar with another user.",
+    description="Shares a calendar with another user. Uses Microsoft Graph API calendar permission roles.",
     parameters={
         "type": "object",
         "properties": {
@@ -2684,9 +2697,9 @@ def get_calendar_permissions_handler(current_user, data):
             "user_email": {"type": "string", "description": "User email"},
             "role": {
                 "type": "string",
-                "description": "Role",
+                "description": "Permission level: freeBusyRead (free/busy only), limitedRead (free/busy + subject/location), read (all event details)",
                 "default": "read",
-                "enum": ["read", "write", "owner"],
+                "enum": ["freeBusyRead", "limitedRead", "read"],
             },
         },
         "required": ["calendar_id", "user_email"],
