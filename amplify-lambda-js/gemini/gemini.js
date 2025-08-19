@@ -171,7 +171,7 @@ export const chat = async (chatBody, writable) => {
         
         // Set up status message timer for long-running Gemini requests
         let statusTimer = null;
-        const statusInterval = 12000; // 12 seconds
+        const statusInterval = model.supportsReasoning ? 15000: 8000;
         
         const sendStatusMessage = (responseStream) => {
             const statusInfo = newStatus({
