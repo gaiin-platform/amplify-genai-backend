@@ -167,10 +167,8 @@ functions:
           enabled: true
           description: "Run every 3 minutes to check for scheduled tasks that need to be executed"
 
-  toolsEndpoint:
-    image:
-      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-fat-${self:custom.deployTimestamp}
-      command: ["service.core.get_builtin_tools"]
+  toolsEndpointLambda:
+    handler: service/core.get_builtin_tools
     runtime: python3.11
     timeout: 30
     memorySize: 4096

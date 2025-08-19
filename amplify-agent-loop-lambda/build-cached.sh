@@ -3,6 +3,13 @@ set -e
 
 REGION="us-east-1"
 STAGE="${1:-dev}"
+PRUNE=false
+
+# Check for --prune flag
+if [[ "$2" == "--prune" ]]; then
+    PRUNE=true
+fi
+
 DEV_REPOSITORY_URI="654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo"
 PROD_REPOSITORY_URI="514391678313.dkr.ecr.us-east-1.amazonaws.com/prod-amplifygenai-repo"
 
@@ -37,8 +44,13 @@ export DOCKER_BUILDKIT=1
 # Login to ECR
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
 
-# Don't clean previous builds to leverage cache
-# docker system prune -f
+# Conditionally clean previous builds based on prune flag
+if [ "$PRUNE" = true ]; then
+    echo "Pruning Docker system..."
+    docker system prune -f
+else
+    echo "Skipping Docker system prune (use --prune flag to enable)"
+fi
 
 # Ensure buildx builder
 docker buildx create --name lambda-builder --use || docker buildx use lambda-builder
