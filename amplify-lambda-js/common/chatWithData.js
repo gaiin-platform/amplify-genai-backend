@@ -307,7 +307,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                            });
             }
 
-            result = openAiTransform(event);  
+            result = openAiTransform(event, responseStream);  
             
         } else if (model.provider === 'Bedrock') {
             const usage = bedrockTokenUsageTransform(event);
@@ -316,7 +316,7 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
             }
             result = bedrockConverseTransform(event, responseStream);
         } else if (isGeminiModel(model.id)) {            
-            result = geminiTransform(event);
+            result = geminiTransform(event, responseStream);
             const usage = geminiUsageTransform(event);
             if (usage) {
                 recordUsage(account, requestId, model, usage.prompt_tokens, usage.completion_tokens, 

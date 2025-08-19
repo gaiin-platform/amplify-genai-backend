@@ -105,6 +105,8 @@ export const handleChat = async ({ account, chatFn, chatRequest, contexts, metaD
                             llmResponse += chunkObj.choices[0].delta.content;
                         } else if (chunkObj?.choices && chunkObj?.choices.length > 0 && chunkObj?.choices[0]?.message?.content) { // for o1 models
                             llmResponse += chunkObj.choices[0].message.content;
+                        } else if (chunkObj?.type === "response.output_text.delta" && chunkObj.delta) { // openai responses endpoints
+                            llmResponse += chunkObj.delta;
                         }
                         
                     } catch (e) {

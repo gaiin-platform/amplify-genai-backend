@@ -53,6 +53,15 @@ export const chatBedrock = async (chatBody, writable) => {
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
                         }
+
+        if (process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION) {
+            logger.debug("Using guardrail", process.env.BEDROCK_GUARDRAIL_ID, process.env.BEDROCK_GUARDRAIL_VERSION);
+            input.guardrailConfig = {
+                guardrailIdentifier: process.env.BEDROCK_GUARDRAIL_ID,
+                guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION
+            }
+       
+        }
         if (currentModel.supportsReasoning) {
             const budget_tokens = getBudgetTokens({options}, maxTokens); 
             input.additionalModelRequestFields={
