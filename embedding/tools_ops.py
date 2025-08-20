@@ -17,6 +17,6 @@ def api_tools_handler(event, context, current_user, name, data):
     # Configure directories to include (more precise than excluding)
     include_dirs = []  # Main code directories including embedding folder
     
-    result = api_tools_register_handler(include_dirs, command, data, current_user)
+    result = api_tools_register_handler(include_dirs, command, data)
     result["service"] = "embedding"
     return result
