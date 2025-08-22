@@ -1,13 +1,13 @@
 import os
 import yaml
 import logging
-import requests
 import re
 import boto3
 import json
 from typing import Dict, Optional, List, Union, Tuple
 from agent.components.tool import register_tool
 from agent.core import ActionContext
+from agent.prompt import Prompt
 
 """
 Database Configuration from DynamoDB
@@ -40,10 +40,12 @@ Only configurations matching the current_user parameter will be loaded from Dyna
 def load_config_from_dynamodb(current_user: str = None):
     """Load configuration from AWS DynamoDB table filtered by current user"""
     try:
-        logging.info(f"Loading database configuration from DynamoDB for user: {current_user}")
+        logging.info(
+            f"Loading database configuration from DynamoDB for user: {current_user}"
+        )
         # Initialize DynamoDB client
         dynamodb = boto3.resource("dynamodb")
-        table = dynamodb.Table("amplify-v6-lambda-dev-db-connections")
+        table = dynamodb.Table(os.environ.get("DB_CONNECTIONS_TABLE"))
 
         # Scan the table to get all configurations
         response = table.scan()
@@ -87,8 +89,10 @@ def load_config_from_dynamodb(current_user: str = None):
             # Store in config structure
             config["db_config"][connection_id] = db_config
 
-        logging.info(f"Processed {filtered_items} items matching user filter, found {len(config['db_config'])} database configurations")
-        
+        logging.info(
+            f"Processed {filtered_items} items matching user filter, found {len(config['db_config'])} database configurations"
+        )
+
         # If no configurations found, raise an error
         if not config["db_config"]:
             error_msg = f"No database configurations found in DynamoDB table for user: {current_user}"
@@ -106,7 +110,9 @@ def load_config_from_dynamodb(current_user: str = None):
 
 def get_db_config(connection_id: str = "default", current_user: str = None) -> Dict:
     """Get specific database configuration by connection ID and current user"""
-    logging.info(f"get_db_config called with connection_id: {connection_id}, current_user: {current_user}")
+    logging.info(
+        f"get_db_config called with connection_id: {connection_id}, current_user: {current_user}"
+    )
     config = load_config_from_dynamodb(current_user)
     logging.info(f"Loaded config from DynamoDB: {config}")
 
@@ -114,15 +120,21 @@ def get_db_config(connection_id: str = "default", current_user: str = None) -> D
     if connection_id == "default":
         if config["db_config"]:
             first_config = list(config["db_config"].values())[0]
-            logging.info(f"Returning first available config for 'default': {first_config}")
+            logging.info(
+                f"Returning first available config for 'default': {first_config}"
+            )
             return first_config
         else:
-            logging.warning(f"No database configurations found for user: {current_user}")
+            logging.warning(
+                f"No database configurations found for user: {current_user}"
+            )
             return {}
 
     # Otherwise, look for the specific connection ID
     specific_config = config["db_config"].get(connection_id, {})
-    logging.info(f"Returning specific config for connection_id {connection_id}: {specific_config}")
+    logging.info(
+        f"Returning specific config for connection_id {connection_id}: {specific_config}"
+    )
     return specific_config
 
 
@@ -154,8 +166,8 @@ def query_database(
 
     Parameters:
         question (str): The natural language question to ask about the data
-        connection_id (str, optional): The connection ID to use from DynamoDB configuration. 
-            If not provided, the tool will automatically use any database connections 
+        connection_id (str, optional): The connection ID to use from DynamoDB configuration.
+            If not provided, the tool will automatically use any database connections
             attached to the current conversation.
         action_context (ActionContext, optional): System context (automatically provided)
 
@@ -171,18 +183,21 @@ def query_database(
 
     Example usage:
         query_database(
-            question="What are the top 10 products by revenue?", 
+            question="What are the top 10 products by revenue?",
             connection_id="connection_id_here"
         )
     """
-    
+
     # Add comprehensive error handling from the start
-    logging.info(f"Database tool starting execution with question: {question}, connection_id: {connection_id}")
-    
+    logging.info(
+        f"Database tool starting execution with question: {question}, connection_id: {connection_id}"
+    )
+
     # try to import vanna modules directly (will fail in slim container)
     try:
         from vanna.base import VannaBase
         from vanna.chromadb import ChromaDB_VectorStore
+
         logging.info("Successfully imported Vanna modules")
     except ImportError as e:
         logging.error(f"Failed to import Vanna modules: {e}")
@@ -200,13 +215,13 @@ def query_database(
     logging.getLogger("vanna").setLevel(logging.WARNING)
 
     class AmplifyLLM(VannaBase):
-        def __init__(self, config=None):
+        def __init__(self, config=None, action_context=None):
             self.config = config or {}
-            self.api_key = os.getenv("AMPLIFY_API_KEY")
-            if not self.api_key:
-                logging.error("AMPLIFY_API_KEY environment variable not found")
-                raise ValueError("AMPLIFY_API_KEY not found in environment variables")
-            logging.info("Successfully initialized AmplifyLLM with API key")
+            self.action_context = action_context
+            if not self.action_context:
+                logging.error("action_context is required for AmplifyLLM")
+                raise ValueError("action_context is required for AmplifyLLM")
+            logging.info("Successfully initialized AmplifyLLM with action_context")
             self.db_schema = None
             self.prompt_history = []  # Track prompt history for context
 
@@ -304,45 +319,26 @@ def query_database(
             return f"Here's the SQL query to answer your question:\n{sql}"
 
         def submit_prompt(self, prompt, **kwargs) -> str:
-            url = "https://prod-api.vanderbilt.ai/chat"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            }
-
             system_msg = self.system_message()
-            formatted_prompt = f"{system_msg}\n\n{prompt}"
-
+            
             if isinstance(prompt, list):
                 prompt = "\n".join(prompt)
 
-            payload = {
-                "data": {
-                    "model": self.config.get("model", "gpt-4o"),
-                    "temperature": self.config.get("temperature", 0.1),
-                    "max_tokens": self.config.get("max_tokens", 4096),
-                    "dataSources": [],
-                    "messages": [
-                        {"role": "system", "content": system_msg},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "options": {
-                        "ragOnly": False,
-                        "skipRag": True,
-                        "model": {"id": self.config.get("model", "gpt-4o")},
-                        "prompt": formatted_prompt,
-                    },
-                }
-            }
+            messages = [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": prompt},
+            ]
 
             try:
-                response = requests.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                return response.json().get("data", "")
+                generate_response = self.action_context.get("llm")
+                if not generate_response:
+                    logging.error("No LLM available in action_context")
+                    return None
+                    
+                response = generate_response(Prompt(messages=messages))
+                return response
             except Exception as e:
                 logging.error(f"Error in submit_prompt: {str(e)}")
-                if hasattr(e, "response"):
-                    logging.error(f"Error details: {e.response.text}")
                 return None
 
         def generate_sql(self, question: str, **kwargs) -> str:
@@ -365,19 +361,21 @@ def query_database(
             return None
 
     class MyVanna(ChromaDB_VectorStore, AmplifyLLM):
-        def __init__(self, config=None):
+        def __init__(self, config=None, action_context=None):
             config = config or {}
             config["persist_directory"] = None  # Use in-memory storage
             ChromaDB_VectorStore.__init__(self, config=config)
-            AmplifyLLM.__init__(self, config=config)
+            AmplifyLLM.__init__(self, config=config, action_context=action_context)
 
     try:
         # Get current user from action context if available
         current_user = None
         if action_context:
             current_user = action_context.get("current_user")
-        
-        logging.info(f"Database tool called with connection_id: {connection_id}, current_user: {current_user}")
+
+        logging.info(
+            f"Database tool called with connection_id: {connection_id}, current_user: {current_user}"
+        )
 
         # If no connection_id provided, try to get it from action_context (attached databases)
         if not connection_id and action_context:
@@ -385,13 +383,21 @@ def query_database(
             attached_db_id = action_context.get("attached_database_connection_id")
             if attached_db_id:
                 connection_id = attached_db_id
-                logging.info(f"Using attached database connection ID from action context: {connection_id}")
+                logging.info(
+                    f"Using attached database connection ID from action context: {connection_id}"
+                )
             else:
                 # Fallback: check for attachedDatabases array
                 attached_dbs = action_context.get("attachedDatabases")
-                if attached_dbs and isinstance(attached_dbs, list) and len(attached_dbs) > 0:
+                if (
+                    attached_dbs
+                    and isinstance(attached_dbs, list)
+                    and len(attached_dbs) > 0
+                ):
                     connection_id = attached_dbs[0]
-                    logging.info(f"Using first attached database from action context: {connection_id}")
+                    logging.info(
+                        f"Using first attached database from action context: {connection_id}"
+                    )
 
         # Check if we have a valid connection_id
         if not connection_id:
@@ -407,10 +413,12 @@ def query_database(
 
         # Get database configuration from DynamoDB
         try:
-            logging.info(f"Looking up database configuration for connection_id: {connection_id}, current_user: {current_user}")
+            logging.info(
+                f"Looking up database configuration for connection_id: {connection_id}, current_user: {current_user}"
+            )
             db_config_from_dynamo = get_db_config(connection_id, current_user)
             logging.info(f"Database configuration retrieved: {db_config_from_dynamo}")
-            
+
             # Check if configuration is empty
             if not db_config_from_dynamo:
                 error_msg = f"No database configuration found for connection_id: {connection_id} and user: {current_user}"
@@ -459,7 +467,8 @@ def query_database(
                     "temperature": 0.1,
                     "max_tokens": 4096,
                     "db_type": db_type,
-                }
+                },
+                action_context=action_context
             )
             logging.info("Successfully created Vanna instance")
         except Exception as e:
@@ -594,7 +603,9 @@ def query_database(
         # Convert results to list of dictionaries
         data = results.to_dict("records")
 
-        logging.info(f"Database tool completed successfully. Returned {len(data)} rows of data.")
+        logging.info(
+            f"Database tool completed successfully. Returned {len(data)} rows of data."
+        )
         return {
             "success": True,
             "data": data,
@@ -609,6 +620,7 @@ def query_database(
         logging.error(f"Unexpected error in database tool: {e}")
         logging.error(f"Exception type: {type(e).__name__}")
         import traceback
+
         logging.error(f"Traceback: {traceback.format_exc()}")
         return {
             "success": False,
