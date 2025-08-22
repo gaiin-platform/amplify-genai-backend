@@ -115,6 +115,7 @@ class TasksMessageHandler(MessageHandler):
                     "startTime": get_timestamp(),
                     "source": source,
                 },
+                execution_id=session_id,
             )
 
             return event_payload
@@ -138,6 +139,17 @@ class TasksMessageHandler(MessageHandler):
         user_id = task_data.get("user")
         task_id = task_data.get("taskId")
 
+        # Try to extract sessionId - it might be available in task_data or we can reconstruct it
+        session_id = task_data.get("sessionId")
+        if not session_id and task_id:
+            # Try to reconstruct sessionId using current time (best effort)
+            runtime = get_timestamp(False)
+            session_id = f"scheduled-task-{task_id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+        
+        # Add sessionId to task_data for consistency
+        if session_id:
+            task_data["sessionId"] = session_id
+
         if not user_id or not task_id:
             print(f"Error in onFailure: Missing task data in event")
             add_task_execution_record(
@@ -150,6 +162,7 @@ class TasksMessageHandler(MessageHandler):
                     "failedAt": get_timestamp(),
                     "source": task_data.get("source", "unknown"),
                 },
+                execution_id=session_id,
             )
             return
 
@@ -171,6 +184,13 @@ class TasksMessageHandler(MessageHandler):
         task_data = agent_input_event.get("metadata", {}).get("requestContent", {})
         user_id = agent_input_event.get("currentUser")
         task_id = task_data.get("taskId")
+        
+        # Get sessionId from the agent_input_event - it should be available at the top level
+        session_id = agent_input_event.get("sessionId")
+        
+        # Add sessionId to task_data if not already there
+        if session_id and "sessionId" not in task_data:
+            task_data["sessionId"] = session_id
 
         if not user_id or not task_id:
             print(
@@ -261,6 +281,9 @@ def task_completed(user_id, task_id, task_data, result):
     """
     try:
         source = task_data.get("source")
+        # Get sessionId from task_data to use as execution_id
+        session_id = task_data.get("sessionId")
+        
         # Add task execution record
         add_task_execution_record(
             user_id,
@@ -271,6 +294,7 @@ def task_completed(user_id, task_id, task_data, result):
                 "completedAt": get_timestamp(),
                 "source": task_data.get("source"),
             },
+            execution_id=session_id,
         )
 
         if source == "scheduled-task":
@@ -334,6 +358,8 @@ def task_failed(user_id, task_id, error, task_data):
         task_data (dict): The task data with configuration details
     """
     try:
+        # Get sessionId from task_data to use as execution_id
+        session_id = task_data.get("sessionId")
 
         # Add task execution record
         add_task_execution_record(
@@ -346,6 +372,7 @@ def task_failed(user_id, task_id, error, task_data):
                 "failedAt": get_timestamp(),
                 "source": task_data.get("source"),
             },
+            execution_id=session_id,
         )
 
         if task_data.get("source") == "scheduled-task":
@@ -442,7 +469,7 @@ def email_task_details(api_key, email_subject, email_body, email_addresses):
             print(f"Failed to send task notification to {address}")
 
 
-def add_task_execution_record(current_user, task_id, status, details=None):
+def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None):
     """
     Add execution record to a task's logs.
 
@@ -451,6 +478,7 @@ def add_task_execution_record(current_user, task_id, status, details=None):
         task_id (str): ID of the task
         status (str): Status of the execution (success, failure, timeout)
         details (dict, optional): Additional details about the execution
+        execution_id (str, optional): Specific execution ID to use. If provided, will update existing record with same ID
 
     Returns:
         dict: Result of the operation
@@ -482,8 +510,10 @@ def add_task_execution_record(current_user, task_id, status, details=None):
                 "message": "Task not found or you don't have permission to update it",
             }
 
-        # Create a new execution record
-        execution_id = f"execution-{str(uuid.uuid4())}"
+        # Use provided execution_id or create a new one for backward compatibility
+        if execution_id is None:
+            execution_id = f"execution-{str(uuid.uuid4())}"
+        
         executed_at = datetime.now().isoformat()
 
         execution_record = {
@@ -513,7 +543,24 @@ def add_task_execution_record(current_user, task_id, status, details=None):
         if "logs" in response["Item"]:
             logs = deserializer.deserialize(response["Item"]["logs"])
 
-        logs.insert(0, execution_record)
+        # Find existing record with same execution_id and update it, or insert new record
+        existing_record_index = None
+        for i, log_entry in enumerate(logs):
+            if log_entry.get("executionId") == execution_id:
+                existing_record_index = i
+                break
+        
+        if existing_record_index is not None:
+            # Update existing record - preserve startTime from original record
+            existing_record = logs[existing_record_index]
+            if "startTime" in existing_record and status != "running":
+                execution_record["startTime"] = existing_record["startTime"]
+            logs[existing_record_index] = execution_record
+            print(f"Updated existing execution record {execution_id} with status {status}")
+        else:
+            # Insert new record at the beginning
+            logs.insert(0, execution_record)
+            print(f"Created new execution record {execution_id} with status {status}")
 
         # Update the task
         update_expression = "SET logs = :logs, lastRunAt = :executedAt"
@@ -904,6 +951,11 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
     for failedTask in failed:
         id = failedTask["taskId"]
         print(f"Failed to send task {id} to queue: {failedTask['error']}")
+        
+        # Create a sessionId for this failed queue operation
+        runtime = get_timestamp(False)
+        session_id = f"scheduled-task-{id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+        
         add_task_execution_record(
             failedTask["userId"],
             id,
@@ -914,6 +966,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
                 "failedAt": failedTask["failedAt"],
                 "source": task_source,
             },
+            execution_id=session_id,
         )
     return {"successful": successful, "failed": failed}
 
