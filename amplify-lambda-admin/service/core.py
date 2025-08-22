@@ -49,6 +49,7 @@ class AdminConfigTypes(Enum):
     INTEGRATIONS = "integrations"
     EMAIL_SUPPORT = "emailSupport"
     DEFAULT_CONVERSATION_STORAGE = "defaultConversationStorage"
+    AI_EMAIL_DOMAIN = 'aiEmailDomain'
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -192,6 +193,7 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.PROMPT_COST_ALERT
             | AdminConfigTypes.INTEGRATIONS
             | AdminConfigTypes.EMAIL_SUPPORT
+            | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
             | AdminConfigTypes.DEFAULT_MODELS ):
             print(f"Updating {config_type.value} - {update_data}")
@@ -354,6 +356,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.PROMPT_COST_ALERT,
             AdminConfigTypes.INTEGRATIONS,
             AdminConfigTypes.EMAIL_SUPPORT,
+            AdminConfigTypes.AI_EMAIL_DOMAIN,
             AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
             AdminConfigTypes.DEFAULT_MODELS,
         ]
@@ -511,11 +514,12 @@ def initialize_config(config_type):
         item["data"] = "future-local"
     elif config_type == AdminConfigTypes.EMAIL_SUPPORT:
         item["data"] = {"isActive": False, "email": ""}
+    elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
+        item["data"] = ""
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
     else:
         raise ValueError(f"Unknown config type: {config_type}")
-
     try:
         admin_table.put_item(Item=item)
         print(f"Config Item Initialized: {config_type.value}")
@@ -531,6 +535,7 @@ def get_user_app_configs(event, context, current_user, name, data):
     app_configs = [
         AdminConfigTypes.EMAIL_SUPPORT,
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
+        AdminConfigTypes.AI_EMAIL_DOMAIN,
     ]
     configs = {}
     for config_type in app_configs:
