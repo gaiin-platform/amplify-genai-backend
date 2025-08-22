@@ -613,6 +613,7 @@ def create_assistant(event, context, current_user, name, data):
 
     all_website_urls = assistant_data.get('websiteUrls', [])
     print(f"Starting with {len(all_website_urls)} existing website URLs")
+    print(f"all_website_urls: {all_website_urls}")
 
 
     for source in data_sources:
@@ -670,11 +671,15 @@ def create_assistant(event, context, current_user, name, data):
                 # imported here to avoid circular import
                 from service.scrape_websites import scrape_website_content
                 # Attempt immediate scraping
-                scraped_data = scrape_website_content(url, access_token, is_sitemap)
+                max_pages = metadata.get("maxPages")
+                exclusions = metadata.get("exclusions")
+                scraped_data = scrape_website_content(url, access_token, is_sitemap, max_pages, exclusions)
                 scraped_web_ds = scraped_data.get("data", {}).get("dataSources")
                 if scraped_data.get("success") and scraped_web_ds:
                     for ds in scraped_web_ds:
                         ds.get("metadata").update({"scanFrequency": scan_frequency, "contentKey": ds['id']})
+                        if (is_sitemap):
+                            ds.get("metadata").update({"maxPages": max_pages})
                         ds['key'] = ds['id']
 
                     scraped_data_sources += scraped_web_ds
