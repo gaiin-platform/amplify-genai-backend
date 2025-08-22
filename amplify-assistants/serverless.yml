@@ -290,6 +290,15 @@ functions:
           method: post
           cors: true
 
+  extract_sitemap_urls:
+    handler: service/scrape_websites.extract_sitemap_urls
+    timeout: 300
+    events:
+      - http:
+          path: assistant/extract_sitemap_urls
+          method: post
+          cors: true
+
   reprocess_drive_sources:
     handler: service/drive_datasources.process_drive_sources
     timeout: 300
