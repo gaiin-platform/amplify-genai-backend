@@ -28,6 +28,8 @@ custom:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
   # Using your existing repository
   ecrRepository: 654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
+  # Add timestamp to image tags from build script
+  deployTimestamp: ${env:DEPLOY_TIMESTAMP, ""}
 
 provider:
   name: aws
@@ -38,6 +40,7 @@ provider:
   logRetentionInDays: 365
   tracing:
     lambda: true
+  deploymentMethod: direct  # Force direct deployment to update container image
   apiGateway:
     restApiId:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiId"
@@ -63,6 +66,7 @@ provider:
     AGENT_QUEUE_URL: !Ref AgentQueue
     AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
     FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
+    DB_CONNECTIONS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-db-connections
     USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
     ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
@@ -112,10 +116,11 @@ functions:
   # New container-based function with different name
   agentRouterContainer:
     image:
-      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router
+      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-${self:custom.deployTimestamp}
       command: ["service.core.route"]
     timeout: 900
     tracing: Active
+    memorySize: 4096
     events:
       - http:
           path: vu-agent-container/{proxy+}
@@ -124,21 +129,21 @@ functions:
   # New container-based function URL with different name
   agentRouterFnUrlContainer:
     image:
-      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router
+      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-${self:custom.deployTimestamp}
       command: ["service.core.route"]
     timeout: 900
     tracing: Active
-    memorySize: 1024
+    memorySize: 4096
     url:
       cors: true
 
   agentRouterFnUrlContainerFat:
     image:
-      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-fat
+      uri: ${self:custom.ecrRepository}:${sls:stage}-agent-router-fat-${self:custom.deployTimestamp}
       command: ["service.core.route"]
     timeout: 900
     tracing: Active
-    memorySize: 1024
+    memorySize: 4096
     url:
       cors: true
 
@@ -162,10 +167,11 @@ functions:
           enabled: true
           description: "Run every 3 minutes to check for scheduled tasks that need to be executed"
 
-  toolsEndpoint:
+  toolsEndpointLambda:
     handler: service/core.get_builtin_tools
     runtime: python3.11
     timeout: 30
+    memorySize: 4096
     events:
       - http:
           path: vu-agent/tools
@@ -207,6 +213,8 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
