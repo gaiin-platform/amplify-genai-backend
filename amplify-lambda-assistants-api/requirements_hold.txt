@@ -78,7 +78,7 @@ pyasn1==0.6.1
     #   pyasn1-modules
     #   python-jose
     #   rsa
-pyasn1-modules==0.4.1
+pyasn1-modules==0.4.2
     # via google-auth
 pydantic==2.10.4
     # via -r requirements.in
