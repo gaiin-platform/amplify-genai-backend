@@ -3,7 +3,7 @@ from decimal import Decimal
 import os
 import boto3
 from model_rates.update_table import load_model_rate_table, get_csv_model_ids
-from pycommon.api.amplify_groups import verify_user_in_amp_group
+from pycommon.api.amplify_groups import get_user_affiliated_groups
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.ops import api_tool
 
@@ -143,19 +143,19 @@ def get_user_available_models(event, context, current_user, name, data):
         return supported_models_result
 
     supported_models = supported_models_result.get("data", {}).items()
+    affiliated_groups, _ = get_user_affiliated_groups(data["access_token"])
+    print("User affiliated_groups: ", affiliated_groups)
 
     # Filter and format the available models directly using a list comprehension
     available_models = [
         extract_data(model_id, model_data)
         for model_id, model_data in supported_models
-        if (
-            model_data.get("isAvailable", False)
-            or verify_user_in_amp_group(
-                data["access_token"], model_data.get("exclusiveGroupAvailability", [])
-            )
+        if (model_data.get("isAvailable", False)
+            or bool(set(model_data.get("exclusiveGroupAvailability", [])) & set(affiliated_groups))
         )
     ]
-    print("Available user models:", available_models)
+    
+    # print("Available user models:", available_models)
 
     default_results = get_admin_default_models()
     # setting as None if not found
