@@ -252,6 +252,6 @@ resources:
     AmplifyAdminTableStreamArn:
       Value: !GetAtt AmplifyAdminTable.StreamArn
       Export:
-        Name: AmplifyAdminTableStreamArn  
+        Name:
+          Fn::Sub: "${sls:stage}-AmplifyAdminTableStreamArn"
 
-   

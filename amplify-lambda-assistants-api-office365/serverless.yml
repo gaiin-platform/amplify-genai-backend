@@ -85,7 +85,7 @@ functions:
       - stream:
           type: dynamodb
           arn:
-            Fn::ImportValue: AmplifyAdminTableStreamArn
+            Fn::ImportValue: "${sls:stage}-AmplifyAdminTableStreamArn"
           batchSize: 1
           startingPosition: TRIM_HORIZON
 
