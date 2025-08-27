@@ -4,7 +4,7 @@
     "serverless-deployment-bucket": "^1.6.0",
     "serverless-domain-manager": "^7.3.8",
     "serverless-iam-roles-per-function": "^3.2.0",
-    "serverless-offline": "^13.6.0",
+    "serverless-offline": "^13.9.0",
     "serverless-prune-plugin": "^2.0.2",
     "serverless-python-requirements": "^6.1.0"
   },

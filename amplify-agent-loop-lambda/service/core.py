@@ -1,3 +1,11 @@
+# Patch sqlite3 for Lambda compatibility before any imports that might use it
+try:
+    import sys
+    import pysqlite3
+    sys.modules['sqlite3'] = pysqlite3
+except ImportError:
+    pass  # pysqlite3 not available, fall back to system sqlite3
+
 import inspect
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError

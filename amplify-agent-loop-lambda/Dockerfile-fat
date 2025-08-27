@@ -23,14 +23,14 @@ RUN yum -y update && \
         libGL \
         && yum clean all
 
-RUN yum -y install xz && \
-    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz && \
-    tar -xf ffmpeg.tar.xz && \
-    dir=$(find . -maxdepth 1 -type d -name "ffmpeg-*-static") && \
-    cp "$dir/ffmpeg" /usr/bin/ffmpeg && \
-    cp "$dir/ffprobe" /usr/bin/ffprobe && \
-    chmod +x /usr/bin/ffmpeg /usr/bin/ffprobe && \
-    rm -rf "$dir" ffmpeg.tar.xz
+#RUN yum -y install xz && \
+ #   curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz && \
+ #   tar -xf ffmpeg.tar.xz && \
+ #   dir=$(find . -maxdepth 1 -type d -name "ffmpeg-*-static") && \
+ #   cp "$dir/ffmpeg" /usr/bin/ffmpeg && \
+ #   cp "$dir/ffprobe" /usr/bin/ffprobe && \
+ #   chmod +x /usr/bin/ffmpeg /usr/bin/ffprobe && \
+ #   rm -rf "$dir" ffmpeg.tar.xz
 
 # Install Pandoc (static binary)
 RUN curl -L https://github.com/jgm/pandoc/releases/download/3.2/pandoc-3.2-linux-amd64.tar.gz -o pandoc.tar.gz && \
@@ -62,6 +62,18 @@ WORKDIR /var/task
 # Copy Python dependencies
 COPY agent-requirements-fat.txt  ./
 
+# Manually install pysqlite3 for Lambda compatibility
+RUN curl -L https://files.pythonhosted.org/packages/33/cb/ef7d041dbecfbf47f9241d7cb6328311fd80fe15bd61a6253d9ab36e9d6d/pysqlite3-0.5.4.tar.gz -o pysqlite3-0.5.4.tar.gz && \
+    curl -L https://www.sqlite.org/2024/sqlite-amalgamation-3460000.zip -o sqlite-amalgamation.zip && \
+    tar -xzf pysqlite3-0.5.4.tar.gz && \
+    unzip sqlite-amalgamation.zip && \
+    cp sqlite-amalgamation-3460000/sqlite3.h pysqlite3-0.5.4/ && \
+    cp sqlite-amalgamation-3460000/sqlite3.c pysqlite3-0.5.4/ && \
+    cd pysqlite3-0.5.4 && \
+    python setup.py build_static && \
+    python setup.py install && \
+    cd .. && \
+    rm -rf pysqlite3-0.5.4* sqlite-amalgamation*
 
 RUN    uv pip install --system --no-cache-dir \
         --only-binary=numpy \
