@@ -20,6 +20,20 @@ file_query_schema = {
         "typePrefix": {"type": ["string", "null"]},
         "types": {"type": "array", "items": {"type": "string"}, "default": []},
         "tags": {"type": "array", "items": {"type": "string"}, "default": []},
+        "filters": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "attribute": {"type": "string"},
+                    "operator": {"type": "string"},
+                    "value": {"type": "string"}
+                },
+                "required": ["attribute", "operator"],
+                "additionalProperties": False
+            },
+            "default": []
+        },
         "pageIndex": {"type": "integer", "default": 0},
         "forwardScan": {"type": "boolean", "default": True},
         "sortIndex": {"type": "string", "default": "createdAt"},
