@@ -3,8 +3,8 @@ set -e
 
 REGION="us-east-1"
 STAGE="${1:-dev}"
-DEV_REPOSITORY_URI="654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo"
-PROD_REPOSITORY_URI="514391678313.dkr.ecr.us-east-1.amazonaws.com/prod-amplifygenai-repo"
+DEV_REPOSITORY_URI="" # ADD YOUR DEV REPO URI
+PROD_REPOSITORY_URI="" # ADD YOUR PROD REPO URI
 
 # Set repository URI based on stage
 if [ "$STAGE" = "prod" ]; then
