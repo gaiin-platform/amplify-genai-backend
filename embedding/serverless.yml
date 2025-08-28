@@ -105,6 +105,7 @@ provider:
     STAGE: ${sls:stage}
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
     
     
@@ -196,6 +197,19 @@ functions:
           path: /embedding/terminate
           method: post
           cors: true
+
+  get_embedding_status:
+    handler: embedding.get_embedding_status
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 30
+    events:
+      - http:
+          path: /embedding/status
+          method: post
+          cors: true
+    environment:
+      EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
 
   check_embedding_completion:
     handler: embedding-dual-retrieval.queue_missing_embeddings
@@ -316,6 +330,7 @@ resources:
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
 
             - Effect: Allow
               Action:

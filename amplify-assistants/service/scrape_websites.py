@@ -29,9 +29,6 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
 
 from service.core import get_most_recent_assistant_version
 
-# Supported image types
-SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-
 # Disallowed file extensions  
 DISALLOWED_EXTENSIONS = [
     "mp3", "wav", "mp4", "mov", "avi", "mkv",
@@ -389,8 +386,9 @@ def fetch_and_parse_url(url):
         # Parse HTML
         soup = BeautifulSoup(response.content, "lxml")
 
-        # Remove script, style, and other non-content elements
-        for element in soup(["script", "style", "meta", "noscript", "iframe"]):
+        # Remove script, style, header, footer, nav, and other non-content elements
+        for element in soup(["script", "style", "meta", "noscript", "iframe", "header", "footer", "nav", "aside", "form", "input", "button", "select", "textarea", "canvas", "dialog", ]):
+            #"embed", "object", "applet", "template", "slot"
             element.decompose()
 
         # Extract title
