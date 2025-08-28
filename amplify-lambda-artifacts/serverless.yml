@@ -48,6 +48,7 @@ provider:
     S3_ARTIFACTS_BUCKET: ${self:service}-${sls:stage}-bucket
     ARTIFACTS_DYNAMODB_TABLE:  ${self:service}-${sls:stage}-user-artifacts
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
@@ -132,6 +133,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ARTIFACTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ARTIFACTS_BUCKET}/"
