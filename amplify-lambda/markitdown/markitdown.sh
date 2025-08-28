@@ -18,7 +18,7 @@ rm -rf python/joblib* || true
 echo "Downloading pycommon source code..."
 # Clone to a local temporary directory instead of inside Docker
 rm -rf ./tmp_pycommon
-git clone --depth 1 --branch pre-release/v0.0.1 https://github.com/gaiin-platform/pycommon.git ./tmp_pycommon
+git clone --depth 1 --branch v0.1.0 https://github.com/gaiin-platform/pycommon.git ./tmp_pycommon
 
 # Create pycommon package structure in python directory
 echo "Extracting minimal pycommon modules..."
@@ -75,6 +75,13 @@ if [ -f "./tmp_pycommon/pycommon/encoders.py" ]; then
     echo "Encoders module copied"
 fi
 
+# Copy const.py as a single file
+if [ -f "./tmp_pycommon/pycommon/const.py" ]; then
+    echo "Copying const.py..."
+    cp ./tmp_pycommon/pycommon/const.py python/pycommon/ 2>/dev/null || echo "const.py not found"
+    echo "Const module copied"
+fi
+
 # Create minimal main __init__.py (overwrite the one from GitHub)
 cat > python/pycommon/__init__.py << 'EOF'
 # Minimal pycommon module exports for RAG functionality
@@ -83,11 +90,13 @@ cat > python/pycommon/__init__.py << 'EOF'
 from . import api
 from . import llm
 from . import encoders
+from . import const
 
 __all__ = [
     "api",
     "llm",
     "encoders",
+    "const",
 ]
 EOF
 

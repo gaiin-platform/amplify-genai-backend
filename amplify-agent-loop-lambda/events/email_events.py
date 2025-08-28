@@ -18,8 +18,7 @@ from events.email_sender_controls import is_allowed_sender
 from events.event_templates import get_event_template
 from delegation.api_keys import get_api_key_directly_by_id
 from service.conversations import register_agent_conversation
-
-IMAGE_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+from pycommon.const import IMAGE_FILE_TYPES
 
 organization_email_domain = os.environ["ORGANIZATION_EMAIL_DOMAIN"]
 
