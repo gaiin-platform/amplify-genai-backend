@@ -13,7 +13,8 @@ import boto3.dynamodb.conditions
 import uuid
 from datetime import datetime, timezone, timedelta
 from pycommon.api.ops import api_tool
-
+from pycommon.db_utils import convert_floats_to_decimal
+from pycommon.lzw import lzw_compress, lzw_uncompress
 
 def update_conversation_cache(user_id, conversation_data, folder=None):
     """Update conversation metadata cache when conversation changes"""
@@ -29,27 +30,30 @@ def update_conversation_cache(user_id, conversation_data, folder=None):
             conversation_data, include_timestamp=True
         )
 
-        table.put_item(
-            Item={
-                "user_id": user_id,
-                "conversation_id": metadata.get("id", ""),
-                "name": metadata.get("name", ""),
-                "model": metadata.get("model", ""),
-                "folder_id": metadata.get("folderId"),
-                "tags": metadata.get("tags", []),
-                "is_local": metadata.get("isLocal", False),
-                "group_type": metadata.get("groupType"),
-                "code_interpreter_assistant_id": metadata.get(
-                    "codeInterpreterAssistantId"
-                ),
-                "last_modified": int(
-                    time.time() * 1000
-                ),  # Use current timestamp for uploads
-                "s3_key": f"{user_id}/{metadata.get('id', '')}",
-                "folder_name": folder.get("name") if folder else None,
-                "updated_at": int(time.time() * 1000),
-            }
-        )
+        item = {
+            "user_id": user_id,
+            "conversation_id": metadata.get("id", ""),
+            "name": metadata.get("name", ""),
+            "model": metadata.get("model", ""),
+            "folder_id": metadata.get("folderId"),
+            "tags": metadata.get("tags", []),
+            "is_local": metadata.get("isLocal", False),
+            "group_type": metadata.get("groupType"),
+            "code_interpreter_assistant_id": metadata.get(
+                "codeInterpreterAssistantId"
+            ),
+            "last_modified": int(
+                time.time() * 1000
+            ),  # Use current timestamp for uploads
+            "s3_key": f"{user_id}/{metadata.get('id', '')}",
+            "folder_name": folder.get("name") if folder else None,
+            "updated_at": int(time.time() * 1000),
+        }
+        
+        # Convert any float values to Decimal for DynamoDB compatibility
+        item = convert_floats_to_decimal(item)
+        
+        table.put_item(Item=item)
 
         print(f"Updated cache for conversation {metadata.get('id', '')}")
 
@@ -88,7 +92,6 @@ def upload_conversation(event, context, current_user, name, data):
     conversation_key = f"{current_user}/{conversation_id}"
     result = upload_to_s3(conversation_key, conversation, folder)
 
-    # Update cache after successful upload (non-blocking)
     if result.get("success"):
         try:
             # Decompress the conversation to get metadata
@@ -527,74 +530,6 @@ def is_valid_uuidv4(uuid):
     return bool(match)
 
 
-def lzw_uncompress(compressed_data):
-    dictionary = {i: chr(i) for i in range(256)}  # Build initial dictionary
-
-    decompressed_string = ""
-    previous_entry = dictionary.get(compressed_data[0])
-    if not previous_entry:
-        print(f"Invalid compressed data: First entry not found in dictionary")
-        return ""
-
-    decompressed_string += previous_entry
-    next_code = 256
-
-    for code in compressed_data[1:]:
-        if code in dictionary:
-            current_entry = dictionary[code]
-        elif code == next_code:
-            current_entry = previous_entry + previous_entry[0]
-        else:
-            raise ValueError("Invalid compressed data: Entry for code not found")
-
-        decompressed_string += current_entry
-        dictionary[next_code] = previous_entry + current_entry[0]
-        next_code += 1
-        previous_entry = current_entry
-
-    # Postprocessing to convert the tagged Unicode characters back to their original form
-    unicode_pattern = re.compile(r"U\+([0-9a-f]{4})", re.IGNORECASE)
-    output = unicode_pattern.sub(
-        lambda m: chr(int(m.group(1), 16)), decompressed_string
-    )
-    try:
-        # Ensure the decompressed string is parsed into a dictionary
-        return json.loads(output)
-    except json.JSONDecodeError:
-        raise ValueError("Failed to parse JSON from decompressed string")
-
-
-def lzw_compress(str_input):
-    if not str_input:
-        return []
-
-    # Initialize the dictionary with single-character mappings
-    dictionary = {chr(i): i for i in range(256)}
-    next_code = 256
-    compressed_output = []
-
-    # Preprocessing to convert Unicode characters to a unique format
-    processed_input = "".join(
-        [f"U+{ord(char):04x}" if ord(char) > 255 else char for char in str_input]
-    )
-
-    current_pattern = ""
-    for character in processed_input:
-        new_pattern = current_pattern + character
-        if new_pattern in dictionary:
-            current_pattern = new_pattern
-        else:
-            compressed_output.append(dictionary[current_pattern])
-            dictionary[new_pattern] = next_code
-            next_code += 1
-            current_pattern = character
-
-    if current_pattern != "":
-        compressed_output.append(dictionary[current_pattern])
-
-    return compressed_output
-
-
 def get_conversations_metadata_lightweight(current_user):
     """Optimized function to get only conversation metadata without full download"""
     s3 = boto3.client("s3")
@@ -703,31 +638,33 @@ def populate_cache_async(current_user, metadata_list):
         # Batch write for efficiency
         with table.batch_writer() as batch:
             for metadata in metadata_list:
-                batch.put_item(
-                    Item={
-                        "user_id": current_user,
-                        "conversation_id": metadata.get("id", ""),
-                        "name": metadata.get("name", ""),
-                        "model": metadata.get("model", ""),
-                        "folder_id": metadata.get("folderId"),
-                        "tags": metadata.get("tags", []),
-                        "is_local": metadata.get("isLocal", False),
-                        "group_type": metadata.get("groupType"),
-                        "code_interpreter_assistant_id": metadata.get(
-                            "codeInterpreterAssistantId"
-                        ),
-                        "last_modified": metadata.get(
-                            "lastModified", int(time.time() * 1000)
-                        ),
-                        "s3_key": f"{current_user}/{metadata.get('id', '')}",
-                        "folder_name": (
-                            metadata.get("folder", {}).get("name")
-                            if metadata.get("folder")
-                            else None
-                        ),
-                        "cached_at": int(time.time() * 1000),
-                    }
-                )
+                item = {
+                    "user_id": current_user,
+                    "conversation_id": metadata.get("id", ""),
+                    "name": metadata.get("name", ""),
+                    "model": metadata.get("model", ""),
+                    "folder_id": metadata.get("folderId"),
+                    "tags": metadata.get("tags", []),
+                    "is_local": metadata.get("isLocal", False),
+                    "group_type": metadata.get("groupType"),
+                    "code_interpreter_assistant_id": metadata.get(
+                        "codeInterpreterAssistantId"
+                    ),
+                    "last_modified": metadata.get(
+                        "lastModified", int(time.time() * 1000)
+                    ),
+                    "s3_key": f"{current_user}/{metadata.get('id', '')}",
+                    "folder_name": (
+                        metadata.get("folder", {}).get("name")
+                        if metadata.get("folder")
+                        else None
+                    ),
+                    "cached_at": int(time.time() * 1000),
+                }
+                
+                # Convert any float values to Decimal for DynamoDB compatibility
+                item = convert_floats_to_decimal(item)
+                batch.put_item(Item=item)
 
         print(
             f"Successfully cached {len(metadata_list)} conversations for {current_user}"

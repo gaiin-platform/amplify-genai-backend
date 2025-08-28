@@ -1,5 +1,4 @@
 service: amplify-${self:custom.stageVars.DEP_NAME}-object-access
-
 frameworkVersion: '3'
 
 package:
@@ -59,7 +58,6 @@ provider:
   
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    COGNITO_USERS_TABLE: ${self:service}-${sls:stage}-cognito-users
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
     COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
@@ -340,7 +338,6 @@ resources:
               Resource:
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-cognito-users"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-accounts"
-                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-cognito-users"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-object-access"
                 - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${self:service}-${sls:stage}-api-keys"
