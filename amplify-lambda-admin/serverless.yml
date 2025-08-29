@@ -210,7 +210,11 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
-
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_GROUPS_DYNAMODB_TABLE}"
     
     AmplifyAdminTable:
       Type: 'AWS::DynamoDB::Table'
