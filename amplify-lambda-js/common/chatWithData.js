@@ -212,10 +212,11 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
         } else {
             logger.error("Rag Error: No sources found");
             ragStatus.message = "Rag ran into an unexpected error";
-            if (!params.options.skipDocumentCache) {
-                logger.debug("File caching will be used instead...");
-                conversationDataSources = ragDataSources;
-            }
+            // TODO: Think through this logic better
+            // if (!params.options.skipDocumentCache) {
+            //     logger.debug("File caching will be used instead...");
+            //     conversationDataSources = ragDataSources;
+            // }
         }
 
         ragStatus.inProgress = false;
@@ -306,16 +307,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                            });
             }
 
-            result = openAiTransform(event);  
+            result = openAiTransform(event, responseStream);  
             
         } else if (model.provider === 'Bedrock') {
             const usage = bedrockTokenUsageTransform(event);
             if (usage) {                                                                     // currently no cached tokens 
                 recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, 0, details);
             }
-            result = bedrockConverseTransform(event);
+            result = bedrockConverseTransform(event, responseStream);
         } else if (isGeminiModel(model.id)) {            
-            result = geminiTransform(event);
+            result = geminiTransform(event, responseStream);
             const usage = geminiUsageTransform(event);
             if (usage) {
                 recordUsage(account, requestId, model, usage.prompt_tokens, usage.completion_tokens, 

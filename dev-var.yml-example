@@ -1,5 +1,4 @@
 # amplify-lambda
-AGENT_ENDPOINT: ""
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
 CHAT_ENDPOINT: ""
 CUSTOM_API_DOMAIN: "" #domain name without protocol for Cognito domain

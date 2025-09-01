@@ -6,24 +6,14 @@ import {getLogger} from "../common/logging.js";
 import {trace} from "../common/trace.js";
 import {doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content} from "../datasource/datasources.js";
 import {sendErrorMessage, sendStateEventToStream, sendStatusEventToStream} from "../common/streams.js";
-import {getSecret} from "../common/secrets.js";
+import {getSecretApiKey} from "../common/secrets.js";
 import {newStatus, getThinkingMessage} from "../common/status.js";
+import { getBudgetTokens } from "../common/params.js";
 
 const logger = getLogger("gemini");
 
 const constructGeminiUrl = () => {
     return `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
-}
-
-const getGeminiApiKey = async () => {
-    const secret = await getSecret(process.env.SECRETS_ARN_NAME);
-    try {
-        const apiKey = JSON.parse(secret).GEMINI_API_KEY;
-        return apiKey;
-    } catch (error) {
-        logger.error("Error getting Gemini API key:", error);
-        return null;
-    }
 }
 
 export const chat = async (chatBody, writable) => {
@@ -33,6 +23,7 @@ export const chat = async (chatBody, writable) => {
         delete body.options;
         const model = options.model;
         const modelId = (model && model.id) || "gemini-1.5-pro";
+        const maxTokens = body.max_tokens || 1000;
 
         let tools = options.tools;
         if(!tools && options.functions){
@@ -59,6 +50,18 @@ export const chat = async (chatBody, writable) => {
             "stream": true,
             "stream_options": {"include_usage": true}
         };
+
+        if (model.supportsReasoning) {
+            const budget_tokens = getBudgetTokens({options}, maxTokens); 
+            data.extra_body = { "google": {
+                                "thinking_config": {
+                                    "thinking_budget": budget_tokens,
+                                    "include_thoughts": true
+                                }
+                              }
+      }
+
+        }
 
         if (data.max_tokens > model.outputTokenLimit) {
             data.max_tokens = model.outputTokenLimit
@@ -158,7 +161,7 @@ export const chat = async (chatBody, writable) => {
 
         const headers = {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + await getGeminiApiKey()
+            'Authorization': 'Bearer ' + await getSecretApiKey("GEMINI_API_KEY")
         };
 
         const url = constructGeminiUrl();
@@ -168,7 +171,7 @@ export const chat = async (chatBody, writable) => {
         
         // Set up status message timer for long-running Gemini requests
         let statusTimer = null;
-        const statusInterval = 8000; // 8 seconds
+        const statusInterval = model.supportsReasoning ? 15000: 8000;
         
         const sendStatusMessage = (responseStream) => {
             const statusInfo = newStatus({

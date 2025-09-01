@@ -1,0 +1,426 @@
+[tool.poetry]
+name = "amplify-agent-loop-lambda"
+version = "0.1.0"
+description = "AI Agent Loop Lambda Function"
+authors = ["Allen Karns <131373444+karnsab@users.noreply.github.com>"]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.12"
+
+# Core dependencies from requirements.txt
+litellm = "~1.57.1"
+boto3 = "1.29.1"
+jose = "1.0.0" 
+python-jose = "3.3.0"
+croniter = "6.0.0"
+
+# Core data processing packages
+numpy = "^2.0.0"
+pandas = "^2.0.0"
+aws-xray-sdk = "*"
+dataclasses-json = "*"
+jsonlines = "*"
+pandas-stubs = "*"
+pdfquery = "*"
+# pikepdf = "*"  # Removed: C++20 compilation issues on Lambda
+polars = "*"
+pyarrow = "*"
+pyjanitor = "*"
+pyreadstat = "*"
+pyxlsb2 = "*"
+scikit-posthocs = "*"
+sqlite-utils = "*"
+typer-cli = "*"
+unstructured = "*"
+
+# Scientific and ML packages
+absl-py = "*"
+scipy = "^1.11.0"
+scikit-learn = "^1.3.0"
+scikit-image = ">=0.21.0,<0.23.0"
+matplotlib = ">=3.7.0,<3.9.0"
+matplotlib-inline = ">=0.1.6"
+matplotlib-venn = ">=0.11.0"
+seaborn = ">=0.12.0,<0.14.0"
+tables = "*"
+numexpr = "*"
+numpy-financial = "*"
+statsmodels = "*"
+xgboost = "*"
+shap = ">=0.42.0,<0.45.0"
+keras = "*"
+jax = "*"
+einops = "*"
+
+# NLP and text processing
+# thinc = "*"  # Commented out due to blis conflict
+# spacy = "*"
+# spacy-legacy = "*"
+nltk = "*"
+textblob = "*"
+# blis = "*"  # Commented out due to version conflict
+# catalogue = "*"
+# cymem = "*"
+# murmurhash = ">=1.0.9"
+# preshed = "*"
+# srsly = "*"
+# wasabi = "*"
+
+# Audio/Video processing
+librosa = "*"
+moviepy = ">=1.0.3"
+ffmpeg-python = "*"
+audioread = "*"
+soundfile = "*"
+resampy = "*"
+
+# Image processing
+pillow = "*"
+opencv-python = "*"
+imageio = "*"
+imageio-ffmpeg = "*"
+pdf2image = "*"
+pytesseract = "*"
+mtcnn = ">=0.1.1"
+
+# Document processing
+pdfplumber = "*"
+pypdf2 = "*"
+python-docx = "*"
+python-pptx = "*"
+openpyxl = "*"
+pdfminer-six = "*"
+pdfkit = "*"
+pdfrw = "*"
+pymupdf = "1.23.26"
+docx2txt = "*"
+extract-msg = "*"
+compressed-rtf = "*"
+ebooklib = "*"
+odfpy = "*"
+pypandoc = "*"
+pyth3 = "*"
+unoconv = "*"
+
+# Web and networking
+requests = "*"
+aiohttp = "*"
+aiosignal = "*"
+httpx = "*"
+urllib3 = "*"
+certifi = "*"
+charset-normalizer = "*"
+idna = "*"
+requests-unixsocket = "*"
+
+# Web frameworks
+fastapi = "*"
+uvicorn = "*"
+gradio = "*"
+quart = "*"
+hypercorn = "*"
+starlette = "*"
+jinja2 = "*"
+markupsafe = "*"
+itsdangerous = "*"
+werkzeug = "*"
+
+# Parsing and scraping
+beautifulsoup4 = "*"
+lxml = "*"
+html5lib = "*"
+cssselect2 = "*"
+markdownify = "*"
+markdown2 = "*"
+
+# Geographic and mapping
+geopandas = "*"
+folium = "*"
+geopy = "*"
+geographiclib = "*"
+basemap = "*"
+basemap-data = "*"
+fiona = "*"
+rasterio = "*"
+affine = "*"
+pyproj = "*"
+shapely = ">=2.0.0,<2.1.0"
+pyshp = "*"
+
+# Visualization
+plotly = "*"
+plotnine = "*"
+bokeh = "*"
+branca = "*"
+svglib = "*"
+svgwrite = "*"
+graphviz = "*"
+pydot = "*"
+
+# Jupyter and notebook
+jupyter-client = "*"
+jupyter-core = "*"
+jupyter-server = "*"
+jupyterlab = "*"
+jupyterlab-pygments = "*"
+jupyterlab-server = "*"
+ipykernel = "*"
+ipython = "*"
+ipython-genutils = "*"
+nbclassic = "*"
+nbclient = "*"
+nbconvert = "*"
+nbformat = "*"
+notebook = "*"
+notebook-shim = "*"
+
+# Data formats and serialization
+json5 = "*"
+jsonpickle = "*"
+jsonschema = "*"
+pyyaml = "*"
+toml = "*"
+tomli = "*"
+et-xmlfile = "*"
+xlrd = "*"
+xlsxwriter = "*"
+pyxlsb = "*"
+rarfile = "*"
+
+# Cryptography and security
+cryptography = "*"
+bcrypt = "*"
+pynacl = "*"
+paramiko = "*"
+pycryptodome = "*"
+
+# Date and time
+python-dateutil = "*"
+pytz = "*"
+pytz-deprecation-shim = "*"
+tzdata = "*"
+tzlocal = "*"
+exchange-calendars = "*"
+korean-lunar-calendar = "*"
+
+# Math and statistics
+sympy = "*"
+mpmath = ">=1.3.0"
+patsy = "*"
+arviz = "*"
+nashpy = ">=0.0.35"
+
+# Utilities
+tqdm = "*"
+click = "*"
+click-plugins = "*"
+cligj = "*"
+typer = "*"
+typing-extensions = "*"
+setuptools = ">=68.0.0"
+wheel = "*"
+pip = "*"
+packaging = "*"
+six = "*"
+attrs = "*"
+importlib-metadata = "*"
+importlib-resources = "*"
+zipp = "*"
+platformdirs = "*"
+filelock = "*"
+
+# Testing
+pytest = "*"
+iniconfig = "*"
+pluggy = "*"
+
+# Terminal and UI
+prompt-toolkit = "*"
+pygments = "*"
+wcwidth = "*"
+colorama = "*"
+
+# Async and concurrency
+anyio = "*"
+sniffio = "*"
+async-timeout = "*"
+nest-asyncio = "*"
+
+# Caching and performance
+cachetools = "*"
+joblib = "*"
+cloudpickle = "*"
+dill = "*"
+threadpoolctl = "*"
+
+# File handling
+aiofiles = "*"
+pathlib2 = "*"
+
+# Miscellaneous
+analytics-python = "*"
+anytree = "*"
+argcomplete = "*"
+backoff = "*"
+cmudict = "*"
+countryinfo = "*"
+deprecat = "*"
+distro-info = "*"
+ebcdic = "*"
+faker = "*"
+fuzzywuzzy = "*"
+gensim = "*"
+gtts = "*"
+imapclient = "*"
+imgkit = "*"
+isodate = "*"
+kerykeion = "*"
+loguru = "*"
+mne = ">=1.4.0,<1.8.0"
+monotonic = ">=1.6"
+munch = ">=4.0.0"
+mutagen = ">=1.46.0"
+olefile = "*"
+opt-einsum = "*"
+pooch = "*"
+pronouncing = "*"
+pycountry = "*"
+pycparser = "*"
+pylog = "*"
+pyluach = "*"
+pyparsing = "*"
+pyphen = "*"
+pyprover = "*"
+pyrsistent = "*"
+pyswisseph = "*"
+pyzbar = "*"
+pyzmq = "*"
+qrcode = "*"
+rdflib = "*"
+regex = "*"
+reportlab = "*"
+semver = ">=3.0.0"
+sentencepiece = ">=0.1.99"
+smart-open = "*"
+snuggs = "*"
+sortedcontainers = "*"
+soupsieve = "*"
+speechrecognition = "*"
+text-unidecode = "*"
+trimesh = "*"
+vanna = "*"
+wand = "*"
+weasyprint = "*"
+webencodings = "*"
+websocket-client = "*"
+websockets = "*"
+wordcloud = "*"
+wrapt = "*"
+wsproto = "*"
+xarray = "*"
+xarray-einstats = "*"
+xml-python = "*"
+xpdf = "*"
+yarl = "*"
+zopfli = "*"
+
+# System and low-level
+cffi = "*"
+ptyprocess = "*"
+pexpect = "*"
+psutil = "*"
+
+# Data compression and encoding
+brotli = "*"
+chardet = "*"
+
+# Cairo and fonts
+cairocffi = "*"
+cairosvg = "*"
+fonttools = "*"
+
+# Web protocols
+h11 = "*"
+h2 = "*"
+hpack = "*"
+hyperframe = "*"
+priority = "*"
+
+# Jupyter extensions
+argon2-cffi = "*"
+argon2-cffi-bindings = "*"
+bleach = "*"
+defusedxml = "*"
+entrypoints = "*"
+fastjsonschema = "*"
+jedi = "*"
+mistune = ">=3.0.0"
+pandocfilters = "*"
+prometheus-client = "*"
+terminado = "*"
+tinycss2 = "*"
+
+# Development and debugging
+asttokens = "*"
+backcall = "*"
+comm = "*"
+debugpy = "*"
+decorator = "*"
+executing = "*"
+parso = "*"
+pickleshare = "*"
+pure-eval = "*"
+stack-data = "*"
+traitlets = "*"
+
+# Scientific computing support
+cycler = "*"
+kiwisolver = "*"
+llvmlite = "*"
+numba = "*"
+mizani = ">=0.9.0"
+pywavelets = "*"
+slicer = "*"
+tifffile = "*"
+toolz = "*"
+
+# Networking protocols
+frozenlist = "*"
+multidict = ">=6.0.0"
+
+# File format support
+h5py = "*"
+h5netcdf = "*"
+networkx = "*"
+tabula = "*"
+tabulate = "*"
+
+# Various utilities
+babel = "*"
+blinker = "*"
+fastprogress = "*"
+ffmpy = "*"
+fpdf = "*"
+future = "*"
+pkgutil-resolve-name = "*"
+proglog = "*"
+py = "*"
+pydub = "*"
+pydyf = "*"
+tenacity = "*"
+tornado = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+
+
+[tool.poetry.group.windows.dependencies]
+# Windows-only packages (excluded by default)
+pywin32 = {version = "*", optional = true}
+pywinpty = {version = "*", optional = true}
+win-unicode-console = {version = "*", optional = true}
+win32-setctime = {version = "*", optional = true}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

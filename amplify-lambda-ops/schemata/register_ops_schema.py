@@ -13,24 +13,37 @@ register_ops_schema = {
                     "name": {"type": "string"},
                     "description": {"type": "string"},
                     "type": {"type": "string"},
-                    "params": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
                             "properties": {
-                                "name": {"type": "string"},
-                                "description": {"type": "string"},
+                                "type": "object",
+                                "patternProperties": {
+                                    ".*": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {"type": "string"}
+                                        },
+                                        "required": ["type"],
+                                        "additionalProperties": True
+                                    }
+                                }
                             },
-                            "required": ["name", "description"],
-                            "additionalProperties": False,
+                            "required": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            }
                         },
+                        "required": ["type", "properties"],
+                        "additionalProperties": False
                     },
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
                     },
                 },
-                "required": ["id", "method", "url", "name", "params"],
+                "required": ["id", "method", "url", "name"],
                 "additionalProperties": True,
             },
         },

@@ -40,4 +40,5 @@ permissions_by_state_type = {
     "/apiKeys/api_documentation/get": {"read": can_read},
     "/apiKeys/api_documentation/upload": {"upload": can_save},
     "/apiKeys/api_documentation/get_templates": {"read": can_read},
+    "/apiKeys/register_ops": {"register_ops": can_save}, 
 }

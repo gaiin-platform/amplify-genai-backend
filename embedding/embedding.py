@@ -5,6 +5,8 @@ import os
 import boto3
 import logging
 import re
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from botocore.exceptions import ClientError
 from pycommon.api.credentials import get_credentials
 from shared_functions import (
@@ -16,11 +18,12 @@ import urllib
 from create_table import create_table
 from embedding_models import get_embedding_models
 import datetime
-from rag.rag_secrets import get_rag_secrets_for_document, delete_rag_secrets_for_document
+from rag.rag_secrets import get_rag_secrets_for_document
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.const import APIAccessType
+from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
+from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
@@ -645,8 +648,6 @@ def lambda_handler(event, context):
                 logging.error(
                     f"[QUEUE_DELETE_ERROR] Failed to delete message after critical error: {delete_error}"
                 )
-        finally:
-            if ds_key: delete_rag_secrets_for_document(ds_key)
 
     logging.info(
         f"[LAMBDA_COMPLETE] ✅ Lambda function completed processing all messages"
@@ -914,3 +915,230 @@ def terminate_embedding(event, context, current_user, name, data):
     except Exception as e:
         print(f"Error terminating embedding for object_id {object_id}: {e}")
         return False
+
+
+async def _check_image_status_async(ds_key, image_bucket, executor):
+    """Async helper to check individual image status"""
+    try:
+        if not image_bucket:
+            logging.error(f"[GET_STATUS] S3_IMAGE_INPUT_BUCKET_NAME not configured for image: {ds_key}")
+            return ds_key, None
+        
+        # Run S3 head_object in thread pool
+        loop = asyncio.get_event_loop()
+        s3_client = boto3.client("s3")
+        
+        def _head_object():
+            return s3_client.head_object(Bucket=image_bucket, Key=ds_key)
+        
+        try:
+            head_response = await loop.run_in_executor(executor, _head_object)
+            content_type = head_response.get("ContentType", "")
+            
+            # If ContentType is text/plain, it means the image was processed to base64
+            if content_type == "text/plain":
+                return ds_key, "completed"
+            elif content_type in IMAGE_FILE_TYPES:
+                # Original image exists but not yet processed - check if recent upload
+                last_modified = head_response.get("LastModified")
+                if last_modified:
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    time_diff = (now - last_modified).total_seconds()
+                    
+                    # If uploaded within last 5 minutes, consider it processing
+                    if time_diff <= 300:  # 5 minutes
+                        return ds_key, "processing"
+                    else:
+                        # Been too long, likely failed
+                        logging.warning(f"[GET_STATUS] Image {ds_key} uploaded {time_diff:.0f}s ago, likely failed processing")
+                        return ds_key, "failed"
+                else:
+                    return ds_key, "failed"
+            else:
+                # Unknown content type
+                logging.warning(f"[GET_STATUS] Image {ds_key} has unexpected ContentType: {content_type}")
+                return ds_key, "failed"
+                
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            if error_code == "NoSuchKey":
+                # Image doesn't exist at all
+                return ds_key, "not_found"
+            else:
+                # Other S3 error
+                logging.error(f"[GET_STATUS] S3 error checking image {ds_key}: {e}")
+                return ds_key, None
+                
+    except Exception as e:
+        logging.error(f"[GET_STATUS] Error checking image status for {ds_key}: {e}")
+        return ds_key, None
+
+
+async def _check_text_status_async(original_key, global_id, progress_table, executor):
+    """Async helper to check individual text status"""
+    try:
+        loop = asyncio.get_event_loop()
+        dynamodb = boto3.resource("dynamodb")
+        table = dynamodb.Table(progress_table)
+        
+        def _get_item():
+            return table.get_item(Key={"object_id": global_id})
+        
+        response = await loop.run_in_executor(executor, _get_item)
+        item = response.get("Item")
+        
+        if not item:
+            return original_key, "not_found"
+        
+        # Check if terminated first
+        if item.get("terminated", False):
+            return original_key, "terminated"
+        
+        # Get parent chunk status
+        parent_status = item.get("parentChunkStatus")
+        if parent_status:
+            return original_key, parent_status
+        else:
+            # If no parent status set, default to starting
+            return original_key, "starting"
+            
+    except Exception as e:
+        logging.error(f"[GET_STATUS] Error getting status for global_id {global_id} (original: {original_key}): {e}")
+        return original_key, None
+
+
+async def _get_embedding_status_async(data_sources_input):
+    """Async helper function to process status lookups in parallel"""
+    status_map = {}
+    
+    # Initialize all with None
+    for ds in data_sources_input:
+        ds_key = ds.get("key")
+        if ds_key:
+            status_map[ds_key] = None
+    
+    # Separate image files from text files
+    text_data_sources = []
+    image_data_sources = []
+    
+    for ds in data_sources_input:
+        ds_key = ds.get("key")
+        ds_type = ds.get("type", "")
+        
+        if not ds_key:
+            logging.warning(f"[GET_STATUS] Skipping data source with missing key: {ds}")
+            continue
+            
+        if ds_type in IMAGE_FILE_TYPES:
+            image_data_sources.append(ds)
+        else:
+            text_data_sources.append(ds)
+    
+    logging.info(f"[GET_STATUS] Processing {len(image_data_sources)} images, {len(text_data_sources)} text files")
+    
+    # Create a thread pool executor
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        tasks = []
+        
+        # Handle image files in parallel
+        image_bucket = os.environ.get("S3_IMAGE_INPUT_BUCKET_NAME")
+        for ds in image_data_sources:
+            ds_key = ds.get("key")
+            task = _check_image_status_async(ds_key, image_bucket, executor)
+            tasks.append(task)
+        
+        # Handle text files - first translate, then check in parallel
+        if text_data_sources:
+            # Convert to format expected by translate function (id -> key, keep type)
+            translate_sources = [{"id": ds["key"], "type": ds["type"]} for ds in text_data_sources]
+            
+            # Translate user data sources to global hash keys (this is sync and can't be easily parallelized)
+            translated_sources = translate_user_data_sources_to_hash_data_sources(translate_sources)
+            
+            # Create mapping from original key to translated global ID
+            original_to_global = {}
+            for i, translated in enumerate(translated_sources):
+                if i < len(text_data_sources):
+                    original_key = text_data_sources[i]["key"]
+                    global_id = translated.get("id")
+                    if global_id:
+                        original_to_global[original_key] = global_id
+                    else:
+                        logging.warning(f"[GET_STATUS] No global ID found for {original_key}")
+            
+            # Now lookup embedding status for the global IDs in parallel
+            progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
+            for original_key, global_id in original_to_global.items():
+                task = _check_text_status_async(original_key, global_id, progress_table, executor)
+                tasks.append(task)
+        
+        # Wait for all tasks to complete
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            for result in results:
+                if isinstance(result, Exception):
+                    logging.error(f"[GET_STATUS] Task failed with exception: {result}")
+                    continue
+                if result and len(result) == 2:
+                    key, status = result
+                    if key and key in status_map:
+                        status_map[key] = status
+    
+    # Log summary of results
+    status_counts = {}
+    for status in status_map.values():
+        status_counts[status] = status_counts.get(status, 0) + 1
+    
+    logging.info(f"[GET_STATUS] Status summary: {status_counts}")
+    
+    # Log details for items needing attention
+    not_found_items = [key for key, status in status_map.items() if status == "not_found"]
+    if not_found_items:
+        logging.warning(f"[GET_STATUS] NOT FOUND ({len(not_found_items)}): {not_found_items}")
+    
+    failed_items = [key for key, status in status_map.items() if status == "failed"]
+    if failed_items:
+        logging.warning(f"[GET_STATUS] FAILED ({len(failed_items)}): {failed_items}")
+    
+    return status_map
+
+
+@validated(op="get_status")
+def get_embedding_status(event, context, current_user, name, data):
+    """
+    Get embedding status for a list of data sources.
+    
+    Args:
+        data: Dictionary containing "dataSources" - list of dicts with "key" and "type" attributes
+        
+    Returns:
+        Dictionary mapping original data_source_key -> status, where status can be:
+        - "starting" - Initial state when document is submitted for embedding
+        - "processing" - Child chunk is actively being processed  
+        - "completed" - All chunks have been successfully processed
+        - "failed" - Child chunk processing encountered an error
+        - "terminated" - Processing has been terminated for all chunks of a document
+        - "not_found" - No record found for this object_id
+        - None - Translation or lookup failed
+    """
+    data_sources_input = data["data"].get("dataSources", [])
+    if not data_sources_input:
+        logging.error("[GET_STATUS] No dataSources provided")
+        return {"success": False, "error": "No dataSources provided"}
+    
+    logging.info(f"[GET_STATUS] Looking up status for {len(data_sources_input)} data sources")
+    
+    try:
+        # Run the async function
+        status_map = asyncio.run(_get_embedding_status_async(data_sources_input))
+        
+        logging.info(f"[GET_STATUS] ✅ Completed lookup for {len(status_map)} data sources")
+        return {"success": True, "data": status_map}
+        
+    except Exception as e:
+        logging.error(f"[GET_STATUS] ❌ Error processing data sources: {e}")
+        # Return all as None on critical failure
+        status_map = {ds.get("key"): None for ds in data_sources_input if ds.get("key")}
+        return {"success": True, "data": status_map}

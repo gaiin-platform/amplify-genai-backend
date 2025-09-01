@@ -17,14 +17,15 @@ from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.amplify_groups import verify_user_in_amp_group
-from pycommon.api.ops_reqs import register_ops
-from base_ast_group_ops import ops
 from pycommon.api.embeddings import check_embedding_completion
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import NO_RATE_LIMIT
 setup_validated(rules, get_permission_checker)
+
+import asyncio
+import aiohttp
 
 
 # Setup AWS DynamoDB access
@@ -337,7 +338,7 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
     print("ast ds: ", ast_ds)
-    print("groupType ds: ", group_type_data)
+    print("groupType data: ", group_type_data)
 
     # compile ds into one list
     # uploaded ones have the correct permissions, data selected from the user files do not, so we need to share it with the group
@@ -352,9 +353,23 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
 
     # print("Updating permissions for the following ds prior to translation: ", ds_selector_ds)
 
+    # Validate that all data sources have required 'id' field and filter out invalid ones
+    valid_ds = [ds for ds in ds_selector_ds if isinstance(ds, dict) and 'id' in ds]
+    invalid_count = len(ds_selector_ds) - len(valid_ds)
+    
+    if invalid_count > 0:
+        print(f"Filtered out {invalid_count} data sources without required 'id' field")
+        ds_selector_ds = valid_ds
+    
+    # Skip if no data sources to process
+    if not ds_selector_ds:
+        print("No data sources to process for group permissions")
+        return {'success': True}
+
     try:
         translated_ds = translate_user_data_sources_to_hash_data_sources(ds_selector_ds)
         print("Updating permissions for the following ds: ", translated_ds)
+
         for ds in translated_ds:
             table.put_item(Item={
                     'object_id': ds['id'],
@@ -370,7 +385,7 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
                 
         return {'success': True}
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        print(f"An error occurred when updating group data source permissions: {str(e)}")
         return {"success": False, "error": str(e)}
 
 
@@ -407,11 +422,11 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             ) and not item.get("supportConvAnalysis", False):
                 ast["data"]["supportConvAnalysis"] = False
 
-            update_perms_result = update_group_ds_perms(ast['dataSources'], groupDSData, group_id, access_token)
+            update_perms_result = update_group_ds_perms(ast.get('dataSources', []), groupDSData, group_id, access_token)
             if (not update_perms_result['success']):
                 print("could not update ds perms for all group type data")
                 return update_perms_result
-
+            
             create_result = create_assistant(access_token, ast)
             if not create_result["success"]:
                 print("create ast call failed")
@@ -694,7 +709,7 @@ def delete_group(event, context, current_user, name, data):
             return {"message": "Failed to delete group", "success": False}
 
     except Exception as e:
-        return {"message": f"An error occurred: {str(e)}", "success": False}
+        return {"message": f"An error occurred while deleting group: {str(e)}", "success": False}
 
 
 def get_latest_assistants(assistants):
@@ -1207,9 +1222,9 @@ def create_amplify_assistants(event, context, current_user, name, data):
         for ast_def in assistants
     ]
 
-    result = register_ops(token, ops)
+    result = asyncio.run(register_ops(token))
 
-    if not result:
+    if not result.get("success", False):
         return {"success": False, "message": "Failed to register ops"}
 
     print("Adding assistants")
@@ -1220,7 +1235,6 @@ def create_amplify_assistants(event, context, current_user, name, data):
             return ast_result
 
     return {"success": True, "data": {"id": group_id}}
-
 
 def clean_old_keys():
     """
@@ -1338,3 +1352,72 @@ def delete_group_files(group_id, access_token):
             "deleted_count": 0,
             "failed_count": 0
         }
+
+
+async def register_ops(token):
+    # temp implementation
+    api_doc_ops = ["assistant", "state", "apiKeys", "models", "embedding"]
+    data = {"data": {"command": "register"}}
+    
+    base_url = os.environ.get("API_BASE_URL")
+    if not base_url:
+        print("API_BASE_URL environment variable not set")
+        return {"success": False, "error": "API_BASE_URL not configured"}
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    
+    async def make_register_call(session, path):
+        url = f"{base_url}/{path}/register_ops"
+        try:
+            async with session.post(url, json=data, headers=headers) as response:
+                result = await response.json()
+                print(f"Register ops call to {path}: {response.status}")
+                # Check for success in the response body, not just HTTP status
+                is_successful = result.get("success", False) if result else False
+                print(f"Register ops call to {path}: {result}")
+                return {
+                    "path": path,
+                    "status": response.status,
+                    "success": is_successful,
+                    "result": result
+                }
+        except Exception as e:
+            print(f"Failed to register ops for {path}: {str(e)}")
+            return {
+                "path": path,
+                "status": None,
+                "success": False,
+                "error": str(e)
+            }
+    
+    # Make all calls concurrently
+    async with aiohttp.ClientSession() as session:
+        tasks = [make_register_call(session, path) for path in api_doc_ops]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Process results
+    successful_ops = []
+    failed_ops = []
+    
+    for result in results:
+        if isinstance(result, Exception):
+            failed_ops.append({"error": str(result)})
+        elif result.get("success"):
+            successful_ops.append(result["path"])
+        else:
+            failed_ops.append(result)
+    
+    print(f"Successfully registered ops for: {successful_ops}")
+    if failed_ops:
+        print(f"Failed to register ops for: {failed_ops}")
+    
+    return {
+        "success": len(failed_ops) == 0,
+        "successful_ops": successful_ops,
+        "failed_ops": failed_ops,
+        "total_attempted": len(api_doc_ops)
+    }
+

@@ -12,7 +12,9 @@ from .get_group_assistant_dashboards_schema import get_group_assistant_dashboard
 from .save_user_rating_schema import save_user_rating_schema
 from .get_group_conversations_data_schema import get_group_conversations_data_schema
 from .scrape_website_schema import scrape_website_schema
+from .tools_op_schema import tools_op_schema
 from .rescan_websites_schema import rescan_websites_schema
+from .extract_sitemap_urls_schema import extract_sitemap_urls_schema
 
 rules = {
     "validators": {
@@ -46,6 +48,9 @@ rules = {
         "/assistant/add_path": {"add_assistant_path": add_assistant_path_schema},
         "/assistant/scrape_website": {"scrape_website": scrape_website_schema},
         "/assistant/rescan_websites": {"rescan_websites": rescan_websites_schema},
+        "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": extract_sitemap_urls_schema},
+        "/assistant/process_drive_sources": {"process_drive_sources": assistant_id_schema},
+        "/assistant/register_ops": {"register_ops": tools_op_schema},
     },
     "api_validators": {
         "/assistant/create": {"create": create_assistant_schema},
@@ -81,5 +86,8 @@ rules = {
         "/assistant/validate/assistant_id": {"lookup": assistant_id_schema},
         "/assistant/scrape_website": {"scrape_website": scrape_website_schema},
         "/assistant/rescan_websites": {"rescan_websites": rescan_websites_schema},
+        "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": extract_sitemap_urls_schema},
+        "/assistant/process_drive_sources": {"process_drive_sources": assistant_id_schema},
+        "/assistant/register_ops": {"register_ops": tools_op_schema},
     },
 }

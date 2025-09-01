@@ -65,9 +65,7 @@ class TokenV1 extends Token {
      * @returns {string} The hashed key as a hex string.
      */
     static _keyGenerator(rawKey, salt = "") {
-        // Using SHAKE256 equivalent - Node.js doesn't have SHAKE256, so using SHA3-256 instead
-        // which provides similar security properties
-        const hash = crypto.createHash('sha3-256');
+        const hash = crypto.createHash('shake256', { outputLength: 64 });
         hash.update(rawKey + salt);
         return hash.digest('hex');
     }
