@@ -319,6 +319,23 @@ functions:
           method: post
           cors: true
 
+      # Not production ready
+  create_or_update_user:
+    handler: service/users.create_or_update_user
+    events:
+      - http:
+          path: user/create
+          method: post
+          cors: true
+
+  upgrade_user:
+    handler: service/users.upgrade_user
+    events:
+      - http:
+          path: user/upgrade
+          method: post
+          cors: true
+
 resources:
   Resources:
     ObjectAccessLambdaPolicy:
