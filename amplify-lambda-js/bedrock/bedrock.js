@@ -45,7 +45,7 @@ export const chatBedrock = async (chatBody, writable) => {
 
         const maxModelTokens = options.model.outputTokenLimit;
 
-        const maxTokens = body.max_tokens || 1000;
+        const maxTokens = body.max_tokens || 2000;
         const inferenceConfigs = {"temperature": options.temperature, 
                                   "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens, };
         
@@ -62,7 +62,7 @@ export const chatBedrock = async (chatBody, writable) => {
             }
        
         }
-        if (currentModel.supportsReasoning) {
+        if (currentModel.supportsReasoning && maxTokens > 1024) {
             const budget_tokens = getBudgetTokens({options}, maxTokens); 
             input.additionalModelRequestFields={
                 "reasoning_config": {
