@@ -65,8 +65,8 @@ export const getBudgetTokens = (params, maxTokens) => {
             budget_tokens = 4096;
             break;
     }
-    if (budget_tokens >= maxTokens) {
-        budget_tokens = maxTokens / 2;
+    if (budget_tokens > maxTokens) {
+        budget_tokens = Math.max(maxTokens / 2, 1024);
     }
     return budget_tokens;
 

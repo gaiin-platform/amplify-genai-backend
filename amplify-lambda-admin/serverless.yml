@@ -139,7 +139,7 @@ functions:
           cors: true
 
   get_user_amplify_groups:
-    handler: service/core.get_user_amplify_groups
+    handler: service/user_services.get_user_amplify_groups
     events:
       - http:
           path: amplifymin/amplify_groups/list
@@ -147,7 +147,7 @@ functions:
           cors: true       
 
   get_user_affiliated_groups:
-    handler: service/core.get_user_affiliated_groups
+    handler: service/user_services.get_user_affiliated_groups
     events:
       - http:
           path: amplifymin/amplify_groups/affiliated
@@ -155,7 +155,7 @@ functions:
           cors: true
 
   is_member_of_amp_group:
-    handler: service/core.verify_is_in_amp_group
+    handler: service/user_services.verify_is_in_amp_group
     timeout: 300
     events:
       - http:
