@@ -38,8 +38,6 @@ pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 api_version = os.environ["API_VERSION"]
 object_access_table = os.environ["OBJECT_ACCESS_TABLE"]
-groups_table = os.environ["GROUPS_DYNAMO_TABLE"]
-
 queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
 s3_bucket = os.environ["S3_FILE_TEXT_BUCKET_NAME"]
 sqs = boto3.client("sqs")
@@ -202,6 +200,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
 
     # Initialize a DynamoDB resource using boto3
     dynamodb = boto3.resource("dynamodb")
+    groups_table = os.environ["GROUPS_DYNAMO_TABLE"]
     group_table = dynamodb.Table(groups_table)
     obj_access_table = dynamodb.Table(object_access_table)
     # if user meets the following criteria for a group then all datasources are approved
@@ -265,6 +264,94 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
             access_denied_src_ids.extend(dataSourceIds)
 
     print(f"Group Accessible src_ids: {accessible_src_ids}, Group Access denied src_ids: {access_denied_src_ids}")
+    return accessible_src_ids, access_denied_src_ids
+
+def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
+    # if user meets the following criteria for an ast then all datasources are approved
+    # user has access to the ast
+    # ast is a standalone ast 
+    ### is publis
+    ### is a listed member
+    ### is member of listed amplify group
+    # if yes to any then we must check if the ast has access to the datasources
+    # classify_src_ids_by_access(raw_src_ids, assistant_id)
+    
+    accessible_src_ids = []
+    access_denied_src_ids = []
+
+    # Initialize a DynamoDB resource using boto3
+    dynamodb = boto3.resource("dynamodb")
+    assistant_lookup_table_name = os.environ.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
+    
+    if not assistant_lookup_table_name:
+        logger.error("ASSISTANT_LOOKUP_DYNAMODB_TABLE environment variable is not set")
+        # If table is not configured, deny all access
+        for ast_id, data_source_ids in raw_ast_src_ids.items():
+            access_denied_src_ids.extend(data_source_ids)
+        return accessible_src_ids, access_denied_src_ids
+    
+    lookup_table = dynamodb.Table(assistant_lookup_table_name)
+
+    # Iterate over each ast_id and associated dataSourceIds  
+    for ast_id, data_source_ids in raw_ast_src_ids.items():
+        logger.info(f"Checking permissions for AST ID: {ast_id}, DS IDs: {data_source_ids}")
+        
+        try:
+            # Query the lookup table directly by assistantId using GSI
+            logger.info(f"Querying DynamoDB lookup table for assistantId: {ast_id}")
+            response = lookup_table.query(
+                IndexName="AssistantIdIndex",
+                KeyConditionExpression=Key("assistantId").eq(ast_id)
+            )
+            
+            logger.info(f"DynamoDB response: {response}")
+            
+            # Check if any items were found
+            if not response.get("Items") or len(response["Items"]) == 0:
+                logger.info(f"No item found for assistantId: '{ast_id}'")
+                access_denied_src_ids.extend(data_source_ids)
+                continue
+
+            item = response["Items"][0]
+            # Get accessTo information
+            access_to = item.get("accessTo", {})
+            # Check if the assistant is public or if the user has access
+            has_access = False
+            
+            if item.get("public", False):
+                # Assistant is public
+                has_access = True
+                logger.info(f"AST {ast_id} is public - access granted")
+            elif current_user == item.get("createdBy"):
+                # User is the creator
+                has_access = True
+                logger.info(f"User {current_user} is creator of AST {ast_id} - access granted")
+            elif current_user in access_to.get("users", []):
+                # User is in the allowed users list
+                has_access = True
+                logger.info(f"User {current_user} is listed in accessTo.users for AST {ast_id} - access granted")
+            elif verify_user_in_amp_group(token, access_to.get("amplifyGroups", [])):
+                # User is member of allowed amplify groups
+                has_access = True
+                logger.info(f"User {current_user} is member of amplifyGroups for AST {ast_id} - access granted")
+            
+            if has_access:
+                # User has access to the AST, now check if AST has access to the datasources
+                logger.info(f"User has access to AST {ast_id}, checking AST access to datasources")
+                ast_accessible_src_ids, ast_access_denied_src_ids = classify_src_ids_by_access(data_source_ids, ast_id)
+                accessible_src_ids.extend(ast_accessible_src_ids)
+                access_denied_src_ids.extend(ast_access_denied_src_ids)
+            else:
+                # User does not have access to the AST
+                logger.info(f"User {current_user} does not have access to AST {ast_id} - access denied")
+                access_denied_src_ids.extend(data_source_ids)
+                
+        except Exception as e:
+            logger.error(f"Error processing AST {ast_id}: {str(e)}")
+            # In case of error, deny access to be safe
+            access_denied_src_ids.extend(data_source_ids)
+
+    logger.info(f"AST Accessible src_ids: {accessible_src_ids}, AST Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
 
 
@@ -371,16 +458,14 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     content = data["userInput"]
     raw_src_ids = data["dataSources"]
     raw_group_src_ids = data.get("groupDataSources", {})
+    raw_ast_src_ids = data.get("astDataSources", {})
     limit = data.get("limit", 10)
 
-    accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(
-        raw_src_ids, current_user
-    )
-    group_accessible_src_ids, group_access_denied_src_ids = (
-        classify_group_src_ids_by_access(raw_group_src_ids, current_user, token)
-    )
+    accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
+    group_accessible_src_ids, group_access_denied_src_ids = classify_group_src_ids_by_access(raw_group_src_ids, current_user, token)
+    ast_accessible_src_ids, ast_access_denied_src_ids = classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token)
 
-    src_ids = accessible_src_ids + group_accessible_src_ids
+    src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
 
     # wait until all embeddings are completed - only check individual accessible sources
     pending_ids = accessible_src_ids  # Only check individual user accessible sources, not group sources
