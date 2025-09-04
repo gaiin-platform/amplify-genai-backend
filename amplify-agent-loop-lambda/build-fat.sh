@@ -3,8 +3,8 @@ set -e
 
 REGION="us-east-1"
 STAGE="${1:-dev}"
-DEV_REPOSITORY_URI="654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo"
-PROD_REPOSITORY_URI="514391678313.dkr.ecr.us-east-1.amazonaws.com/prod-amplifygenai-repo"
+DEV_REPOSITORY_URI="" # ADD YOUR DEV REPO URI
+PROD_REPOSITORY_URI="" # ADD YOUR PROD REPO URI
 
 # Set repository URI based on stage
 if [ "$STAGE" = "prod" ]; then
@@ -13,11 +13,18 @@ else
     REPOSITORY_URI="$DEV_REPOSITORY_URI"
 fi
 
-IMAGE_TAG="${STAGE}-agent-router-fat"
+# Add timestamp to ensure unique tag for each build
+TIMESTAMP=$(date +%s)
+BASE_IMAGE_TAG="${STAGE}-agent-router-fat"
+IMAGE_TAG="${BASE_IMAGE_TAG}-${TIMESTAMP}"
+
+# Export the timestamp for serverless.yml to use
+echo "export DEPLOY_TIMESTAMP=$TIMESTAMP" > deploy-timestamp.env
 
 echo "Building container image for stage: $STAGE"
 echo "Repository: $REPOSITORY_URI"
 echo "Image tag: $IMAGE_TAG"
+echo "Timestamp: $TIMESTAMP"
 
 # Enable Docker BuildKit explicitly
 export DOCKER_BUILDKIT=1

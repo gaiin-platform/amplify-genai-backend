@@ -52,6 +52,7 @@ provider:
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${sls:stage}-openai-endpoints
     S3_CONVERSION_OUTPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-document-conversion-output
     AMPLIFY_GROUPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
+    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
   iam:
@@ -138,7 +139,7 @@ functions:
           cors: true
 
   get_user_amplify_groups:
-    handler: service/core.get_user_amplify_groups
+    handler: service/user_services.get_user_amplify_groups
     events:
       - http:
           path: amplifymin/amplify_groups/list
@@ -146,7 +147,7 @@ functions:
           cors: true       
 
   get_user_affiliated_groups:
-    handler: service/core.get_user_affiliated_groups
+    handler: service/user_services.get_user_affiliated_groups
     events:
       - http:
           path: amplifymin/amplify_groups/affiliated
@@ -154,7 +155,7 @@ functions:
           cors: true
 
   is_member_of_amp_group:
-    handler: service/core.verify_is_in_amp_group
+    handler: service/user_services.verify_is_in_amp_group
     timeout: 300
     events:
       - http:
@@ -206,9 +207,14 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
-
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_GROUPS_DYNAMODB_TABLE}"
     
     AmplifyAdminTable:
       Type: 'AWS::DynamoDB::Table'

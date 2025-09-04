@@ -19,12 +19,14 @@ from pycommon.api.ops_reqs import get_all_op
 from base_feature_flags import feature_flags
 from datetime import datetime
 from botocore.config import Config
-from pycommon.const import NO_RATE_LIMIT
-from pycommon.authz import validated, setup_validated
+from service.user_services import is_in_amp_group
+from pycommon.const import NO_RATE_LIMIT, APIAccessType
+from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
 setup_validated(rules, get_permission_checker)
+add_api_access_types([APIAccessType.ADMIN.value])
 
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
@@ -49,6 +51,7 @@ class AdminConfigTypes(Enum):
     INTEGRATIONS = "integrations"
     EMAIL_SUPPORT = "emailSupport"
     DEFAULT_CONVERSATION_STORAGE = "defaultConversationStorage"
+    AI_EMAIL_DOMAIN = 'aiEmailDomain'
 
 
 # Map config_type to the corresponding secret name in Secrets Manager
@@ -192,6 +195,7 @@ def handle_update_config(config_type, update_data, token, invalid_users_set):
             | AdminConfigTypes.PROMPT_COST_ALERT
             | AdminConfigTypes.INTEGRATIONS
             | AdminConfigTypes.EMAIL_SUPPORT
+            | AdminConfigTypes.AI_EMAIL_DOMAIN
             | AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE
             | AdminConfigTypes.DEFAULT_MODELS ):
             print(f"Updating {config_type.value} - {update_data}")
@@ -354,6 +358,7 @@ def get_configs(event, context, current_user, name, data):
             AdminConfigTypes.PROMPT_COST_ALERT,
             AdminConfigTypes.INTEGRATIONS,
             AdminConfigTypes.EMAIL_SUPPORT,
+            AdminConfigTypes.AI_EMAIL_DOMAIN,
             AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
             AdminConfigTypes.DEFAULT_MODELS,
         ]
@@ -511,11 +516,12 @@ def initialize_config(config_type):
         item["data"] = "future-local"
     elif config_type == AdminConfigTypes.EMAIL_SUPPORT:
         item["data"] = {"isActive": False, "email": ""}
+    elif config_type == AdminConfigTypes.AI_EMAIL_DOMAIN:
+        item["data"] = ""
     elif config_type == AdminConfigTypes.INTEGRATIONS:
         item["data"] = {}  # No integrtaions have been initialized from the admin panel
     else:
         raise ValueError(f"Unknown config type: {config_type}")
-
     try:
         admin_table.put_item(Item=item)
         print(f"Config Item Initialized: {config_type.value}")
@@ -531,6 +537,7 @@ def get_user_app_configs(event, context, current_user, name, data):
     app_configs = [
         AdminConfigTypes.EMAIL_SUPPORT,
         AdminConfigTypes.DEFAULT_CONVERSATION_STORAGE,
+        AdminConfigTypes.AI_EMAIL_DOMAIN,
     ]
     configs = {}
     for config_type in app_configs:
@@ -803,161 +810,6 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
         }
 
 
-@validated(op="read")
-def get_user_amplify_groups(event, context, current_user, name, data):
-    # will need some rework - for now we are just going to return all the groups
-    all_groups = get_all_amplify_groups()
-    if not all_groups:
-        return {"success": False, "message": "No Amplify Groups Found"}
-    return {"success": True, "data": list(all_groups.keys())}
-
-
-def get_all_amplify_groups():
-    try:
-        config_item = admin_table.get_item(
-            Key={"config_id": AdminConfigTypes.AMPLIFY_GROUPS.value}
-        )
-        if "Item" in config_item and "data" in config_item["Item"]:
-            return config_item["Item"]["data"]
-        else:
-            print("No Amplify Groups Found")
-    except Exception as e:
-        print(f"Error retrieving {AdminConfigTypes.AMPLIFY_GROUPS.value}: {str(e)}")
-    return None
-
-
-@validated(op="read")
-def get_user_affiliated_groups(event, context, current_user, name, data):
-    try:
-        all_groups = get_all_amplify_groups()
-        if not all_groups:
-            return {"success": False, "message": "No Amplify Groups Found"}
-        
-        affiliated_groups = find_all_user_groups(current_user, all_groups)
-        return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
-    except Exception as e:
-        print(f"Error retrieving user affiliated groups: {str(e)}")
-        return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
-
-
-def find_all_user_groups(current_user, all_groups):
-    """
-    Find all groups a user is affiliated with (direct and indirect membership).
-    
-    Returns a list of group names the user belongs to.
-    """
-    affiliated = []
-    
-    # Phase 1: Find all groups where user is a direct member
-    direct_groups = set()
-    for group_name, group_data in all_groups.items():
-        members = group_data.get("members", [])
-        if current_user in members:
-            direct_groups.add(group_name)
-            affiliated.append(group_name)
-    
-    # Phase 2: Find all groups that include user's groups (directly or indirectly)
-    # Use BFS to find all groups that eventually include user's direct groups
-    for group_name, group_data in all_groups.items():
-        if group_name not in direct_groups:  # Skip already found direct groups
-            visited = set()
-            if group_includes_user_groups(group_name, direct_groups, all_groups, visited):
-                affiliated.append(group_name)
-    
-    return affiliated
-
-
-def group_includes_user_groups(group_name, user_direct_groups, all_groups, visited):
-    """
-    Check if a group includes any of the user's direct groups through its includeFromOtherGroups chain.
-    """
-    if group_name not in all_groups or group_name in visited:
-        return False
-    
-    visited.add(group_name)
-    group_data = all_groups[group_name]
-    
-    # Check if this group directly includes any of user's direct groups
-    includes = group_data.get("includeFromOtherGroups", [])
-    for included_group in includes:
-        if included_group in user_direct_groups:
-            return True
-        # Recursively check if included group eventually includes user's groups
-        if group_includes_user_groups(included_group, user_direct_groups, all_groups, visited):
-            return True
-    
-    return False
-
-
-@validated(op="read")
-def verify_is_in_amp_group(event, context, current_user, name, data):
-    amp_groups = data["data"]["groups"]
-    try:
-        isMember = is_in_amp_group(current_user, amp_groups)
-        print(f"User {current_user} is in group: {isMember}")
-        return {"success": True, "isMember": isMember}
-    except Exception as e:
-        print(f"Error verifying is in amp group: {str(e)}")
-        return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
-
-
-def is_in_amp_group(current_user, check_amplify_groups):
-    if len(check_amplify_groups) == 0:
-        return False
-    """
-    Given a current_user and a list of group names (check_amplify_groups), determine if the user
-    has access via direct or indirect (nested) membership in any of these groups.
-
-    Steps:
-    1. Retrieve all_amplify_groups from the admin table.
-    2. For each group in check_amplify_groups, check if the user is a member.
-    3. If found in any, return True. Otherwise, return False.
-    """
-
-    all_amplify_groups = get_all_amplify_groups()
-    if all_amplify_groups is None:
-        raise Exception("No Amplify Groups Found")
-    
-    if not all_amplify_groups or len(all_amplify_groups) == 0:
-        return False
-
-    # Check each provided group in check_amplify_groups for user membership
-    visited = set()
-    for group_name in check_amplify_groups:
-        if user_in_group(group_name, current_user, all_amplify_groups, visited):
-            return True
-
-    # If none of the groups matched, user is not in any Amplify Group
-    return False
-
-
-def user_in_group(group_name, current_user, all_amplify_groups, visited):
-    """
-    Checks if `current_user` is in `group_name` directly or through nested groups.
-    Avoids infinite loops using the `visited` set.
-    """
-    # If the group does not exist in the map, return False
-    # If we have already visited this group, return False to avoid cycles
-    if group_name not in all_amplify_groups or group_name in visited:
-        return False
-
-    visited.add(group_name)
-
-    cur_group = all_amplify_groups[group_name]
-
-    # Check direct membership
-    members = cur_group.get("members", [])
-    if current_user in members:
-        return True
-
-    # Check include groups
-    for include_group_name in cur_group.get("includeFromOtherGroups", []):
-        if user_in_group(include_group_name, current_user, all_amplify_groups, visited):
-            return True
-
-    # If user not found here or in any included groups
-    return False
-
 
 @validated(op="read")
 def verify_valid_admin(event, context, current_user, name, data):
@@ -966,7 +818,6 @@ def verify_valid_admin(event, context, current_user, name, data):
     log_item(None, current_user, f"Authentication user for the purpose of: {purpose}")
     return {"success": True, "isAdmin": authorized_admin(current_user)}
 
-    # using to fill in feature flag for the user
 
 
 def authorized_admin(current_user, forFeatureFlags=False):

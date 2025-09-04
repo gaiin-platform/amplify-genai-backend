@@ -9,7 +9,7 @@ from pycommon.api.ops import api_tool
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.const import APIAccessType
+from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.FILE_UPLOAD.value])
 
@@ -22,7 +22,6 @@ from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_s
 from pycommon.api.object_permissions import can_access_objects
 from pycommon.api.embeddings import delete_embeddings
 from pycommon.api.amplify_groups import verify_member_of_ast_admin_group
-from images.image_types import IMAGE_FILE_TYPES
 
 dynamodb = boto3.resource("dynamodb")
 
@@ -1155,6 +1154,18 @@ def update_file_tags(current_user, item_id, tags):
                 "type": "string",
                 "description": "String. Optional. Attribute to sort results by. Default: 'createdAt'.",
             },
+            "filters": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "attribute": {"type": "string"},
+                        "operator": {"type": "string"},
+                        "value": {"type": "string"}
+                    }
+                },
+                "description": "Array of objects. Optional. Dynamic filters for flexible filtering. Each filter has 'attribute' (supports nested like 'data.type'), 'operator' (startsWith, not_startsWith, contains, not_contains, equals, not_equals, exists, not_exists), and 'value'.",
+            },
         },
         "required": [],
     },
@@ -1329,6 +1340,7 @@ def query_user_files(event, context, current_user, name, data):
     type_prefix = query_params.get("typePrefix")
     type_filters = query_params.get("types")
     tag_search = query_params.get("tags", None)
+    dynamic_filters = query_params.get("filters", None)
     page_index = query_params.get("pageIndex", 0)
     forward_scan = query_params.get("forwardScan", False)
 
@@ -1399,6 +1411,7 @@ def query_user_files(event, context, current_user, name, data):
         sort_key_value_start=sort_key_value_start,
         filters=begins_with_filters,
         type_filters=type_filters,
+        dynamic_filters=dynamic_filters,
         exclusive_start_key=exclusive_start_key,
         page_size=page_size,
         forward_scan=forward_scan,
@@ -1420,6 +1433,7 @@ def query_table_index(
     sort_key_value_start=None,
     filters=None,
     type_filters=None,
+    dynamic_filters=None,
     exclusive_start_key=None,
     page_size=10,
     forward_scan=False,
@@ -1482,6 +1496,53 @@ def query_table_index(
         type_filter_expression = " OR ".join(type_filter_expressions)
         filter_expressions.append(type_filter_expression)
 
+    # Process dynamic filters
+    if dynamic_filters is not None:
+        for i, filter_def in enumerate(dynamic_filters):
+            attr_path = filter_def.get("attribute", "")
+            operator = filter_def.get("operator", "")
+            value = filter_def.get("value", "")
+            
+            if not attr_path or not operator:
+                continue
+                
+            # Handle nested attributes like "data.type"
+            attr_parts = attr_path.split(".")
+            if len(attr_parts) == 1:
+                # Simple attribute
+                attr_name_placeholder = f"#dyn_attr_{i}"
+                expression_attribute_names[attr_name_placeholder] = attr_parts[0]
+                attr_expression = attr_name_placeholder
+            else:
+                # Nested attribute like "data.type"
+                attr_placeholders = []
+                for j, part in enumerate(attr_parts):
+                    placeholder = f"#dyn_attr_{i}_{j}"
+                    expression_attribute_names[placeholder] = part
+                    attr_placeholders.append(placeholder)
+                attr_expression = ".".join(attr_placeholders)
+            
+            value_placeholder = f":dyn_value_{i}"
+            expression_attribute_values[value_placeholder] = {"S": str(value)}
+            
+            # Build filter expression based on operator
+            if operator == "startsWith":
+                filter_expressions.append(f"begins_with({attr_expression}, {value_placeholder})")
+            elif operator == "not_startsWith":
+                filter_expressions.append(f"NOT begins_with({attr_expression}, {value_placeholder})")
+            elif operator == "contains":
+                filter_expressions.append(f"contains({attr_expression}, {value_placeholder})")
+            elif operator == "not_contains":
+                filter_expressions.append(f"NOT contains({attr_expression}, {value_placeholder})")
+            elif operator == "equals":
+                filter_expressions.append(f"{attr_expression} = {value_placeholder}")
+            elif operator == "not_equals":
+                filter_expressions.append(f"{attr_expression} <> {value_placeholder}")
+            elif operator == "exists":
+                filter_expressions.append(f"attribute_exists({attr_expression})")
+            elif operator == "not_exists":
+                filter_expressions.append(f"attribute_not_exists({attr_expression})")
+
     if filters:
         for filter_def in filters:
             attr_name = filter_def["attribute"]
@@ -1524,8 +1585,13 @@ def query_table_index(
         if len(expression_attribute_values) > 0:
             query_params["ExpressionAttributeValues"] = expression_attribute_values
 
-    # Limit the query if there's no begins_with filter provided
-    if not filter_expressions:
+    # Always set a limit to control pagination
+    # When there are filters, we may need to scan more items to get enough results
+    if filter_expressions:
+        # With filters, set a reasonable upper bound to avoid scanning entire table
+        # while still allowing enough items to be scanned to meet the page_size after filtering
+        query_params["Limit"] = min(page_size * 10, 1000)  # Cap at 1000 to avoid large scans
+    else:
         query_params["Limit"] = page_size
 
     # Use exclusive_start_key if provided
@@ -1545,6 +1611,23 @@ def query_table_index(
     last_evaluated_key = response.get("LastEvaluatedKey")
     if last_evaluated_key:
         last_evaluated_key = unmarshal_dynamodb_item(last_evaluated_key)
+
+    # When filters are applied, we need to limit results to the requested page_size
+    # and handle pagination correctly
+    if filter_expressions and len(items) > page_size:
+        # Limit items to requested page size
+        items = items[:page_size]
+        # If we're truncating results, create a pagination key from the last item
+        if len(items) == page_size:
+            last_item = items[-1]
+            # Create pagination key based on the index being used
+            last_evaluated_key = {
+                partition_key_name: partition_key_value,
+                sort_key_name: last_item.get(sort_key_name),
+                "id": last_item.get("id"),  # Primary key for the main table
+                "createdAt": last_item.get("createdAt"),  # Always include for GSI
+                "type": last_item.get("type")  # Include type for type-based sorts
+            }
 
     return {"success": True, "data": {"items": items, "pageKey": last_evaluated_key}}
 

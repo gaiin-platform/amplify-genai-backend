@@ -26,5 +26,6 @@ FEATURE_FLAGS = {
     "assistantPathPublishing": False,  # Controls the feature to publish assistants at custom paths
     "websiteUrls": False,
     "accounts": True,
-    "cachedDocuments": False
+    "cachedDocuments": False,
+    "modelPricing": False
 }

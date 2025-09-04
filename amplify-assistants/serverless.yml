@@ -86,6 +86,8 @@ provider:
     IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
+
 
   iam:
     role:
@@ -287,6 +289,15 @@ functions:
     events:
       - http:
           path: assistant/rescan_websites
+          method: post
+          cors: true
+
+  extract_sitemap_urls:
+    handler: service/scrape_websites.extract_sitemap_urls
+    timeout: 300
+    events:
+      - http:
+          path: assistant/extract_sitemap_urls
           method: post
           cors: true
 
@@ -651,6 +662,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
 
             - Effect: Allow
               Action:

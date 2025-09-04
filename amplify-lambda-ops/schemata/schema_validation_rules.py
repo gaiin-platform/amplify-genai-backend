@@ -14,7 +14,7 @@ rules = {
         "/ops/register_ops": {"register_ops": tools_op_schema}, 
     },
     "api_validators": {
-        "/ops/get": {"get": {}},
+        "/ops/get": {"get": get_ops_schema},
         "/ops/register": {"write": register_ops_schema},
         "/ops/get_op": {"get": get_op_schema},
         "/ops/register_ops": {"register_ops": tools_op_schema},

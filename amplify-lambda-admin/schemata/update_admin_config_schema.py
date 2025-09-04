@@ -402,7 +402,22 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
-                     {
+                    {
+                        # Configuration for 'aiEmailDomain'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "aiEmailDomain"
+                            },
+                            "data":  {
+                                "type": "string",
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
                         # Configuration for 'defaultConversationStorage'
                         "type": "object",
                         "properties": {
