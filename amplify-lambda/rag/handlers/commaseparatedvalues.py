@@ -3,8 +3,6 @@
 
 import csv
 import io
-import chardet
-
 from rag.handlers.text import TextExtractionHandler
 from rag.handlers.shared_functions import is_likely_text
 

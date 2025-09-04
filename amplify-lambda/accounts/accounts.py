@@ -76,51 +76,6 @@ def save_accounts_for_user(user, accounts_list):
         return {"success": False, "message": "An error occurred while saving accounts"}
 
 
-def create_charge(account_id, charge, description, user, details):
-    dynamodb = boto3.resource("dynamodb")
-    request_id = str(uuid.uuid4())
-    charge_as_decimal = Decimal(str(charge))
-    accounting_table_name = os.environ["ACCOUNTING_DYNAMO_TABLE"]
-    requests_table = dynamodb.Table(accounting_table_name)
-
-    print(
-        f"User {user} is creating a new charge request with id {request_id} for {charge_as_decimal} in {accounting_table_name}"
-    )
-
-    response = requests_table.put_item(
-        Item={
-            "id": request_id,
-            "account_id": account_id,
-            "charge": charge_as_decimal,
-            "description": description,
-            "user": user,
-            "details": details,
-        }
-    )
-
-    if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
-        print(f"Charge request {request_id} stored successfully")
-        return {
-            "success": True,
-            "message": "Charge request stored successfully",
-            "request_id": request_id,
-        }
-    else:
-        print(f"Failed to create charge request {request_id}")
-        return {"success": False, "message": "Failed to store charge request"}
-
-
-@validated("create_charge")
-def charge_request(event, context, user, name, data):
-    account_id = data["data"]["accountId"]
-    charge = data["data"]["charge"]
-    description = data["data"]["description"]
-    details = data["data"]["details"]
-
-    # Call the core business logic function within the request handling function
-    return create_charge(account_id, charge, description, user, details)
-
-
 @api_tool(
     path="/state/accounts/get",
     name="getUserAccounts",
