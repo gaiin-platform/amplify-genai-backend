@@ -68,10 +68,8 @@ provider:
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
-    ACCOUNTING_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounting
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
-    CHAT_USAGE_ARCHIVE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage-archive
     COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
@@ -103,6 +101,7 @@ provider:
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     DEP_REGION: ${self:custom.stageVars.DEP_REGION}
     OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
     STAGE: ${sls:stage}
 
 
@@ -364,14 +363,6 @@ functions:
           path: chat/convert
           method: post
 
-  accounts_charge:
-    handler: accounts/accounts.charge_request
-    layers:
-      - Ref: PythonRequirementsLambdaLayer
-    events:
-      - http:
-          path: state/accounts/charge
-          method: post
 
   accounts_get:
     handler: accounts/accounts.get_accounts
@@ -476,6 +467,36 @@ functions:
                 - RagChunkDocumentQueue
                 - Arn
 
+  test_db_connection:
+    handler: utilities/test_db_connection.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: db/test-connection
+          method: post
+          cors: true
+
+  save_db_connection:
+    handler: utilities/save_db_connection.lambda_handler
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: db/save-connection
+          method: post
+          cors: true
+
+  get_db_connections:
+    handler: utilities/get_db_connections.lambda_handler
+    timeout: 30
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - http:
+          path: db/get-connections
+          method: post
+          cors: true
 
   process_images_for_chat:
     handler: images/core.process_images_for_chat
@@ -578,9 +599,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMBEDDING_PROGRESS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
@@ -613,6 +631,7 @@ resources:
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
 
     StateBucket:
       Type: AWS::S3::Bucket
@@ -851,22 +870,6 @@ resources:
               ProjectionType: ALL
 
 
-    AccountingChargesDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        SSESpecification:
-          SSEEnabled: false          
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        TableName: ${self:provider.environment.ACCOUNTING_DYNAMO_TABLE}
 
     AccountsDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
@@ -921,41 +924,6 @@ resources:
               ProjectionType: ALL  # Or specify the attributes you want projected
         StreamSpecification:  # enable streaming
           StreamViewType: NEW_AND_OLD_IMAGES        
-
-    AccountingChatUsageArchiveDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        SSESpecification:
-          SSEEnabled: false          
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: user
-            AttributeType: S
-          - AttributeName: time
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        TableName: ${self:provider.environment.CHAT_USAGE_ARCHIVE_DYNAMO_TABLE}
-        GlobalSecondaryIndexes:
-          - IndexName: UserUsageTimeIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: time
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL  # Or specify the attributes you want projected
-          - IndexName: DateIndex
-            KeySchema:
-              - AttributeName: time
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL  # Or specify the attributes you want projected
 
     ConversationMetadataTable:
       Type: 'AWS::DynamoDB::Table'

@@ -15,6 +15,7 @@ import agent.tools.prompt_tools
 import agent.tools.shell
 import agent.tools.structured_editing
 import agent.tools.markdown_converter
+import agent.tools.database_tool
 
 from agent.agents import actions_agent, workflow_agent
 from agent.capabilities.workflow_model import Workflow
@@ -625,6 +626,23 @@ def handle_event(
             "llm": llm,
             "work_directory": work_directory,
         }
+        
+        # Add attached database connection ID from metadata or chat body if present
+        attached_database_id = None
+        if metadata and metadata.get("attached_database_connection_id"):
+            attached_database_id = metadata["attached_database_connection_id"]
+        elif metadata and metadata.get("attachedDatabases"):
+            # Handle attached databases from chat body
+            attached_dbs = metadata.get("attachedDatabases")
+            if isinstance(attached_dbs, list) and len(attached_dbs) > 0:
+                attached_database_id = attached_dbs[0]  # Use first attached database
+            elif isinstance(attached_dbs, str):
+                attached_database_id = attached_dbs
+        
+        if attached_database_id:
+            action_context_props["attachedDatabases"] = [attached_database_id]
+            action_context_props["attached_database_connection_id"] = attached_database_id
+            print(f"Added attached database connection ID to action context: {attached_database_id}")
         if api_key_id:
             action_context_props["api_key_id"] = api_key_id
 

@@ -2,7 +2,6 @@
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import base64
 import hashlib
 import os
 import mimetypes

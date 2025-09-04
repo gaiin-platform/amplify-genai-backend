@@ -27,29 +27,54 @@ def get_emails(event, context, current_user, name, data):
         }
 
     dynamodb = boto3.resource("dynamodb")
-    cognito_user_table = dynamodb.Table(os.environ["COGNITO_USERS_TABLE"])
+    cognito_user_table = dynamodb.Table(os.environ["COGNITO_USERS_DYNAMODB_TABLE"])
 
     try:
         print("Initiate query to cognito user dynamo table")
-        response = None
-        if email_prefix == "*":  # If the prefix is '*', get all entries
-            response = cognito_user_table.scan(ProjectionExpression="user_id")
-        else:
-            response = cognito_user_table.scan(
-                ProjectionExpression="user_id",
-                FilterExpression="begins_with(user_id, :email_prefix)",
-                ExpressionAttributeValues={":email_prefix": email_prefix.lower()},
-            )
-
-        # print("Response: ", response)
-        if "Items" not in response:
-            print("Failed to get matching emails")
+        
+        # Collect all items across multiple pages
+        all_items = []
+        last_evaluated_key = None
+        
+        while True:
+            # Prepare scan parameters
+            scan_params = {"ProjectionExpression": "user_id"}
+            
+            if email_prefix != "*":  # Add filter if not getting all entries
+                scan_params.update({
+                    "FilterExpression": "begins_with(user_id, :email_prefix)",
+                    "ExpressionAttributeValues": {":email_prefix": email_prefix.lower()},
+                })
+            
+            # Add pagination token if we have one
+            if last_evaluated_key:
+                scan_params["ExclusiveStartKey"] = last_evaluated_key
+            
+            # Execute scan
+            response = cognito_user_table.scan(**scan_params)
+            
+            # Check if we got items
+            if "Items" not in response:
+                break
+                
+            # Add items to our collection
+            all_items.extend(response["Items"])
+            
+            # Check if there are more pages
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break  # No more pages
+                
+        print(f"Retrieved {len(all_items)} total items")
+        
+        if not all_items:
+            print("No matching emails found")
             return {
                 "statusCode": 404,
-                "body": json.dumps({"error": "Failed to get matching Emails"}),
+                "body": json.dumps({"error": "No matching emails found"}),
             }
 
-        email_matches = [item["user_id"] for item in response["Items"]]
+        email_matches = [item["user_id"] for item in all_items]
         # print("Email matches:\n", email_matches)
         return {"statusCode": 200, "body": json.dumps({"emails": email_matches})}
 
@@ -75,7 +100,7 @@ def get_user_groups(event, context, current_user, name, data):
 
 def get_cognito_amplify_groups(current_user):
     dynamodb = boto3.resource("dynamodb")
-    cognito_user_table = dynamodb.Table(os.environ["COGNITO_USERS_TABLE"])
+    cognito_user_table = dynamodb.Table(os.environ["COGNITO_USERS_DYNAMODB_TABLE"])
 
     try:
         print("Initiate query to cognito user dynamo table for user: ", current_user)

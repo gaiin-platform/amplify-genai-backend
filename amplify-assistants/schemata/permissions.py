@@ -120,5 +120,6 @@ permissions_by_state_type = {
     "/assistant/scrape_website": {"scrape_website": can_scrape_website},
     "/assistant/rescan_websites": {"rescan_websites": can_rescan_websites},
     "/assistant/process_drive_sources": {"process_drive_sources": can_process_drive_sources},
-     "/assistant/register_ops": {"register_ops": can_list_assistant},
+    "/assistant/register_ops": {"register_ops": can_list_assistant},
+    "/assistant/extract_sitemap_urls": {"extract_sitemap_urls": can_scrape_website},
 }
