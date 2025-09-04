@@ -220,8 +220,6 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}"
@@ -253,7 +251,10 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
