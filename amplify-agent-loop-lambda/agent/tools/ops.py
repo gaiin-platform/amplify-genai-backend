@@ -2,8 +2,6 @@ import json
 import os
 from typing import Optional
 from uuid import uuid4
-
-import boto3
 import requests
 
 from agent.components.tool import get_tool_metadata, register_tool
