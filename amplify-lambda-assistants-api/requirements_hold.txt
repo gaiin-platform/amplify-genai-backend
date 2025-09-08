@@ -114,7 +114,7 @@ rsa==4.9
     # via
     #   google-auth
     #   python-jose
-s3transfer==0.10.4
+s3transfer==0.13.1
     # via boto3
 six==1.17.0
     # via
