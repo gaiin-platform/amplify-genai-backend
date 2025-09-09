@@ -6,6 +6,7 @@ import json
 from botocore.exceptions import ClientError
 import os
 from pycommon.authz import validated, setup_validated
+from pycommon.api.amplify_users import are_valid_amplify_users
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
@@ -257,3 +258,41 @@ def update_object_permissions(event, context, current_user, name, data):
         }
     print("Permissions updated successfully")
     return {"statusCode": 200, "body": json.dumps("Permissions updated successfully.")}
+
+
+@validated("validate_users")
+def validate_users(event, context, current_user, name, data):
+    """
+    Validates a list of user names (emails) against Amplify user directory.
+    Returns which user names are valid Amplify users and which are not.
+    """
+    print("Validating users")
+    
+    try:
+        data = data["data"]
+        user_names = data["user_names"]
+        
+        # Extract access token from the event
+        # The pycommon validation system should have already validated the token
+        access_token = event.get("headers", {}).get("Authorization", "")
+        if access_token.startswith("Bearer "):
+            access_token = access_token[7:]  # Remove "Bearer " prefix
+        
+        # Call the pycommon function to validate users
+        valid_users, invalid_users = are_valid_amplify_users(access_token, user_names)
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps("User validation completed successfully."),
+            "data": {
+                "valid_users": valid_users,
+                "invalid_users": invalid_users
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error in validate_users: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps(f"Error processing user validation request: {str(e)}"),
+        }
