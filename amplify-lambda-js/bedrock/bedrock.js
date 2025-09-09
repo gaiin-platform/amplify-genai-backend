@@ -1,5 +1,6 @@
 import {sendDeltaToStream, sendStateEventToStream, sendErrorMessage} from "../common/streams.js";
 import {getLogger} from "../common/logging.js";
+import { getBudgetTokens } from "../common/params.js";
 import { doesNotSupportImagesInstructions, additionalImageInstruction, getImageBase64Content } from "../datasource/datasources.js";
 import { BedrockRuntimeClient, ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime";
 import {trace} from "../common/trace.js";
@@ -44,7 +45,7 @@ export const chatBedrock = async (chatBody, writable) => {
 
         const maxModelTokens = options.model.outputTokenLimit;
 
-        const maxTokens = body.max_tokens || 1000;
+        const maxTokens = body.max_tokens || 2000;
         const inferenceConfigs = {"temperature": options.temperature, 
                                   "maxTokens": maxTokens > maxModelTokens ? maxModelTokens : maxTokens, };
         
@@ -52,6 +53,24 @@ export const chatBedrock = async (chatBody, writable) => {
                         messages: sanitizedMessages,
                         inferenceConfig: inferenceConfigs,
                         }
+
+        if (process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION) {
+            logger.debug("Using guardrail", process.env.BEDROCK_GUARDRAIL_ID, process.env.BEDROCK_GUARDRAIL_VERSION);
+            input.guardrailConfig = {
+                guardrailIdentifier: process.env.BEDROCK_GUARDRAIL_ID,
+                guardrailVersion: process.env.BEDROCK_GUARDRAIL_VERSION
+            }
+       
+        }
+        if (currentModel.supportsReasoning && maxTokens > 1024) {
+            const budget_tokens = getBudgetTokens({options}, maxTokens); 
+            input.additionalModelRequestFields={
+                "reasoning_config": {
+                    "type": "enabled",
+                "budget_tokens": budget_tokens
+                },
+            }
+        }
 
         if (currentModel.supportsSystemPrompts) {
             input.system = systemPrompts;

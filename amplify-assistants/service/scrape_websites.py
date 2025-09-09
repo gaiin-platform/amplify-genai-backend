@@ -29,6 +29,94 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
 
 from service.core import get_most_recent_assistant_version
 
+# Disallowed file extensions  
+DISALLOWED_EXTENSIONS = [
+    "mp3", "wav", "mp4", "mov", "avi", "mkv",
+    "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", 
+    "tif", "tiff", "bmp", "eps", "ps", "ai",
+    "psd", "heic", "heif", "ico", "zip", "epub"
+]
+
+def get_file_extension_from_content_type(content_type):
+    """Map MIME type to file extension."""
+    mime_to_ext = {
+        # Documents
+        "application/pdf": "pdf",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/vnd.ms-excel": "xls", 
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.ms-powerpoint": "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "text/plain": "txt",
+        "text/csv": "csv",
+        "application/rtf": "rtf",
+        "text/markdown": "md",
+        
+        # Code/Markup
+        "text/html": "html",
+        "application/xml": "xml", 
+        "text/xml": "xml",
+        "application/json": "json",
+        "application/javascript": "js",
+        "text/css": "css",
+        "text/x-python": "py",
+        
+        # Images (supported)
+        "image/jpeg": "jpg",
+        "image/png": "png", 
+        "image/gif": "gif",
+        "image/webp": "webp",
+    }
+    
+    # Handle content type with charset (e.g., "text/plain; charset=utf-8")
+    clean_content_type = content_type.split(';')[0].strip()
+    return mime_to_ext.get(clean_content_type, None)
+
+def is_supported_file_type(content_type, url):
+    """Check if file type is supported and not disallowed."""
+    extension = get_file_extension_from_content_type(content_type)
+    if not extension:
+        return False
+    
+    # Check if extension is disallowed
+    if extension.lower() in DISALLOWED_EXTENSIONS:
+        print(f"Skipping disallowed file type: {extension} for URL: {url}")
+        return False
+    
+    return True
+
+def apply_exclusions(urls, exclusions=None):
+    """Apply exclusions to a list of URLs."""
+    if not exclusions:
+        return urls
+    
+    filtered_urls = urls
+    
+    # Apply excludedUrls (exact matches)
+    if exclusions.get("excludedUrls"):
+        filtered_urls = [url for url in filtered_urls if url not in exclusions["excludedUrls"]]
+        print(f"  Excluded {len(urls) - len(filtered_urls)} URLs via excludedUrls")
+    
+    # Apply excludeKeywords (case-insensitive substring matching)
+    if exclusions.get("excludeKeywords"):
+        original_count = len(filtered_urls)
+        filtered_urls = [
+            url for url in filtered_urls 
+            if not any(keyword.lower() in url.lower() for keyword in exclusions["excludeKeywords"])
+        ]
+        print(f"  Excluded {original_count - len(filtered_urls)} URLs via excludeKeywords")
+    
+    # Apply excludePatterns (wildcard patterns)
+    if exclusions.get("excludePatterns"):
+        original_count = len(filtered_urls)
+        for pattern in exclusions["excludePatterns"]:
+            regex_pattern = pattern.replace("*", ".*")
+            filtered_urls = [url for url in filtered_urls if not re.match(regex_pattern, url)]
+        print(f"  Excluded {original_count - len(filtered_urls)} URLs via excludePatterns")
+    
+    return filtered_urls
+
 def sanitize_and_validate_url(url):
     """
     Sanitize and validate a URL before scraping.
@@ -96,9 +184,12 @@ def sanitize_and_validate_url(url):
     except Exception as e:
         return False, None, f"URL parsing error: {str(e)}"
 
-def scrape_website_content(url, access_token, is_sitemap=False, max_pages=10):
+def scrape_website_content(url, access_token, is_sitemap=False, max_pages=None, exclusions=None):
     """Helper function to scrape a website and return the data source key"""
     try:
+        # Ensure max_pages is an integer or None for unlimited
+        if max_pages is not None:
+            max_pages = int(max_pages)
         print(f"Attempting to scrape {'sitemap' if is_sitemap else 'website'}: {url}")
         
         # Validate and sanitize the URL first
@@ -117,7 +208,7 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=10):
         # Determine if single URL or sitemap
         urls_to_scrape = []
         if is_sitemap:
-            urls_to_scrape = extract_urls_from_sitemap(url, max_pages)
+            urls_to_scrape = extract_urls_from_sitemap(url, max_pages, exclusions)
             print(f"Extracted {len(urls_to_scrape)} URLs from sitemap")
             if not urls_to_scrape:
                 return {
@@ -188,9 +279,12 @@ def scrape_website_content(url, access_token, is_sitemap=False, max_pages=10):
         }
 
 
-def extract_urls_from_sitemap(sitemap_url, max_pages=10):
+def extract_urls_from_sitemap(sitemap_url, max_pages=None, exclusions=None):
     """Extract URLs from a sitemap XML file."""
     try:
+        # Ensure max_pages is an integer or None for unlimited
+        if max_pages is not None:
+            max_pages = int(max_pages)
         response = requests.get(sitemap_url, timeout=30)
         response.raise_for_status()
 
@@ -200,11 +294,12 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=10):
         # Handle nested sitemaps
         if "sitemapindex" in sitemap_dict:
             all_urls = []
-            for sitemap in sitemap_dict["sitemapindex"]["sitemap"][:max_pages]:
+            sitemaps_to_process = sitemap_dict["sitemapindex"]["sitemap"] if max_pages is None else sitemap_dict["sitemapindex"]["sitemap"][:max_pages]
+            for sitemap in sitemaps_to_process:
                 sitemap_loc = sitemap["loc"]
-                sub_urls = extract_urls_from_sitemap(sitemap_loc, max_pages)
+                sub_urls = extract_urls_from_sitemap(sitemap_loc, max_pages, exclusions)
                 all_urls.extend(sub_urls)
-                if len(all_urls) >= max_pages:
+                if max_pages is not None and len(all_urls) >= max_pages:
                     return all_urls[:max_pages]
             return all_urls
 
@@ -222,7 +317,8 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=10):
                 else:
                     print(f"Skipping invalid URL from sitemap: {url_loc} - {error_msg}")
             else:
-                for url_entry in url_entries[:max_pages]:
+                entries_to_process = url_entries if max_pages is None else url_entries[:max_pages]
+                for url_entry in entries_to_process:
                     url_loc = url_entry["loc"]
                     # Validate the extracted URL
                     is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url_loc)
@@ -231,7 +327,9 @@ def extract_urls_from_sitemap(sitemap_url, max_pages=10):
                     else:
                         print(f"Skipping invalid URL from sitemap: {url_loc} - {error_msg}")
 
-        return urls[:max_pages]
+        # Apply exclusions before limiting by max_pages
+        urls = apply_exclusions(urls, exclusions)
+        return urls if max_pages is None else urls[:max_pages]
 
     except Exception as e:
         print(f"Error extracting URLs from sitemap: {e}")
@@ -267,8 +365,9 @@ def fetch_and_parse_url(url):
         ):
             print(f"URL {url} returned non-HTML content: {content_type}")
 
-            # For non-HTML content like PDFs, handle differently
-            if "application/pdf" in content_type:
+            # Check if this is a supported file type
+            if is_supported_file_type(content_type, url):
+                print(f"Processing supported file type: {content_type}")
                 return {
                     "metadata": {
                         "title": url.split("/")[-1],
@@ -276,25 +375,20 @@ def fetch_and_parse_url(url):
                         "contentType": content_type,
                         "scrapedAt": datetime.now().isoformat(),
                     },
-                    "text": f"[PDF Content from {url}]",
+                    "file_bytes": response.content,
+                    "file_type": content_type,
                 }
-
-            # Generic handling for other types
-            return {
-                "metadata": {
-                    "title": url.split("/")[-1],
-                    "url": url,
-                    "contentType": content_type,
-                    "scrapedAt": datetime.now().isoformat(),
-                },
-                "text": f"[Content from {url} with type {content_type}]",
-            }
+            else:
+                # Unsupported file type - skip it gracefully
+                print(f"Skipping unsupported file type: {content_type} for URL: {url}")
+                return None
 
         # Parse HTML
         soup = BeautifulSoup(response.content, "lxml")
 
-        # Remove script, style, and other non-content elements
-        for element in soup(["script", "style", "meta", "noscript", "iframe"]):
+        # Remove script, style, header, footer, nav, and other non-content elements
+        for element in soup(["script", "style", "meta", "noscript", "iframe", "header", "footer", "nav", "aside", "form", "input", "button", "select", "textarea", "canvas", "dialog", ]):
+            #"embed", "object", "applet", "template", "slot"
             element.decompose()
 
         # Extract title
@@ -385,11 +479,24 @@ def save_scraped_content(scraped_data, access_token):
         "fromSitemap": scraped_data.get('fromSitemap')
     }, cls=SmartDecimalEncoder))
     
+    # Handle different file types dynamically
+    content_file_type = scraped_data['content'].get('file_type')
+    if content_file_type and scraped_data['content'].get('file_bytes'):
+        # For file content: pass raw bytes with proper file type
+        file_contents = scraped_data['content']['file_bytes']
+        file_type = content_file_type
+        file_extension = get_file_extension_from_content_type(content_file_type)
+    else:
+        # For regular HTML content: JSON as before
+        file_contents = json.dumps(scraped_data['content'], cls=SmartDecimalEncoder)
+        file_type = "application/json"
+        file_extension = "json"
+    
     file_resp = upload_file(
         access_token = access_token,
-        file_name = f"{scraped_data['url_name']}_{timestamp}.json",
-        file_contents = json.dumps(scraped_data['content'], cls=SmartDecimalEncoder),
-        file_type = "application/json",
+        file_name = f"{scraped_data['url_name']}_{timestamp}.{file_extension}",
+        file_contents = file_contents,
+        file_type = file_type,
         tags = ["website", "scraped"],
         data_props = safe_data_props,
         enter_rag_pipeline = True,
@@ -420,7 +527,7 @@ def save_scraped_content(scraped_data, access_token):
             "assistantId": {
                 "type": "string",
                 "description": "ID of the assistant to update website content for.",
-            }
+            },
         },
         "required": ["assistantId"],
     },
@@ -466,6 +573,9 @@ def rescan_websites(event, context, current_user, name, data=None):
 
         # Get assistantId (public ID) from request data
         assistant_public_id = data["data"]["assistantId"]
+        force_rescan = data["data"].get("forceRescan", False)
+        if force_rescan:
+            print("Force rescanning all websites for assistant: ", assistant_public_id)
         
         # Get the most recent version of the assistant using public ID
         latest_assistant = get_most_recent_assistant_version(
@@ -475,7 +585,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         if not latest_assistant:
             return {"success": False, "message": "Assistant not found"}
 
-        result = process_assistant_websites(latest_assistant, access_token)
+        result = process_assistant_websites(latest_assistant, access_token, force_rescan)
 
         return {
             "success": result["success"],
@@ -488,7 +598,7 @@ def rescan_websites(event, context, current_user, name, data=None):
         return {"success": False, "message": f"Failed to rescan websites: {str(e)}"}
 
 
-def process_assistant_websites(assistant, access_token):
+def process_assistant_websites(assistant, access_token, force_rescan=False):
     """Process websites for an assistant and update data sources with proper cleanup."""
     try:
         website_urls = assistant.get("data", {}).get("websiteUrls", [])
@@ -520,22 +630,27 @@ def process_assistant_websites(assistant, access_token):
             print(f"  scanFrequency: {scan_frequency}")
             print(f"  lastScanned: {last_scanned}")
             
-            # Skip if no scanFrequency is defined
-            if scan_frequency is None:
-                print(f"  -> Skipping (no scanFrequency defined)")
-                updated_website_urls.append(website_url_entry)
-                continue
-            
-            # Check if rescanning is needed based on frequency
-            needs_rescan = True
-            if last_scanned:
-                last_scan_date = datetime.fromisoformat(last_scanned)
-                time_since_scan = datetime.now() - last_scan_date
-                needs_rescan = time_since_scan >= timedelta(days=int(scan_frequency))
-                print(f"  -> Time since last scan: {time_since_scan.days} days")
-                print(f"  -> Needs rescan: {needs_rescan} (frequency: {scan_frequency} days)")
+            # If force rescan is enabled, rescan all URLs regardless of scanFrequency
+            if force_rescan:
+                needs_rescan = True
+                print(f"  -> Needs rescan: {needs_rescan} (force rescan enabled)")
             else:
-                print(f"  -> Needs rescan: {needs_rescan} (never scanned)")
+                # Skip if no scanFrequency is defined (only when not force rescanning)
+                if scan_frequency is None:
+                    print(f"  -> Skipping (no scanFrequency defined)")
+                    updated_website_urls.append(website_url_entry)
+                    continue
+                
+                # Check if rescanning is needed based on frequency
+                needs_rescan = True
+                if last_scanned:
+                    last_scan_date = datetime.fromisoformat(last_scanned)
+                    time_since_scan = datetime.now() - last_scan_date
+                    needs_rescan = time_since_scan >= timedelta(days=int(scan_frequency))
+                    print(f"  -> Time since last scan: {time_since_scan.days} days")
+                    print(f"  -> Needs rescan: {needs_rescan} (frequency: {scan_frequency} days)")
+                else:
+                    print(f"  -> Needs rescan: {needs_rescan} (never scanned)")
             
             if needs_rescan:
                 urls_to_rescan.append(website_url_entry)
@@ -583,9 +698,11 @@ def process_assistant_websites(assistant, access_token):
         for website_url_entry in urls_to_rescan:
             url = website_url_entry["url"]
             is_sitemap = website_url_entry.get("type") == "website/sitemap"
-            max_pages = website_url_entry.get("maxPages", 10)
+            max_pages = website_url_entry.get("maxPages")
+            if max_pages is not None:
+                max_pages = int(max_pages)
             
-            print(f"Processing URL: {url} (sitemap: {is_sitemap})")
+            print(f"Processing URL: {url} (sitemap: {is_sitemap}, maxPages: {max_pages})")
             
             # Validate and sanitize the URL first
             is_valid, sanitized_url, error_msg = sanitize_and_validate_url(url)
@@ -602,7 +719,8 @@ def process_assistant_websites(assistant, access_token):
 
             if is_sitemap:
                 # For sitemaps, extract all sub-URLs and create separate data sources for each
-                urls = extract_urls_from_sitemap(url, max_pages)
+                exclusions = website_url_entry.get("exclusions")
+                urls = extract_urls_from_sitemap(url, max_pages, exclusions)
                 print(f"  Extracted {len(urls)} URLs from sitemap")
                 for sub_url in urls:
                     # Note: URLs from sitemaps are already validated during extraction
@@ -620,6 +738,16 @@ def process_assistant_websites(assistant, access_token):
                         # Save each sub-URL as its own data source
                         try:
                             data_source_data = save_scraped_content(current_data, access_token)
+                            # Add metadata updates like core.py does
+                            scan_frequency = website_url_entry.get("scanFrequency")
+                            url_max_pages = website_url_entry.get("maxPages")
+                            metadata_updates = {
+                                "scanFrequency": scan_frequency, 
+                                "contentKey": data_source_data['id']
+                            }
+                            if url_max_pages is not None:
+                                metadata_updates["maxPages"] = url_max_pages
+                            data_source_data.get("metadata", {}).update(metadata_updates)
                             scraped_ds.append(data_source_data)
                             url_scraped_ds.append(data_source_data)
                             print(f"  Saved data source for: {sub_url}")
@@ -642,6 +770,12 @@ def process_assistant_websites(assistant, access_token):
                     # Save single URL as data source
                     try:
                         data_source_data = save_scraped_content(current_data, access_token)
+                        # Add metadata updates like core.py does
+                        scan_frequency = website_url_entry.get("scanFrequency")
+                        data_source_data.get("metadata", {}).update({
+                            "scanFrequency": scan_frequency, 
+                            "contentKey": data_source_data['id']
+                        })
                         scraped_ds.append(data_source_data)
                         url_scraped_ds.append(data_source_data)
                         print(f"  Saved data source for: {url}")
@@ -742,6 +876,50 @@ def process_assistant_websites(assistant, access_token):
         }
 
 
+@validated(op="extract_sitemap_urls")
+def extract_sitemap_urls(event, context, current_user, name, data):
+    """
+    Lambda function to extract URLs from a sitemap without scraping them.
+    """
+    try:
+        sitemap_url = data["data"]["sitemap"]
+        max_pages = data["data"].get("maxPages")
+        if max_pages is not None:
+            max_pages = int(max_pages)
+        
+        # Validate and sanitize the sitemap URL
+        is_valid, sanitized_url, error_msg = sanitize_and_validate_url(sitemap_url)
+        if not is_valid:
+            return {
+                "success": False,
+                "message": f"Invalid sitemap URL: {error_msg}",
+                "error": error_msg,
+            }
+        
+        # Extract URLs from the sitemap
+        exclusions = data["data"].get("exclusions")
+        urls = extract_urls_from_sitemap(sanitized_url, max_pages, exclusions)
+        
+        return {
+            "success": True,
+            "message": f"Successfully extracted {len(urls)} URLs from sitemap",
+            "data": {
+                "urls": urls,
+                "totalUrls": len(urls),
+                "maxPages": max_pages
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error extracting URLs from sitemap: {e}")
+    
+    return {
+            "success": False,
+            "message": "No URLs found in sitemap or sitemap could not be processed",
+            "data": {"urls": []}
+            }
+
+
 @validated(op="scrape_website")
 def scrape_website(event, context, current_user, name, data):
     """
@@ -749,9 +927,12 @@ def scrape_website(event, context, current_user, name, data):
     """
     url = data["data"]["url"]
     is_sitemap = data["data"].get("isSitemap", False)
-    max_pages = data["data"].get("maxPages", 10)
+    max_pages = data["data"].get("maxPages")
+    if max_pages is not None:
+        max_pages = int(max_pages)
+    exclusions = data["data"].get("exclusions")
 
-    return scrape_website_content(url, data["access_token"], is_sitemap, max_pages)
+    return scrape_website_content(url, data["access_token"], is_sitemap, max_pages, exclusions)
 
 
 def extract_name_from_url(url):

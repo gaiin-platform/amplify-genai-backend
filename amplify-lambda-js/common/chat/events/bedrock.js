@@ -1,6 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
-
+import { sendStatusEventToStream } from "../../streams.js";
+import { newStatus } from "../../status.js";
 // for all Claude models  Not In Use
 export const claudeTransform = (event) => {
     if(event && event.d && event.d.delta && event.d.delta.text) {
@@ -23,9 +24,12 @@ export const mistralTransform = (event) => {
 }
 
 
-export const bedrockConverseTransform = (event) => { 
+export const bedrockConverseTransform = (event, responseStream = null) => { 
     if (event && event.d && event.d.delta && event.d.delta.text) { 
         return {d: event.d.delta.text}
+    } else if (responseStream && event && event.d && event.d.delta && event.d.delta.reasoningContent.text && event.d.delta.reasoningContent.text) {
+        const reasoning = event.d.delta.reasoningContent.text;
+        sendStatusEventToStream(responseStream, newStatus( {id: "reasoning", summary: "Thinking Details:", message: reasoning, icon: "bolt", inProgress: true, animated: true} ));
     } else if (event && event.d && event.d && event.d.stopReason) {
         switch (event.d.stopReason) {
             case "content_filtered":

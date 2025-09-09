@@ -19,8 +19,8 @@ const limiter = new Bottleneck({
 
 const ragEndpoint = process.env.API_BASE_URL + '/embedding-dual-retrieval';
 
-async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupDataSourcesKeys, count) {
-    if (ragDataSourceKeys.length === 0 && ragGroupDataSourcesKeys.length === 0) {
+async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupDataSourcesKeys, ragAstDataSourcesKeys, count) {
+    if (ragDataSourceKeys.length === 0 && ragGroupDataSourcesKeys.length === 0 && ragAstDataSourcesKeys.length === 0) {
         logger.debug("WARNING: No RAG data sources found, something when wrong, most likely from key to global translation");
         return {data: {result: []}};
     }
@@ -28,6 +28,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
         data: {
             dataSources: ragDataSourceKeys,
             groupDataSources : ragGroupDataSourcesKeys, 
+            astDataSources : ragAstDataSourcesKeys,
             userInput : search,
             limit: count
         },
@@ -120,6 +121,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
 
         const keyLookup = {};
         const ragGroupDataSourcesKeys = {};
+        const ragAstDataSourcesKeys = {};
         const ragDataSourceKeys = [];
         dataSources.forEach(async ds => {
             const key = extractKey(ds.id);
@@ -129,6 +131,11 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                     ragGroupDataSourcesKeys[ds.groupId] = [];
                 }
                 ragGroupDataSourcesKeys[ds.groupId].push(key);
+            } else if (ds.ast) {
+                if (!ragAstDataSourcesKeys[ds.ast]) {   
+                    ragAstDataSourcesKeys[ds.ast] = [];
+                }
+                ragAstDataSourcesKeys[ds.ast].push(key);
             } else {
                 ragDataSourceKeys.push(key)
                 // call the check-completion endpoint to ensure the embeddings are complete if not itll start
@@ -180,7 +187,7 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 limiter.schedule(async () => {
                     try {
                         const searchString = idea.descriptionOfSpecificHelpfulInformation;
-                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, ragGroupDataSourcesKeys, resultsPerIdea);
+                        const response = await getRagResults(params, token, searchString, ragDataSourceKeys, ragGroupDataSourcesKeys, ragAstDataSourcesKeys, resultsPerIdea);
                         const sources = response.data.result.map((item) => {
                             const [content, key, locations, indexes, charIndex, user, tokenCount,  ragId, score] = item;
                             const ds = keyLookup[key];

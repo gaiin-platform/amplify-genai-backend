@@ -57,6 +57,7 @@ provider:
     ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
+    ASSISTANT_LOOKUP_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-lookup
     CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
     TRACE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-traces
@@ -77,7 +78,8 @@ provider:
     AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
     AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
     S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
-
+    BEDROCK_GUARDRAIL_ID: ${self:custom.stageVars.BEDROCK_GUARDRAIL_ID, ''}
+    BEDROCK_GUARDRAIL_VERSION: ${self:custom.stageVars.BEDROCK_GUARDRAIL_VERSION, ''}
     
   iam:
     role:
@@ -249,7 +251,10 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -265,6 +270,13 @@ resources:
                 - s3:GetObject
               Resource:
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeGuardrail
+                - bedrock:ApplyGuardrail
+              Resource:
+                - "arn:aws:bedrock:*:${aws:accountId}:guardrail/${self:provider.environment.BEDROCK_GUARDRAIL_ID, '*'}"
+                - "arn:aws:bedrock:*:${aws:accountId}:guardrail-profile/*"
     
     RequestStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

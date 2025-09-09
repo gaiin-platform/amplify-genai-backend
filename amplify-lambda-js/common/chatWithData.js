@@ -307,16 +307,16 @@ export const chatWithDataStateless = async (params, chatFn, chatRequestOrig, dat
                            });
             }
 
-            result = openAiTransform(event);  
+            result = openAiTransform(event, responseStream);  
             
         } else if (model.provider === 'Bedrock') {
             const usage = bedrockTokenUsageTransform(event);
             if (usage) {                                                                     // currently no cached tokens 
                 recordUsage(account, requestId, model, usage.inputTokens, usage.outputTokens, 0, details);
             }
-            result = bedrockConverseTransform(event);
+            result = bedrockConverseTransform(event, responseStream);
         } else if (isGeminiModel(model.id)) {            
-            result = geminiTransform(event);
+            result = geminiTransform(event, responseStream);
             const usage = geminiUsageTransform(event);
             if (usage) {
                 recordUsage(account, requestId, model, usage.prompt_tokens, usage.completion_tokens, 
