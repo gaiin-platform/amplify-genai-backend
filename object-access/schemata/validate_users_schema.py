@@ -3,7 +3,7 @@ validate_users_schema = {
     "properties": {
         "user_names": {
             "type": "array",
-            "items": {"type": "string", "format": "email"},
+            "items": {"type": "string"},
             "description": "An array of user names (email addresses) to validate as Amplify users.",
         }
     },
