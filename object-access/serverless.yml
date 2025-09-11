@@ -321,7 +321,8 @@ functions:
 
       # Not production ready
   create_or_update_user:
-    handler: service/users.create_or_update_user
+    handler: users.create_or_update_user
+    timeout: 60
     events:
       - http:
           path: user/create
@@ -329,7 +330,7 @@ functions:
           cors: true
 
   upgrade_user:
-    handler: service/users.upgrade_user
+    handler: users.upgrade_user
     events:
       - http:
           path: user/upgrade
