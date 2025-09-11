@@ -182,12 +182,8 @@ def test_amplify_vanna():
             vn.connect_to_mssql(**DB_CONFIG["mssql"])
         elif db_type == "mysql":
             vn.connect_to_mysql(**DB_CONFIG["mysql"])
-        elif db_type == "duckdb":
-            vn.connect_to_duckdb(**DB_CONFIG["duckdb"])
         elif db_type == "snowflake":
             vn.connect_to_snowflake(**DB_CONFIG["snowflake"])
-        elif db_type == "bigquery":
-            vn.connect_to_bigquery(**DB_CONFIG["bigquery"])
         elif db_type == "sqlite":
             vn.connect_to_sqlite(DB_CONFIG["sqlite"]["database"])
         elif db_type == "oracle":

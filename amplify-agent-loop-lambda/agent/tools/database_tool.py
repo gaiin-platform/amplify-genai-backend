@@ -18,7 +18,7 @@ database connection configurations. Each item in the table should have the follo
 {
     "id": "unique_connection_identifier",
     "user": "user_id",              // Required: User ID to filter configurations
-    "type": "snowflake|postgres|mysql|mssql|duckdb|bigquery|sqlite|oracle",
+    "type": "snowflake|postgres|mysql|mssql|sqlite|oracle",
     "account": "account_identifier",  // for Snowflake
     "username": "username",           // for Snowflake
     "password": "password",           // for Snowflake
@@ -28,8 +28,6 @@ database connection configurations. Each item in the table should have the follo
     "host": "host_address",          // for other databases
     "port": 5432,                    // for other databases
     "user": "username",              // for other databases
-    "project": "project_id",         // for BigQuery
-    "location": "location"           // for BigQuery
 }
 
 IMPORTANT: The "user" field is used to filter DB configurations stored in DynamoDB. 
@@ -361,9 +359,33 @@ def query_database(
             return None
 
     class MyVanna(ChromaDB_VectorStore, AmplifyLLM):
-        def __init__(self, config=None, action_context=None):
+        def __init__(self, config=None, action_context=None, connection_id=None):
             config = config or {}
             config["persist_directory"] = None  # Use in-memory storage
+            
+            # Use connection_id as tenant name for better isolation
+            tenant_name = connection_id or "default_tenant"
+            database_name = f"db_{tenant_name}"
+            
+            # ChromaDB 1.0+ requires proper client setup
+            import chromadb
+            # Create in-memory ChromaDB client first
+            chroma_client = chromadb.Client()
+            
+            # Create or get tenant and database
+            try:
+                chroma_client.get_tenant(tenant_name)
+            except:
+                chroma_client.create_tenant(tenant_name)
+            
+            try:
+                chroma_client.get_database(database_name, tenant=tenant_name)
+            except:
+                chroma_client.create_database(database_name, tenant=tenant_name)
+            
+            config["client"] = chroma_client
+            config["tenant"] = tenant_name
+            config["database"] = database_name
             ChromaDB_VectorStore.__init__(self, config=config)
             AmplifyLLM.__init__(self, config=config, action_context=action_context)
 
@@ -460,7 +482,7 @@ def query_database(
 
         # Create Vanna instance with optimized configuration
         try:
-            logging.info(f"Creating Vanna instance for database type: {db_type}")
+            logging.info(f"Creating Vanna instance for database type: {db_type} with connection_id: {connection_id}")
             vn = MyVanna(
                 config={
                     "model": "gpt-4o",
@@ -468,7 +490,8 @@ def query_database(
                     "max_tokens": 4096,
                     "db_type": db_type,
                 },
-                action_context=action_context
+                action_context=action_context,
+                connection_id=connection_id
             )
             logging.info("Successfully created Vanna instance")
         except Exception as e:
@@ -488,9 +511,7 @@ def query_database(
             "postgres": vn.connect_to_postgres,
             "mssql": vn.connect_to_mssql,
             "mysql": vn.connect_to_mysql,
-            "duckdb": vn.connect_to_duckdb,
             "snowflake": vn.connect_to_snowflake,
-            "bigquery": vn.connect_to_bigquery,
             "sqlite": lambda **kwargs: vn.connect_to_sqlite(kwargs["database"]),
             "oracle": vn.connect_to_oracle,
         }

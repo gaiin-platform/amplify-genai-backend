@@ -66,7 +66,7 @@ provider:
     AGENT_QUEUE_URL: !Ref AgentQueue
     AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
     FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
-    DB_CONNECTIONS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-db-connections
+    DB_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-db-connections
     USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
     ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
@@ -509,3 +509,28 @@ resources:
               AllowedOrigins:
                 - '*'
               MaxAge: 3000
+
+    DbConnectionsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.DB_CONNECTIONS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL

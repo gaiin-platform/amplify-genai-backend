@@ -21,6 +21,7 @@ from service.handlers import *
 from service.workflow_handlers import *
 from service.scheduled_task_handlers import *
 from service.email_events_handlers import *
+from service.database_handlers import *
 
 from pycommon.authz import validated
 

@@ -116,3 +116,9 @@ The deployment automatically handles SQLite compatibility for Chroma:
 - Re-run `./generate-linux-lock.sh` to generate fresh Linux requirements
 - Check logs for specific package errors
 - Consider alternative packages or versions for problematic dependencies
+
+### Known Problematic Dependencies
+
+** IMPORTANT: Do NOT include DuckDB in dependencies**
+- DuckDB causes deployment script failures and should be avoided
+- If DuckDB functionality is needed, consider alternative database solutions
