@@ -304,6 +304,7 @@ resources:
                 - !GetAtt RagPostgresDbCluster.DBClusterArn
                 - !Ref RagPostgresDbSecret
                 - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_TABLE}/*"

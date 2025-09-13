@@ -15,6 +15,9 @@ from pycommon.api.credentials import get_endpoint
 from embedding_models import get_embedding_models
 from pycommon.llm.chat import chat
 from pycommon.api.get_endpoint import get_endpoint as get_chat_endpoint, EndpointType
+import time
+import random
+    
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -171,15 +174,111 @@ def generate_questions(content, account_data = None):
                 "rateLimit": account_data.get("rate_limit")
             },
         }
-    try:
-        response, metadata =  chat(chat_endpoint, account_data['access_token'], payload)    
-        # Handle both error string returns and successful responses
-        if response.startswith("Error:"):
-            return {"success": False, "error": response}
-        return {"success": True, "data": response}
-    except Exception as e:
-        logger.error(f"An error occurred with chat js call: {e}")
-        return {"success": False, "error": str(e)}
+
+    max_normal_retries = 2  
+    max_rate_limit_retries = 3 
+    base_delay = 0.5 
+    max_delay = 5.0  
+    
+    def is_internal_rate_limit(error_message):
+        """Check if the error is from internal rate limiting (should not retry)."""
+        internal_indicators = [
+            "Request limit reached",
+            "Admin limit", 
+            "Group limit",
+            "User limit",
+            "Rate limit:",
+            "Current Spent:"
+        ]
+        return any(indicator in error_message for indicator in internal_indicators)
+    
+    def is_model_rate_limit(error_message):
+        """Check if the error is from model rate limiting (should retry with longer waits)."""
+        model_indicators = [
+            "Too Many Requests",
+            "too many requests",
+            "rate limit",
+            "quota exceeded",
+            "Request Timed Out"
+        ]
+        return any(indicator in error_message for indicator in model_indicators)
+    
+    def calculate_backoff_delay(attempt, is_rate_limit=False):
+        """Calculate exponential backoff with jitter."""
+        if is_rate_limit:
+            # Longer delays for rate limits: 2^attempt + random jitter
+            delay = min(max_delay, (2 ** attempt) + random.uniform(0.5, 2.0))
+        else:
+            # Shorter delays for normal errors: base_delay * attempt + jitter
+            delay = min(max_delay, base_delay * attempt + random.uniform(0.1, 0.5))
+        return delay
+    
+    last_error = None
+    
+    for attempt in range(max(max_normal_retries, max_rate_limit_retries) + 1):
+        try:
+            print(f"[QA_RETRY] Attempt {attempt + 1} for question generation")
+            response, metadata = chat(chat_endpoint, account_data['access_token'], payload)    
+            
+            # Handle both error string returns and successful responses
+            if response.startswith("Error:"):
+                error_message = response
+                print(f"[QA_RETRY] Error response received: {error_message}")
+                
+                # Check if it's an internal rate limit (don't retry)
+                if is_internal_rate_limit(error_message):
+                    print(f"[QA_RETRY] 🚫 Internal rate limit detected - not retrying: {error_message}")
+                    return {"success": False, "error": error_message}
+                
+                # Check if it's a model rate limit
+                is_model_rl = is_model_rate_limit(error_message)
+                max_retries = max_rate_limit_retries if is_model_rl else max_normal_retries
+                
+                if attempt >= max_retries:
+                    print(f"[QA_RETRY] ❌ Max retries ({max_retries}) reached for {'model rate limit' if is_model_rl else 'normal error'}")
+                    return {"success": False, "error": error_message}
+                
+                # Calculate and wait before retry
+                delay = calculate_backoff_delay(attempt, is_model_rl)
+                error_type = "model rate limit" if is_model_rl else "error"
+                print(f"[QA_RETRY] ⏳ {error_type} detected, waiting {delay:.2f}s before retry {attempt + 2}/{max_retries + 1}")
+                time.sleep(delay)
+                last_error = error_message
+                continue
+            
+            # Success case
+            print(f"[QA_RETRY] ✅ Question generation successful on attempt {attempt + 1}")
+            return {"success": True, "data": response}
+            
+        except Exception as e:
+            error_message = str(e)
+            print(f"[QA_RETRY] Exception occurred: {error_message}")
+            
+            # Check if it's an internal rate limit (don't retry)
+            if "429" in error_message and is_internal_rate_limit(error_message):
+                print(f"[QA_RETRY] 🚫 Internal rate limit exception - not retrying: {error_message}")
+                return {"success": False, "error": error_message}
+            
+            # Check if it's a model rate limit or timeout
+            is_model_rl = "429" in error_message or is_model_rate_limit(error_message)
+            max_retries = max_rate_limit_retries if is_model_rl else max_normal_retries
+            
+            if attempt >= max_retries:
+                print(f"[QA_RETRY] ❌ Max retries ({max_retries}) reached for {'model rate limit' if is_model_rl else 'normal error'}")
+                logger.error(f"An error occurred with chat js call after {attempt + 1} attempts: {e}")
+                return {"success": False, "error": error_message}
+            
+            # Calculate and wait before retry
+            delay = calculate_backoff_delay(attempt, is_model_rl)
+            error_type = "model rate limit" if is_model_rl else "exception"
+            print(f"[QA_RETRY] ⏳ {error_type} detected, waiting {delay:.2f}s before retry {attempt + 2}/{max_retries + 1}")
+            time.sleep(delay)
+            last_error = error_message
+    
+    # This should never be reached, but just in case
+    final_error = last_error or "Unknown error occurred"
+    logger.error(f"Question generation failed after all retry attempts: {final_error}")
+    return {"success": False, "error": final_error}
 
 
 
