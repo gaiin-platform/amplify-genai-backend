@@ -171,7 +171,7 @@ def create_or_update_user(event, context):
         # A user has not been found; need to create one
         if not user:
             _create_user(payload)
-            return {"statusCode": 201, "body": "User created successfully"}
+            return {"statusCode": 201, "body": json.dumps({"message": "User created"})}
 
         # we have a user...
         # this next part will be fleshed out & differentiated when the
@@ -188,7 +188,7 @@ def create_or_update_user(event, context):
             _update_attributes(payload, user)
             _update_admin_groups(user)
 
-        return {"statusCode": 200, "body": "User creation or update logic goes here"}
+        return {"statusCode": 200, "body": json.dumps({"message": "User updated"})}
 
     except (
         ClaimException,
@@ -197,7 +197,7 @@ def create_or_update_user(event, context):
         jose.exceptions.JWTClaimsError,
     ) as e:
         print(f"Token error: {str(e)}")
-        return {"statusCode": 401, "body": f"Unauthorized: {str(e)}"}
+        return {"statusCode": 401, "body": json.dumps({"message": f"Unauthorized: {str(e)}"})}
 
 
 def upgrade_user(event, context):
