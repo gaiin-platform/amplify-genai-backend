@@ -146,10 +146,10 @@ functions:
     timeout: 900
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    events:
-      - schedule:
-          rate: rate(5 minutes)
-          enabled: true
+    # events:
+    #   - schedule:
+    #       rate: rate(5 minutes)
+    #       enabled: true
 
   create_ast_admin_group:
     handler: groups.create_group
