@@ -34,7 +34,7 @@ def _create_user(token_payload: dict) -> UserABC:
         family_name=token_payload.get("family_name"),
         given_name=token_payload.get("given_name"),
         cust_vu_groups=token_payload.get("custom:vu_groups", ""),
-        cust_vu_saml_groups=token_payload.get("custom:saml_groups", ""),
+        cust_saml_groups=token_payload.get("custom:saml_groups", ""),
     )
     user.save()
     return user
