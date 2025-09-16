@@ -1,3 +1,4 @@
+import json
 import os
 import jose
 from pycommon import required_env_vars
@@ -23,6 +24,68 @@ def _find_user_by_property(properties: dict) -> tuple[UserABC, str] | None:
         except NotFound:
             continue
     return None, ""
+
+
+def _create_user(token_payload: dict) -> UserABC:
+    """Helper to create a user from token payload."""
+    user: UserABC = dal.User(
+        user_id=token_payload.get("immutable_id"),
+        email=token_payload.get("email"),
+        family_name=token_payload.get("family_name"),
+        given_name=token_payload.get("given_name"),
+        cust_vu_groups=token_payload.get("custom:vu_groups", ""),
+        cust_vu_saml_groups=token_payload.get("custom:saml_groups", ""),
+    )
+    user.save()
+    return user
+
+
+def _update_attributes(token_payload: dict, user: UserABC) -> UserABC:
+    """Helper to update user attributes from token payload."""
+    if token_payload.get("email"):
+        user.email = token_payload.get("email")
+    if token_payload.get("family_name"):
+        user.family_name = token_payload.get("family_name")
+    if token_payload.get("given_name"):
+        user.given_name = token_payload.get("given_name")
+    if token_payload.get("custom:vu_groups"):
+        user.cust_vu_groups = token_payload.get("custom:vu_groups")
+    if token_payload.get("custom:saml_groups"):
+        user.cust_saml_groups = token_payload.get("custom:saml_groups")
+    user.save()
+    return user
+
+
+def _update_admin_groups(user: UserABC) -> None:
+    """
+    Helper to update the admin config for AMPLIFY_GROUPS.
+    This ensures that the user is added to any new groups and removed from any
+    groups of which they are no longer a member.
+    """
+    config_id = "amplifyGroups"
+    conf = dal.AdminConfig.get_config(config_id)
+
+    if not conf:
+        # TODO(karely): we might wish to log this
+        return
+    saml_groups = json.loads(user.cust_saml_groups) if user.cust_saml_groups else []
+    user_id = user.user_id
+    # handle any case where we have a group in saml but it
+    # is not in the config, or vice versa
+    for g in saml_groups:
+        if g not in conf:
+            print(f"adding new group {g} to config")
+            conf[g] = {"members": [user_id], "createdBy": "DAL"}
+    for g in conf:
+        print(f"looking for group {g}")
+        if g in saml_groups and user_id not in conf.get(g, {}).get("members", []):
+            print(f"adding user {user_id} to group {g}")
+            conf[g].setdefault("members", []).append(user_id)
+        elif g not in saml_groups and user_id in conf.get(g, {}).get("members", []):
+            print(f"removing user {user_id} from group {g}")
+            if conf[g].get("members"):
+                conf[g]["members"].remove(user_id)
+    dal.AdminConfig.set_config(config_id, conf)
 
 
 @required_env_vars("OAUTH_ISSUER_BASE_URL", "OAUTH_AUDIENCE", "ACCOUNTS_DYNAMO_TABLE")
@@ -53,7 +116,7 @@ def create_or_update_user(event, context):
     3c2. If the email does not exist then we create a new user.
     """  # noqa: E501
 
-    print("Creating or updating user")
+    # print("Creating or updating user")
 
     # snag our auth header - because this is pre-auth, we cannot use the @validated
     # decorator.
@@ -75,17 +138,17 @@ def create_or_update_user(event, context):
         # verify the token structure...
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
-        print(f"token header: {header}, kid: {kid}")
+        # print(f"token header: {header}, kid: {kid}")
         if not kid:
             return {"statusCode": 401, "body": "Unauthorized: No kid in token header"}
 
         # get the JWKS to validate the signature
         jwks = pycommon.authz.get_jwks_for_url(base_url)
-        print(f"jwks: {jwks}")
+        # print(f"jwks: {jwks}")
 
         # try to find a matching key id (kid)
         key = next((k for k in jwks["keys"] if k["kid"] == kid), None)
-        print(f"found key: {key}")
+        # print(f"found key: {key}")
         if not key:
             return {"statusCode": 401, "body": "Unauthorized: No matching key found"}
 
@@ -98,6 +161,7 @@ def create_or_update_user(event, context):
             issuer=base_url,
         )
 
+        # print(f"token payload: {payload}")
         # get the payload to search in the DAL
         # while immutable_id is the primary key, we also want to check email due to
         # previous system versions that did not enforce immutable_id as primary key.
@@ -106,38 +170,23 @@ def create_or_update_user(event, context):
         )
         # A user has not been found; need to create one
         if not user:
-            # create user (NOTE: we _always_ use the ABC classes in business logic code)
-            # so that the implementation can be hot-swapped if needed.
-            user: UserABC = dal.User(
-                user_id=payload.get("immutable_id"),
-                email=payload.get("email"),
-                family_name=payload.get("family_name"),
-                given_name=payload.get("given_name"),
-                cust_vu_groups=payload.get("custom:vu_groups", ""),
-                cust_vu_saml_groups=payload.get("custom:vu_saml_groups", ""),
-            )
-            user.save()
+            _create_user(payload)
             return {"statusCode": 201, "body": "User created successfully"}
 
         # we have a user...
+        # this next part will be fleshed out & differentiated when the
+        # upgrade logic is in place
         if prop_name == "email":
             # user needs to have attributes updated, potentially and if
             # the version is old enough, upgraded.
-            print(f"found user user by email. details: {user}")
-            if payload.get("email"):
-                user.email = payload.get("email")
-            if payload.get("family_name"):
-                user.family_name = payload.get("family_name")
-            if payload.get("given_name"):
-                user.given_name = payload.get("given_name")
-            if payload.get("custom:vu_groups"):
-                user.cust_vu_groups = payload.get("custom:vu_groups")
-            if payload.get("custom:vu_saml_groups"):
-                user.cust_saml_groups = payload.get("custom:vu_saml_groups")
-            user.save()
+            # print(f"found user user by email. details: {user}")
+            _update_attributes(payload, user)
+            _update_admin_groups(user)
         if prop_name == "immutable_id":
             # user found by immutable_id, so just update attributes as needed
-            print(f"found user by immutable_id. details: {user}")
+            # print(f"found user by immutable_id. details: {user}")
+            _update_attributes(payload, user)
+            _update_admin_groups(user)
 
         return {"statusCode": 200, "body": "User creation or update logic goes here"}
 
