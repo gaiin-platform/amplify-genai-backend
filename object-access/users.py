@@ -75,8 +75,12 @@ def _update_admin_groups(user: UserABC) -> None:
     for g in saml_groups:
         if g not in conf:
             print(f"adding new group {g} to config")
-            conf[g] = {"members": [user_id], "createdBy": "DAL"}
+            conf[g] = {"members": [user_id], "createdBy": "JIT_PROVISIONER"}
     for g in conf:
+        ignore_groups: str = conf[g].get("createdBy", None)
+        if ignore_groups and ignore_groups != "JIT_PROVISIONER" and ignore_groups != "Cognito_Sync":
+            print(f"ignoring group {g} because createdBy is {ignore_groups}")
+            continue
         print(f"looking for group {g}")
         if g in saml_groups and user_id not in conf.get(g, {}).get("members", []):
             print(f"adding user {user_id} to group {g}")
