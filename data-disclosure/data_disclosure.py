@@ -284,10 +284,9 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
 @validated(op="save_data_disclosure_decision")
 def save_data_disclosure_decision(event, context, current_user, name, data):
     data = data["data"]
-    email = data.get("email")
     accepted_data_disclosure = data.get("acceptedDataDisclosure")
 
-    if not isinstance(email, str) or accepted_data_disclosure not in (True, False):
+    if not isinstance(current_user, str) or accepted_data_disclosure not in (True, False):
         return generate_error_response(
             400, "Invalid input for saving data disclosure acceptance"
         )
@@ -305,7 +304,7 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
     try:
         acceptance_table.put_item(
             Item={
-                "user": email,
+                "user": current_user,
                 "acceptedDataDisclosure": accepted_data_disclosure,
                 "acceptedTimestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
                 "completedTraining": False,

@@ -19,17 +19,16 @@ export const handler = async (event, context, callback) => {
         if (params.statusCode) {
             return params; // This is an error response from extractParams
         }
-
-        const { body } = params;
-
-        if (!body || !body.data || !body.data.email) {
+        
+        const { body, user } = params;
+        if (!user) {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'Email is required' }),
             };
         }
 
-        const email = body.data.email;
+        const email = user;
 
         const queryParams = {
             TableName: costDynamoTableName,
@@ -44,8 +43,13 @@ export const handler = async (event, context, callback) => {
 
         if (result.Items.length === 0) {
             return {
-                statusCode: 404,
-                body: JSON.stringify({ error: 'No cost data found for the given email' }),
+                statusCode: 200,
+                body: JSON.stringify({
+                    email: email,
+                    dailyCost: 0,
+                    monthlyCost: 0,
+                    'MTD Cost': 0,
+                }),
             };
         }
 
@@ -198,8 +202,8 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
         const params = await extractParams(event);
         if (params.statusCode) return params;
 
-        const { body } = params;
-        if (!body?.data?.apiKeys || !Array.isArray(body.data.apiKeys) || !body.data.email) {
+        const { body, user } = params;
+        if (!body?.data?.apiKeys || !Array.isArray(body.data.apiKeys) || !user) {
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'API keys array and email are required' }),
@@ -207,7 +211,7 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
         }
 
         const apiKeys = body.data.apiKeys;
-        const email = body.data.email;
+        const email = user;
 
         if (!historyCostDynamoTableName || !costDynamoTableName) {
             logger.error("Missing required table names");
@@ -1268,14 +1272,15 @@ export const listUserMtdCostsHandler = async (event, context, callback) => {
         if (!result.Items || result.Items.length === 0) {
             logger.info("No cost data found for user", { user });
             return {
-                statusCode: 404,
+                statusCode: 200,
                 body: JSON.stringify({ 
-                    error: 'No cost data found for user',
                     email: user,
                     dailyCost: 0,
                     monthlyCost: 0,
                     totalCost: 0,
-                    accounts: []
+                    accounts: [],
+                    lastUpdated: null,
+                    timestamp: new Date().toISOString()
                 }),
             };
         }
