@@ -79,7 +79,10 @@ export const extractParams = async (event) => {
         }
 
         const user = payload.username;
-        const current_user = idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
+        const extractIdpPrefix = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
+
+        const current_user = payload.immutable_id ?? extractIdpPrefix();
+       
         console.log("Current user: " + current_user);
 
         let requestBody;

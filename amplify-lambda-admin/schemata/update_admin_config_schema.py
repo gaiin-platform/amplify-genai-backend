@@ -268,9 +268,6 @@ update_admin_config_schema = {
                                     "^.*$": {
                                         "type": "object",
                                         "properties": {
-                                            "groupName": {
-                                                "type": "string"
-                                            },
                                             "createdBy": {
                                                 "type": "string"
                                             },
@@ -291,7 +288,7 @@ update_admin_config_schema = {
                                                 "type": "boolean"
                                             }
                                         },
-                                        "required": ["groupName", "createdBy", "members", "rateLimit", "isBillingGroup"],
+                                        "required": ["createdBy", "members", "rateLimit", "isBillingGroup"],
                                         "additionalProperties": False
 
                                     }
