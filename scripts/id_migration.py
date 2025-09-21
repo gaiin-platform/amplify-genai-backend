@@ -9,14 +9,10 @@ import csv
 import argparse
 import boto3
 import json
-import pycommon.dal.providers.aws
 from datetime import datetime
 from typing import Dict, Tuple
-from pycommon.dal import DAL, Backend
-from pycommon.dal.providers.aws import AwsUser
 from boto3.dynamodb.conditions import Key
 
-dal = DAL(Backend.AWS)
 dynamodb = boto3.resource("dynamodb")
 tables: Dict[str, str]
 
@@ -80,11 +76,18 @@ def tables_ok(table_names: Dict[str, str]) -> bool:
         log(f"Error checking tables: {e}")
         return False
 
-def get_user(old_id: str) -> AwsUser:
+def get_user(old_id: str) -> dict | None:
     """Fetch user by old ID."""
+    table = table_names.get("COGNITO_USERS_DYNAMODB_TABLE")
     try:
-        user = AwsUser.get_by_user_id(user_id=old_id)
-        return user
+        account = dynamodb.Table(table)
+        response = account.query(
+            KeyConditionExpression=Key("user_id").eq(old_id)
+        )
+        if "Items" in response and response["Items"]:
+            return response["Items"][0]
+        else:
+            return None
     except Exception as e:
         return None
 
@@ -122,13 +125,20 @@ def update_user_id(old_id: str, new_id: str, dry_run: bool) -> bool:
     msg = f"[update_user_id][dry-run: {dry_run}] %s"
     try:
         user = get_user(old_id)
+        user_table = table_names.get("COGNITO_USERS_DYNAMODB_TABLE")
+        # update username
+        user["user_id"] = new_id
+        if not user:
+            log(msg % f"User with old ID {old_id} not found.")
+            return False
+        log(msg % f"Found user with old ID {old_id}.\n\tExisting Data: {user}")
         if dry_run:
-            log(msg % f"Would update user ID from {old_id} to {new_id}")
+            log(msg % f"Would update user ID from {old_id} to {new_id}.\n\tNew Data: {user}")
             return True
         else:
-            log(msg % f"Updating user ID from {old_id} to {new_id}")
-            user.user_id = new_id
-            user.save()
+            # save the user back to the table
+            log(msg % f"Updating user ID from {old_id} to {new_id}.\n\tNew Data: {user}")
+            dynamodb.Table(user_table).put_item(Item=user)
             return True
     except Exception as e:
         log(msg % f"Error updating user ID from {old_id} to {new_id}: {e}")
@@ -163,21 +173,20 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
         return False
 
 
-def change_user_table(user: AwsUser, new_id: str, dry_run: bool):
+def change_user_table(old_id: str, new_id: str, dry_run: bool):
     """Change the user ID in the user table."""
     # This is a placeholder function. Actual implementation will depend on
     # how the user ID is stored and what constraints exist.
     pass
 
-
-def change_account_table(user: AwsUser, new_id: str, dry_run: bool):
+def change_account_table(old_id: str, new_id: str, dry_run: bool):
     """Change the user ID in the account table."""
     # This is a placeholder function. Actual implementation will depend on
     # how the user ID is stored and what constraints exist.
     pass
 
 
-def change_api_keys(user: AwsUser, new_id: str, dry_run: bool):
+def change_api_keys(old_id: str, new_id: str, dry_run: bool):
     """Change the user ID in the API keys table."""
     # This is a placeholder function. Actual implementation will depend on
     # how the user ID is stored and what constraints exist.
@@ -213,9 +222,6 @@ if __name__ == "__main__":
                 log(f"\tUser with old ID {old_user_id} not found. Skipping.")
                 continue
 
-            # create new user with new id.
-            # we will do this by changing that attribute (which is immutable) and saving
-            # and the save() function of the AwsUser object will create a new object.
             if not update_user_id(old_user_id, new_user_id, args.dry_run):
                 log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
                 continue
