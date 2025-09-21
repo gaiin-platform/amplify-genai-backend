@@ -1,5 +1,6 @@
 {
     "DYNAMODB_TABLE": "amplify-v6-lambda-dev",
     "COGNITO_USERS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-cognito-users",
-    "ACCOUNTS_DYNAMO_TABLE": "amplify-v6-lambda-dev-accounts"
+    "ACCOUNTS_DYNAMO_TABLE": "amplify-v6-lambda-dev-accounts",
+    "API_KEYS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-api-keys"
 }

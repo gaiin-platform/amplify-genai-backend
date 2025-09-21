@@ -12,6 +12,7 @@ import json
 from datetime import datetime
 from typing import Dict, Tuple
 from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr
 
 dynamodb = boto3.resource("dynamodb")
 tables: Dict[str, str]
@@ -172,6 +173,43 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
         log(msg % f"Error updating accounts for user ID from {old_id} to {new_id}: {e}")
         return False
 
+def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all API keys associated with the old user ID to the new user ID."""
+    # NOTE: This table does not allow us to query by the old user ID, so we
+    # have to scan the entire table. This is not efficient, but it is a one-time
+    # operation.
+    msg = f"[update_api_keys][dry-run: {dry_run}] %s"
+    table = table_names.get("API_KEYS_DYNAMODB_TABLE")
+    try:
+        api_keys_table = dynamodb.Table(table)
+        
+        # Get all API key records for the old user ID
+        # by finding the 'api_owner_id' field that starts with
+        # the old user ID
+        # TODO(Karely): Should we search by owner_id instead?
+        raw_keys = api_keys_table.scan(
+            FilterExpression=Attr("api_owner_id").begins_with(old_id)
+        )
+        if "Items" not in raw_keys or not raw_keys["Items"]:
+            log(msg % f"No API keys found for user ID {old_id}.")
+            return True  # No API keys to update, so we consider it successful
+        # create a new copy of the record with the updated username
+        for item in raw_keys["Items"]:
+            log(msg % f"Found API keys record for user ID {old_id}.\n\tExisting Data: {item}")
+            item["api_owner_id"] = item["api_owner_id"].replace(old_id, new_id)
+            # TODO(Karely): Does 'owner' need to reflect the new ID?
+            item["owner"] = new_id
+            if dry_run:
+                log(msg % f"Would update API key item to:\n\tNew Data:{item}")
+            else:
+                log(msg % f"Updating API key item to:\n\tNew Data:{item}")
+                api_keys_table.put_item(Item=item)
+        return True
+
+    except Exception as e:
+        log(msg % f"Error updating API keys for user ID from {old_id} to {new_id}: {e}")
+        return False
+
 
 def change_user_table(old_id: str, new_id: str, dry_run: bool):
     """Change the user ID in the user table."""
@@ -212,7 +250,7 @@ if __name__ == "__main__":
 
         # loop through our users
         for u in get_users_from_csv(args.csv_file).items():
-            log(f"Processing user: old: {u[0]} new: {u[1]}")
+            log(f"\n\nProcessing user: old: {u[0]} new: {u[1]}")
             old_user_id = u[0]
             new_user_id = u[1]
             # this is a sanity check to make user exists
@@ -229,6 +267,9 @@ if __name__ == "__main__":
             if not update_accounts(old_user_id, new_user_id, args.dry_run):
                 log(f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required.")
                 continue
+
+            if not update_api_keys(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys.")
 
     except Exception as e:
         log(f"Error processing users: {e}")
