@@ -37,7 +37,11 @@ def get(dictionary, *keys):
 
 def get_openai_client():
     if openai_provider == "openai":
-        openai_api_key = get_secret_value("OPENAI_API_KEY")
+        # Get the main secret containing all API keys
+        secret_name = os.environ.get("SECRETS_ARN_NAME")
+        secret_data = get_secret_value(secret_name)
+        parsed_secret = json.loads(secret_data)
+        openai_api_key = parsed_secret["OPENAI_API_KEY"]
         client = OpenAI(api_key=openai_api_key)
         return client
     elif openai_provider == "azure":
@@ -61,7 +65,7 @@ def file_keys_to_file_ids(file_keys):
     if len(file_keys) == 0:
         return []
 
-    files_bucket_name = os.environ["ASSISTANTS_FILES_BUCKET_NAME"]
+    files_bucket_name = os.environ["S3_RAG_INPUT_BUCKET_NAME"]
     images_bucket_name = os.environ["S3_IMAGE_INPUT_BUCKET_NAME"]
 
     updated_keys = []
@@ -776,7 +780,7 @@ def get_file_size(file):
 def record_thread_usage(op_details, info):
     print("Recording thread usage")
     dynamodb = boto3.resource("dynamodb")
-    usage_table = dynamodb.Table(os.environ["BILLING_DYNAMODB_TABLE"])
+    usage_table = dynamodb.Table(os.environ["ADDITIONAL_CHARGES_TABLE"])
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
@@ -866,7 +870,7 @@ def record_thread_usage(op_details, info):
 def add_session_billing_table(timestamp, info):
     print("Recording session to billing")
     dynamodb = boto3.resource("dynamodb")
-    billing_table = dynamodb.Table(os.environ["BILLING_DYNAMODB_TABLE"])
+    billing_table = dynamodb.Table(os.environ["ADDITIONAL_CHARGES_TABLE"])
     billing_table.put_item(
         Item={
             "id": f"{str(uuid.uuid4())}",

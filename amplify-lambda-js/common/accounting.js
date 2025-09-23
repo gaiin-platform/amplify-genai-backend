@@ -145,6 +145,6 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 };
 
 const getApiKeyId = (account) => {
-    if (account.accessToken.startsWith("amp-") && account.apiKeyId) return account.apiKeyId;
+    if (account && account.accessToken?.startsWith("amp-") && account?.apiKeyId) return account.apiKeyId;
     return null;
 }

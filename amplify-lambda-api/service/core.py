@@ -14,6 +14,10 @@ from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.ops import api_tool
 from pycommon.api.auth_admin import verify_user_as_admin
 from botocore.config import Config
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -35,6 +39,9 @@ class APIFile(Enum):
     JSON = "Postman_Amplify_API_Collection.json"
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("read")
 def get_api_keys_for_user(event, context, user, name, data):
     return get_api_keys(user)
@@ -127,6 +134,9 @@ def get_api_keys(user):
     },
 )
 # for api key ast 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("read")
 def get_api_keys_for_assistant(event, context, user, name, data):
     # Fetch API keys
@@ -185,6 +195,9 @@ def is_valid_account(coa):
     return bool(pattern.match(coa))
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated("create")
 def create_api_keys(event, context, user, name, data):
     # api keys/get
@@ -268,6 +281,9 @@ def create_api_key_for_user(user, api_key):
         }
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("update")
 def update_api_keys_for_user(event, context, user, name, data):
     failed = []
@@ -348,6 +364,9 @@ def update_api_key(item_id, updates, user):
         return {"success": False, "error": str(e), "key_name": key_name}
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("deactivate")
 def deactivate_key(event, context, user, name, data):
     item_id = data["data"]["apiKeyId"]
@@ -411,6 +430,9 @@ def is_expired(date_str):
     return date <= datetime.now()
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN],
+})
 @validated("read")
 def get_system_ids(event, context, current_user, name, data):
     print("Getting system-specific API keys from DynamoDB")
@@ -448,6 +470,9 @@ def get_system_ids(event, context, current_user, name, data):
         return {"success": False, "message": str(e)}
 
 
+@required_env_vars({
+    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.GET_OBJECT],
+})
 @validated("read")
 def get_documentation(event, context, current_user, name, data):
     print(f"Getting presigned download URL for user {current_user}")
@@ -494,6 +519,9 @@ def formatRateLimit(rateLimit):
     return rateLimit
 
 
+@required_env_vars({
+    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.PUT_OBJECT],
+})
 @validated("upload")
 def get_api_doc_presigned_urls(event, context, current_user, name, data):
     # verify they are an admin
@@ -534,6 +562,9 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
         }
 
 
+@required_env_vars({
+    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.LIST_OBJECT, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+})
 @validated("read")
 def get_api_document_templates(event, context, current_user, name, data):
     templates_key = "Amplify_API_Templates.zip"
@@ -595,6 +626,9 @@ def get_api_document_templates(event, context, current_user, name, data):
         return {"success": False, "message": "Failed to generate presigned URL"}
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("rotate")
 def rotate_api_key(event, context, user, name, data):
     """

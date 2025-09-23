@@ -11,6 +11,8 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.CHAT.value])
 
@@ -121,6 +123,9 @@ add_api_access_types([APIAccessType.CHAT.value])
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.BATCH_GET_ITEM],
+})
 @validated("chat")
 def chat_endpoint(event, context, current_user, name, data):
     access_token = data["access_token"]

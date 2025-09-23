@@ -297,11 +297,11 @@ export async function isRateLimited(params) {
 
 
 async function getAdminRateLimit() {
-    const adminTable = process.env.ADMIN_DYNAMODB_TABLE;
+    const adminTable = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
 
     if (!adminTable) {
-        console.log("ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
-        throw new Error("ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
+        console.log("AMPLIFY_ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
+        throw new Error("AMPLIFY_ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
     }
     
      try {
@@ -320,11 +320,11 @@ async function getAdminRateLimit() {
         const item = response.Items[0];
 
         if (!item) {
+            console.log(`❌ No admin rate limit config found in table: ${adminTable}`);
             logger.error("Table entry does not exist. Can not verify if rate limited");
             return false;
         }
         const rateData = unmarshall(item);
-        console.log(rateData)
         return rateData.data;
         
     } catch (error) {

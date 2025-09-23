@@ -10,6 +10,10 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value])
 
@@ -148,6 +152,18 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_OPENAI_PROVIDER": ["CONFIG"],
+    "SECRETS_ARN_NAME": ["AWS_SECRETS_MANAGER"],
+    "LLM_ENDPOINTS_SECRETS_NAME": ["AWS_SECRETS_MANAGER"],
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANT_THREADS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+})
 @validated(op="chat")
 def chat_with_code_interpreter(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -260,6 +276,14 @@ def generate_req_id():
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_OPENAI_PROVIDER": ["CONFIG"],
+    "SECRETS_ARN_NAME": ["AWS_SECRETS_MANAGER"],
+    "LLM_ENDPOINTS_SECRETS_NAME": ["AWS_SECRETS_MANAGER"],
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated(op="create")
 def create_code_interpreter_assistant(event, context, current_user, name, data):
     extracted_data = data["data"]
@@ -316,6 +340,9 @@ def create_code_interpreter_assistant(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+})
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
@@ -368,6 +395,9 @@ def delete_assistant(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_THREADS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+})
 @validated(op="delete")
 def delete_assistant_thread(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
@@ -428,6 +458,9 @@ def delete_assistant_thread(event, context, current_user, name, data):
         "required": ["success", "downloadUrl"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated(op="download")
 def get_presigned_url_code_interpreter(event, context, current_user, name, data):
     data = data["data"]

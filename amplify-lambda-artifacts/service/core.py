@@ -8,6 +8,10 @@ import boto3
 import json
 import re
 from pycommon.api.amplify_users import are_valid_amplify_users
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -22,6 +26,10 @@ artifact_table = dynamodb.Table(artifacts_table_name)
 artifact_bucket = os.environ["S3_ARTIFACTS_BUCKET"]
 
 
+@required_env_vars({
+    "S3_ARTIFACTS_BUCKET": [S3Operation.GET_OBJECT],
+    "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("read")
 def get_artifact(event, context, current_user, name, data):
     validated_key = validate_query_param(event.get("queryStringParameters", {}))
@@ -52,6 +60,9 @@ def get_artifact(event, context, current_user, name, data):
         return {"success": False, "message": "Failed to retrieve artifact."}
 
 
+@required_env_vars({
+    "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("read")
 def get_artifacts_info(event, context, current_user, name, data):
     try:
@@ -71,6 +82,10 @@ def get_artifacts_info(event, context, current_user, name, data):
         return {"success": False, "message": "Failed to retrieve artifacts."}
 
 
+@required_env_vars({
+    "S3_ARTIFACTS_BUCKET": [S3Operation.DELETE_OBJECT],
+    "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("delete")
 def delete_artifact(event, context, current_user, name, data):
     validated_key = validate_query_param(event.get("queryStringParameters", {}))
@@ -129,6 +144,10 @@ def create_artifact_keys(current_user, artifact):
     return artifact_key, artifact_id, created_at_str
 
 
+@required_env_vars({
+    "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT],
+    "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("save")
 def save_artifact(event, context, current_user, name, data):
     return save_artifact_for_user(current_user, data["data"]["artifact"])
@@ -193,6 +212,10 @@ def save_artifact_for_user(current_user, artifact, sharedBy=None):
         return {"success": False, "message": "Failed to save artifact"}
 
 
+@required_env_vars({
+    "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT],
+    "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("share")
 def share_artifact(event, context, current_user, name, data):
     access_token = data["access_token"]

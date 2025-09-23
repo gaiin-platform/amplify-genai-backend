@@ -12,7 +12,12 @@ from flow.steps import parse_workflow
 from llm.chat import prompt
 from pycommon.llm.chat import chat
 from pycommon.api.get_endpoint import get_endpoint, EndpointType
+from pycommon.api.models import get_default_models
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, LambdaOperation, SecretsManagerOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -77,6 +82,10 @@ set_permissions_by_state(permissions)
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "CHAT_ENDPOINT": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "USER_MODELS_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="rag_query")
 def llm_prompt_datasource_rag(event, context, current_user, name, data):
     data["ragOnly"] = True
@@ -135,6 +144,10 @@ def llm_prompt_datasource_rag(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "CHAT_ENDPOINT": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "USER_MODELS_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="query")
 def llm_prompt_datasource(event, context, current_user, name, data):
     try:
@@ -213,13 +226,21 @@ def llm_prompt_datasource(event, context, current_user, name, data):
         query = data["query"]
         account = data.get("account", "default")
 
+
+        default_models = get_default_models(access_token)
+
+        if not default_models or not default_models.get("user_model"):
+            raise Exception("No default user model found")
+            
+        default_model_id = default_models.get("user_model")
+
         # If you specified additionalParams, you could also extract them here from data.
         # This is an example with a default value in case it isn't configured.
-        model = data.get("model", os.getenv("DEFAULT_LLM_QUERY_MODEL"))
+        model = data.get("model", default_model_id)
 
         default_options = {
             "account": "default",
-            "model": os.getenv("DEFAULT_LLM_QUERY_MODEL"),
+            "model": default_model_id,
             "limit": 25,
         }
 
@@ -380,6 +401,9 @@ def qa(input: QAInput) -> QAOutput:
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "USER_MODELS_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="qa_check")
 def llm_qa_check(event, context, current_user, name, data):
     try:
@@ -388,13 +412,18 @@ def llm_qa_check(event, context, current_user, name, data):
         access_token = data["access_token"]
         data = data["data"]
 
+        default_models = get_default_models(access_token)
+
+        if not default_models or not default_models.get("user_model"):
+            raise Exception("No default user model found")
+
         try:
             # Step 2: Create an instance of the model using the dictionary
             input = QAInput(**data)
             output = qa(
                 input=input,
                 access_token=access_token,
-                model=os.getenv("DEFAULT_LLM_QUERY_MODEL"),
+                model=default_models.get("user_model"),
             )
 
             return {
@@ -455,6 +484,10 @@ def llm_qa_check(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "JOBS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "WORKFLOW_LAMBDA_NAME": [],
+})
 @validated(op="llm_workflow_async")
 def llm_workflow_async(event, context, current_user, name, data):
     try:
@@ -473,6 +506,9 @@ def llm_workflow_async(event, context, current_user, name, data):
         return {"success": False, "message": "Failed to execute the operation"}
 
 
+@required_env_vars({
+    "USER_MODELS_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="llm_workflow")
 def llm_workflow(event, context, current_user, name, data):
     try:

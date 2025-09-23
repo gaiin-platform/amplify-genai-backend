@@ -5,6 +5,10 @@ from botocore.exceptions import ClientError
 import os
 import json
 from datetime import datetime
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.encoders import SafeDecimalEncoder
 from pycommon.api.auth_admin import verify_user_as_admin
 from botocore.config import Config
@@ -42,6 +46,9 @@ def get_latest_version_details(table):
     return latest_version_details
 
 
+@required_env_vars({
+    "DATA_DISCLOSURE_STORAGE_BUCKET": [S3Operation.PUT_OBJECT],
+})
 @validated(op="upload")
 def get_presigned_data_disclosure(event, context, current_user, name, data):
     # Authorize the User
@@ -245,6 +252,10 @@ def get_latest_version_number():
 
 
 # Check if a user's email has accepted the agreement in the DataDisclosureAcceptanceTable
+@required_env_vars({
+    "DATA_DISCLOSURE_ACCEPTANCE_TABLE": [DynamoDBOperation.GET_ITEM],
+    "DATA_DISCLOSURE_VERSIONS_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="check_data_disclosure_decision")
 def check_data_disclosure_decision(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["DATA_DISCLOSURE_ACCEPTANCE_TABLE"])
@@ -281,6 +292,10 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
 
 
 # Save the user's acceptance or denial of the data disclosure in the DataDisclosureAcceptanceTable
+@required_env_vars({
+    "DATA_DISCLOSURE_VERSIONS_TABLE": [DynamoDBOperation.QUERY],
+    "DATA_DISCLOSURE_ACCEPTANCE_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="save_data_disclosure_decision")
 def save_data_disclosure_decision(event, context, current_user, name, data):
     data = data["data"]
@@ -319,6 +334,10 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
 
 
 # Pull the most recent data disclosure from the DataDisclosureVersionsTable
+@required_env_vars({
+    "DATA_DISCLOSURE_VERSIONS_TABLE": [DynamoDBOperation.QUERY],
+    "DATA_DISCLOSURE_STORAGE_BUCKET": [S3Operation.GET_OBJECT],
+})
 @validated(op="get_latest_data_disclosure")
 def get_latest_data_disclosure(event, context, current_user, name, data):
     versions_table = dynamodb.Table(os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"])

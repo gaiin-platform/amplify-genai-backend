@@ -18,6 +18,10 @@ from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_s
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.amplify_groups import verify_user_in_amp_group
 from pycommon.api.embeddings import check_embedding_completion
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -30,9 +34,14 @@ import aiohttp
 
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
-groups_table = dynamodb.Table(os.environ["AMPLIFY_GROUPS_DYNAMODB_TABLE"])
+groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="create")
 def create_group(event, context, current_user, name, data):
     print("Initiating group creation process")
@@ -216,6 +225,11 @@ def update_ast_perms_for_members(members_dict, assistants, access_token):
     }
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_members(event, context, current_user, name, data):
     data = data["data"]
@@ -284,6 +298,11 @@ def update_members_db(group_id, updated_members):
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_members_permission(event, context, current_user, name, data):
     data = data["data"]
@@ -389,6 +408,12 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
         return {"success": False, "error": str(e)}
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_group_assistants(event, context, current_user, name, data):
     data = data["data"]
@@ -498,6 +523,11 @@ def update_assistants(current_user, group_id, update_type, ast_list):
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="add_assistant_path")
 def add_path_to_assistant(event, context, current_user, name, data):
     data = data["data"]
@@ -532,6 +562,11 @@ def add_path_to_assistant(event, context, current_user, name, data):
     return add_assistant_path(access_token, path_data)
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_group_types(event, context, current_user, name, data):
     data = data["data"]
@@ -588,6 +623,11 @@ def update_group_types(event, context, current_user, name, data):
         }
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_amplify_groups(event, context, current_user, name, data):
     data = data["data"]
@@ -620,6 +660,11 @@ def update_amplify_groups(event, context, current_user, name, data):
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_system_users(event, context, current_user, name, data):
     data = data["data"]
@@ -658,6 +703,12 @@ def is_valid_group_id(group_id):
     return bool(re.match(pattern, group_id))
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="delete")
 def delete_group(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
@@ -728,6 +779,10 @@ def get_latest_assistants(assistants):
     return list(latest_assistants.values())
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.SCAN],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="list")
 def list_groups(event, context, current_user, name, data):
     groups_result = get_my_groups(current_user, data["access_token"])
@@ -844,6 +899,9 @@ def is_group_member(current_user, group, token):
         return is_in_amplify_group
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="verify_member")
 def verify_is_member_ast_group(event, context, current_user, name, data):
     token = data["access_token"]
@@ -949,6 +1007,9 @@ def log_item(group_id, action, username, details):
     print("item logged for group: ", group_id)
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.SCAN],
+})
 @validated(op="list")
 def list_all_groups_for_admins(event, context, current_user, name, data):
     # verify is admin
@@ -986,6 +1047,11 @@ def list_all_groups_for_admins(event, context, current_user, name, data):
         }
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def replace_group_key(event, context, current_user, name, data):
     api_keys_table_name = dynamodb.Table(os.getenv("API_KEYS_DYNAMODB_TABLE"))
@@ -1085,6 +1151,10 @@ def replace_group_key(event, context, current_user, name, data):
     }
 
 
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="update")
 def update_ast_admin_groups(event, context, current_user, name, data):
     groups_to_update = data["data"]["groups"]
@@ -1195,6 +1265,12 @@ def update_ast_admin_groups(event, context, current_user, name, data):
         }
 
 
+@required_env_vars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="create")
 def create_amplify_assistants(event, context, current_user, name, data):
     print("Creating group")

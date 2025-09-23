@@ -19,6 +19,8 @@ dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -562,6 +564,9 @@ def save_scraped_content(scraped_data, access_token):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="rescan_websites")
 def rescan_websites(event, context, current_user, name, data=None):
     """

@@ -164,6 +164,10 @@ from pycommon.api.ops import api_tool, set_route_data, set_op_type
 
 set_route_data(route_data)
 set_op_type("integration")
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated
 
 
@@ -274,6 +278,9 @@ def common_handler(operation, *required_params, **optional_params):
     return handler
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("route", False)
 def route_request(event, context, current_user, name, data):
     try:

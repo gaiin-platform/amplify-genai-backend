@@ -10,6 +10,10 @@ from auth.oauth import refresh_integration_token, get_user_integrations
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SSMOperation
+)
 
 setup_validated(rules, get_permission_checker)
 
@@ -121,7 +125,9 @@ def get_ms_graph_session(current_user, integration, access_token):
     )
     return session
 
-
+@required_env_vars({
+    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
+})
 @validated("get")
 def get_integrations(event, context, current_user, name, data):
     stage = os.environ.get("INTEGRATION_STAGE")

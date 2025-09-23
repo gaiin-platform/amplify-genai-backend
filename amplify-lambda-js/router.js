@@ -13,6 +13,7 @@ import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 import AWSXRay from "aws-xray-sdk";
+import {requiredEnvVars, DynamoDBOperation, S3Operation, SQSOperation} from "./common/envVarsTracking.js";
 
 
 const doTrace = process.env.TRACING_ENABLED === 'true';
@@ -23,7 +24,7 @@ function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
 }
 
-export const routeRequest = async (params, returnResponse, responseStream) => {
+const routeRequestCore = async (params, returnResponse, responseStream) => {
     const segment = AWSXRay.getSegment();
     const subSegment = segment.addNewSubsegment('chat-js.router.routeRequest');
 
@@ -234,5 +235,26 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
         subSegment.close();
     }
 }
+
+// Environment variables tracking wrapper for router
+export const routeRequest = requiredEnvVars({
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.QUERY],
+    "MODEL_RATE_TABLE": [DynamoDBOperation.QUERY],
+    "CHAT_USAGE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "REQUEST_STATE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "DATASOURCE_REGISTRY_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
+})(routeRequestCore);
 
 

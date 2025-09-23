@@ -13,7 +13,7 @@ dynamodb = boto3.resource("dynamodb")
 
 
 def get(event, context):
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     # fetch todo from the database
     result = table.get_item(Key={"id": event["pathParameters"]["id"]})
@@ -37,7 +37,7 @@ def get_by_user(event, context):
 
     user = params["user"]
 
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     # fetch all items for a specific user from the database
     result = table.query(

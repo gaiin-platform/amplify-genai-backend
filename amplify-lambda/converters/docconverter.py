@@ -16,6 +16,10 @@ import os
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    S3Operation
+)
 
 setup_validated(rules, get_permission_checker)
 
@@ -61,8 +65,10 @@ def parse_s3_key(s3_key):
         return email, uuid, fmat, extension
     else:
         return None, None, None, None
-
-
+@required_env_vars({
+    "S3_CONVERSION_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated("convert")
 def submit_conversion_job(event, context, user, name, data):
     print(f"User {user} submitted conversion job")

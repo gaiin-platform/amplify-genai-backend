@@ -16,6 +16,10 @@ import time
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    S3Operation
+)
 from pycommon.authz import validated, setup_validated
 from pycommon.api.files import upload_file, delete_file
 from schemata.schema_validation_rules import rules
@@ -28,6 +32,9 @@ API_URL = os.environ["API_BASE_URL"]
 
 
 # unifies location for functions needed in datasource file manager component.
+@required_env_vars({
+    "API_BASE_URL": ["HTTP_REQUEST"],
+})
 @validated("list_files")
 def list_integration_files(event, context, current_user, name, data):
     token = data["access_token"]
@@ -92,6 +99,10 @@ def list_files(integration_provider, token, folder_id=None):
     return None
 
 
+@required_env_vars({
+    "API_BASE_URL": ["HTTP_REQUEST"],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, "S3_PRESIGNED_URL"],
+})
 @validated("download_file")
 def download_integration_file(event, context, current_user, name, data):
     token = data["access_token"]
@@ -310,6 +321,10 @@ MIME_TO_EXT = {
 }
 
 
+@required_env_vars({
+    "API_BASE_URL": ["HTTP_REQUEST"],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, "S3_PRESIGNED_URL"],
+})
 @validated("upload_files")
 def drive_files_to_data_sources(event, context, current_user, name, data):
     """
