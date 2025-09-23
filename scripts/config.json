@@ -4,5 +4,6 @@
     "ACCOUNTS_DYNAMO_TABLE": "amplify-v6-lambda-dev-accounts",
     "API_KEYS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-api-keys",
     "OPS_DYNAMODB_TABLE": "amplify-v6-lambda-ops-dev-ops",
-    "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-state"
+    "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-state",
+    "OAUTH_STATE_TABLE": "amplify-v6-assistants-api-dev-oauth-state"
 }
