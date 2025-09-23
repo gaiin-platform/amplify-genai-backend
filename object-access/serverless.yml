@@ -140,6 +140,18 @@ functions:
           method: post
           cors: true
 
+  validate_users:
+    runtime: python3.11
+    handler: object_access.validate_users
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    timeout: 15
+    events:
+      - http:
+          path: /utilities/validate_users
+          method: post
+          cors: true
+
   sync_cognito_users:
     runtime: python3.11
     handler: cognito_users_sync.sync_users_to_dynamo

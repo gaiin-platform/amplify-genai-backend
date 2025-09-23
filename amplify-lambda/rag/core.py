@@ -2,7 +2,6 @@
 # Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import base64
 import hashlib
 import os
 import mimetypes
@@ -151,7 +150,7 @@ async def extract_text_from_file(key, file_content, current_user=None, account_d
 
     except Exception as e:
         print(f"Unable to extract text from {key} using markitdown extractor: {str(e)}")
-        print("Continuing with default handler logic...")
+    print("Continuing with default handler logic...")
 
     # Get the appropriate handler and split parameters for the file type
     handler = get_text_extraction_handler(key)
@@ -191,7 +190,7 @@ def split_text(sent_tokenize, content):
         return [content]
 
 
-def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None):
+def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None, force_reprocess=False):
     print(f"Saving chunks {len(chunks)} to {chunks_bucket}/{key}-{split_count}.chunks.json")
     chunks_key = f"{key}-{split_count}.chunks.json"
     
@@ -200,6 +199,10 @@ def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None):
     if object_key:
         metadata["object_key"] = object_key
         print(f"Adding object_key metadata: {object_key}")
+    
+    if force_reprocess:
+        metadata["force_reprocess"] = "true"
+        print(f"Adding force_reprocess metadata: true")
     
     s3.put_object(
         Bucket=chunks_bucket,
@@ -212,7 +215,8 @@ def save_chunks(chunks_bucket, key, split_count, chunks, object_key=None):
         print(f"Stored object_key metadata: {object_key}")
 
 
-def chunk_content(key, text_content, split_params, object_key=None):
+
+def chunk_content(key, text_content, split_params, object_key=None, force_reprocess=False):
     # nltk.download('punkt')
     nltk.data.path.append("/tmp")
     nltk.download("punkt", download_dir="/tmp")
@@ -280,7 +284,7 @@ def chunk_content(key, text_content, split_params, object_key=None):
 
             if len(chunks) == split_increment:
                 split_count += 1
-                save_chunks(chunks_bucket, key, split_count, chunks, object_key)
+                save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess)
                 chunks = []
 
         else:
@@ -309,7 +313,7 @@ def chunk_content(key, text_content, split_params, object_key=None):
 
     if chunks:  # If there are unfinished chunks, save them
         split_count += 1
-        save_chunks(chunks_bucket, key, split_count, chunks, object_key)
+        save_chunks(chunks_bucket, key, split_count, chunks, object_key, force_reprocess)
 
     print(f"In Chunk Content Function")
     print(
@@ -318,7 +322,7 @@ def chunk_content(key, text_content, split_params, object_key=None):
     return split_count
 
 
-def chunk_s3_file_content(bucket, key, object_key=None):
+def chunk_s3_file_content(bucket, key, object_key=None, force_reprocess=False):
     try:
         # Download the file from S3
         print(f"Fetching text from {bucket}/{key}")
@@ -330,7 +334,7 @@ def chunk_s3_file_content(bucket, key, object_key=None):
         print(f"Loaded json from {bucket}/{key}")
 
         # Extract text from the file in S3
-        chunks = chunk_content(key, file_content, {}, object_key)
+        chunks = chunk_content(key, file_content, {}, object_key, force_reprocess)
         print(
             f"Chunk S3 File Content Function: Chunked content for {key} into {chunks} chunks"
         )
@@ -597,24 +601,29 @@ def process_document_for_rag(event, context):
                     update_object_permissions(user, permissions_update)
 
                     text = None
-                    # Check if already processed AND not a force reprocess request
-                    if dochash_resposne.get("Item") is not None and not force_reprocess:
-                        print(f"Document {key} already processed")
+                    # Check if already processed AND not a force reprocess request AND embedding was successful
+                    if dochash_resposne.get("Item") is not None and not force_reprocess and is_embedding_successful(key):
+                        print(f"✅ Document {key} already processed and embedding completed successfully - skipping")
                         text_bucket = dochash_resposne.get("Item").get(
                             "textLocationBucket"
                         )
                         text_key = dochash_resposne.get("Item").get("textLocationKey")
-                        print(f"Getting text from {text_bucket}/{text_key}")
+                        print(f"Getting existing text from {text_bucket}/{text_key}")
                         text = json.loads(get_file_from_s3(text_bucket, text_key))
-                        print(f"Got text from {text_bucket}/{text_key}")
+                        print(f"Got existing text from {text_bucket}/{text_key}")
                         total_tokens = text.get("totalTokens", 0)
                         total_items = text.get("totalItems", 0)
                         location_properties = text.get("locationProperties", [])
                         tags = text.get("tags", [])
                         props = text.get("props", [])
                     else:
+                        # Process document if: not processed before, OR force reprocess, OR embedding incomplete/failed
                         if force_reprocess:
-                            print(f"Force reprocessing document {key}")
+                            print(f"🔄 Force reprocessing document {key}")
+                        elif dochash_resposne.get("Item") is not None:
+                            print(f"⚠️ Document {key} processed but embedding incomplete/failed - reprocessing")
+                        else:
+                            print(f"🆕 New document {key} - processing")
                         text = asyncio.run(
                             extract_text_from_file(file_extension, file_content, user, account_data)
                         )
@@ -688,6 +697,7 @@ def process_document_for_rag(event, context):
                                 print("Sending message to chunking queue")
                                 try:
                                     record = {
+                                        "force_reprocess": force_reprocess,
                                         "s3": {
                                             "bucket": { "name": file_text_content_bucket_name },
                                             "object": { "key": text_content_key },
@@ -754,6 +764,36 @@ def update_embedding_status(original_creator, object_id, total_chunks, status):
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(progress_table)
 
+        # Check if there's existing progress data (for selective reprocessing)
+        try:
+            response = table.get_item(Key={"object_id": object_id})
+            existing_item = response.get("Item")
+            
+            if existing_item and existing_item.get("data", {}).get("childChunks"):
+                # Preserve existing chunk statuses that are completed
+                existing_chunks = existing_item["data"]["childChunks"]
+                new_chunks = {}
+                
+                for i in range(total_chunks):
+                    chunk_id = str(i + 1)
+                    if chunk_id in existing_chunks and existing_chunks[chunk_id].get("status") == "completed":
+                        # Preserve completed chunks
+                        new_chunks[chunk_id] = existing_chunks[chunk_id]
+                        print(f"Preserving completed status for chunk {chunk_id}")
+                    else:
+                        # Reset non-completed chunks to starting
+                        new_chunks[chunk_id] = {"status": status}
+                
+                child_chunks = new_chunks
+                print(f"Preserved {len([c for c in new_chunks.values() if c.get('status') == 'completed'])} completed chunks")
+            else:
+                # No existing data, create fresh
+                child_chunks = {str(i + 1): {"status": status} for i in range(total_chunks)}
+        except Exception as e:
+            print(f"Error checking existing progress: {e}")
+            # Fallback to creating fresh
+            child_chunks = {str(i + 1): {"status": status} for i in range(total_chunks)}
+
         table.put_item(
             Item={
                 "object_id": object_id,
@@ -763,14 +803,12 @@ def update_embedding_status(original_creator, object_id, total_chunks, status):
                 "terminated": False,
                 "totalChunks": total_chunks,
                 "data": {
-                    "childChunks": {
-                        str(i + 1): {"status": status} for i in range(total_chunks)
-                    }
+                    "childChunks": child_chunks
                 },
             }
         )
         print(
-            f"Created {total_chunks} nested childCunks for {object_id} in Embeddings Progress Table"
+            f"Updated {total_chunks} nested childChunks for {object_id} in Embeddings Progress Table"
         )
 
     except Exception as e:
@@ -807,6 +845,64 @@ def get_original_creator(key):
     return original_creator
 
 
+def is_embedding_successful(document_key):
+    """
+    Check if embedding process was successful for a document.
+    
+    Args:
+        document_key: The document key to check embedding status for
+        
+    Returns:
+        bool: True if embedding completed successfully, False otherwise
+    """
+    try:
+        from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
+        
+        # Translate document key to global hash
+        translated_sources = translate_user_data_sources_to_hash_data_sources([{"id": document_key, "type": "document"}])
+        if not translated_sources or not translated_sources[0].get("id"):
+            print(f"[EMBEDDING_CHECK] Could not get global hash for {document_key}")
+            return False
+            
+        global_id = translated_sources[0]["id"]
+        
+        # Check embedding progress table
+        progress_table = os.environ.get("EMBEDDING_PROGRESS_TABLE")
+        if not progress_table:
+            print(f"[EMBEDDING_CHECK] EMBEDDING_PROGRESS_TABLE not configured")
+            return False
+            
+        dynamodb = boto3.resource("dynamodb")
+        table = dynamodb.Table(progress_table)
+        
+        response = table.get_item(Key={"object_id": global_id})
+        item = response.get("Item")
+        
+        if not item:
+            print(f"[EMBEDDING_CHECK] No embedding progress found for {document_key}")
+            return False
+        
+        # Check if terminated
+        if item.get("terminated", False):
+            print(f"[EMBEDDING_CHECK] Embedding process terminated for {document_key}")
+            return False
+        
+        # Check parent chunk status
+        parent_status = item.get("parentChunkStatus")
+        if parent_status == "completed":
+            print(f"[EMBEDDING_CHECK] ✅ Embedding completed successfully for {document_key}")
+            return True
+        else:
+            print(f"[EMBEDDING_CHECK] Embedding not completed for {document_key} (status: {parent_status})")
+            return False
+            
+    except Exception as e:
+        print(f"[EMBEDDING_CHECK] Error checking embedding status for {document_key}: {e}")
+        # On error, return False to trigger reprocessing for safety
+        return False
+
+
+
 def chunk_document_for_rag(event, context):
     print(f"Received event: {event}")
 
@@ -814,9 +910,14 @@ def chunk_document_for_rag(event, context):
         try:
             print(f"Processing message: {record}")
             # Assuming the message body is a JSON string, parse it
-            s3_info = json.loads(record["body"])
-            print(f"Message body: {s3_info}")
-            s3_info = s3_info["s3"]
+            message_data = json.loads(record["body"])
+            print(f"Message body: {message_data}")
+            
+            # Check if this is a force reprocessing request
+            force_reprocess = message_data.get("force_reprocess", False)
+            print(f"Force reprocess flag: {force_reprocess}")
+            
+            s3_info = message_data["s3"]
 
             # Extract object_key from metadata if present
             object_key = s3_info.get("metadata", {}).get("object_key")
@@ -834,9 +935,17 @@ def chunk_document_for_rag(event, context):
             # global entry
             original_creator = get_original_creator(key)
 
-            chunks = chunk_s3_file_content(bucket, key, object_key)
+            # Use original chunking method - no selective processing for now to avoid complexity
+            chunks_created = chunk_s3_file_content(bucket, key, object_key, force_reprocess)
+            print(f"[CHUNKING] Created {chunks_created} chunk files for {key}")
+            
+            if chunks_created == 0:
+                print(f"No chunks were created for {key}")
+                continue
 
-            update_embedding_status(original_creator, key, chunks, "starting")
+            # Use chunk FILES count, not individual chunks
+            # The embedding service processes chunk files, not individual chunks
+            update_embedding_status(original_creator, key, chunks_created, "starting")
 
         except Exception as e:
             print(f"Error processing SQS message: {str(e)}")
