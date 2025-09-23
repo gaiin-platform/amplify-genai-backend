@@ -19,6 +19,7 @@ from .update_groups_schema import update_groups_schema
 from .groupId_schema import groupId_schema
 from .assistant_path_schema import assistant_path_schema
 from .add_assistant_path_schema import add_assistant_path_schema
+from .validate_users_schema import validate_users_schema
 
 rules = {
     "validators": {
@@ -29,6 +30,7 @@ rules = {
         "/utilities/simulate_access_to_objects": {
             "simulate_access_to_objects": simulate_access_to_objects
         },
+        "/utilities/validate_users": {"validate_users": validate_users_schema},
         "/utilities/create_cognito_group": {
             "create_cognito_group": create_cognito_group_schema
         },
@@ -60,6 +62,7 @@ rules = {
         "/utilities/simulate_access_to_objects": {
             "simulate_access_to_objects": simulate_access_to_objects
         },
+        "/utilities/validate_users": {"validate_users": validate_users_schema},
         "/groups/verify_ast_group_member": {"verify_member": groupId_schema},
         "/utilities/emails": {"read": {}},
     }

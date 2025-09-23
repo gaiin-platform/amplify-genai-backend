@@ -19,6 +19,10 @@ from pycommon.api.amplify_groups import (
     verify_user_in_amp_group,
 )
 
+from pycommon.api.data_sources import (
+    translate_user_data_sources_to_hash_data_sources,
+)
+
 from pycommon.api.ops import api_tool
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
@@ -464,9 +468,9 @@ def add_assistant_path(event, context, current_user, name, data):
         if (
             path_history
             and len(path_history) > 1
-            and path_history[-1]["path"] == ast_path
-            and path_history[-1]["changedBy"] == current_user
-            and path_history[-1]["assistant_id"] == assistant_id
+            and path_history[-1].get("path") == ast_path
+            and path_history[-1].get("changedBy") == current_user
+            and path_history[-1].get("assistant_id") == assistant_id
         ):
             path_history[-1]["changedAt"] = created_at
         else:
@@ -512,6 +516,8 @@ def add_assistant_path(event, context, current_user, name, data):
         # Increment the version number
         new_version = assistant_version + 1
 
+        data_sources = existing_assistant.get("dataSources", [])
+
         # Save the updated assistant
         new_item = save_assistant(
             assistants_table,
@@ -520,7 +526,7 @@ def add_assistant_path(event, context, current_user, name, data):
             existing_assistant["instructions"],
             assistant_data,
             existing_assistant.get("disclaimer", ""),
-            existing_assistant.get("dataSources", []),
+            data_sources,
             existing_assistant.get("provider", "amplify"),
             existing_assistant.get("tools", []),
             current_user,
@@ -549,9 +555,35 @@ def add_assistant_path(event, context, current_user, name, data):
                     "object_type": "assistant",  # The type of object being accessed
                 }
             )
-            print(
-                f"Successfully added direct permissions for {principal_type} {current_user} on assistant version {new_item['id']}"
-            )
+            print(f"Successfully added direct permissions for {principal_type} {current_user} on assistant version {new_item['id']}")
+
+            if principal_type != "group":
+                filtered_drive_ds = []
+                try:
+                    from service.drive_datasources import extract_drive_datasources
+                    drive_data_sources = extract_drive_datasources(assistant_data.get("integrationDriveData", {}))
+                    print(f"Drive data sources before translation: {drive_data_sources}")
+                    filtered_drive_ds = translate_user_data_sources_to_hash_data_sources(drive_data_sources)
+                    print(f"Drive Data sources after translation and extraction: {filtered_drive_ds}")
+                except Exception as e:
+                    print(f"Error translating drive data sources to hash data sources: {str(e)}")
+
+                for ds in data_sources + filtered_drive_ds:
+                    ds_key = ds["id"]
+                    try:
+                        object_access_table.put_item(
+                        Item={
+                            "object_id": ds_key,  # The ID of the new assistant version
+                            "principal_id": assistant_id,
+                            "permission_level": "read",  # Give the user full ownership rights
+                            "principal_type": principal_type,  # For individual users or groups
+                            "object_type": "datasource",  # The type of object being accessed
+                        })
+                        print(f"Successfully added data source direct permissions for {assistant_id} on data source {ds_key}")
+                    except Exception as e:
+                        print(f"Error adding data source direct permissions for {assistant_id} on data source {ds_key}: {str(e)}")
+        
+
         except Exception as e:
             print(f"Error adding permissions for assistant version: {str(e)}")
 

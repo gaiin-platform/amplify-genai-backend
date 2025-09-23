@@ -32,6 +32,7 @@ if [ -d "./tmp_pycommon/pycommon/api" ]; then
     cp ./tmp_pycommon/pycommon/api/secrets.py python/pycommon/api/ 2>/dev/null || echo "secrets.py not found"
     cp ./tmp_pycommon/pycommon/api/models.py python/pycommon/api/ 2>/dev/null || echo "models.py not found"
     cp ./tmp_pycommon/pycommon/api/get_endpoint.py python/pycommon/api/ 2>/dev/null || echo "get_endpoint.py not found"
+    cp ./tmp_pycommon/pycommon/api/data_sources.py python/pycommon/api/ 2>/dev/null || echo "data_sources.py not found"
     
     # Create minimal __init__.py for api module (overwrite the one from GitHub)
     cat > python/pycommon/api/__init__.py << 'EOF'
@@ -47,6 +48,7 @@ from .secrets import (
 # Import other copied modules
 from . import models
 from . import get_endpoint
+from . import data_sources
 
 __all__ = [
     "get_secret_parameter",
@@ -54,6 +56,7 @@ __all__ = [
     "delete_secret_parameter",
     "models",
     "get_endpoint",
+    "data_sources",
 ]
 EOF
     echo "API modules copied with minimal __init__.py"
