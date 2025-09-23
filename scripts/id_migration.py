@@ -255,6 +255,43 @@ def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         return False
 
 
+def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all agent state records associated with the old user ID to the new user ID."""
+    # TODO(Karely): This table seems to have an S3 bucket associated with it we'll need
+    # to coordinate that change as well.
+    msg = f"[update_agent_state_table][dry-run: {dry_run}] %s"
+    table = table_names.get("AGENT_STATE_DYNAMODB_TABLE")
+    try:
+        agent_state_table = dynamodb.Table(table)
+        # get raw table query by user id
+        raw_states = agent_state_table.scan(FilterExpression=Attr("user").eq(old_id))
+        if "Items" not in raw_states or not raw_states["Items"]:
+            log(msg % f"No agent state records found for user ID {old_id}.")
+            return (
+                True  # No agent state records to update, so we consider it successful
+            )
+        # create a new copy of the record with the updated username
+        for item in raw_states["Items"]:
+            log(
+                msg
+                % f"Found agent state records for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update agent state item to:\n\tNew Data:{item}")
+            else:
+                log(msg % f"Updating agent state item to:\n\tNew Data:{item}")
+                agent_state_table.put_item(Item=item)
+        return True
+
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating agent state records for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
+
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -304,6 +341,11 @@ if __name__ == "__main__":
             if not update_ops_table(old_user_id, new_user_id, args.dry_run):
                 log(
                     f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records."
+                )
+
+            if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
+                log(
+                    f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records."
                 )
 
     except Exception as e:
