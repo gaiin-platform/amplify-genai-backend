@@ -18,6 +18,45 @@ dynamodb = boto3.resource("dynamodb")
 tables: Dict[str, str]
 
 
+def paginated_query(table_name: str, key_name: str, value: str, index_name: str =  None):
+    """
+    Generator for paginated DynamoDB query results.
+    Yields items matching Key(key_name).eq(value).
+    """
+    table = dynamodb.Table(table_name)
+    kwargs = {"KeyConditionExpression": Key(key_name).eq(value)}
+    if index_name:
+        kwargs["IndexName"] = index_name
+
+    while True:
+        response = table.query(**kwargs)
+        for item in response.get("Items", []):
+            yield item
+        if "LastEvaluatedKey" not in response:
+            break
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+
+def paginated_scan(table_name: str, attr_name: str, value: str, begins_with:bool = False):
+    """
+    Generator for paginated DynamoDB scan results.
+    Yields items matching Attr(attr_name).eq(value).
+    """
+    table = dynamodb.Table(table_name)
+    if begins_with:
+        kwargs = {"FilterExpression": Attr(attr_name).begins_with(value)}
+    else:
+        kwargs = {"FilterExpression": Attr(attr_name).eq(value)}
+
+    while True:
+        response = table.scan(**kwargs)
+        for item in response.get("Items", []):
+            yield item
+        if "LastEvaluatedKey" not in response:
+            break
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+
 def log(*messages):
     for message in messages:
         print(f"[{datetime.now()}]", message)
@@ -156,25 +195,21 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
     msg = f"[update_accounts][dry-run: {dry_run}] %s"
     table = table_names.get("ACCOUNTS_DYNAMO_TABLE")
     try:
-        account = dynamodb.Table(table)
-        # get raw table query by user id
-        raw_account = account.query(KeyConditionExpression=Key("user").eq(old_id))
-        if "Items" not in raw_account or not raw_account["Items"]:
-            log(msg % f"No accounts found for user ID {old_id}.")
-            return True  # No accounts to update, so we consider it successful
-        log(
-            msg
-            % f"Found accounts record for user ID {old_id}.\n\tExisting Data: {raw_account['Items']}"
-        )
-        # create a new copy of the record with the updated username
-        for item in raw_account["Items"]:
+        
+        ret = False
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found accounts record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
             item["user"] = new_id
             if dry_run:
-                log(msg % f"Would update account item to:\n\tNew Data:{item}")
+                log(msg % f"Would update account item to:\n\tNew Data: {item}")
             else:
-                log(msg % f"Updating account item to:\n\tNew Data:{item}")
-                account.put_item(Item=item)
-        return True
+                log(msg % f"Updating account item to:\n\tNew Data: {item}")
+                dynamodb.Table(table).put_item(Item=item)
+            ret = True
+        return ret
 
     except Exception as e:
         log(msg % f"Error updating accounts for user ID from {old_id} to {new_id}: {e}")
@@ -195,14 +230,9 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
         # by finding the 'api_owner_id' field that starts with
         # the old user ID
         # TODO(Karely): Should we search by owner_id instead?
-        raw_keys = api_keys_table.scan(
-            FilterExpression=Attr("api_owner_id").begins_with(old_id)
-        )
-        if "Items" not in raw_keys or not raw_keys["Items"]:
-            log(msg % f"No API keys found for user ID {old_id}.")
-            return True  # No API keys to update, so we consider it successful
-        # create a new copy of the record with the updated username
-        for item in raw_keys["Items"]:
+        
+        ret = False
+        for item in paginated_scan(table, "api_owner_id", old_id, begins_with=True):
             log(
                 msg
                 % f"Found API keys record for user ID {old_id}.\n\tExisting Data: {item}"
@@ -211,11 +241,12 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
             # TODO(Karely): Does 'owner' need to reflect the new ID?
             item["owner"] = new_id
             if dry_run:
-                log(msg % f"Would update API key item to:\n\tNew Data:{item}")
+                log(msg % f"Would update API key item to:\n\tNew Data: {item}")
             else:
-                log(msg % f"Updating API key item to:\n\tNew Data:{item}")
+                log(msg % f"Updating API key item to:\n\tNew Data: {item}")
                 api_keys_table.put_item(Item=item)
-        return True
+            ret = True
+        return ret
 
     except Exception as e:
         log(msg % f"Error updating API keys for user ID from {old_id} to {new_id}: {e}")
@@ -228,25 +259,21 @@ def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("OPS_DYNAMODB_TABLE")
     try:
         ops_table = dynamodb.Table(table)
-        # get raw table query by user id
-        raw_ops = ops_table.scan(FilterExpression=Attr("user").eq(old_id))
-        if "Items" not in raw_ops or not raw_ops["Items"]:
-            log(msg % f"No ops records found for user ID {old_id}.")
-            return True  # No ops records to update, so we consider it successful
-        # create a new copy of the record with the updated username
-        for item in raw_ops["Items"]:
+        
+        ret = False
+        for item in paginated_query(table, "user", old_id):
             log(
                 msg
                 % f"Found ops records for user ID {old_id}.\n\tExisting Data: {item}"
             )
             item["user"] = new_id
             if dry_run:
-                log(msg % f"Would update ops item to:\n\tNew Data:{item}")
+                log(msg % f"Would update ops item to:\n\tNew Data: {item}")
             else:
-                log(msg % f"Updating ops item to:\n\tNew Data:{item}")
+                log(msg % f"Updating ops item to:\n\tNew Data: {item}")
                 ops_table.put_item(Item=item)
-        return True
-
+            ret = True
+        return ret
     except Exception as e:
         log(
             msg
@@ -263,31 +290,59 @@ def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("AGENT_STATE_DYNAMODB_TABLE")
     try:
         agent_state_table = dynamodb.Table(table)
-        # get raw table query by user id
-        raw_states = agent_state_table.scan(FilterExpression=Attr("user").eq(old_id))
-        if "Items" not in raw_states or not raw_states["Items"]:
-            log(msg % f"No agent state records found for user ID {old_id}.")
-            return (
-                True  # No agent state records to update, so we consider it successful
-            )
-        # create a new copy of the record with the updated username
-        for item in raw_states["Items"]:
+        
+        ret = False
+        for item in paginated_query(table, "user", old_id):
             log(
                 msg
                 % f"Found agent state records for user ID {old_id}.\n\tExisting Data: {item}"
             )
             item["user"] = new_id
             if dry_run:
-                log(msg % f"Would update agent state item to:\n\tNew Data:{item}")
+                log(msg % f"Would update agent state item to:\n\tNew Data: {item}")
             else:
-                log(msg % f"Updating agent state item to:\n\tNew Data:{item}")
+                log(msg % f"Updating agent state item to:\n\tNew Data: {item}")
                 agent_state_table.put_item(Item=item)
-        return True
-
+            ret = True
+        return ret
     except Exception as e:
         log(
             msg
             % f"Error updating agent state records for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
+
+
+def update_oauth_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all OAuth state records associated with the old user ID to the new user ID."""
+    msg = f"[update_oauth_state_table][dry-run: {dry_run}] %s"
+    table = table_names.get("OAUTH_STATE_TABLE")
+    try:
+        oauth_state_table = dynamodb.Table(table)
+        
+        # TODO(Karely): It'd be nice to be able to query this rather than scan.
+        # Also, we're creating new records here when, strictly speaking, we could
+        # just update the existing ones in place. Still, this is consistent with what
+        # we're doing elsewhere. So, we'll need to delete the old records later.
+        ret = False
+        for item in paginated_scan(table, "user", old_id):
+            log(
+                msg
+                % f"Found OAuth state records for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update OAuth state item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating OAuth state item to:\n\tNew Data: {item}")
+                oauth_state_table.put_item(Item=item)
+            ret = True
+        return ret
+
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating OAuth state records for user ID from {old_id} to {new_id}: {e}"
         )
         return False
 
@@ -331,7 +386,7 @@ if __name__ == "__main__":
                 log(
                     f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required."
                 )
-                continue
+                # continue
 
             if not update_api_keys(old_user_id, new_user_id, args.dry_run):
                 log(
@@ -346,6 +401,11 @@ if __name__ == "__main__":
             if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
                 log(
                     f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records."
+                )
+            
+            if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
+                log(
+                    f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records."
                 )
 
     except Exception as e:
