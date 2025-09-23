@@ -128,11 +128,11 @@ def update_user_id(old_id: str, new_id: str, dry_run: bool) -> bool:
         user = get_user(old_id)
         user_table = table_names.get("COGNITO_USERS_DYNAMODB_TABLE")
         # update username
-        user["user_id"] = new_id
         if not user:
             log(msg % f"User with old ID {old_id} not found.")
             return False
         log(msg % f"Found user with old ID {old_id}.\n\tExisting Data: {user}")
+        user["user_id"] = new_id
         if dry_run:
             log(msg % f"Would update user ID from {old_id} to {new_id}.\n\tNew Data: {user}")
             return True
