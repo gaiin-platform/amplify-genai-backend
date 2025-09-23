@@ -27,8 +27,8 @@ custom:
     dockerizePip: true
     layer: true
     # uncomment in case of issues with pythonRequirement layers not uploading to aws 
-    # useStaticCache: false  # Uses a static path for the cache
-    # useDownloadCache: false 
+    useStaticCache: false  # Uses a static path for the cache
+    useDownloadCache: false 
 
   prune:
     automatic: true
@@ -43,6 +43,9 @@ custom:
     - dev
     - staging
     - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.stageVars.DEP_NAME}
 
   customDomain:
     domainName: ${self:custom.stageVars.CUSTOM_API_DOMAIN}
@@ -61,49 +64,60 @@ provider:
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false 
   environment:
-    #Local Resources Created in this service
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    DYNAMODB_TABLE: ${self:service}-${sls:stage}
-    ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
-    FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
-    USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
-    HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
-    ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
-    CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
-    COST_CALCULATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-cost-calculations
-    S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
-    LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
-    DB_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-db-connections
-    S3_BUCKET_NAME: ${self:service}-${sls:stage}-share  
-    S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
-    S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
-    S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
-    S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
-    S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
-    S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
-    SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
-    SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
-    EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
-    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
-    S3_CONVERSATIONS_BUCKET_NAME:  ${self:service}-${sls:stage}-user-conversations
-    S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    CONVERSATION_METADATA_TABLE: ${self:service}-${sls:stage}-conversation-metadata
+    # AWS_REGION optional for /chat/service.py 
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
-    MAX_CHUNKS: 1000
-    PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN}  
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    #AWS_REGION optional for /chat/service.py 
     APP_ARN_NAME: ${sls:stage}-amplify-app-vars
     DEP_REGION: ${self:custom.stageVars.DEP_REGION}
-    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    MAX_CHUNKS: 1000
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    PANDOC_LAYER: ${self:custom.stageVars.PANDOC_LAMBDA_LAYER_ARN} 
+    SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
+    # Locally Defined Variables
+    ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
+    ENV_VARS_TRACKING_TABLE: ${self:service}-${sls:stage}-env-vars-tracking
+    CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usages
+    CONVERSATION_METADATA_TABLE: ${self:service}-${sls:stage}-conversation-metadata
+    DB_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-db-connections
+    FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files
+    HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
+    LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
+    S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
+    S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
+    S3_SHARE_BUCKET_NAME: ${self:service}-${sls:stage}-share
+    S3_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-user-conversations
+    S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
+    S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
+    S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
+    S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
+    S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
+    S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
+    SHARES_DYNAMODB_TABLE: ${self:service}-${sls:stage}
+    SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
+    SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
+    USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
+
+    # Imported Variables
+    # AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+    # API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    # COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
+    # EMBEDDING_PROGRESS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-progress
+    # OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
+    # OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    
+    # Parameter Store Version
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
+    EMBEDDING_PROGRESS_TABLE: ${ssm:${self:custom.ssmBasePath}-embedding/EMBEDDING_PROGRESS_TABLE}
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
+    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
 
   iam:
     role:
@@ -541,7 +555,14 @@ resources:
                 - ssm:GetParametersByPath
               Resource: 
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*            
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*            
             - Effect: Allow
               Action:
                 - s3:ListBucket
@@ -583,13 +604,11 @@ resources:
                 - dynamodb:BatchGetItem
               Resource:
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.FILES_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}"
@@ -609,8 +628,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
-                - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"
@@ -632,11 +651,20 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
 
     StateBucket:
       Type: AWS::S3::Bucket
       Properties:
-        BucketName: ${self:provider.environment.S3_BUCKET_NAME}
+        BucketName: ${self:provider.environment.S3_SHARE_BUCKET_NAME}
         CorsConfiguration:
           CorsRules:
             - AllowedOrigins: ['*']
@@ -662,50 +690,6 @@ resources:
           DestinationBucketName: 
             Ref: AccessLogsBucket
           LogFilePrefix: S3AccessLogs/              
-
-    AssistantsDynamoDbTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        BillingMode: PAY_PER_REQUEST
-        PointInTimeRecoverySpecification:
-          PointInTimeRecoveryEnabled: true
-        SSESpecification:
-          SSEEnabled: false
-        AttributeDefinitions:
-          -
-            AttributeName: id
-            AttributeType: S
-          -
-            AttributeName: user
-            AttributeType: S
-          -
-            AttributeName: name
-            AttributeType: S
-        KeySchema:
-          -
-            AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          -
-            IndexName: UserIndex
-            KeySchema:
-              -
-                AttributeName: user
-                KeyType: HASH
-
-            Projection:
-              ProjectionType: ALL
-          -
-            IndexName: UserNameIndex
-            KeySchema:
-              - AttributeName: user
-                KeyType: HASH
-              - AttributeName: name
-                KeyType: RANGE
-
-            Projection:
-              ProjectionType: ALL
-        TableName: ${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}
 
 
     UserStateDynamoDbTable:
@@ -748,7 +732,7 @@ resources:
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL
-        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        TableName: ${self:provider.environment.SHARES_DYNAMODB_TABLE}
 
 
     UserFilesDynamoDbTable:
@@ -1199,6 +1183,31 @@ resources:
           - IndexName: UserIndex
             KeySchema:
               - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    EnvironmentVariablesTrackingTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: false
+        AttributeDefinitions:
+          - AttributeName: service_var_key
+            AttributeType: S
+          - AttributeName: service_name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: service_var_key
+            KeyType: HASH
+        TableName: ${self:service}-${sls:stage}-env-vars-tracking
+        GlobalSecondaryIndexes:
+          - IndexName: ServiceIndex
+            KeySchema:
+              - AttributeName: service_name
                 KeyType: HASH
             Projection:
               ProjectionType: ALL

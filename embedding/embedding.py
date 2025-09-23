@@ -25,6 +25,10 @@ from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
 from pycommon.api.data_sources import translate_user_data_sources_to_hash_data_sources
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
@@ -1341,7 +1345,9 @@ def perform_full_cleanup(trimmed_src):
         if 'db_connection' in locals() and not db_connection.closed:
             db_connection.close()
 
-
+@required_env_vars({
+    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="terminate")
 def terminate_embedding(event, context, current_user, name, data):
     object_id = data["data"].get("object_key")
@@ -1559,6 +1565,10 @@ async def _get_embedding_status_async(data_sources_input):
     return status_map
 
 
+@required_env_vars({
+    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.GET_ITEM],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.HEAD_OBJECT],
+})
 @validated(op="get_status")
 def get_embedding_status(event, context, current_user, name, data):
     """

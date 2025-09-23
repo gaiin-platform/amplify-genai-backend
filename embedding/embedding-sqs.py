@@ -6,6 +6,10 @@ import json
 import os
 import logging
 from shared_functions import get_original_creator
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    SQSOperation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from pycommon.const import APIAccessType
@@ -22,6 +26,9 @@ sqs = boto3.client("sqs")
 embedding_chunks_index_queue = os.environ["EMBEDDING_CHUNKS_INDEX_QUEUE"]
 
 
+@required_env_vars({
+    "EMBEDDING_CHUNKS_INDEX_QUEUE": [SQSOperation.RECEIVE_MESSAGE, SQSOperation.DELETE_MESSAGE],
+})
 @validated(op="get")
 def get_in_flight_messages(event, context, current_user, name, data):
     try:

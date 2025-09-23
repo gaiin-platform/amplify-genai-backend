@@ -22,6 +22,9 @@ custom:
     - staging
     - prod
 
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.stageVars.DEP_NAME}
+
   cf-changesets:
     requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}  
 
@@ -41,29 +44,42 @@ provider:
 
 
   environment:
+    #AWS_REGION optional for /chat/service.py 
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    DEFAULT_SECRET_PARAMETER_PREFIX: "/pdb"
-    DEFAULT_ACCOUNT: "default"
-    DEFAULT_LLM_QUERY_MODEL: "anthropic.claude-3-5-sonnet-20240620-v1:0"
-    OBJECT_ACCESS_API_ENDPOINT: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}/utilities/can_access_objects"
-    USER_SESSIONS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-sessions
-    USER_RECORDS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-records
-    ATTACHMENT_STORAGE_S3_BUCKET_NAME: ${self:service}-${sls:stage}-work-record-attachments
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    DYNAMO_DYNAMIC_CODE_TABLE: ${self:service}-${sls:stage}-dynamic-code
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    DYNAMIC_CODE_BUCKET: ${self:service}-${sls:stage}-dynamic-code
-    LAMBDA_BASIC_OPS_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    JOB_STATUS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-job-status
-    JOB_RESULTS_BUCKET: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-job-results
-    WORKFLOW_LAMBDA_NAME: ${self:service}-${self:provider.stage}-llm_workflow_runner
-    USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-storage
-    #AWS_REGION optional for /chat/service.py 
-    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
 
+    # Locally Defined Variables
+    ATTACHMENT_STORAGE_S3_BUCKET_NAME: ${self:service}-${sls:stage}-work-record-attachments
+    DYNAMIC_CODE_BUCKET: ${self:service}-${sls:stage}-dynamic-code
+    DYNAMO_DYNAMIC_CODE_TABLE: ${self:service}-${sls:stage}-dynamic-code-entries
+    LAMBDA_BASIC_OPS_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    USER_RECORDS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-records
+    USER_SESSIONS_DYNAMODB_TABLE_NAME: ${self:service}-${sls:stage}-work-sessions
+    USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-storage
+    WORKFLOW_LAMBDA_NAME: ${self:service}-${self:provider.stage}-llm_workflow_runner
+
+    # Imported Variables
+    # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    # API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    # COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    # JOB_RESULTS_BUCKET: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-job-results
+    # JOB_STATUS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-api-${sls:stage}-job-status
+    # ENV_VARS_TRACKING_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-env-vars-tracking
+
+    # Parameter Store Version
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    JOB_RESULTS_BUCKET: ${ssm:${self:custom.ssmBasePath}-assistants-api/JOB_RESULTS_BUCKET}
+    JOB_STATUS_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants-api/JOB_STATUS_TABLE}
+    
   iam:
     role:
       managedPolicies:
@@ -258,6 +274,23 @@ resources:
               Resource: 
                 - arn:aws:s3:::${self:provider.environment.ATTACHMENT_STORAGE_S3_BUCKET_NAME}/*
                 - arn:aws:s3:::${self:provider.environment.DYNAMIC_CODE_BUCKET}/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction

@@ -15,6 +15,8 @@ from pycommon.api.assistants import share_assistant
 import boto3
 
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation, S3Operation
 
 dynamodb = boto3.resource("dynamodb")
 from pycommon.api.amplify_users import are_valid_amplify_users
@@ -36,7 +38,7 @@ def get_s3_data(bucket_name, s3_key):
 
 def get_data_from_dynamodb(user, name):
     dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     print("Querying DynamoDB for user: {} and name: {}".format(user, name))
 
@@ -91,6 +93,10 @@ def get_data_from_dynamodb(user, name):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+    "S3_SHARE_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated("load")
 def load_data_from_s3(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -116,7 +122,7 @@ def load_data_from_s3(event, context, current_user, name, data):
         print("Loading data from S3: {}".format(s3_key))
         return {
             "success": True,
-            "item": get_s3_data(os.environ["S3_BUCKET_NAME"], s3_key),
+            "item": get_s3_data(os.environ["S3_SHARE_BUCKET_NAME"], s3_key),
         }
 
     else:
@@ -265,6 +271,10 @@ def handle_share_assistant(access_token, prompts, recipient_users):
         "required": ["success", "items"],
     },
 )
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
     access_token = data["access_token"]
@@ -314,10 +324,10 @@ def share_with_users(event, context, current_user, name, data):
                 user, current_user, dt_string, str(uuid.uuid4())
             )
 
-            put_s3_data(os.environ["S3_BUCKET_NAME"], s3_key, new_data)
+            put_s3_data(os.environ["S3_SHARE_BUCKET_NAME"], s3_key, new_data)
 
             dynamodb = boto3.resource("dynamodb")
-            table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+            table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
             # Step 1: Query using the secondary index to get the primary key
             response = table.query(
@@ -394,8 +404,9 @@ def remove_code_interpreter_details(conversations):
                 ):
                     del message["data"]["state"]["codeInterpreter"]
     return conversations
-
-
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated("read")
 def get_share_data_for_user(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -405,7 +416,7 @@ def get_share_data_for_user(event, context, current_user, name, data):
             "message": "API key does not have access to share functionality",
         }
 
-    tableName = os.environ["DYNAMODB_TABLE"]
+    tableName = os.environ["SHARES_DYNAMODB_TABLE"]
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(tableName)
 

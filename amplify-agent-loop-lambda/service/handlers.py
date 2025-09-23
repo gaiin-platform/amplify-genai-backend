@@ -27,6 +27,10 @@ from agent.core import Action, UnknownActionError
 from agent.prompt import create_llm
 from agent.tools.ops import ops_to_tools, get_default_ops_as_tools
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from datetime import datetime
 from typing import List, Dict, Any
 from service.data_sources import resolve_datasources
@@ -172,6 +176,10 @@ def event_printer(
             print(f"Error storing agent response in DynamoDB: {e}")
 
 
+@required_env_vars({
+    "AGENT_STATE_DYNAMODB_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.QUERY],
+    "AGENT_STATE_BUCKET": [S3Operation.PUT_OBJECT],
+})
 @api_tool(
     path="/vu-agent/handle-event",
     tags=["default"],
@@ -859,6 +867,9 @@ def generate_file_download_urls(
         return {}
 
 
+@required_env_vars({
+    "AGENT_STATE_BUCKET": [S3Operation.GET_OBJECT],
+})
 @api_tool(
     path="/vu-agent/get-file-download-urls",
     tags=["default"],
@@ -930,6 +941,10 @@ def extract_data_sources_from_messages(
     return data_sources
 
 
+@required_env_vars({
+    "AGENT_STATE_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+    "AGENT_STATE_BUCKET": [S3Operation.GET_OBJECT],
+})
 @api_tool(
     path="/vu-agent/get-latest-agent-state",
     tags=[],

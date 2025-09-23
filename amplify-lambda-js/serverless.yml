@@ -19,6 +19,9 @@ custom:
     - dev
     - staging
     - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.stageVars.DEP_NAME}
     
   prune:
     automatic: true
@@ -43,21 +46,29 @@ provider:
 
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
-    #Combined Vars:
-    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
-    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
-    S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
-    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
+    
+    AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    BEDROCK_GUARDRAIL_ID: ${self:custom.stageVars.BEDROCK_GUARDRAIL_ID, ''}
+    BEDROCK_GUARDRAIL_VERSION: ${self:custom.stageVars.BEDROCK_GUARDRAIL_VERSION, ''}
     COGNITO_CLIENT_ID: ${self:custom.stageVars.COGNITO_CLIENT_ID}
-    HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
+    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
+    DEP_REGION: ${self:custom.stageVars.DEP_REGION} 
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
+    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
+    TRACING_ENABLED: false
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+    # Locally Defined Variables
     ASSISTANT_QUEUE_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-assistant-queue
+    ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
     ASSISTANT_TASK_RESULTS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${self:service}-${sls:stage}-ast-results
     ASSISTANT_LOGS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-${sls:stage}-assistant-chat-logs
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
     ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
-    ASSISTANT_LOOKUP_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-lookup
     CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
     TRACE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-traces
@@ -65,22 +76,45 @@ provider:
     API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
     API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
     COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
     HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-history-cost-calculations
-    MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-assistant-conversations
-    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-conversations-content
-    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    DEP_REGION: ${self:custom.stageVars.DEP_REGION} 
-    AGENT_ENDPOINT: ${self:custom.stageVars.AGENT_ENDPOINT}
-    AGENT_STATE_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-agent-loop-${sls:stage}-agent-state
-    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
-    BEDROCK_GUARDRAIL_ID: ${self:custom.stageVars.BEDROCK_GUARDRAIL_ID, ''}
-    BEDROCK_GUARDRAIL_VERSION: ${self:custom.stageVars.BEDROCK_GUARDRAIL_VERSION, ''}
-    
+    REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
+    TRACE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-traces
+  
+    # Imported Variables
+    # AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+    # API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    # ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
+    # ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
+    # CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
+    # GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-assistant-conversations
+    # ASSISTANT_GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
+    # HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
+    # MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
+    # S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
+    # S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-group-conversations-content
+    # S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
+    # S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
+    # ENV_VARS_TRACKING_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-env-vars-tracking
+
+    # Parameter Store Version
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
+    ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANT_LOOKUP_DYNAMODB_TABLE}
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_ALIASES_DYNAMODB_TABLE}
+    ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}
+    HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
+    MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
+    S3_FILE_TEXT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_FILE_TEXT_BUCKET_NAME}
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-assistants/S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}
+    S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
+    S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
+
   iam:
     role:
       managedPolicies:
@@ -220,8 +254,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.TRACE_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANT_TASK_RESULTS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANT_LOGS_BUCKET_NAME}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.ASSISTANT_QUEUE_NAME}"
@@ -239,8 +273,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_STATE_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - 'arn:aws:bedrock:*::foundation-model/*'
                 - "arn:aws:bedrock:*:${aws:accountId}:inference-profile/*"
             - Effect: Allow
@@ -277,6 +310,22 @@ resources:
               Resource:
                 - "arn:aws:bedrock:*:${aws:accountId}:guardrail/${self:provider.environment.BEDROCK_GUARDRAIL_ID, '*'}"
                 - "arn:aws:bedrock:*:${aws:accountId}:guardrail-profile/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
     
     RequestStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'

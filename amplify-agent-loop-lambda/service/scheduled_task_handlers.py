@@ -8,8 +8,16 @@ from scheduled_tasks_events.scheduled_tasks_registry import (
     execute_specific_task,
 )
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, SQSOperation
+)
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "SCHEDULED_TASKS_QUEUE": [SQSOperation.SEND_MESSAGE],
+})
 @api_tool(
     path="/vu-agent/create-scheduled-task",
     tags=["scheduled-tasks", "default"],
@@ -150,6 +158,9 @@ def create_scheduled_task_handler(
         }
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @api_tool(
     path="/vu-agent/get-scheduled-task",
     tags=["scheduled-tasks", "default"],
@@ -205,6 +216,9 @@ def get_scheduled_task_handler(current_user, access_token, task_id):
         return {"success": False, "message": f"Failed to get scheduled task: {str(e)}"}
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.SCAN],
+})
 @api_tool(
     path="/vu-agent/list-scheduled-tasks",
     tags=["scheduled-tasks", "default"],
@@ -252,6 +266,9 @@ def list_scheduled_tasks_handler(current_user, access_token):
         }
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @api_tool(
     path="/vu-agent/update-scheduled-task",
     tags=["scheduled-tasks", "default"],
@@ -378,6 +395,10 @@ def update_scheduled_task_handler(
         }
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.DELETE_ITEM],
+    "SCHEDULED_TASKS_QUEUE": [SQSOperation.SEND_MESSAGE],
+})
 @api_tool(
     path="/vu-agent/delete-scheduled-task",
     tags=["scheduled-tasks", "default"],
@@ -414,6 +435,10 @@ def delete_scheduled_task_handler(current_user, access_token, task_id):
         }
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.GET_ITEM],
+    "SCHEDULED_TASK_EXECUTION_LOGS_BUCKET": [S3Operation.GET_OBJECT],
+})
 @api_tool(
     path="/vu-agent/get-task-execution-details",
     tags=["scheduled-tasks", "default"],
@@ -538,6 +563,10 @@ def get_task_execution_details_handler(
         }
 
 
+@required_env_vars({
+    "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.GET_ITEM],
+    "SCHEDULED_TASKS_QUEUE": [SQSOperation.SEND_MESSAGE],
+})
 @api_tool(
     path="/vu-agent/execute-task",
     tags=["scheduled-tasks", "default"],

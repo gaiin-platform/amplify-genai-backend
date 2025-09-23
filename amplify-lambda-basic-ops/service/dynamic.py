@@ -9,6 +9,10 @@ import concurrent.futures
 from boto3.dynamodb.types import TypeSerializer
 from llm.chat import chat_simple
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, SecretsManagerOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -192,6 +196,12 @@ response = client.chat.completions.create(
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "DYNAMIC_CODE_BUCKET": [S3Operation.PUT_OBJECT],
+    "DYNAMO_DYNAMIC_CODE_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "USER_MODELS_TABLE": [DynamoDBOperation.GET_ITEM],
+    "CHAT_ENDPOINT": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated(op="create")
 def create_code(event, context, current_user, name, data):
     try:
@@ -357,6 +367,10 @@ def create_code(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "DYNAMO_DYNAMIC_CODE_TABLE": [DynamoDBOperation.GET_ITEM],
+    "DYNAMIC_CODE_BUCKET": [S3Operation.GET_OBJECT],
+})
 @validated(op="invoke")
 def invoke_code(event, context, current_user, name, data):
     try:
@@ -499,6 +513,9 @@ def invoke_code(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "DYNAMO_DYNAMIC_CODE_TABLE": [DynamoDBOperation.SCAN],
+})
 @validated(op="list")
 def list_user_code(event, context, current_user, name, data):
     try:

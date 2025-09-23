@@ -13,6 +13,8 @@ s3 = boto3.client("s3")
 
 
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -232,6 +234,9 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="process_drive_sources")
 def process_drive_sources(event, context, current_user, name, data=None):
     """

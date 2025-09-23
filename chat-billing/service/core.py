@@ -3,6 +3,10 @@ from decimal import Decimal
 import os
 import boto3
 from model_rates.update_table import load_model_rate_table, get_csv_model_ids
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.api.amplify_groups import get_user_affiliated_groups
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.api.ops import api_tool
@@ -134,6 +138,13 @@ DEFAULT_MODELS = "defaultModels"
         "required": ["success", "data"],
     },
 )
+@required_env_vars({
+    "MODEL_RATE_TABLE": [DynamoDBOperation.SCAN],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="read")
 def get_user_available_models(event, context, current_user, name, data):
     # Retrieve supported models
@@ -289,6 +300,13 @@ def extract_data(model_id, model_data):
     }
 
 
+@required_env_vars({
+    "MODEL_RATE_TABLE": [
+        DynamoDBOperation.SCAN,
+        DynamoDBOperation.BATCH_WRITE_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="read")
 def get_supported_models_as_admin(event, context, current_user, name, data):
     if data["api_accessed"] and "admin" not in data["allowed_access"]:
@@ -388,6 +406,14 @@ def adjust_data_to_decimal(model):
     return model
 
 
+@required_env_vars({
+    "MODEL_RATE_TABLE": [
+        DynamoDBOperation.SCAN,
+        DynamoDBOperation.BATCH_WRITE_ITEM,
+        DynamoDBOperation.DELETE_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="update")
 def update_supported_models(event, context, current_user, name, data):
     if not verify_user_as_admin(data["access_token"], "Update Supported Models"):
@@ -528,6 +554,9 @@ def models_are_equal(existing_model, new_model):
     return True
 
 
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="read")
 def get_default_models(event, context, current_user, name, data):
     default_models_result = get_admin_default_models()

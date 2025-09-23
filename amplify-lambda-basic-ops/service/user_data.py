@@ -7,6 +7,10 @@ from jsonschema.exceptions import ValidationError
 import re
 from data.user import CommonData
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -96,6 +100,16 @@ def common_handler(operation, func_schema, **optional_params):
     return handler
 
 
+@required_env_vars({
+    "USER_STORAGE_TABLE": [
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+        DynamoDBOperation.DELETE_ITEM,
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.BATCH_GET_ITEM,
+        DynamoDBOperation.BATCH_WRITE_ITEM,
+    ],
+})
 @validated("route", False)
 def route(event, context, current_user, name, data):
 

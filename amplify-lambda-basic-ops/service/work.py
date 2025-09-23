@@ -4,6 +4,10 @@ from datetime import datetime
 from work.session import create_session, delete_record, list_records, add_record
 from work.util import extract_sections
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -88,6 +92,11 @@ set_permissions_by_state(permissions)
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "USER_SESSIONS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM],
+    "USER_RECORDS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.QUERY],
+    "ATTACHMENT_STORAGE_S3_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated(op="create")
 def create_user_session(event, context, current_user, name, data):
     try:
@@ -184,6 +193,11 @@ def create_user_session(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "USER_SESSIONS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY],
+    "USER_RECORDS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.PUT_ITEM],
+    "ATTACHMENT_STORAGE_S3_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated(op="add_record")
 def add_user_record(event, context, current_user, name, data):
     try:
@@ -293,6 +307,11 @@ def add_user_record(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "USER_SESSIONS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.GET_ITEM],
+    "USER_RECORDS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.QUERY],
+    "ATTACHMENT_STORAGE_S3_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated(op="list_records")
 def list_user_records(event, context, current_user, name, data):
     try:
@@ -374,6 +393,11 @@ def list_user_records(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "USER_SESSIONS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "USER_RECORDS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "ATTACHMENT_STORAGE_S3_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+})
 @validated(op="delete_record")
 def delete_user_record(event, context, current_user, name, data):
     try:
@@ -530,6 +554,11 @@ def echo(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "USER_SESSIONS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.GET_ITEM],
+    "USER_RECORDS_DYNAMODB_TABLE_NAME": [DynamoDBOperation.QUERY],
+    "ATTACHMENT_STORAGE_S3_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated(op="stitch_records")
 def stitch_records(event, context, current_user, name, data):
     try:

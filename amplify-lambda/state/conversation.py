@@ -6,6 +6,10 @@ import time
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 setup_validated(rules, get_permission_checker)
 from botocore.exceptions import BotoCoreError, ClientError
 import boto3
@@ -80,8 +84,10 @@ def upload_to_s3(key, conversation, folder=None):
             "message": "Failed to uploaded conversation to s3",
             "error": str(e),
         }
-
-
+@required_env_vars({
+    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+})
 @validated("conversation_upload")
 def upload_conversation(event, context, current_user, name, data):
     data = data["data"]
@@ -163,6 +169,10 @@ def upload_conversation(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated("conversation_upload")
 def register_conversation(event, context, current_user, name, data):
     data = data["data"]
@@ -191,7 +201,9 @@ def register_conversation(event, context, current_user, name, data):
     conversation_key = f"{current_user}/{conversation['id']}"
     return upload_to_s3(conversation_key, compressed_conversation, None)
 
-
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated("read")
 def get_conversation(event, context, current_user, name, data):
     query_param = get_conversation_query_param(event.get("queryStringParameters", {}))
@@ -245,6 +257,9 @@ def pick_conversation_attributes(conversation, include_timestamp=False):
         )
 
     return result
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+})
 
 
 @validated("read")
@@ -274,6 +289,9 @@ def get_all_conversations(event, context, current_user, name, data):
 
     presigned_urls = get_presigned_urls(current_user, conversations)
     return {"success": True, "presignedUrls": presigned_urls}
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+})
 
 
 @validated("read")
@@ -366,7 +384,9 @@ def get_all_complete_conversations(current_user, days=None):
         print(str(e))
         return None
 
-
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+})
 @validated("get_multiple_conversations")
 def get_multiple_conversations(event, context, current_user, name, data):
     data = data["data"]
@@ -454,7 +474,9 @@ def get_presigned_urls(current_user, conversations, chunk_size=400):
     print("Number of presigned urls needed: ", len(presigned_urls))
     return presigned_urls
 
-
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+})
 @validated("delete")
 def delete_conversation(event, context, current_user, name, data):
     query_param = get_conversation_query_param(event.get("queryStringParameters", {}))
@@ -479,7 +501,9 @@ def delete_conversation(event, context, current_user, name, data):
             "error": str(e),
         }
 
-
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+})
 @validated("delete_multiple_conversations")
 def delete_multiple_conversations(event, context, current_user, name, data):
     data = data["data"]
@@ -674,7 +698,10 @@ def populate_cache_async(current_user, metadata_list):
         print(f"Error populating cache (non-blocking): {str(e)}")
         # Non-blocking - cache population failure doesn't break the API
 
-
+@required_env_vars({
+    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM],
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT, S3Operation.LIST_BUCKET],
+})
 @validated("read")
 def get_conversations_metadata_only(event, context, current_user, name, data):
     """Get metadata with lazy cache population and S3 fallback"""
@@ -732,7 +759,9 @@ def get_conversations_metadata_only(event, context, current_user, name, data):
             "message": f"Failed to get conversation metadata: {str(e)}",
         }
 
-
+@required_env_vars({
+    "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT, S3Operation.LIST_BUCKET],
+})
 @validated("read")
 def get_conversations_since_timestamp(event, context, current_user, name, data):
     """Get conversations modified after a specific timestamp"""
