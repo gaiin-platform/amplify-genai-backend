@@ -53,6 +53,7 @@ def get_tables_from_config_file() -> Dict[str, str]:
         log(f"Error reading config file: {e}")
         sys.exit(1)
 
+
 def tables_ok(table_names: Dict[str, str]) -> bool:
     """Check if the required tables exist."""
     try:
@@ -77,14 +78,13 @@ def tables_ok(table_names: Dict[str, str]) -> bool:
         log(f"Error checking tables: {e}")
         return False
 
+
 def get_user(old_id: str) -> dict | None:
     """Fetch user by old ID."""
     table = table_names.get("COGNITO_USERS_DYNAMODB_TABLE")
     try:
         account = dynamodb.Table(table)
-        response = account.query(
-            KeyConditionExpression=Key("user_id").eq(old_id)
-        )
+        response = account.query(KeyConditionExpression=Key("user_id").eq(old_id))
         if "Items" in response and response["Items"]:
             return response["Items"][0]
         else:
@@ -134,16 +134,22 @@ def update_user_id(old_id: str, new_id: str, dry_run: bool) -> bool:
         log(msg % f"Found user with old ID {old_id}.\n\tExisting Data: {user}")
         user["user_id"] = new_id
         if dry_run:
-            log(msg % f"Would update user ID from {old_id} to {new_id}.\n\tNew Data: {user}")
+            log(
+                msg
+                % f"Would update user ID from {old_id} to {new_id}.\n\tNew Data: {user}"
+            )
             return True
         else:
             # save the user back to the table
-            log(msg % f"Updating user ID from {old_id} to {new_id}.\n\tNew Data: {user}")
+            log(
+                msg % f"Updating user ID from {old_id} to {new_id}.\n\tNew Data: {user}"
+            )
             dynamodb.Table(user_table).put_item(Item=user)
             return True
     except Exception as e:
         log(msg % f"Error updating user ID from {old_id} to {new_id}: {e}")
         return False
+
 
 def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all accounts associated with the old user ID to the new user ID."""
@@ -152,13 +158,14 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
     try:
         account = dynamodb.Table(table)
         # get raw table query by user id
-        raw_account = account.query(
-            KeyConditionExpression=Key("user").eq(old_id)
-        )
+        raw_account = account.query(KeyConditionExpression=Key("user").eq(old_id))
         if "Items" not in raw_account or not raw_account["Items"]:
             log(msg % f"No accounts found for user ID {old_id}.")
             return True  # No accounts to update, so we consider it successful
-        log(msg % f"Found accounts record for user ID {old_id}.\n\tExisting Data: {raw_account['Items']}")
+        log(
+            msg
+            % f"Found accounts record for user ID {old_id}.\n\tExisting Data: {raw_account['Items']}"
+        )
         # create a new copy of the record with the updated username
         for item in raw_account["Items"]:
             item["user"] = new_id
@@ -173,6 +180,7 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
         log(msg % f"Error updating accounts for user ID from {old_id} to {new_id}: {e}")
         return False
 
+
 def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all API keys associated with the old user ID to the new user ID."""
     # NOTE: This table does not allow us to query by the old user ID, so we
@@ -182,7 +190,7 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("API_KEYS_DYNAMODB_TABLE")
     try:
         api_keys_table = dynamodb.Table(table)
-        
+
         # Get all API key records for the old user ID
         # by finding the 'api_owner_id' field that starts with
         # the old user ID
@@ -195,7 +203,10 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
             return True  # No API keys to update, so we consider it successful
         # create a new copy of the record with the updated username
         for item in raw_keys["Items"]:
-            log(msg % f"Found API keys record for user ID {old_id}.\n\tExisting Data: {item}")
+            log(
+                msg
+                % f"Found API keys record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
             item["api_owner_id"] = item["api_owner_id"].replace(old_id, new_id)
             # TODO(Karely): Does 'owner' need to reflect the new ID?
             item["owner"] = new_id
@@ -211,24 +222,37 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
         return False
 
 
-def change_user_table(old_id: str, new_id: str, dry_run: bool):
-    """Change the user ID in the user table."""
-    # This is a placeholder function. Actual implementation will depend on
-    # how the user ID is stored and what constraints exist.
-    pass
+def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all ops records associated with the old user ID to the new user ID."""
+    msg = f"[update_ops_table][dry-run: {dry_run}] %s"
+    table = table_names.get("OPS_DYNAMODB_TABLE")
+    try:
+        ops_table = dynamodb.Table(table)
+        # get raw table query by user id
+        raw_ops = ops_table.scan(FilterExpression=Attr("user").eq(old_id))
+        if "Items" not in raw_ops or not raw_ops["Items"]:
+            log(msg % f"No ops records found for user ID {old_id}.")
+            return True  # No ops records to update, so we consider it successful
+        # create a new copy of the record with the updated username
+        for item in raw_ops["Items"]:
+            log(
+                msg
+                % f"Found ops records for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update ops item to:\n\tNew Data:{item}")
+            else:
+                log(msg % f"Updating ops item to:\n\tNew Data:{item}")
+                ops_table.put_item(Item=item)
+        return True
 
-def change_account_table(old_id: str, new_id: str, dry_run: bool):
-    """Change the user ID in the account table."""
-    # This is a placeholder function. Actual implementation will depend on
-    # how the user ID is stored and what constraints exist.
-    pass
-
-
-def change_api_keys(old_id: str, new_id: str, dry_run: bool):
-    """Change the user ID in the API keys table."""
-    # This is a placeholder function. Actual implementation will depend on
-    # how the user ID is stored and what constraints exist.
-    pass
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating ops records for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 if __name__ == "__main__":
@@ -261,15 +285,26 @@ if __name__ == "__main__":
                 continue
 
             if not update_user_id(old_user_id, new_user_id, args.dry_run):
-                log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
+                log(
+                    f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required."
+                )
                 continue
 
             if not update_accounts(old_user_id, new_user_id, args.dry_run):
-                log(f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required.")
+                log(
+                    f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required."
+                )
                 continue
 
             if not update_api_keys(old_user_id, new_user_id, args.dry_run):
-                log(f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys.")
+                log(
+                    f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys."
+                )
+
+            if not update_ops_table(old_user_id, new_user_id, args.dry_run):
+                log(
+                    f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records."
+                )
 
     except Exception as e:
         log(f"Error processing users: {e}")
