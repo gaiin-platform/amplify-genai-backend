@@ -239,6 +239,7 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
             )
             item["api_owner_id"] = item["api_owner_id"].replace(old_id, new_id)
             # TODO(Karely): Does 'owner' need to reflect the new ID?
+            # TODO(Karely): Confirmed we need delegated field updated
             item["owner"] = new_id
             if dry_run:
                 log(msg % f"Would update API key item to:\n\tNew Data: {item}")
