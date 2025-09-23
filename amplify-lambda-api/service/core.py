@@ -563,7 +563,7 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.LIST_OBJECT, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
 })
 @validated("read")
 def get_api_document_templates(event, context, current_user, name, data):
