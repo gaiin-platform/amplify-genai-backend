@@ -54,29 +54,45 @@
 {
     "DATA_DISCLOSURE_VERSIONS_TABLE" : "amplify-v6-data-disclosure-dev-versions",
     "MODEL_RATE_TABLE":  "amplify-v6-chat-billing-dev-model-rates", // non user related??
+    "DATASOURCE_REGISTRY_DYNAMO_TABLE" : "amplify-v6-amplify-js-dev-datasource-registry",
     }
     
     
     
     
     // BUCKETS: 
-    {
+    {   
+        // REQUIRES MIGRATION:
+        "S3_CONVERSATIONS_BUCKET_NAME" : "amplify-v6-lambda-dev-user-conversations",
+
+
+
+        // BUCKETS OF LESS MIGRATION IMPORTANCE:
+        
         "AGENT_STATE_BUCKET": "amplify-v6-agent-loop-dev-agent-state", // POINTER 
-        "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME" : "amplify-v6-assistants-dev-code-interpreter-files", // NOT CURRENTLY TRACKED  - RETURNED TO USER IN CHAT RESPONSE BODY AND FORGOTTEN 
         "SCHEDULED_TASKS_LOGS_BUCKET" : "amplify-v6-agent-loop-dev-scheduled-tasks-logs", // POINTER 
         "S3_ARTIFACTS_BUCKET" : "amplify-v6-artifacts-dev-bucket", // POINTER 
-        "S3_CONVERSATIONS_BUCKET_NAME" : "amplify-v6-lambda-dev-user-conversations",
-        "S3_CONVERSION_INPUT_BUCKET_NAME" : "amplify-v6-lambda-dev-document-conversion-input",
-        "S3_CONVERSION_OUTPUT_BUCKET_NAME" : "amplify-v6-lambda-dev-document-conversion-output",
         "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME" : "amplify-v6-assistants-dev-group-conversations-content", // POINTER 
         "S3_SHARE_BUCKET_NAME" : "amplify-v6-lambda-dev-share", // POINTER 
         "WORKFLOW_TEMPLATES_BUCKET": "amplify-v6-agent-loop-dev-workflow-templates", // POINTER 
-    
-        // looking into 
+
+        "TRACE_BUCKET_NAME": "amplify-v6-lambda-dev-chat-traces", // not even turned on at this time 
+        "S3_ZIP_FILE_BUCKET_NAME" : "amplify-v6-lambda-dev-zip-files", // used for uploading individual files only 
+
+
+        // one and done (skip):
+        "S3_CONVERSION_INPUT_BUCKET_NAME" : "amplify-v6-lambda-dev-document-conversion-input",
+        "S3_CONVERSION_OUTPUT_BUCKET_NAME" : "amplify-v6-lambda-dev-document-conversion-output", // templates/ folder contents must remain unchanged
+        "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME" : "amplify-v6-assistants-dev-code-interpreter-files", // NOT CURRENTLY TRACKED  - RETURNED TO USER IN CHAT RESPONSE BODY AND FORGOTTEN 
+        
+
+        // Cannot Change:
         "S3_IMAGE_INPUT_BUCKET_NAME" : "amplify-v6-lambda-dev-image-input",
         "S3_RAG_INPUT_BUCKET_NAME" : "amplify-v6-lambda-dev-rag-input",
         "S3_FILE_TEXT_BUCKET_NAME" : "amplify-v6-lambda-dev-file-text",
     
+
+
      // unsure if in use
         "DYNAMIC_CODE_BUCKET" : "amplify-v6-lambda-basic-ops-dev-dynamic-code",
         "ASSISTANT_TASK_RESULTS_BUCKET_NAME" : "amplify-v6-amplify-v6-amplify-js-dev-ast-results",
@@ -85,9 +101,6 @@
         "ATTACHMENT_STORAGE_S3_BUCKET_NAME": "amplify-v6-lambda-basic-ops-dev-work-record-attachments",
         "ASSISTANT_LOGS_BUCKET_NAME" : "amplify-v6-dev-assistant-chat-logs",
      
-        // BUCKETS OF LESS MIGRATION IMPORTANCE:
-        "TRACE_BUCKET_NAME": "amplify-v6-lambda-dev-chat-traces", // not even turned on at this time 
-        "S3_ZIP_FILE_BUCKET_NAME" : "amplify-v6-lambda-dev-zip-files", // used for uploading individual files only 
     } 
     
     // non user related buckets:

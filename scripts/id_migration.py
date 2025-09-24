@@ -445,7 +445,9 @@ def update_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("FILES_DYNAMO_TABLE")
     try:
         files_table = dynamodb.Table(table)
-    ### TODO LOOKING INTO ###       
+    ### TODO 
+    # "createdBy"
+    # File IDs CAN remain unchanged during migration      
 
 # "HASH_FILES_DYNAMO_TABLE" : "amplify-v6-lambda-dev-hash-files",
 def update_hash_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -454,7 +456,9 @@ def update_hash_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("HASH_FILES_DYNAMO_TABLE")
     try:
         hash_files_table = dynamodb.Table(table)
-    ### TODO LOOKING INTO ###   
+    ### TODO 
+    # "originalCreator" 
+    # Hash File IDs CAN remain unchanged during migration
 
 # "EMBEDDING_PROGRESS_TABLE" : "amplify-v6-embedding-dev-embedding-progress",
 def update_embedding_progress_table(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -463,7 +467,8 @@ def update_embedding_progress_table(old_id: str, new_id: str, dry_run: bool) -> 
     table = table_names.get("EMBEDDING_PROGRESS_TABLE")
     try:
         embedding_progress_table = dynamodb.Table(table)
-    ### TODO LOOKING INTO ###  
+    ### TODO  
+    # "originalCreator"
     
 
 # "USER_TAGS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-user-tags",    
@@ -613,16 +618,6 @@ def update_oauth_user_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     # 1. "user_integration" prefix must be updated
         
 
-### DATA DISCLOSURE TABLES ###
-# "DATASOURCE_REGISTRY_DYNAMO_TABLE" : "amplify-v6-amplify-js-dev-datasource-registry",
-def update_datasource_registry_table(old_id: str, new_id: str, dry_run: bool) -> bool:
-    """Update all datasource registry records associated with the old user ID to the new user ID."""
-    msg = f"[update_datasource_registry_table][dry-run: {dry_run}] %s"
-    table = table_names.get("DATASOURCE_REGISTRY_DYNAMO_TABLE")
-    try:
-        datasource_registry_table = dynamodb.Table(table)
-
-    # TODO: NOT SURE LOOKING INTO
         
 # "DATA_DISCLOSURE_ACCEPTANCE_TABLE" : "amplify-v6-data-disclosure-dev-acceptance",
 def update_data_disclosure_acceptance_table(old_id: str, new_id: str, dry_run: bool) -> bool:
