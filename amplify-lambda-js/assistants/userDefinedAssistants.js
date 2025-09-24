@@ -97,7 +97,6 @@ const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
 }
 
 const isMemberOfGroup = async (current_user, ast_owner, token) => {
-
     try {
         const params = {
             TableName: process.env.GROUPS_DYNAMO_TABLE,
@@ -163,8 +162,51 @@ const userInAmplifyGroup = async (amplifyGroups, token) => {
 
 }
 
+const getStandaloneAst = async (assistantPublicId, current_user, token) => {
+    const ast = await getLatestAssistant(assistantPublicId);
+    if (!ast || ! ast.data?.astPath) return null;
+
+    const params = {
+        TableName: process.env.ASSISTANT_LOOKUP_DYNAMODB_TABLE,
+        Key: {
+            astPath: { S: ast.data.astPath }
+        }
+    };
+    
+    try {
+        const response = await dynamodbClient.send(new GetItemCommand(params));
+        
+        if (!response.Item) {
+            return null;
+        }
+        
+        const item = unmarshall(response.Item);
+        
+        const accessTo = item.accessTo || {};
+        
+        if (!item.public) {
+            if (current_user !== item.createdBy && 
+                !accessTo.users?.includes(current_user) &&
+                !await userInAmplifyGroup(accessTo.amplifyGroups || [], token)) {
+                return null;
+            }
+        }
+        
+        return ast;
+        
+    } catch (error) {
+        console.error('Error looking up standalone assistant:', error);
+        return null;
+    }
+}
+
 
 export const getAstgGroupId = async (assistantPublicId) => {
+    const ast = await getLatestAssistant(assistantPublicId);
+    return ast?.data?.groupId;
+}
+
+const getLatestAssistant = async (assistantPublicId) => {
     /**
      * Retrieves the most recent version of an assistant from the DynamoDB table.
      *
@@ -197,7 +239,7 @@ export const getAstgGroupId = async (assistantPublicId) => {
                     const maxVersion = max.version || 1;
                     return itemVersion > maxVersion ? item : max;
                 });
-                return astRecord.data?.groupId;
+                return astRecord;
             }
         } catch (error) {
             console.error('Error querying assistant:', error);
@@ -206,6 +248,7 @@ export const getAstgGroupId = async (assistantPublicId) => {
     }
 
     return null;
+
 }
 
 export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
@@ -218,17 +261,22 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
         console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
         if (!isMemberOfGroup(current_user, ast_owner, token)) return null;
     }
-
+    let assistantData = null;
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
     if (assistantAlias) {
-        const assistant = await getAssistantByAssistantDatabaseId(
+        assistantData = await getAssistantByAssistantDatabaseId(
             assistantAlias.data.id
         );
+        console.log("Assistant found by alias: ", assistantData);
+    } else {
+        //check if ast is standalone
+        assistantData = await getStandaloneAst(assistantPublicId, current_user, token);
+        console.log("Assistant found by standalone ast: ", assistantData);
+    }
 
-        console.log("Assistant found by alias: ", assistant);
-
-        const userDefinedAssistant =  fillInAssistant(assistant, assistantBase)
+    if (assistantData) {
+        const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase)
         console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
         return userDefinedAssistant;
     }
@@ -479,12 +527,6 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 (message) => message.role !== "system"
             );
 
-            if (assistant.data?.integrationDriveData) {
-                const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
-                // console.log("Drive datasources: ", driveDatasources);
-                assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
-            }
-
             const groupType = body.options.groupType;
             if (groupType) {
                 const groupTypeData = assistant.data.groupTypeData[groupType];
@@ -536,7 +578,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             content: "Pay close attention to any provided information. Unless told otherwise, " +
                                 "cite the information you are provided with quotations supporting your analysis " +
                                 "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                            data: {dataSources: assistant.dataSources}
+                            data: {dataSources: extractAssistantDatasources(assistant)}
                         },
                         {
                             role: 'system',
@@ -606,4 +648,23 @@ function extractDriveDatasources(data) {
         ])
         .map(fileMetadata => fileMetadata.datasource)
         .filter(datasource => datasource && datasource.id);
+}
+
+function extractAssistantDatasources(assistant) {
+    if (!assistant) return [];
+
+    if (assistant.data?.integrationDriveData) {
+        const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
+        // console.log("Drive datasources: ", driveDatasources);
+        assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
+    }
+
+    // update ds with astp for dual embedding object access check 
+    if (assistant.data?.astPath) {
+        assistant.dataSources.forEach(ds => {
+            ds.ast = assistant.assistantId;
+        });
+    }
+
+    return assistant.dataSources || [];
 }

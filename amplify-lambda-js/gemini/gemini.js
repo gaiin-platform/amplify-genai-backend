@@ -23,7 +23,7 @@ export const chat = async (chatBody, writable) => {
         delete body.options;
         const model = options.model;
         const modelId = (model && model.id) || "gemini-1.5-pro";
-        const maxTokens = body.max_tokens || 1000;
+        const maxTokens = body.max_tokens || 2000;
 
         let tools = options.tools;
         if(!tools && options.functions){

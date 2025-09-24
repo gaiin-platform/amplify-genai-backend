@@ -898,8 +898,13 @@ def share_assistant_with(
 
     if not assistant_entry:
         return {"success": False, "message": "Assistant not found"}
+    
+    from service.drive_datasources import extract_drive_datasources
+    drive_data_sources = extract_drive_datasources(assistant_entry.get("data", {}).get("integrationDriveData", {}))
+    # if (drive_data_sources):
+    #     print(f"Drive data sources: {drive_data_sources}")
 
-    data_sources = get_data_source_keys(assistant_entry["dataSources"])
+    data_sources = get_data_source_keys(assistant_entry["dataSources"] + drive_data_sources)
     # print("DS: ", data_sources)
 
     if not can_access_objects(

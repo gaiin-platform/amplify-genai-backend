@@ -8,3 +8,5 @@ google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
 cryptography>=36.0.0,<46.0.0 #as per the dependencies requirements
+cffi==1.17.1
+requests==2.32.4

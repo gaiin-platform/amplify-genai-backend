@@ -40,7 +40,7 @@ export class LLM {
         this.passThrough = false;
         this.responseStream = responseStream;
         this.defaultBody = {
-            "max_tokens": 1000,
+            "max_tokens": params?.options?.maxTokens || 1000,
             "temperature": 1.0,
             "top_p": 1,
             "n": 1,

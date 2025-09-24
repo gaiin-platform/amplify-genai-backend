@@ -151,7 +151,7 @@ def get_user_available_models(event, context, current_user, name, data):
         extract_data(model_id, model_data)
         for model_id, model_data in supported_models
         if (model_data.get("isAvailable", False)
-            or bool(set(model_data.get("exclusiveGroupAvailability", [])) & set(affiliated_groups))
+            or bool(set(model_data.get("exclusiveGroupAvailability", [])) & set(affiliated_groups or []))
         )
     ]
     
