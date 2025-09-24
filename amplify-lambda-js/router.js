@@ -248,6 +248,7 @@ export const routeRequest = requiredEnvVars({
     "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
     "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANT_LOGS_BUCKET_NAME": [S3Operation.PUT_OBJECT],
     "DATASOURCE_REGISTRY_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
     "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
