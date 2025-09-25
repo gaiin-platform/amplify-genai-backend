@@ -93,8 +93,9 @@ def get_authorization_url_and_state(integration, client, scopes=None):
             authorization_url, state = client.authorization_url(prompt="consent")
         case IntegrationType.MICROSOFT:
             state = str(uuid.uuid4())  # Generate a random state
+            redirect_uri = build_redirect_uri()
             authorization_url = client.get_authorization_request_url(
-                scopes=scopes, state=state, prompt="consent"
+                scopes=scopes, state=state, redirect_uri=redirect_uri, prompt="consent"
             )
 
     return authorization_url, state
@@ -822,4 +823,9 @@ def refresh_credentials(current_user, integration, credentials):
 
 
 def get_expiration_time(expires_in):
+    # Handle None or invalid expires_in values by defaulting to 1 hour (3600 seconds)
+    if expires_in is None or not isinstance(expires_in, (int, float)) or expires_in <= 0:
+        print(f"Warning: Invalid expires_in value: {expires_in}, defaulting to 3600 seconds (1 hour)")
+        expires_in = 3600
+    
     return int((datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp())
