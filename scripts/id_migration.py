@@ -18,7 +18,7 @@ dynamodb = boto3.resource("dynamodb")
 tables: Dict[str, str]
 
 
-def paginated_query(table_name: str, key_name: str, value: str, index_name: str =  None):
+def paginated_query(table_name: str, key_name: str, value: str, index_name: str = None):
     """
     Generator for paginated DynamoDB query results.
     Yields items matching Key(key_name).eq(value).
@@ -37,7 +37,9 @@ def paginated_query(table_name: str, key_name: str, value: str, index_name: str 
         kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 
-def paginated_scan(table_name: str, attr_name: str, value: str, begins_with:bool = False):
+def paginated_scan(
+    table_name: str, attr_name: str, value: str, begins_with: bool = False
+):
     """
     Generator for paginated DynamoDB scan results.
     Yields items matching Attr(attr_name).eq(value).
@@ -159,6 +161,7 @@ def get_users_from_csv(file_path: str) -> Dict[str, str]:
 ## Starting Here is all the functions that actually update the data ###
 ## ----------------------------------------------------------------- ##
 
+
 # "COGNITO_USERS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-cognito-users",
 def update_user_id(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update the user ID of the given user."""
@@ -195,14 +198,13 @@ def update_amplify_admin_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all admin configs associated with the old user ID to the new user ID."""
     msg = f"[update_amplify_admin_table][dry-run: {dry_run}] %s"
     table = table_names.get("AMPLIFY_ADMIN_DYNAMODB_TABLE")
-    try:
-        amplify_admin_table = dynamodb.Table(table)
-    # TODO:  
+    amplify_admin_table = dynamodb.Table(table)
+    # TODO:
     # 1. Config_id = "admins"  -> "data" attribute -> List <str (users_ids)>
     # 2. Config_id = "amplifyGroups"  -> "data" attribute ->  Dict <str (key),    Dict ({ "members" attribute -> List <str (users_ids)> })>
     # 3. Config_id = "featureFlags"  -> "data" attribute -> Dict <str (key),    Dict ({ "userExceptions": List <str (users_ids)> })>
-  
-        
+
+
 ### User object related tables ###
 # "ACCOUNTS_DYNAMO_TABLE": "amplify-v6-lambda-dev-accounts",
 def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -210,7 +212,7 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
     msg = f"[update_accounts][dry-run: {dry_run}] %s"
     table = table_names.get("ACCOUNTS_DYNAMO_TABLE")
     try:
-        
+
         ret = False
         for item in paginated_query(table, "user", old_id):
             log(
@@ -230,6 +232,7 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
         log(msg % f"Error updating accounts for user ID from {old_id} to {new_id}: {e}")
         return False
 
+
 # "API_KEYS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-api-keys",
 def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all API keys associated with the old user ID to the new user ID."""
@@ -246,15 +249,11 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
         # the old user ID
         # TODO(Karely): Should we search by owner_id instead?
 
-
-
-        #TODO:  NOTICE SAM
+        # TODO:  NOTICE SAM
         # 1. "api_owner_id"  Cannot update - this is referenced for cost tracking, agent use, etc.
         # 2. "owner" attribute needs to be updated DONE
-        # 3. "delegate" attribute needs to be updated 
+        # 3. "delegate" attribute needs to be updated
 
-
-        
         ret = False
         for item in paginated_scan(table, "api_owner_id", old_id, begins_with=True):
             log(
@@ -277,16 +276,17 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
         log(msg % f"Error updating API keys for user ID from {old_id} to {new_id}: {e}")
         return False
 
+
 # "ARTIFACTS_DYNAMODB_TABLE" : "amplify-v6-artifacts-dev-user-artifacts",
 def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all artifacts records associated with the old user ID to the new user ID."""
     msg = f"[update_artifacts_table][dry-run: {dry_run}] %s"
     table = table_names.get("ARTIFACTS_DYNAMODB_TABLE")
-    try:
-        artifacts_table = dynamodb.Table(table)
-        #TODO:
-        # user_id attribute needs to be updated
-        
+    artifacts_table = dynamodb.Table(table)
+    # TODO:
+    # user_id attribute needs to be updated
+
+
 # "OPS_DYNAMODB_TABLE" : "amplify-v6-lambda-ops-dev-ops",
 def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all ops records associated with the old user ID to the new user ID."""
@@ -294,7 +294,7 @@ def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("OPS_DYNAMODB_TABLE")
     try:
         ops_table = dynamodb.Table(table)
-        
+
         ret = False
         for item in paginated_query(table, "user", old_id):
             log(
@@ -322,26 +322,25 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all shares records associated with the old user ID to the new user ID."""
     msg = f"[update_shares_table][dry-run: {dry_run}] %s"
     table = table_names.get("SHARES_DYNAMODB_TABLE")
-    try:
-        shares_table = dynamodb.Table(table)
+    shares_table = dynamodb.Table(table)
 
-    #TODO:
-    # 1. "id" 
+    # TODO:
+    # 1. "id"
     # 2. maybe useless attribute "user"
     # 3. "data" attribute -> List <Dict ({ "sharedBy": str (users_ids)})>
-    # Opportunity to migrate settings column elsewhere #TODO 
-        
+    # Opportunity to migrate settings column elsewhere #TODO
+
+
 # "OBJECT_ACCESS_DYNAMODB_TABLE" : "amplify-v6-object-access-dev-object-access",
 def update_object_access_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all object access records associated with the old user ID to the new user ID."""
     msg = f"[update_object_access_table][dry-run: {dry_run}] %s"
     table = table_names.get("OBJECT_ACCESS_DYNAMODB_TABLE")
-    try:
-        object_access_table = dynamodb.Table(table)
+    object_access_table = dynamodb.Table(table)
 
     # TODO:
-    # "principal_id" 
-        
+    # "principal_id"
+
 
 ### Assistants Tables ###
 # "ASSISTANTS_ALIASES_DYNAMODB_TABLE": "amplify-v6-assistants-dev-assistant-aliases",
@@ -349,92 +348,89 @@ def update_assistants_aliases_table(old_id: str, new_id: str, dry_run: bool) -> 
     """Update all assistants aliases records associated with the old user ID to the new user ID."""
     msg = f"[update_assistants_aliases_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANTS_ALIASES_DYNAMODB_TABLE")
-    try:
-        assistants_aliases_table = dynamodb.Table(table)
-    
+    assistants_aliases_table = dynamodb.Table(table)
+
     # TODO:
-    # "user" 
-        
+    # "user"
+
+
 # "ASSISTANTS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistants",
 def update_assistants_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistants records associated with the old user ID to the new user ID."""
     msg = f"[update_assistants_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANTS_DYNAMODB_TABLE")
-    try:
-        assistants_table = dynamodb.Table(table)
+    assistants_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user" 
-    
-        
+    # 1. "user"
+
+
 # "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-code-interpreter-assistants",
-def update_assistant_code_interpreter_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+def update_assistant_code_interpreter_table(
+    old_id: str, new_id: str, dry_run: bool
+) -> bool:
     """Update all assistant code interpreter records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_code_interpreter_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE")
-    try:
-        assistant_code_interpreter_table = dynamodb.Table(table)
+    assistant_code_interpreter_table = dynamodb.Table(table)
 
     # TODO:
-    # 1. "user" 
+    # 1. "user"
 
-    
-           
+
 # "ASSISTANT_THREADS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-threads",
 def update_assistant_threads_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistant threads records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_threads_table][dry-run: {dry-run}] %s"
     table = table_names.get("ASSISTANT_THREADS_DYNAMODB_TABLE")
-    try:
-        assistant_threads_table = dynamodb.Table(table)
+    assistant_threads_table = dynamodb.Table(table)
 
     # TODO:
-    # 1. "user" 
-        
+    # 1. "user"
+
+
 # "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-thread-runs",
 def update_assistant_thread_runs_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistant thread runs records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_thread_runs_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE")
-    try:
-        assistant_thread_runs_table = dynamodb.Table(table)
+    assistant_thread_runs_table = dynamodb.Table(table)
 
     # TODO:
-    # 1. "user" 
+    # 1. "user"
 
 
-# "ASSISTANT_GROUPS_DYNAMO_TABLE" : "amplify-v6-object-access-dev-amplify-groups", 
+# "ASSISTANT_GROUPS_DYNAMO_TABLE" : "amplify-v6-object-access-dev-amplify-groups",
 def update_assistant_groups_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistant groups records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_groups_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_GROUPS_DYNAMO_TABLE")
-    try:
-        assistant_groups_table = dynamodb.Table(table)
+    assistant_groups_table = dynamodb.Table(table)
     # TODO:
-    # 1. "createdBy" 
+    # 1. "createdBy"
     # 2. "members" -> Dict < str (user_id), str (permission)>
-    
+
 
 # "ASSISTANT_LOOKUP_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-lookup",
 def update_assistant_lookup_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistant lookup records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_lookup_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
-    try:
-        assistant_lookup_table = dynamodb.Table(table)
+    assistant_lookup_table = dynamodb.Table(table)
     # TODO:
-    # 1. "createdBy" 
+    # 1. "createdBy"
     # 2. "accessTo" -> Dict < "users": List <str (user_id)>>
-     
+
 
 # "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE" : "amplify-v6-assistants-dev-group-assistant-conversations",
-def update_group_assistant_conversations_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+def update_group_assistant_conversations_table(
+    old_id: str, new_id: str, dry_run: bool
+) -> bool:
     """Update all group assistant conversations records associated with the old user ID to the new user ID."""
     msg = f"[update_group_assistant_conversations_table][dry-run: {dry_run}] %s"
     table = table_names.get("GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE")
-    try:
-        group_assistant_conversations_table = dynamodb.Table(table)
+    group_assistant_conversations_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user" 
+    # 1. "user"
 
 
 ### Data source related tables ###
@@ -443,49 +439,48 @@ def update_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all files records associated with the old user ID to the new user ID."""
     msg = f"[update_files_table][dry-run: {dry_run}] %s"
     table = table_names.get("FILES_DYNAMO_TABLE")
-    try:
-        files_table = dynamodb.Table(table)
-    ### TODO 
+    files_table = dynamodb.Table(table)
+    ### TODO
     # "createdBy"
-    # File IDs CAN remain unchanged during migration      
+    # File IDs CAN remain unchanged during migration
+
 
 # "HASH_FILES_DYNAMO_TABLE" : "amplify-v6-lambda-dev-hash-files",
 def update_hash_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all hash files records associated with the old user ID to the new user ID."""
     msg = f"[update_hash_files_table][dry-run: {dry_run}] %s"
     table = table_names.get("HASH_FILES_DYNAMO_TABLE")
-    try:
-        hash_files_table = dynamodb.Table(table)
-    ### TODO 
-    # "originalCreator" 
+    hash_files_table = dynamodb.Table(table)
+    ### TODO
+    # "originalCreator"
     # Hash File IDs CAN remain unchanged during migration
+
 
 # "EMBEDDING_PROGRESS_TABLE" : "amplify-v6-embedding-dev-embedding-progress",
 def update_embedding_progress_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all embedding progress records associated with the old user ID to the new user ID."""
     msg = f"[update_embedding_progress_table][dry-run: {dry_run}] %s"
     table = table_names.get("EMBEDDING_PROGRESS_TABLE")
-    try:
-        embedding_progress_table = dynamodb.Table(table)
-    ### TODO  
+    embedding_progress_table = dynamodb.Table(table)
+    ### TODO
     # "originalCreator"
-    
 
-# "USER_TAGS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-user-tags",    
+
+# "USER_TAGS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-user-tags",
 def update_user_tags_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all user tags records associated with the old user ID to the new user ID."""
     msg = f"[update_user_tags_table][dry-run: {dry_run}] %s"
     table = table_names.get("USER_TAGS_DYNAMO_TABLE")
-    try:
-        user_tags_table = dynamodb.Table(table)
+    user_tags_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user"     
+    # 1. "user"
+
 
 ### AGENT LOOP TABLES ###
-# "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-states"   *LESS IMPORTANT* 
-# NOTE Previously named "amplify-v6-agent-loop-dev-agent-state" and 
-           # renamed to "amplify-v6-agent-loop-dev-agent-states"
-       #Likely no changes needed
+# "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-states"   *LESS IMPORTANT*
+# NOTE Previously named "amplify-v6-agent-loop-dev-agent-state" and
+# renamed to "amplify-v6-agent-loop-dev-agent-states"
+# Likely no changes needed
 def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all agent state records associated with the old user ID to the new user ID."""
     # TODO(Karely): This table seems to have an S3 bucket associated with it we'll need
@@ -494,7 +489,7 @@ def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     table = table_names.get("AGENT_STATE_DYNAMODB_TABLE")
     try:
         agent_state_table = dynamodb.Table(table)
-        
+
         ret = False
         for item in paginated_query(table, "user", old_id):
             log(
@@ -522,63 +517,61 @@ def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) 
     """Update all agent event templates records associated with the old user ID to the new user ID."""
     msg = f"[update_agent_event_templates_table][dry-run: {dry_run}] %s"
     table = table_names.get("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE")
-    try:
-        agent_event_templates_table = dynamodb.Table(table)
+    agent_event_templates_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user" 
+    # 1. "user"
 
-# "WORKFLOW_TEMPLATES_TABLE" : "amplify-v6-agent-loop-dev-workflow-registry",    
+
+# "WORKFLOW_TEMPLATES_TABLE" : "amplify-v6-agent-loop-dev-workflow-registry",
 def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all workflow templates records associated with the old user ID to the new user ID."""
     msg = f"[update_workflow_templates_table][dry-run: {dry_run}] %s"
     table = table_names.get("WORKFLOW_TEMPLATES_TABLE")
-    try:
-        workflow_templates_table = dynamodb.Table(table)
+    workflow_templates_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user" 
-    
+    # 1. "user"
+
 
 # "EMAIL_SETTINGS_DYNAMO_TABLE" : "amplify-v6-agent-loop-dev-email-allowed-senders",
 def update_email_settings_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all email settings records associated with the old user ID to the new user ID."""
     msg = f"[update_email_settings_table][dry-run: {dry_run}] %s"
     table = table_names.get("EMAIL_SETTINGS_DYNAMO_TABLE")
-    try:
-        email_settings_table = dynamodb.Table(table)
+    email_settings_table = dynamodb.Table(table)
     # TODO:
-    # 1. "email" 
+    # 1. "email"
     # 2. "allowed_senders" -> List <str (users_ids)>
-        
+
+
 # "SCHEDULED_TASKS_TABLE" : "amplify-v6-agent-loop-dev-scheduled-tasks",
 def update_scheduled_tasks_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all scheduled tasks records associated with the old user ID to the new user ID."""
     msg = f"[update_scheduled_tasks_table][dry-run: {dry_run}] %s"
     table = table_names.get("SCHEDULED_TASKS_TABLE")
-    try:
-        scheduled_tasks_table = dynamodb.Table(table)
+    scheduled_tasks_table = dynamodb.Table(table)
     # TODO:
     # 1. "user" only
+
 
 # "DB_CONNECTIONS_TABLE" : "amplify-v6-lambda-dev-db-connections",
 def update_db_connections_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all db connections records associated with the old user ID to the new user ID."""
     msg = f"[update_db_connections_table][dry-run: {dry_run}] %s"
     table = table_names.get("DB_CONNECTIONS_TABLE")
-    try:
-        db_connections_table = dynamodb.Table(table)
+    db_connections_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user" 
-        
+    # 1. "user"
+
 
 ### INTEGRATION TABLES ###
-# "OAUTH_STATE_TABLE" : "amplify-v6-assistants-api-dev-oauth-state", 
+# "OAUTH_STATE_TABLE" : "amplify-v6-assistants-api-dev-oauth-state",
 def update_oauth_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all OAuth state records associated with the old user ID to the new user ID."""
     msg = f"[update_oauth_state_table][dry-run: {dry_run}] %s"
     table = table_names.get("OAUTH_STATE_TABLE")
     try:
         oauth_state_table = dynamodb.Table(table)
-        
+
         # TODO(Karely): It'd be nice to be able to query this rather than scan.
         # Also, we're creating new records here when, strictly speaking, we could
         # just update the existing ones in place. Still, this is consistent with what
@@ -607,28 +600,28 @@ def update_oauth_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         )
         return False
 
+
 # "OAUTH_USER_TABLE" : "amplify-v6-assistants-api-dev-user-oauth-integrations",
 def update_oauth_user_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all OAuth user records associated with the old user ID to the new user ID."""
     msg = f"[update_oauth_user_table][dry-run: {dry_run}] %s"
     table = table_names.get("OAUTH_USER_TABLE")
-    try:
-        oauth_user_table = dynamodb.Table(table)
+    oauth_user_table = dynamodb.Table(table)
     # TODO:
     # 1. "user_integration" prefix must be updated
-        
 
-        
+
 # "DATA_DISCLOSURE_ACCEPTANCE_TABLE" : "amplify-v6-data-disclosure-dev-acceptance",
-def update_data_disclosure_acceptance_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+def update_data_disclosure_acceptance_table(
+    old_id: str, new_id: str, dry_run: bool
+) -> bool:
     """Update all data disclosure acceptance records associated with the old user ID to the new user ID."""
     msg = f"[update_data_disclosure_acceptance_table][dry-run: {dry_run}] %s"
     table = table_names.get("DATA_DISCLOSURE_ACCEPTANCE_TABLE")
-    try:
-        data_disclosure_acceptance_table = dynamodb.Table(table)
+    data_disclosure_acceptance_table = dynamodb.Table(table)
     # TODO:
-    # 1. "user" 
-       
+    # 1. "user"
+
 
 ### Cost calculation related tables ###
 # "COST_CALCULATIONS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-cost-calculations",
@@ -636,62 +629,63 @@ def update_cost_calculations_table(old_id: str, new_id: str, dry_run: bool) -> b
     """Update all cost calculations records associated with the old user ID to the new user ID."""
     msg = f"[update_cost_calculations_table][dry-run: {dry_run}] %s"
     table = table_names.get("COST_CALCULATIONS_DYNAMO_TABLE")
-    try:
-        cost_calculations_table = dynamodb.Table(table)
+    cost_calculations_table = dynamodb.Table(table)
     # TODO:
-    # 1. "id" 
-        
+    # 1. "id"
+
+
 # "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-history-cost-calculations",
-def update_history_cost_calculations_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+def update_history_cost_calculations_table(
+    old_id: str, new_id: str, dry_run: bool
+) -> bool:
     """Update all history cost calculations records associated with the old user ID to the new user ID."""
     msg = f"[update_history_cost_calculations_table][dry-run: {dry_run}] %s"
     table = table_names.get("HISTORY_COST_CALCULATIONS_DYNAMO_TABLE")
-    try:
-        history_cost_calculations_table = dynamodb.Table(table)
+    history_cost_calculations_table = dynamodb.Table(table)
     # TODO:
     # 1. "user" prefix must be updated
-        
+
+
 # "ADDITIONAL_CHARGES_TABLE": "amplify-v6-chat-billing-dev-additional-charges",
 def update_additional_charges_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all additional charges records associated with the old user ID to the new user ID."""
     msg = f"[update_additional_charges_table][dry-run: {dry_run}] %s"
     table = table_names.get("ADDITIONAL_CHARGES_TABLE")
-    try:
-        additional_charges_table = dynamodb.Table(table)
+    additional_charges_table = dynamodb.Table(table)
 
     # TODO:
-    # 1. "user" 
-        
+    # 1. "user"
+
+
 ### Chat related tables ###
 # "CHAT_USAGE_DYNAMO_TABLE" : "amplify-v6-lambda-dev-chat-usages",
 def update_chat_usage_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all chat usage records associated with the old user ID to the new user ID."""
     msg = f"[update_chat_usage_table][dry-run: {dry_run}] %s"
     table = table_names.get("CHAT_USAGE_DYNAMO_TABLE")
-    try:
-        chat_usage_table = dynamodb.Table(table)
-    
+    chat_usage_table = dynamodb.Table(table)
+
     # TODO:
-    # 1. "user" 
-        
+    # 1. "user"
+
+
 # "CONVERSATION_METADATA_TABLE" : "amplify-v6-lambda-dev-conversation-metadata",
 def update_conversation_metadata_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all conversation metadata records associated with the old user ID to the new user ID."""
     msg = f"[update_conversation_metadata_table][dry-run: {dry_run}] %s"
     table = table_names.get("CONVERSATION_METADATA_TABLE")
-    try:
-        conversation_metadata_table = dynamodb.Table(table)
-        
-    # TODO: 
-    # 1. "user_id" 
+    conversation_metadata_table = dynamodb.Table(table)
+
+    # TODO:
+    # 1. "user_id"
+
 
 # "USER_STORAGE_TABLE" : "amplify-v6-lambda-basic-ops-dev-user-storage",
 def update_user_storage_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all user storage records associated with the old user ID to the new user ID."""
     msg = f"[update_user_storage_table][dry-run: {dry_run}] %s"
     table = table_names.get("USER_STORAGE_TABLE")
-    try:
-        user_storage_table = dynamodb.Table(table)
+    user_storage_table = dynamodb.Table(table)
     # TODO:
     # 1. "PK" prefix must be updated
     # 2. "appId" prefix must be updated
@@ -704,17 +698,15 @@ def update_user_storage_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 # "USER_SESSIONS_DYNAMODB_TABLE_NAME" : "amplify-v6-lambda-basic-ops-dev-work-sessions",
 
 
-
-
 ### VERY MUCH LESS IMPORTANT TABLES ###
 # "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE" : "amplify-v6-admin-dev-admin-logs",
-    # "user" attribute needs to be updated
+# "user" attribute needs to be updated
 # "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE" : "amplify-v6-object-access-dev-amplify-group-logs",
-    # "user" attribute needs to be updated (can query)
+# "user" attribute needs to be updated (can query)
 # "OP_LOG_DYNAMO_TABLE" : "amplify-v6-assistants-api-dev-op-log",
-    # "user" attribute needs to be updated
+# "user" attribute needs to be updated
 # "REQUEST_STATE_DYNAMO_TABLE" : "amplify-v6-amplify-js-dev-request-state",
-    # "user" attribute needs to be updated (can query)
+# "user" attribute needs to be updated (can query)
 
 
 if __name__ == "__main__":
@@ -772,7 +764,7 @@ if __name__ == "__main__":
                 log(
                     f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records."
                 )
-            
+
             if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
                 log(
                     f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records."
