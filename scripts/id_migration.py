@@ -19,6 +19,7 @@ from config import CONFIG as tables
 dynamodb = boto3.resource("dynamodb")
 tables: Dict[str, str] = tables
 
+
 def paginated_query(table_name: str, key_name: str, value: str, index_name: str = None):
     """
     Generator for paginated DynamoDB query results.
