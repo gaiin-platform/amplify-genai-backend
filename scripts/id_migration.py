@@ -14,9 +14,10 @@ from typing import Dict, Tuple
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.conditions import Attr
 
-dynamodb = boto3.resource("dynamodb")
-tables: Dict[str, str]
+from config import CONFIG as tables
 
+dynamodb = boto3.resource("dynamodb")
+tables: Dict[str, str] = tables
 
 def paginated_query(table_name: str, key_name: str, value: str, index_name: str = None):
     """
@@ -86,13 +87,8 @@ def parse_args():
 
 def get_tables_from_config_file() -> Dict[str, str]:
     """Read the config file and return the table names."""
-    try:
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        return config
-    except Exception as e:
-        log(f"Error reading config file: {e}")
-        sys.exit(1)
+    del tables["needs_edit"]
+    return tables
 
 
 def tables_ok(table_names: Dict[str, str]) -> bool:
