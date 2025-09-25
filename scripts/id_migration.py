@@ -17,7 +17,6 @@ from boto3.dynamodb.conditions import Attr
 from config import CONFIG as tables
 
 dynamodb = boto3.resource("dynamodb")
-tables: Dict[str, str] = tables
 
 
 def paginated_query(table_name: str, key_name: str, value: str, index_name: str = None):
@@ -88,19 +87,25 @@ def parse_args():
 
 def get_tables_from_config_file() -> Dict[str, str]:
     """Read the config file and return the table names."""
-    del tables["needs_edit"]
-    return tables
+    t = tables.copy()
+    del t["needs_edit"]
+    return t
 
 
-def tables_ok(table_names: Dict[str, str]) -> bool:
+def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False) -> bool:
     """Check if the required tables exist."""
     try:
         existing_tables = dynamodb.meta.client.list_tables()["TableNames"]
-        for table in table_names.values():
-            if table not in existing_tables:
-                log(f"Table {table} does not exist.")
-                return False
-
+        for table_key, table_value in table_names.items():
+            if table_value not in existing_tables:
+                if continue_anyway:
+                    log(f"Table {table_value} does not exist, but continuing anyway.")
+                    table_names[table_key] = None
+                    continue
+                else:
+                    log(f"Table {table_value} does not exist.")
+                    return False
+        table_names = {k: v for k, v in table_names.items() if v is not None}
         # Print the table mapping and ask the user to
         # confirm they have accepted the terms
         log("The following tables will be used:")
@@ -712,8 +717,7 @@ if __name__ == "__main__":
     global table_names
     table_names = get_tables_from_config_file()
 
-    if not tables_ok(table_names):
-        log("User has not accepted the terms. Exiting.")
+    if not tables_ok(table_names, continue_anyway=True):
         sys.exit(1)
 
     try:
