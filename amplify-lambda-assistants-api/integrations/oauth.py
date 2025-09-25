@@ -117,8 +117,9 @@ def acquire_token_from_code(integration, client, scopes, authorization_code):
             client.fetch_token(code=authorization_code)
             return client.credentials
         case IntegrationType.MICROSOFT:
+            redirect_uri = build_redirect_uri()
             result = client.acquire_token_by_authorization_code(
-                code=authorization_code, scopes=scopes
+                code=authorization_code, scopes=scopes, redirect_uri=redirect_uri
             )
             return result
     raise ValueError(f"Unsupported integration type: {integration}")
@@ -128,6 +129,7 @@ def serialize_credentials(integration, credentials):
     """
     Serializes and encrypts the credentials returning a consistent JSON that includes an 'expires_at' timestamp.
     """
+
     match provider_case(integration):
         case IntegrationType.GOOGLE:
             credentials_dict = json.loads(credentials.to_json())
@@ -142,8 +144,12 @@ def serialize_credentials(integration, credentials):
                     print("Error parsing Google expiry date:", e)
                     raise e
             else:
-                raise Exception("Google credentials missing 'expiry' field")
+                raise Exception("Google credentials missing required fields:", credentials_dict)
         case IntegrationType.MICROSOFT:
+            if ("error" in credentials or "error_description" in credentials):
+                print("Error serializing Microsoft credentials:", credentials)
+                raise Exception(f"Error serializing Microsoft credentials: {credentials}")
+                
             credentials_dict = {
                 "token": credentials.get("access_token"),
                 "expires_in": credentials.get("expires_in"),
