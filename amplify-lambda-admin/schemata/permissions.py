@@ -25,6 +25,10 @@ def can_upload(user, data):
     return True
 
 
+def can_test_apis(user, data):
+    return True  # authorized_admin already called
+
+
 """
 Every service must define the permissions for each operation
 here. The permissions are defined as a dictionary of
@@ -44,5 +48,6 @@ permissions_by_state_type = {
     "/amplifymin/verify_amp_member": {"read": can_read},
     "/amplifymin/amplify_groups/list": {"read": can_read},
     "/amplifymin/user_app_configs": {"read": can_read},
-    "/amplifymin/amplify_groups/affiliated": {"read": can_read}
+    "/amplifymin/amplify_groups/affiliated": {"read": can_read},
+    "/admin/test-apis": {"test_apis": can_test_apis}
 }

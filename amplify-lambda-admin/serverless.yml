@@ -158,6 +158,15 @@ functions:
           method: post
           cors: true
 
+  test-apis:
+    handler: service.test_apis.test_apis_request
+    timeout: 60
+    events:
+      - http:
+          path: admin/test-apis
+          method: post
+          cors: true
+
   get_user_amplify_groups:
     handler: service/user_services.get_user_amplify_groups
     events:

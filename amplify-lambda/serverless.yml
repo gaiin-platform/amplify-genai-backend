@@ -110,20 +110,20 @@ provider:
     # OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
     # OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
     
-    # Parameter Store Version
-    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
-    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
-    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
-    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
-    EMBEDDING_PROGRESS_TABLE: ${ssm:${self:custom.ssmBasePath}-embedding/EMBEDDING_PROGRESS_TABLE}
-    OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
-    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    # Parameter Store Version (with local dev fallback)
+    AMPLIFY_ADMIN_DYNAMODB_TABLE: ${self:custom.stageVars.AMPLIFY_ADMIN_DYNAMODB_TABLE, ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${self:custom.stageVars.API_KEYS_DYNAMODB_TABLE, ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${self:custom.stageVars.COGNITO_USERS_DYNAMODB_TABLE, ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${self:custom.stageVars.COST_CALCULATIONS_DYNAMO_TABLE, ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
+    EMBEDDING_PROGRESS_TABLE: ${self:custom.stageVars.EMBEDDING_PROGRESS_TABLE, ssm:${self:custom.ssmBasePath}-embedding/EMBEDDING_PROGRESS_TABLE}
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${self:custom.stageVars.OBJECT_ACCESS_DYNAMODB_TABLE, ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
+    OPS_DYNAMODB_TABLE: ${self:custom.stageVars.OPS_DYNAMODB_TABLE, ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
 
   iam:
     role:
       managedPolicies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole      
-        - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
+        - arn:aws:iam::${self:custom.stageVars.LOCAL_AWS_ACCOUNT_ID, aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
 
 functions:
 
@@ -553,16 +553,16 @@ resources:
                 - ssm:DeleteParameter
                 - ssm:DescribeParameters
                 - ssm:GetParametersByPath
-              Resource: 
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/*
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/rag-ds/${sls:stage}/*
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${self:custom.stageVars.LOCAL_AWS_ACCOUNT_ID, aws:accountId}:parameter/rag-ds/*
+                - arn:aws:ssm:${self:provider.region}:${self:custom.stageVars.LOCAL_AWS_ACCOUNT_ID, aws:accountId}:parameter/rag-ds/${sls:stage}/*
             - Effect: Allow
               Action:
                 - ssm:GetParameter
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*            
+                - arn:aws:ssm:${self:provider.region}:${self:custom.stageVars.LOCAL_AWS_ACCOUNT_ID, aws:accountId}:parameter${self:custom.ssmBasePath}-*            
             - Effect: Allow
               Action:
                 - s3:ListBucket
@@ -1160,7 +1160,7 @@ resources:
                     - '/S3AccessLogs/*'
               Condition:
                 StringEquals:
-                  'aws:SourceAccount': ${aws:accountId}
+                  'aws:SourceAccount': ${self:custom.stageVars.LOCAL_AWS_ACCOUNT_ID, aws:accountId}
 
     DbConnectionsTable:
       Type: 'AWS::DynamoDB::Table'

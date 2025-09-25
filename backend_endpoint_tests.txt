@@ -1,0 +1,89 @@
+API Testing Endpoint Specifications
+ 
+  Overview
+ 
+  Create a comprehensive automated testing endpoint in amplify-lambda-admin that validates all backend services by  executing real API calls with test data and returning detailed test results.
+ 
+  Endpoint Requirements
+ 
+  Location
+ 
+  - Service: amplify-lambda-admin  - File: amplify-lambda-admin/service/test_apis.py  - Endpoint: /admin/test-apis  - Method: POST
+ 
+  Input Parameters
+ 
+  {    "services": ["service-name1", "service-name2"]  // Optional: specific services to test    // If empty/null, test ALL services  }
+ 
+  Authentication & Authorization
+ 
+  1. Admin Authorization: Must call authorized_admin(current_user) from service/core.py first  2. API Key Generation: Create system API key via amplify-lambda-api/create_api_keys with systemUse: true  3. Follow PyCommon Pattern: Implement schema, validation rules, permissions per README_pycomon_lambdas.md
+ 
+  Implementation Steps
+ 
+  1. Schema Setup
+ 
+  Create the following files following PyCommon patterns:
+ 
+  schemata/test_apis_schema.py:  test_apis_schema = {      "type": "object",      "properties": {          "services": {              "type": "array",              "items": {"type": "string"},              "description": "Optional list of specific services to test"          }      }  }
+ 
+  Update schemata/schema_validation_rules.py:  from .test_apis_schema import test_apis_schema
+ 
+  rules = {      "validators": {          "/admin/test-apis": {"test_apis": test_apis_schema},      },      # No api_validators - admin only  }
+ 
+  Update schemata/permissions.py:  def can_test_apis(user, data):      return True  # authorized_admin already called
+ 
+  permissions_by_state_type = {      "/admin/test-apis": {"test_apis": can_test_apis},  }
+ 
+  Update serverless.yml - Add endpoint:  functions:    test-apis:      handler: service.test_apis.test_apis_request      events:        - http:            path: admin/test-apis            method: post            cors: true
+ 
+  2. Core Function Implementation
+ 
+  service/test_apis.py:  from pycommon.authz import validated, setup_validated  from pycommon.decorators import required_env_vars  from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation  from schemata.schema_validation_rules import rules  from schemata.permissions import get_permission_checker  from service.core import authorized_admin
+ 
+  setup_validated(rules, get_permission_checker)
+ 
+  @required_env_vars({      "ANY_RESOURCE_ENV_VAR": [DynamoDBOperation.OPERATION],  # EXAMPLE  })  @validated("test_apis")  def test_apis_request(event, context, user, name, data):      # 1. Check admin authorization      authorized_admin(user)
+ 
+      # 2. Generate system API key      api_key = create_system_api_key(user)
+ 
+      # 3. Execute tests      services_to_test = data.get("services", []) or ALL_SERVICES      results = run_service_tests(services_to_test, api_key)
+ 
+      return {          "success": True,          "summary": generate_summary(results),          "details": results      }
+ 
+  3. Service Testing Logic
+ 
+  Test Execution Order:  # Priority order for dependencies  TEST_ORDER = [      "amplify-lambda-api",           # 1. Create API keys first      "amplify-assistants",           # 2. Create assistant      "amplify-lambda",               # 3. Core functionality + chat      "embedding",                    # 4. Test file embeddings      "amplify-lambda-admin",      "amplify-lambda-artifacts",      "amplify-lambda-ops",      "chat-billing",      "data-disclosure",      "object-access",      "amplify-lambda-js",      # Last batch - depends on data from previous tests      "amplify-agent-loop-lambda",    # Needs assistant data      "amplify-lambda-assistants-api",      "amplify-lambda-assistants-api-google",      "amplify-lambda-assistants-api-office365",      "amplify-lambda-basic-ops"  ]
+ 
+  4. Gather Test Endpoints
+  
+  For each service:  1. Parse serverless.yml → Extract endpoints and HTTP methods  2. Parse schemata/schema_validation_rules.py → Extract expected request schema  3. Generate test data from schema requirements 
+ 
+  5. Specific Test Scenarios
+ 
+  API Key Creation Test:  def test_create_api_key(api_key):      """Test amplify-lambda-api create_api_keys with systemUse=true"""      test_data = {          "owner": "test-system",          "account": {"id": "test-account", "name": "Test Account"},          "appName": "API Testing Suite",          "appDescription": "Automated API testing",          "rateLimit": {"rate": null, "period": "unlimited"},          "accessTypes": ["FULL_ACCESS"],          "systemUse": true,          "purpose": "Automated API testing"      }      return call_endpoint("/api/create_api_keys", test_data, api_key)
+ 
+  Assistant → Chat Test Flow:  def test_assistant_and_chat(api_key):      """Create assistant then use it for chat"""      # 1. Create assistant via amplify-assistants      assistant = create_test_assistant(api_key)
+ 
+      # 2. Use assistant for chat via amplify-lambda/chat      chat_result = test_chat_with_assistant(assistant["id"], api_key)
+ 
+      return {"assistant": assistant, "chat": chat_result}
+ 
+  File → Embedding Test Flow:  def test_file_and_embedding(api_key):      """Upload file then test embedding retrieval"""      # 1. Upload test file via amplify-lambda/files      file_result = upload_test_file(api_key)
+ 
+      # 2. Test embedding retrieval      embedding_result = test_file_embedding(file_result["file_id"], api_key)
+ 
+      return {"file": file_result, "embedding": embedding_result}
+ 
+  6. Response Format
+ 
+  Success Response:  {    "success": true,    "summary": {      "total_services": 16,      "tested_services": 14,      "passed": 12,      "failed": 2,      "execution_time_ms": 45000    },    "details": {      "amplify-lambda-api": {        "status": "passed",        "endpoints_tested": 5,        "endpoints_passed": 5,        "endpoints_failed": 0,        "execution_time_ms": 2500,        "results": [          {            "endpoint": "/api/create_api_keys",            "method": "POST",            "status": "passed",            "response_code": 200,            "response_time_ms": 450,            "test_data_sent": {...},            "response_received": {...}          }        ]      },      "amplify-assistants": {        "status": "failed",        "error": "Schema validation failed for /assistants/create",        "endpoints_tested": 3,        "endpoints_passed": 2,        "endpoints_failed": 1      }    }  }
+ 
+  Error Response:  {    "success": false,    "error": "Admin authorization failed",    "error_code": "UNAUTHORIZED"  }
+
+
+More Random information:
+
+cd into the admin lambda and run pip install -r requirements.txt  --force-reinstall (already done)
+ 
+to run your function 
+serverless offline --httpPort 3016 --stage dev --lambdaPort 3002
