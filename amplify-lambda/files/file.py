@@ -549,6 +549,7 @@ def get_presigned_url(event, context, current_user, name, data):
             "error": "User does not have access to the file_upload functionality",
         }
 
+  
     # we need the perms to be under the groupId if applicable
     groupId = data["data"].get("groupId", None)
 
@@ -578,6 +579,11 @@ def get_presigned_url(event, context, current_user, name, data):
     tags = data["tags"]
     props = data["data"]
     knowledge_base = data["knowledgeBase"]
+
+    is_zip_file = file_type.lower().split("/")[-1] == 'zip':
+    
+    if is_zip_file:
+        return handle_zip_presignedUrl(current_user, name, file_type, tags, props, knowledge_base)
 
     print(
         f"\nGetting presigned URL for {name} of type {type} with tags {tags} and data {data} and knowledge base {knowledge_base}"
@@ -2011,3 +2017,135 @@ def delete_image_file(key):
         print("Deleted from S3")
     except ClientError as e:
         print(f"Error deleting file from S3: {e}")
+
+
+
+
+def handle_zip_presignedUrl(current_user, name, file_type, tags, props, knowledge_base):
+    print("Zip file detected")
+    zip_bucket_name = os.environ.get("S3_ZIP_FILE_BUCKET_NAME")  
+    dt_string = datetime.now().strftime('%Y-%m-%d')  
+    key = f'{current_user}/{dt_string}/{uuid.uuid4()}.zip'
+
+    props_data = props if isinstance(props, dict) else {}
+    tags_data = tags if isinstance(tags, list) else []
+    print(f"Props: {props_data}")
+    print(f"Tags {tags_data}")
+    print(f"Knowledge Base: {knowledge_base}")
+
+    s3 = boto3.client("s3")
+    presigned_url = s3.generate_presigned_url(
+        ClientMethod='put_object',
+        Params={
+            'Bucket': zip_bucket_name,
+            'Key': key,
+            'ContentType': file_type,
+            'Metadata': {
+                'props': json.dumps(props_data),
+                'knowledge_base': str(knowledge_base if knowledge_base else 'default'),
+                'tags': json.dumps(tags_data),
+                'current_user': str(current_user)
+            }
+            # Add any additional parameters like ACL, ContentType, etc. if needed
+        },
+        ExpiresIn=3600  # Set the expiration time for the presigned URL, in seconds
+    )
+
+    #TODO check what happens without the status URLs in the frontend
+    if presigned_url:
+        return {'success': True,
+                'uploadUrl': presigned_url,
+                #'statusUrl': presigned_text_status_content_url,
+                #'contentUrl': presigned_text_content_url,
+                #'metadataUrl': presigned_text_metadata_url,
+                'key': key}
+    else:
+        return {'success': False}
+
+
+def process_zip_file(event, context):
+    print("Enter process_zip_file")
+    s3 = boto3.client('s3')
+
+    s3_object = event['Records'][0]['s3']
+    bucket_name = s3_object['bucket']['name']
+    object_key_encoded = s3_object['object']['key']
+    object_key = unquote_plus(object_key_encoded)
+
+
+    print(f"Bucket name: {bucket_name}")
+    print(f"Key: {object_key}")
+
+    try:
+        # Fetch the metadata using head_object
+        response = s3.head_object(Bucket=bucket_name, Key=object_key)
+        object_metadata = response['Metadata']
+
+        # Access the metadata
+        props = object_metadata.get('props', 'default_props')
+        knowledge_base = object_metadata.get('knowledge_base', 'default_knowledge_base')
+        tags = object_metadata.get('tags', 'default_tags')
+        current_user = object_metadata.get('current_user', 'default_user')
+
+        # The rest of your code...
+    except s3.exceptions.NoSuchKey:
+        print(f"No object found with key: {object_key}")
+        raise
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        raise
+    
+    #HARDCODING FOR LOCAL TESTING
+    
+
+    print(f"Bucket name: {bucket_name}")
+    print(f"Key: {object_key}")
+    try:
+        # Get the object directly from S3 instead of generating a presigned URL
+        zip_file_obj = s3.get_object(Bucket= bucket_name, Key= object_key)
+        zip_file_content = zip_file_obj['Body'].read()
+
+        # Create a ZipFile object
+        buffer = BytesIO(zip_file_content)
+        with zipfile.ZipFile(buffer, 'r') as zip_ref:
+            # Extract all the contents of the zip file in memory
+            for file_name in zip_ref.namelist():
+                file_content = zip_ref.read(file_name)
+                
+
+                if file_name.startswith('__MACOSX/') or file_name.endswith('/'):
+                    continue  # Skip the folder entries or MAC OS metadata files.
+                
+                zip_file_name = file_name.split('/')[0]
+                file_name = file_name.split('/')[-1]
+
+                print("Determining file type of: ", file_name)
+                extension = file_name.split('.')[-1]
+                if (extension in disallowed_file_extensions):
+                    print(f"File \"{file_name}\" does not have an accepted file type: {extension}")
+                    continue
+                file_type = get_content_type_by_extension(extension)
+                    
+                print(f"File type: {file_type}")
+                #Set tag that is the same for every file in the Zip
+                tags = [zip_file_name]
+
+                presinged_url = process_files_for_rag(current_user= current_user,name= file_name,file_type= file_type,tags= tags,props= props,knowledge_base= knowledge_base)
+                if presinged_url['success']:
+                    upload_url = presinged_url['uploadUrl']
+
+                    response = requests.put(upload_url, data=file_content, headers={'Content-Type': file_type})
+
+                    if response.status_code == 200:
+                        print(f"Object {file_name} uploaded successfully!")
+                    else:
+                        print(f"Failed to upload object {file_name}. Status code: {response.status_code}")
+                else:
+                    print("This file failed")
+        
+        buffer.close()
+        return {'success': True}
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return {'success': False, 'error': str(e)}
