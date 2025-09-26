@@ -300,10 +300,7 @@ def build_action(current_user, token, action_name, data):
 
 @required_env_vars({
     "OP_LOG_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "API_BASE_URL": ["HTTP_REQUEST"],
-    "OP_TRACING_ENABLED": [],
-    "OP_TRACING_REQUEST_DETAILS_ENABLED": [],
-    "OP_TRACING_RESULT_DETAILS_ENABLED": [],
+
 })
 @validated("execute_custom_auto")
 def execute_custom_auto(event, context, current_user, name, data):
