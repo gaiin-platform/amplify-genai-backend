@@ -86,14 +86,36 @@ def parse_args():
 
 
 def get_tables_from_config_file() -> Dict[str, str]:
-    """Read the config file and return the table names."""
+    """
+    Reads the configuration file and returns a dictionary of table names,
+    excluding the entry with the key 'needs_edit'.
+
+    Returns:
+        Dict[str, str]: A dictionary containing table names from the configuration file,
+        with 'needs_edit' removed.
+    """
     t = tables.copy()
     del t["needs_edit"]
     return t
 
 
 def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False) -> bool:
-    """Check if the required tables exist."""
+    """
+    Checks if the required DynamoDB tables exist and prompts the user for confirmation to proceed.
+
+    Args:
+        table_names (Dict[str, str]): A dictionary mapping logical table names to DynamoDB table names.
+        continue_anyway (bool, optional): If True, continues execution even if some tables do not exist,
+            setting their values to None. Defaults to False.
+
+    Returns:
+        bool: True if all required tables exist (or continue_anyway is True) and the user confirms to proceed;
+            False otherwise.
+
+    Side Effects:
+        - Logs messages about missing tables and table mappings.
+        - Prompts the user for confirmation via input.
+    """
     try:
         existing_tables = dynamodb.meta.client.list_tables()["TableNames"]
         for table_key, table_value in table_names.items():
@@ -201,10 +223,107 @@ def update_amplify_admin_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     msg = f"[update_amplify_admin_table][dry-run: {dry_run}] %s"
     table = table_names.get("AMPLIFY_ADMIN_DYNAMODB_TABLE")
     amplify_admin_table = dynamodb.Table(table)
-    # TODO:
-    # 1. Config_id = "admins"  -> "data" attribute -> List <str (users_ids)>
-    # 2. Config_id = "amplifyGroups"  -> "data" attribute ->  Dict <str (key),    Dict ({ "members" attribute -> List <str (users_ids)> })>
-    # 3. Config_id = "featureFlags"  -> "data" attribute -> Dict <str (key),    Dict ({ "userExceptions": List <str (users_ids)> })>
+
+    # For the 'admins' config, we could just do this record a single time
+    # by using the CSV file and constructing the proper list. This would
+    # be the most efficient way to do it - but its a one time shot and so
+    # I'm doing it the easy way for now.
+    admin_config = amplify_admin_table.get_item(Key={"config_id": "admins"})
+    if not "Item" in admin_config:
+        log(msg % f"No admin config found in {table}.")
+    else:
+        admin_data = list(set(admin_config["Item"].get("data", [])))
+        if old_id in admin_data:
+            log(
+                msg
+                % f"Found admin config with old ID {old_id}.\n\tExisting Data: {admin_data}"
+            )
+            new_admin_data = list(
+                set([new_id if uid == old_id else uid for uid in admin_data])
+            )
+            if dry_run:
+                log(
+                    msg
+                    % f"Would update admin config data to:\n\tNew Data: {new_admin_data}"
+                )
+            else:
+                log(
+                    msg
+                    % f"Updating admin config data to:\n\tNew Data: {new_admin_data}"
+                )
+                amplify_admin_table.put_item(
+                    Item={"config_id": "admins", "data": new_admin_data}
+                )
+
+    # A similar dilemma is presented here and I maintain that this table desperately needs a restructure.
+    group_config = amplify_admin_table.get_item(Key={"config_id": "amplifyGroups"})
+    if not "Item" in group_config:
+        log(msg % f"No amplifyGroups config found in {table}.")
+    else:
+        group_data = group_config["Item"].get("data", {})
+        updated = False
+        for group_name, group_info in group_data.items():
+            members = list(set(group_info.get("members", [])))
+            if old_id in members:
+                log(
+                    msg
+                    % f"Found amplifyGroups config with old ID {old_id} in group {group_name}.\n\tExisting Data: {members}"
+                )
+                new_members = list(
+                    set([new_id if uid == old_id else uid for uid in members])
+                )
+                group_info["members"] = new_members
+                updated = True
+                if dry_run:
+                    log(
+                        msg
+                        % f"Would update members of group {group_name} to:\n\tNew Data: {new_members}"
+                    )
+                else:
+                    log(
+                        msg
+                        % f"Updating members of group {group_name} to:\n\tNew Data: {new_members}"
+                    )
+        if updated and not dry_run:
+            amplify_admin_table.put_item(
+                Item={"config_id": "amplifyGroups", "data": group_data}
+            )
+
+    # And the most complicated of the tables....
+    feature_flags_config = amplify_admin_table.get_item(
+        Key={"config_id": "featureFlags"}
+    )
+    if not "Item" in feature_flags_config:
+        log(msg % f"No featureFlags config found in {table}.")
+    else:
+        feature_flags_data = feature_flags_config["Item"].get("data", {})
+        updated = False
+        for flag_name, flag_info in feature_flags_data.items():
+            user_exceptions = list(set(flag_info.get("userExceptions", [])))
+            if old_id in user_exceptions:
+                log(
+                    msg
+                    % f"Found featureFlags config with old ID {old_id} in flag {flag_name}.\n\tExisting Data: {user_exceptions}"
+                )
+                new_user_exceptions = list(
+                    set([new_id if uid == old_id else uid for uid in user_exceptions])
+                )
+                flag_info["userExceptions"] = new_user_exceptions
+                updated = True
+                if dry_run:
+                    log(
+                        msg
+                        % f"Would update userExceptions of flag {flag_name} to:\n\tNew Data: {new_user_exceptions}"
+                    )
+                else:
+                    log(
+                        msg
+                        % f"Updating userExceptions of flag {flag_name} to:\n\tNew Data: {new_user_exceptions}"
+                    )
+        if updated and not dry_run:
+            amplify_admin_table.put_item(
+                Item={"config_id": "featureFlags", "data": feature_flags_data}
+            )
 
 
 ### User object related tables ###
@@ -769,6 +888,11 @@ if __name__ == "__main__":
             if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
                 log(
                     f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records."
+                )
+
+            if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
+                log(
+                    f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins."
                 )
 
     except Exception as e:
