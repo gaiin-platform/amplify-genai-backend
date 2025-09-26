@@ -32,9 +32,6 @@ API_URL = os.environ["API_BASE_URL"]
 
 
 # unifies location for functions needed in datasource file manager component.
-@required_env_vars({
-    "API_BASE_URL": ["HTTP_REQUEST"],
-})
 @validated("list_files")
 def list_integration_files(event, context, current_user, name, data):
     token = data["access_token"]
@@ -100,8 +97,7 @@ def list_files(integration_provider, token, folder_id=None):
 
 
 @required_env_vars({
-    "API_BASE_URL": ["HTTP_REQUEST"],
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, "S3_PRESIGNED_URL"],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated("download_file")
 def download_integration_file(event, context, current_user, name, data):
@@ -322,8 +318,7 @@ MIME_TO_EXT = {
 
 
 @required_env_vars({
-    "API_BASE_URL": ["HTTP_REQUEST"],
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, "S3_PRESIGNED_URL"],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated("upload_files")
 def drive_files_to_data_sources(event, context, current_user, name, data):
