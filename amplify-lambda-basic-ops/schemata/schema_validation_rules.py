@@ -1,5 +1,3 @@
-from .query_schema import query_schema
-from .workflow_schema import workflow_schema
 from .user_data_put_schema import user_data_put_schema
 from .user_data_get_schema import user_data_get_schema
 from .user_data_uuid_get_schema import user_data_uuid_get_schema
@@ -13,16 +11,6 @@ from .user_data_batch_delete_schema import user_data_batch_delete_schema
 from .user_data_uuid_delete_schema import user_data_uuid_delete_schema
 
 validators = {
-    "/llm/query": {"query": query_schema},
-    "/llm/qa_check": {"qa_check": {}},
-    "/llm/workflow": {"workflow": workflow_schema},
-    "/llm/workflow-start": {"workflow": workflow_schema},
-    "/work/echo": {"echo": {}},
-    "/work/session/create": {"create": {}},
-    "/work/session/add_record": {"add": {}},
-    "/work/session/list_records": {"list": {}},
-    "/work/session/delete_record": {"delete": {}},
-    "/work/session/stitch_records": {"stitch": {}},
     "/user-data/put": user_data_put_schema,
     "/user-data/get": user_data_get_schema,
     "/user-data/get-by-uuid": user_data_uuid_get_schema,
