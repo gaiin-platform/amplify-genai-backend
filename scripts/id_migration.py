@@ -472,14 +472,35 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "OBJECT_ACCESS_DYNAMODB_TABLE" : "amplify-v6-object-access-dev-object-access",
+# DONE
 def update_object_access_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all object access records associated with the old user ID to the new user ID."""
     msg = f"[update_object_access_table][dry-run: {dry_run}] %s"
     table = table_names.get("OBJECT_ACCESS_DYNAMODB_TABLE")
     object_access_table = dynamodb.Table(table)
-
-    # TODO:
-    # "principal_id"
+    ret = False
+    try:
+        for item in paginated_query(
+            table, "principal_id", old_id, index_name="PrincipalIdIndex"
+        ):
+            log(
+                msg
+                % f"Found object access record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["principal_id"] = new_id
+            if dry_run:
+                log(msg % f"Would update object access item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating object access item to:\n\tNew Data: {item}")
+                object_access_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating object access for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 ### Assistants Tables ###
@@ -971,11 +992,16 @@ if __name__ == "__main__":
             #         f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates."
             #     )
 
-            if not update_workflow_templates_table(
-                old_user_id, new_user_id, args.dry_run
-            ):
+            # if not update_workflow_templates_table(
+            #     old_user_id, new_user_id, args.dry_run
+            # ):
+            #     log(
+            #         f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates."
+            #     )
+
+            if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
                 log(
-                    f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates."
+                    f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records."
                 )
 
     except Exception as e:
