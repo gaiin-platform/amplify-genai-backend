@@ -505,6 +505,7 @@ def update_object_access_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 ### Assistants Tables ###
 # "ASSISTANTS_ALIASES_DYNAMODB_TABLE": "amplify-v6-assistants-dev-assistant-aliases",
+# DONE
 def update_assistants_aliases_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistants aliases records associated with the old user ID to the new user ID."""
     msg = f"[update_assistants_aliases_table][dry-run: {dry_run}] %s"
@@ -537,13 +538,43 @@ def update_assistants_aliases_table(old_id: str, new_id: str, dry_run: bool) -> 
 
 
 # "ASSISTANTS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistants",
+# DONE
+# NOTE: The semantics of this are different than most other functions - it _UPDATES_ the
+# record rathre than creating a new one. Why? Because the PK must be unique so we cannot
+# just copy it. So our choices are: delete & recreate OR update. I chose update.
 def update_assistants_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistants records associated with the old user ID to the new user ID."""
     msg = f"[update_assistants_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANTS_DYNAMODB_TABLE")
     assistants_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id, index_name="UserNameIndex"):
+            log(
+                msg
+                % f"Found assistants record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update assistants item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating assistants item to:\n\tNew Data: {item}")
+                # update item instead of creating new because the PK must be unique
+                # in cases where there is no SK, like this one
+                assistants_table.update_item(
+                    Key={"id": old_id},
+                    UpdateExpression="SET #user = :new_id",
+                    ExpressionAttributeNames={"#user": "user"},
+                    ExpressionAttributeValues={":new_id": new_id},
+                )
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistants for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-code-interpreter-assistants",
@@ -1025,11 +1056,16 @@ if __name__ == "__main__":
             #         f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records."
             #     )
 
-            if not update_assistants_aliases_table(
-                old_user_id, new_user_id, args.dry_run
-            ):
+            # if not update_assistants_aliases_table(
+            #     old_user_id, new_user_id, args.dry_run
+            # ):
+            #     log(
+            #         f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records."
+            #     )
+
+            if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
                 log(
-                    f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records."
+                    f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records."
                 )
 
     except Exception as e:
