@@ -422,8 +422,7 @@ def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         return ret
     except Exception as e:
         log(
-            msg
-            % f"Error updating artifacts for user ID from {old_id} to {new_id}: {e}"
+            msg % f"Error updating artifacts for user ID from {old_id} to {new_id}: {e}"
         )
         return False
 
@@ -654,6 +653,7 @@ def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-event-templates",
+# DONE
 def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all agent event templates records associated with the old user ID to the new user ID."""
     msg = f"[update_agent_event_templates_table][dry-run: {dry_run}] %s"
@@ -668,7 +668,10 @@ def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) 
             )
             item["user"] = new_id
             if dry_run:
-                log(msg % f"Would update agent event template item to:\n\tNew Data: {item}")
+                log(
+                    msg
+                    % f"Would update agent event template item to:\n\tNew Data: {item}"
+                )
             else:
                 log(msg % f"Updating agent event template item to:\n\tNew Data: {item}")
                 agent_event_templates_table.put_item(Item=item)
@@ -681,14 +684,37 @@ def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) 
         )
         return False
 
+
 # "WORKFLOW_TEMPLATES_TABLE" : "amplify-v6-agent-loop-dev-workflow-registry",
+# TODO(Karely): Do we need to consider the S3 key here?
 def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all workflow templates records associated with the old user ID to the new user ID."""
     msg = f"[update_workflow_templates_table][dry-run: {dry_run}] %s"
     table = table_names.get("WORKFLOW_TEMPLATES_TABLE")
     workflow_templates_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found workflow templates record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(
+                    msg % f"Would update workflow template item to:\n\tNew Data: {item}"
+                )
+            else:
+                log(msg % f"Updating workflow template item to:\n\tNew Data: {item}")
+                workflow_templates_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating workflow templates for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "EMAIL_SETTINGS_DYNAMO_TABLE" : "amplify-v6-agent-loop-dev-email-allowed-senders",
@@ -938,11 +964,18 @@ if __name__ == "__main__":
             #         f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts."
             #     )
 
-            if not update_agent_event_templates_table(
+            # if not update_agent_event_templates_table(
+            #     old_user_id, new_user_id, args.dry_run
+            # ):
+            #     log(
+            #         f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates."
+            #     )
+
+            if not update_workflow_templates_table(
                 old_user_id, new_user_id, args.dry_run
             ):
                 log(
-                    f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates."
+                    f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates."
                 )
 
     except Exception as e:
