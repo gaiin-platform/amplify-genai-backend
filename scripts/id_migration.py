@@ -510,9 +510,30 @@ def update_assistants_aliases_table(old_id: str, new_id: str, dry_run: bool) -> 
     msg = f"[update_assistants_aliases_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANTS_ALIASES_DYNAMODB_TABLE")
     assistants_aliases_table = dynamodb.Table(table)
-
-    # TODO:
-    # "user"
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found assistants aliases record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(
+                    msg
+                    % f"Would update assistants aliases item to:\n\tNew Data: {item}"
+                )
+            else:
+                log(msg % f"Updating assistants aliases item to:\n\tNew Data: {item}")
+                assistants_aliases_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistants aliases for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANTS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistants",
@@ -999,9 +1020,16 @@ if __name__ == "__main__":
             #         f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates."
             #     )
 
-            if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
+            # if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records."
+            #     )
+
+            if not update_assistants_aliases_table(
+                old_user_id, new_user_id, args.dry_run
+            ):
                 log(
-                    f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records."
+                    f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records."
                 )
 
     except Exception as e:
