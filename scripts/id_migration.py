@@ -659,9 +659,27 @@ def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) 
     msg = f"[update_agent_event_templates_table][dry-run: {dry_run}] %s"
     table = table_names.get("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE")
     agent_event_templates_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
-
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found agent event templates record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update agent event template item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating agent event template item to:\n\tNew Data: {item}")
+                agent_event_templates_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating agent event templates for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 # "WORKFLOW_TEMPLATES_TABLE" : "amplify-v6-agent-loop-dev-workflow-registry",
 def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -915,9 +933,16 @@ if __name__ == "__main__":
             #         f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins."
             #     )
 
-            if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
+            # if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts."
+            #     )
+
+            if not update_agent_event_templates_table(
+                old_user_id, new_user_id, args.dry_run
+            ):
                 log(
-                    f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts."
+                    f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates."
                 )
 
     except Exception as e:
