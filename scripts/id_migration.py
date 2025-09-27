@@ -399,13 +399,33 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "ARTIFACTS_DYNAMODB_TABLE" : "amplify-v6-artifacts-dev-user-artifacts",
+# DONE
 def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all artifacts records associated with the old user ID to the new user ID."""
     msg = f"[update_artifacts_table][dry-run: {dry_run}] %s"
     table = table_names.get("ARTIFACTS_DYNAMODB_TABLE")
     artifacts_table = dynamodb.Table(table)
-    # TODO:
-    # user_id attribute needs to be updated
+    ret = False
+    try:
+        for item in paginated_query(table, "user_id", old_id):
+            log(
+                msg
+                % f"Found artifacts record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user_id"] = new_id
+            if dry_run:
+                log(msg % f"Would update artifact item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating artifact item to:\n\tNew Data: {item}")
+                artifacts_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating artifacts for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "OPS_DYNAMODB_TABLE" : "amplify-v6-lambda-ops-dev-ops",
@@ -854,45 +874,50 @@ if __name__ == "__main__":
             # this is a sanity check to make user exists
             user = get_user(old_user_id)
 
-            if not user:
-                log(f"\tUser with old ID {old_user_id} not found. Skipping.")
-                continue
+            # if not user:
+            #     log(f"\tUser with old ID {old_user_id} not found. Skipping.")
+            #     continue
 
-            if not update_user_id(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required."
-                )
-                continue
+            # if not update_user_id(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required."
+            #     )
+            #     continue
 
-            if not update_accounts(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required."
-                )
-                # continue
+            # if not update_accounts(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required."
+            #     )
+            #     # continue
 
-            if not update_api_keys(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys."
-                )
+            # if not update_api_keys(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys."
+            #     )
 
-            if not update_ops_table(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records."
-                )
+            # if not update_ops_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records."
+            #     )
 
-            if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records."
-                )
+            # if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records."
+            #     )
 
-            if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records."
-                )
+            # if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records."
+            #     )
 
-            if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
+            # if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins."
+            #     )
+
+            if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
                 log(
-                    f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins."
+                    f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts."
                 )
 
     except Exception as e:
