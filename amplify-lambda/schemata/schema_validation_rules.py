@@ -56,6 +56,7 @@ rules = {
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/state/register_ops": {"register_ops": tools_op_schema}, 
+        **user_data_validators,
     },
     "api_validators": {
         "/state/share": {"read": {}},
@@ -77,5 +78,21 @@ rules = {
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/files/delete": {"delete": file_delete_schema},
         "/state/register_ops": {"register_ops": tools_op_schema}, 
+        **user_data_validators,
     },
+}
+
+
+user_data_validators = {
+    "/user-data/put": user_data_put_schema,
+    "/user-data/get": user_data_get_schema,
+    "/user-data/get-by-uuid": user_data_uuid_get_schema,
+    "/user-data/query-range": user_data_query_range_schema,
+    "/user-data/query-prefix": user_data_query_prefix_schema,
+    "/user-data/query-type": user_data_query_type_schema,
+    "/user-data/delete": user_data_delete_schema,
+    "/user-data/batch-put": user_data_batch_put_schema,
+    "/user-data/batch-get": user_data_batch_get_schema,
+    "/user-data/batch-delete": user_data_batch_delete_schema,
+    "/user-data/delete-by-uuid": user_data_uuid_delete_schema,
 }
