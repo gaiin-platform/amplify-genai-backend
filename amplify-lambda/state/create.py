@@ -10,18 +10,24 @@ import boto3
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 
 setup_validated(rules, get_permission_checker)
 
 
 dynamodb = boto3.resource("dynamodb")
 
-
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated("create")
 def create(event, context, user, name, data):
     timestamp = str(time.time())
 
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     item = {
         "id": str(uuid.uuid1()),

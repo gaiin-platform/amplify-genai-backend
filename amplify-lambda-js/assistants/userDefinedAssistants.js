@@ -99,7 +99,7 @@ const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
 const isMemberOfGroup = async (current_user, ast_owner, token) => {
     try {
         const params = {
-            TableName: process.env.GROUPS_DYNAMO_TABLE,
+            TableName: process.env.ASSISTANT_GROUPS_DYNAMO_TABLE,
             Key: {
                 group_id: { S: ast_owner }
             }

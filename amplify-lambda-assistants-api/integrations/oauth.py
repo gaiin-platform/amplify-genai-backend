@@ -19,6 +19,10 @@ from integrations.oauth_encryption import (
 )
 from pycommon.api.auth_admin import verify_user_as_admin
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SSMOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -89,8 +93,9 @@ def get_authorization_url_and_state(integration, client, scopes=None):
             authorization_url, state = client.authorization_url(prompt="consent")
         case IntegrationType.MICROSOFT:
             state = str(uuid.uuid4())  # Generate a random state
+            redirect_uri = build_redirect_uri()
             authorization_url = client.get_authorization_request_url(
-                scopes=scopes, state=state, prompt="consent"
+                scopes=scopes, state=state, redirect_uri=redirect_uri, prompt="consent"
             )
 
     return authorization_url, state
@@ -112,8 +117,9 @@ def acquire_token_from_code(integration, client, scopes, authorization_code):
             client.fetch_token(code=authorization_code)
             return client.credentials
         case IntegrationType.MICROSOFT:
+            redirect_uri = build_redirect_uri()
             result = client.acquire_token_by_authorization_code(
-                code=authorization_code, scopes=scopes
+                code=authorization_code, scopes=scopes, redirect_uri=redirect_uri
             )
             return result
     raise ValueError(f"Unsupported integration type: {integration}")
@@ -123,6 +129,7 @@ def serialize_credentials(integration, credentials):
     """
     Serializes and encrypts the credentials returning a consistent JSON that includes an 'expires_at' timestamp.
     """
+
     match provider_case(integration):
         case IntegrationType.GOOGLE:
             credentials_dict = json.loads(credentials.to_json())
@@ -137,8 +144,12 @@ def serialize_credentials(integration, credentials):
                     print("Error parsing Google expiry date:", e)
                     raise e
             else:
-                raise Exception("Google credentials missing 'expiry' field")
+                raise Exception("Google credentials missing required fields:", credentials_dict)
         case IntegrationType.MICROSOFT:
+            if ("error" in credentials or "error_description" in credentials):
+                print("Error serializing Microsoft credentials:", credentials)
+                raise Exception(f"Error serializing Microsoft credentials: {credentials}")
+                
             credentials_dict = {
                 "token": credentials.get("access_token"),
                 "expires_in": credentials.get("expires_in"),
@@ -253,6 +264,12 @@ def get_oauth_client_for_integration(integration):
     return create_oauth_client(integration, client_config, scopes)
 
 
+@required_env_vars({
+    "OAUTH_STATE_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
+    "API_BASE_URL": [],
+    "OAUTH_AUDIENCE": [],
+})
 @validated("start_oauth")
 def start_auth(event, context, current_user, name, data):
 
@@ -484,6 +501,10 @@ def return_html_failed_auth(message):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("list_integrations")
 def list_connected_integrations(event, context, current_user, name, data):
     supported_integrations = get_available_integrations()
@@ -530,6 +551,9 @@ def list_user_integrations(supported_integrations, current_user):
     return connected_list
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("delete_integration")
 def handle_delete_integration(event, context, current_user, name, data):
     integration = data["data"]["integration"]
@@ -620,6 +644,9 @@ def delete_integration(current_user, integration):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("list_integrations")
 def get_supported_integrations(event, context, current_user, name, data):
     supported_integrations = get_available_integrations()
@@ -661,6 +688,11 @@ def get_available_integrations():
         return None
 
 
+@required_env_vars({
+    "INTEGRATION_STAGE": [SSMOperation.PUT_PARAMETER],
+    "API_BASE_URL": [],
+    "OAUTH_AUDIENCE": [],
+})
 @validated("register_secret")
 def regiser_secret(event, context, current_user, name, data):
     integration_provider = data["data"]["integration"]
@@ -748,6 +780,10 @@ def get_oauth_user_table():
     return dynamodb.Table(oauth_user_table_name)
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
+})
 @validated("refresh_token")
 def refresh_integration_tokens(event, context, current_user, name, data):
     integration = data["data"]["integration"]
@@ -793,4 +829,9 @@ def refresh_credentials(current_user, integration, credentials):
 
 
 def get_expiration_time(expires_in):
+    # Handle None or invalid expires_in values by defaulting to 1 hour (3600 seconds)
+    if expires_in is None or not isinstance(expires_in, (int, float)) or expires_in <= 0:
+        print(f"Warning: Invalid expires_in value: {expires_in}, defaulting to 3600 seconds (1 hour)")
+        expires_in = 3600
+    
     return int((datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp())

@@ -24,6 +24,8 @@ from pycommon.api.data_sources import (
 )
 
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -113,6 +115,10 @@ from service.core import check_user_can_update_assistant, get_most_recent_assist
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANT_LOOKUP_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="lookup")
 def lookup_assistant_path(event, context, current_user, name, data):
     token = data["access_token"]
@@ -382,6 +388,12 @@ def lookup_assistant_path(event, context, current_user, name, data):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM],
+    "ASSISTANT_LOOKUP_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="add_assistant_path")
 def add_assistant_path(event, context, current_user, name, data):
     is_group_user = is_group_sys_user(data)

@@ -44,7 +44,7 @@ export const openAiTransform = (event, responseStream = null) => {
     } else if (event && event.d && event.d.delta && event.d.delta.text) { // for error message
         return {d: event.d.delta.text}
     }
-    console.log("----NO MATCH---", event , "\n\n")
+    // console.log("----NO MATCH---", event , "\n\n")
     return null;
     
 }

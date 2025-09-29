@@ -1,6 +1,7 @@
 import json
 import os
 import requests
+from pycommon.api.get_endpoint import get_endpoint, EndpointType
 
 
 def resolve_datasources(datasource_request, authorization_token=None, endpoint=None):
@@ -29,7 +30,8 @@ def resolve_datasources(datasource_request, authorization_token=None, endpoint=N
     Returns:
         dict: The resolved datasources with signed URLs
     """
-    resolver_endpoint = endpoint or os.environ.get("DATASOURCES_RESOLVER_ENDPOINT")
+    
+    resolver_endpoint = get_endpoint(EndpointType.CHAT_ENDPOINT)
     if not resolver_endpoint:
         raise ValueError(
             "No datasource resolver endpoint provided or configured in DATASOURCES_RESOLVER_ENDPOINT"

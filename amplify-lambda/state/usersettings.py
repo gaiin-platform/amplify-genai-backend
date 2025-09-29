@@ -7,14 +7,21 @@ from boto3.dynamodb.conditions import Key, Attr
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 
 setup_validated(rules, get_permission_checker)
 
-tableName = os.environ["DYNAMODB_TABLE"]
+tableName = os.environ["SHARES_DYNAMODB_TABLE"]
 dynamodb = boto3.resource("dynamodb")
 users_table = dynamodb.Table(tableName)
 
 
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.SCAN],
+})
 @validated("get")
 def get_settings(event, context, current_user, name, data):
     try:
@@ -40,6 +47,9 @@ def get_settings(event, context, current_user, name, data):
         return {"success": False, "error": f"Error occurred: {e}"}
 
 
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("save")
 def save_settings(event, context, user, name, data):
     # settings/save

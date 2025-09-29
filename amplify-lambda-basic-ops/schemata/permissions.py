@@ -9,27 +9,6 @@ def get_permission_checker(user, ptype, op, data):
     )
 
 
-def can_prompt(user, data):
-    """
-    Sample permission checker
-    :param user: the user to check
-    :param data: the request data
-    :return: if the user can do the operation
-    """
-    return True
-
-
-def can_create(user, data):
-    return True
-
-
-def can_read(user, data):
-    return True
-
-
-def can_delete(user, data):
-    return True
-
 
 """
 Every service must define the permissions for each operation
@@ -40,16 +19,6 @@ is a function that takes a user and data and returns if the
 user can do the operation.
 """
 permissions_by_state_type = {
-    "/llm/query": {"query": can_prompt},
-    "/llm/qa_check": {"qa_check": can_read},
-    "/llm/workflow": {"llm_workflow": can_prompt},
-    "/llm/workflow-start": {"llm_workflow_async": can_prompt},
-    "/work/echo": {"echo": can_read},
-    "/work/session/create": {"create": can_create},
-    "/work/session/add_record": {"add_record": can_create},
-    "/work/session/list_records": {"list_records": can_read},
-    "/work/session/delete_record": {"delete_record": can_delete},
-    "/work/session/stitch_records": {"stitch_records": can_create},
     "/user-data/put": {"route": lambda for_user, with_data: True},
     "/user-data/get": {"route": lambda for_user, with_data: True},
     "/user-data/get-by-uuid": {"route": lambda for_user, with_data: True},

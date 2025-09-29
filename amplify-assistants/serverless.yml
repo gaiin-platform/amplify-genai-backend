@@ -20,6 +20,9 @@ custom:
     - dev
     - staging
     - prod
+
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.stageVars.DEP_NAME}
     
   pythonRequirements:
     dockerizePip: true
@@ -55,39 +58,61 @@ provider:
 
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    OPENAI_API_KEY: ${self:custom.stageVars.OPENAI_API_KEY} #When using the OpenAI API, you need to provide the ARN of the secret that contains the API key, the secret should be named OPENAI_API_KEY.
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    LLM_ENDPOINTS_SECRETS_NAME: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME}
-    HASH_FILES_DYNAMO_TABLE:  amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
-    ASSISTANTS_OPENAI_PROVIDER: ${self:custom.stageVars.ASSISTANTS_OPENAI_PROVIDER}
-    ASSISTANTS_FILES_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
-    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
-    ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
-    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
-    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
-    ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
-    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
+    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
+    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+    # Locally Defined Variables
     ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE: ${self:service}-${sls:stage}-code-interpreter-assistants
     ASSISTANT_LAMBDA_MANAGED_POLICY: ${self:service}-${sls:stage}-managed-policy
-    BILLING_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-additional-charges
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    S3_SHARE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-share
-    SHARES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
-    GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
-    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
-    GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-dashboards
-    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-lookup
-    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
+    ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
+    ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
+    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
+    ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
+    GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
 
+    # Imported Variables
+    # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    # API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    # S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input #Rag Input Bucket
+    # ADDITIONAL_CHARGES_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-additional-charges
+    # COGNITO_USERS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-cognito-users
+    # COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    # ASSISTANT_GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
+    # HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
+    # OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
+    # OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    # S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
+    # S3_SHARE_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-share
+    # SHARES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}
+    # ENV_VARS_TRACKING_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-env-vars-tracking
+
+    # Parameter Store Version
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    ADDITIONAL_CHARGES_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/ADDITIONAL_CHARGES_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
+    OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
+    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
+    S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
+    S3_SHARE_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_SHARE_BUCKET_NAME}
+    SHARES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/SHARES_DYNAMODB_TABLE}
 
   iam:
     role:
@@ -630,8 +655,8 @@ resources:
                 - s3:PutObject
                 - s3:ListBucket
               Resource:
-                - "arn:aws:secretsmanager:${aws:region}:*:${self:provider.environment.OPENAI_API_KEY}"
                 - "${self:provider.environment.LLM_ENDPOINTS_SECRETS_NAME_ARN}"
+                - "arn:aws:secretsmanager:${aws:region}:*:secret:${self:provider.environment.SECRETS_ARN_NAME}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OBJECT_ACCESS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SHARES_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
@@ -639,7 +664,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.BILLING_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ADDITIONAL_CHARGES_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_ALIASES_DYNAMODB_TABLE}"
@@ -652,10 +677,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_DASHBOARDS_DYNAMO_TABLE}/*"
                 - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
@@ -670,9 +693,27 @@ resources:
               Resource: 
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.HASH_FILES_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUPS_DYNAMO_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_GROUPS_DYNAMO_TABLE}"
             - Effect: Allow
               Action:
                 - s3:PutObject
               Resource:
                 - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
+            
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+            
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   

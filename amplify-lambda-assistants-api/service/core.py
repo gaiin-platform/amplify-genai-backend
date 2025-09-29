@@ -2,6 +2,10 @@ from decimal import Decimal
 from requests.auth import HTTPBasicAuth
 from pycommon.encoders import SafeDecimalEncoder
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata import permissions
@@ -294,6 +298,10 @@ def build_action(current_user, token, action_name, data):
     )
 
 
+@required_env_vars({
+    "OP_LOG_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+
+})
 @validated("execute_custom_auto")
 def execute_custom_auto(event, context, current_user, name, data):
     try:
@@ -425,6 +433,10 @@ def execute_custom_auto(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "JOBS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "S3_JOBS_BUCKET": [S3Operation.GET_OBJECT],
+})
 @validated("get_result")
 def get_job_result(event, context, current_user, name, data):
     try:
@@ -440,6 +452,10 @@ def get_job_result(event, context, current_user, name, data):
         return {"success": False, "error": str(e)}
 
 
+@required_env_vars({
+    "JOBS_DYNAMODB_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_JOBS_BUCKET": [S3Operation.PUT_OBJECT],
+})
 @validated("set_result")
 def update_job_result(event, context, current_user, name, data):
     try:

@@ -22,7 +22,7 @@ def list(event: dict, context: dict) -> dict:
     Returns:
         dict: A response containing the status code and the list of items from the table.
     """
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     # fetch all todos from the database
     result = table.scan()

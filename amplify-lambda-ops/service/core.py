@@ -3,6 +3,10 @@ import uuid
 import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.api.ops import api_tool
 from pycommon.api.auth_admin import verify_user_as_admin
 from pycommon.authz import validated, setup_validated
@@ -14,6 +18,9 @@ setup_validated(rules, get_permission_checker)
 dynamodb = boto3.client("dynamodb")
 
 
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get")
 def get_all_ops(event, context, current_user, name, data):
     if not verify_user_as_admin(data["access_token"], "Get All Ops"):
@@ -109,6 +116,9 @@ def get_all_ops(event, context, current_user, name, data):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get")
 def get_ops(event, context, current_user, name, data):
     data = data["data"]
@@ -194,6 +204,9 @@ def get_ops(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get")
 def get_op_by_name(event, context, current_user, name, data):
     data = data["data"]
@@ -332,6 +345,13 @@ def fetch_user_ops(current_user, tag):
     }
 
 
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.UPDATE_ITEM,
+        DynamoDBOperation.PUT_ITEM,
+    ],
+})
 @validated(op="write")
 def write_ops(event, context, current_user, name, data):
     data = data["data"]
@@ -408,6 +428,13 @@ def write_ops(event, context, current_user, name, data):
     }
 
 
+@required_env_vars({
+    "OPS_DYNAMODB_TABLE": [
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.UPDATE_ITEM,
+        DynamoDBOperation.DELETE_ITEM,
+    ],
+})
 @validated(op="delete")
 def delete_op(event, context, current_user, name, data):
     op = data["data"]["op"]

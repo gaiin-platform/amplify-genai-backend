@@ -5,6 +5,10 @@ import boto3
 import json
 from botocore.exceptions import ClientError
 import os
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated, setup_validated
 from pycommon.api.amplify_users import are_valid_amplify_users
 from schemata.schema_validation_rules import rules
@@ -39,6 +43,9 @@ def add_access_response(access_responses, object_id, access_type, response):
     print("Added access response: ", access_responses)
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("simulate_access_to_objects")
 def simulate_access_to_objects(event, context, current_user, name, data):
     print("Simulating object access")
@@ -98,6 +105,9 @@ def simulate_access_to_objects(event, context, current_user, name, data):
     }
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("can_access_objects")
 def can_access_objects(event, context, current_user, name, data):
     print("Can access objects")
@@ -160,6 +170,14 @@ def can_access_objects(event, context, current_user, name, data):
     return {"statusCode": 200, "body": "User has access to the object(s)."}
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [
+        DynamoDBOperation.QUERY,
+        DynamoDBOperation.PUT_ITEM,
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.UPDATE_ITEM,
+    ],
+})
 @validated("update_object_permissions")
 def update_object_permissions(event, context, current_user, name, data):
     table_name = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]

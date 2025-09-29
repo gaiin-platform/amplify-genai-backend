@@ -2,6 +2,10 @@ import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
+import { 
+    withEnvVarsTracking, 
+    DynamoDBOperation 
+} from '../common/envVarsTracking.js';
 
 const logger = getLogger("mtd");
 const client = new DynamoDBClient({});
@@ -11,7 +15,7 @@ const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 const historyCostDynamoTableName = process.env.HISTORY_COST_CALCULATIONS_DYNAMO_TABLE;
 const apiKeysTableName = process.env.API_KEYS_DYNAMODB_TABLE;
 
-export const handler = async (event, context, callback) => {
+const mtdHandler = async (event, context, callback) => {
     try {
         logger.debug("Extracting params from event");
         const params = await extractParams(event);
@@ -197,7 +201,7 @@ const processAccountInfo = async (accountInfo) => {
     return `${newAccount}#${id}`;
 };
 
-export const apiKeyUserCostHandler = async (event, context, callback) => {
+const internalApiKeyUserCostHandler = async (event, context, callback) => {
     try {
         const params = await extractParams(event);
         if (params.statusCode) return params;
@@ -369,7 +373,7 @@ export const apiKeyUserCostHandler = async (event, context, callback) => {
     }
 };
 
-export const listAllUserMtdCostsHandler = async (event, context, callback) => {
+const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
     const startTime = Date.now();
     logger.info("=== LIST ALL USER MTD COSTS REQUEST STARTED ===");
     
@@ -388,11 +392,11 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
         user = params.user; // Assign user from params
         logger.info("Request initiated by user", { user, requestBody: body });
 
-        // Check if user is in Admin group by querying ADMIN_DYNAMODB_TABLE
+        // Check if user is in Admin group by querying AMPLIFY_ADMIN_DYNAMODB_TABLE
         logger.info("Starting admin privilege verification");
-        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -734,7 +738,7 @@ export const listAllUserMtdCostsHandler = async (event, context, callback) => {
     }
 };
 
-export const billingGroupsCostsHandler = async (event, context, callback) => {
+const internalBillingGroupsCostsHandler = async (event, context, callback) => {
     const startTime = Date.now();
     logger.info("=== BILLING GROUPS COSTS REQUEST STARTED ===");
     
@@ -755,9 +759,9 @@ export const billingGroupsCostsHandler = async (event, context, callback) => {
 
         // Step 1: Check admin privileges
         logger.info("Verifying admin privileges");
-        const adminTableName = process.env.ADMIN_DYNAMODB_TABLE;
+        const adminTableName = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
         if (!adminTableName) {
-            logger.error("ADMIN_DYNAMODB_TABLE environment variable is not set");
+            logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE environment variable is not set");
             return {
                 statusCode: 500,
                 body: JSON.stringify({ error: 'Server configuration error' }),
@@ -1226,7 +1230,7 @@ export const billingGroupsCostsHandler = async (event, context, callback) => {
     }
 };
 
-export const listUserMtdCostsHandler = async (event, context, callback) => {
+const internalListUserMtdCostsHandler = async (event, context, callback) => {
     const startTime = Date.now();
     logger.info("=== LIST USER MTD COSTS REQUEST STARTED ===");
     
@@ -1424,3 +1428,23 @@ export const listUserMtdCostsHandler = async (event, context, callback) => {
         };
     }
 };
+// Environment variable configuration for billing handlers
+const billingEnvConfig = {
+    // DynamoDB tables - require IAM permissions
+    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY], // Used for resolving API key details
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM], // Used for admin privilege checks
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
+    
+    // Configuration-only variables (no AWS permissions needed):
+    // "SERVICE_NAME": [], // Tracking metadata only
+    // "STAGE": [], // Tracking metadata only
+};
+
+// Export all handlers with environment variable tracking (using original names)
+export const handler = withEnvVarsTracking(billingEnvConfig, mtdHandler);
+export const apiKeyUserCostHandler = withEnvVarsTracking(billingEnvConfig, internalApiKeyUserCostHandler);
+export const listAllUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListAllUserMtdCostsHandler);
+export const billingGroupsCostsHandler = withEnvVarsTracking(billingEnvConfig, internalBillingGroupsCostsHandler);
+export const listUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListUserMtdCostsHandler);

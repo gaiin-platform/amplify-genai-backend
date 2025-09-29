@@ -5,6 +5,7 @@ from pycommon import required_env_vars
 from pycommon.exceptions import ClaimException
 from pycommon.dal import DAL, Backend, UserABC
 from pycommon.dal.errors import NotFound
+from pycommon.dal.providers.aws.resource_perms import DynamoDBOperation
 from jose import jwt
 import pycommon.dal.providers.aws
 
@@ -92,7 +93,9 @@ def _update_admin_groups(user: UserABC) -> None:
     dal.AdminConfig.set_config(config_id, conf)
 
 
-@required_env_vars("OAUTH_ISSUER_BASE_URL", "OAUTH_AUDIENCE", "ACCOUNTS_DYNAMO_TABLE")
+@required_env_vars({
+    "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 def create_or_update_user(event, context):
     """Lambda function to create or update a user based on Cognito data.
 

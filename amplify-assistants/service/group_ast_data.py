@@ -14,6 +14,10 @@ from pycommon.const import APIAccessType
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -27,6 +31,10 @@ from service.core import get_most_recent_assistant_version
 
 # used for system users who have access to a group. Group assistants are based on group permissions
 # currently the data returned is best for our amplify wordpress plugin
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="get")
 def retrieve_astg_for_system_use(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
@@ -73,7 +81,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
 
     print("checking perms from group table")
     # check system user has access to group assistant
-    groups_table = dynamodb.Table(os.environ["GROUPS_DYNAMO_TABLE"])
+    groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
 
     try:
         response = groups_table.get_item(Key={"group_id": groupId})
@@ -133,6 +141,9 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
 
 # queries GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE (updated at the end of every conversation via amplify-lambda-js/common/chat/controllers/sequentialChat.js)
 # to see all conversations of a specific group assistant. assistantId must be provided in the data field.
+@required_env_vars({
+    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="get_group_assistant_conversations")
 def get_group_assistant_conversations(event, context, current_user, name, data):
     if "data" not in data or "assistantId" not in data["data"]:
@@ -181,6 +192,9 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
 
 
 
+@required_env_vars({
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated(op="get_group_conversations_data")
 def get_group_conversations_data(event, context, current_user, name, data):
     if (
@@ -230,6 +244,10 @@ def get_group_conversations_data(event, context, current_user, name, data):
 # - specify date range: startDate-endDate (default null, meaning provide all data regardless of date)
 # - include conversation data: true/false (default false, meaning provide only dashboard data, NOT conversation statistics in CSV format)
 # - include conversation content: true/false (default false, meaning content of conversations is not provided)
+@required_env_vars({
+    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
+})
 @validated(op="get_group_assistant_dashboards")
 def get_group_assistant_dashboards(event, context, current_user, name, data):
     if "data" not in data or "assistantId" not in data["data"]:
@@ -421,6 +439,9 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
 
 
+@required_env_vars({
+    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="save_user_rating")
 def save_user_rating(event, context, current_user, name, data):
     if (

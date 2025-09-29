@@ -6,6 +6,10 @@ from .integrationsList import integrations_list
 from auth.oauth_encryption import decrypt_oauth_data
 from auth.oauth import refresh_integration_token, get_user_integrations
 from pycommon.api.secrets import get_secret_parameter
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SSMOperation
+)
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -102,6 +106,9 @@ def check_credentials_expired(expires_at: int) -> bool:
     return current_ts >= expires_at
 
 
+@required_env_vars({
+    "INTEGRATION_STAGE": [SSMOperation.GET_PARAMETER],
+})
 @validated("get")
 def get_integrations(event, context, current_user, name, data):
     stage = os.environ.get("INTEGRATION_STAGE")
