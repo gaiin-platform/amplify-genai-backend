@@ -1,4 +1,4 @@
-git+https://github.com/gaiin-platform/pycommon.git@v0.1.0
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.0dev
 beautifulsoup4
 aws-xray-sdk==2.14.0
 litellm~=1.57.1

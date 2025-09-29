@@ -15,6 +15,10 @@ import boto3
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 
 setup_validated(rules, get_permission_checker)
 
@@ -30,7 +34,7 @@ def update(event, context):
 
     timestamp = int(time.time() * 1000)
 
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     result = table.update_item(
         Key={"id": event["pathParameters"]["id"]},
@@ -50,14 +54,16 @@ def update(event, context):
 
     return response
 
-
+@required_env_vars({
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("append")
 def append_using_user_and_name(event, context, user, name, data):
 
     new_data = data["data"]
 
     dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
     # Step 1: Query using the secondary index to get the primary key
     response = table.query(

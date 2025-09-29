@@ -33,6 +33,10 @@ from pycommon.api.object_permissions import (
 )
 
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -119,6 +123,11 @@ def check_user_can_update_assistant(assistant, user_id):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "ASSISTANT_LOOKUP_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+})
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -322,6 +331,10 @@ def delete_assistant(event, context, current_user, name, data):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated(op="list")
 def list_assistants(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -573,6 +586,11 @@ def get_assistant(assistant_id):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
+    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+})
 @validated(op="create")
 def create_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -847,6 +865,13 @@ def create_assistant(event, context, current_user, name, data):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -1237,6 +1262,9 @@ def delete_assistant_by_public_id(assistants_table, assistant_public_id):
         assistants_table.delete_item(Key={"id": item["id"]})
 
 
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.DELETE_ITEM],
+})
 @validated(op="remove_astp_permissions")
 def remove_shared_ast_permissions(event, context, current_user, name, data):
     extracted_data = data["data"]
@@ -1683,6 +1711,11 @@ def update_assistant_alias_by_type(assistant_public_id, new_id, version, alias_t
 
 
 
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated(op="share_assistant")
 def request_assistant_to_public_ast(event, context, current_user, name, data):
     data = data["data"]
@@ -1762,6 +1795,9 @@ def request_assistant_to_public_ast(event, context, current_user, name, data):
         }
 
 
+@required_env_vars({
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated(op="lookup")
 def validate_assistant_id(event, context, current_user, name, data):
     data = data["data"]

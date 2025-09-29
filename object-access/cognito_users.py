@@ -7,6 +7,10 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 from pycommon.const import APIAccessType
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
@@ -15,6 +19,9 @@ setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value, 
                       APIAccessType.ADMIN.value, APIAccessType.API_KEY.value,])
 
+@required_env_vars({
+    "COGNITO_USERS_DYNAMODB_TABLE": [DynamoDBOperation.SCAN],
+})
 @validated("read")
 def get_emails(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
@@ -92,6 +99,9 @@ def is_valid_email_prefix(prefix):
     return False
 
 
+@required_env_vars({
+    "COGNITO_USERS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("read")
 def get_user_groups(event, context, current_user, name, data):
     resp_data = get_cognito_amplify_groups(current_user)

@@ -6,8 +6,15 @@ from workflow.workflow_template_registry import (
     update_workflow_template,
 )
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @api_tool(
     path="/vu-agent/register-workflow-template",
     tags=["workflows"],
@@ -116,6 +123,9 @@ def register_workflow_template_handler(
         raise RuntimeError(f"Failed to register workflow template: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.DELETE_ITEM],
+})
 @api_tool(
     path="/vu-agent/delete-workflow-template",
     tags=["workflows"],
@@ -152,6 +162,9 @@ def delete_workflow_template_handler(current_user, access_token, template_id):
         raise RuntimeError(f"Failed to delete workflow template: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @api_tool(
     path="/vu-agent/get-workflow-template",
     tags=["workflows"],
@@ -241,6 +254,9 @@ def get_workflow_template_handler(current_user, access_token, template_id):
         raise RuntimeError(f"Failed to get workflow template: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.SCAN],
+})
 @api_tool(
     path="/vu-agent/list-workflow-templates",
     tags=["workflows"],
@@ -325,6 +341,9 @@ def list_workflow_templates_handler(current_user, access_token, filter_base_temp
         raise RuntimeError(f"Failed to list workflow templates: {str(e)}")
 
 
+@required_env_vars({
+    "WORKFLOW_TEMPLATES_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @api_tool(
     path="/vu-agent/update-workflow-template",
     tags=["workflows"],

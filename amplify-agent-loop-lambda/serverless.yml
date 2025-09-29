@@ -15,6 +15,8 @@ plugins:
 
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  # Base paths for Parameter Store
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.stageVars.DEP_NAME}
   pythonRequirements:
     dockerizePip: true
     usePoetry: false
@@ -48,44 +50,66 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
-    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
+    AGENT_QUEUE_URL: !Ref AgentQueue
+    API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
+    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
+    DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
     LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
+    LLM_ENDPOINTS_SECRETS_NAME: ${sls:stage}-openai-endpoints
     OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
     OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
-    API_BASE_URL: "https://${self:custom.stageVars.CUSTOM_API_DOMAIN}"
-    OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-state
-    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
-    # We will need to change this below in the policy when we migrate too
-    # OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
-    AGENT_QUEUE_URL: !Ref AgentQueue
-    AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
-    FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
-    DB_CONNECTIONS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-db-connections
-    USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
-    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
     ORGANIZATION_EMAIL_DOMAIN: ${self:custom.stageVars.ORGANIZATION_EMAIL_DOMAIN}
-    S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
-    S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
+    SECRETS_ARN_NAME: ${sls:stage}-amplify-app-secrets
+    SERVICE_NAME: ${self:service}
+    STAGE: ${sls:stage}
+
+    # Locally Defined Variables
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
-    ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
-    ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
-    DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
-    WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
-    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
-    SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
+    AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
+    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
+    AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-states
+    EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
+    LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
     SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs
-    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-    CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
-    MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
-    REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
-    DATASOURCES_RESOLVER_ENDPOINT: ${self:custom.stageVars.CHAT_ENDPOINT}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
+    SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
+    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
+    WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
+
+    # Imported Variables
+    # OPS_LAMBDA_NAME: amplify-${self:custom.stageVars.DEP_NAME}-se-${sls:stage}-opExecLambda
+    # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    # API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    # ASSISTANTS_ALIASES_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistant-aliases
+    # ASSISTANTS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-assistants-${sls:stage}-assistants
+    # CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
+    # COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    # DB_CONNECTIONS_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-db-connections
+    # FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-files
+    # MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
+    # OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+    # REQUEST_STATE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-amplify-js-${sls:stage}-request-state
+    # S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
+    # S3_RAG_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-input
+    # USER_TAGS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-user-tags
+    # ENV_VARS_TRACKING_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-env-vars-tracking
+
+    # Parameter Store Version
+    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
+    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_ALIASES_DYNAMODB_TABLE}
+    ASSISTANTS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANTS_DYNAMODB_TABLE}
+    CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
+    DB_CONNECTIONS_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/DB_CONNECTIONS_TABLE}
+    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/FILES_DYNAMO_TABLE}
+    MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
+    OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    REQUEST_STATE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/REQUEST_STATE_DYNAMO_TABLE}
+    S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
+    S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
+    USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
 
   iam:
     role:
@@ -284,6 +308,24 @@ resources:
                 - ecr:GetDownloadUrlForLayer
               Resource:
                 - arn:aws:ecr:us-east-1:654654422653:repository/dev-amplifygenai-repo
+
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource:
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource:
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
 
     AgentStateDynamoDBTable:
       Type: AWS::DynamoDB::Table

@@ -10,6 +10,10 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType, IMAGE_FILE_TYPES
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, S3Operation, SQSOperation
+)
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.FILE_UPLOAD.value])
 
@@ -60,6 +64,12 @@ dynamodb = boto3.resource("dynamodb")
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("download")
 def get_presigned_download_url(event, context, current_user, name, data):
     access_token = data["access_token"]
@@ -217,6 +227,11 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 
 
 # due to lambda layer requirements in rag.core, we have to define this function here
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "RAG_PROCESS_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+})
 @validated("upload")
 def reprocess_document_for_rag(event, context, current_user, name, data):
     """
@@ -344,8 +359,10 @@ def create_file_metadata_entry(
         update_file_tags(current_user, key, tags)
 
     return bucket_name, key
-
-
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("set")
 def set_datasource_metadata_entry(event, context, current_user, name, data):
 
@@ -539,6 +556,13 @@ def set_datasource_metadata_entry(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("upload")
 def get_presigned_url(event, context, current_user, name, data):
     access = data["allowed_access"]
@@ -726,6 +750,9 @@ def get_presigned_url(event, context, current_user, name, data):
         "required": ["success", "data"],
     },
 )
+@required_env_vars({
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("list")
 def list_tags_for_user(event, context, current_user, name, data):
     table = dynamodb.Table(os.environ["USER_TAGS_DYNAMO_TABLE"])
@@ -811,6 +838,9 @@ def list_tags_for_user(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM],
+})
 @validated("delete")
 def delete_tag_from_user(event, context, current_user, name, data):
     data = data["data"]
@@ -922,6 +952,9 @@ def delete_tag_from_user(event, context, current_user, name, data):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("create")
 def create_tags(event, context, current_user, name, data):
     data = data["data"]
@@ -1046,6 +1079,10 @@ def add_tags_to_user(current_user, tags_to_add):
         "required": ["success", "message"],
     },
 )
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+})
 @validated("set_tags")
 def update_item_tags(event, context, current_user, name, data):
     data = data["data"]
@@ -1320,6 +1357,9 @@ def update_file_tags(current_user, item_id, tags):
         "required": ["success", "data"],
     },
 )
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+})
 @validated("query")
 def query_user_files(event, context, current_user, name, data):
     print(f"Querying user files for {current_user}")
@@ -1684,8 +1724,15 @@ def query_user_files_by_created_at2(
         "success": True,
         "data": {"items": plain_items, "pageKey": last_evaluated_key},
     }
-
-
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.DELETE_ITEM],
+    "EMBEDDING_PROGRESS_TABLE": [DynamoDBOperation.DELETE_ITEM],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+})
 @validated("delete")
 def delete_file(event, context, current_user, name, data):
     """

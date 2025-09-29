@@ -1,4 +1,3 @@
-from .add_charge_schema import add_charge_schema
 from .share_schema import share_schema
 from .share_load_schema import share_load_schema
 from .set_metadata_schema import set_metadata_schema
@@ -32,7 +31,6 @@ rules = {
         "/files/tags/list": {"list": {}},
         "/files/query": {"query": file_query_schema},
         "/chat/convert": {"convert": convert_schema},
-        "/state/accounts/charge": {"create_charge": add_charge_schema},
         "/state/accounts/save": {"save": save_accounts_schema},
         "/state/accounts/get": {"get": {}},
         "/state/conversation/upload": {

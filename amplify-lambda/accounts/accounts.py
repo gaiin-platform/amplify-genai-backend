@@ -9,6 +9,10 @@ from pycommon.api.ops import api_tool
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation
+)
 
 setup_validated(rules, get_permission_checker)
 
@@ -123,6 +127,9 @@ def save_accounts_for_user(user, accounts_list):
         "required": ["success", "message", "data"],
     },
 )
+@required_env_vars({
+    "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @validated("get")
 def get_accounts(event, context, user, name, data):
     # accounts/get
@@ -135,7 +142,9 @@ def get_accounts(event, context, user, name, data):
         "data": accounts,
     }
 
-
+@required_env_vars({
+    "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @validated("save")
 def save_accounts(event, context, user, name, data):
     # accounts/get

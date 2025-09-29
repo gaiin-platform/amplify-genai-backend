@@ -1,6 +1,10 @@
 import traceback
 
 from pycommon.api.ops import api_tool
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SQSOperation
+)
 from events.email_sender_controls import (
     add_allowed_sender,
     remove_allowed_sender,
@@ -18,6 +22,9 @@ from events.mock import generate_ses_event
 from service.agent_queue import route_queue_event
 
 
+@required_env_vars({
+    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @api_tool(
     path="/vu-agent/add-event-template",
     tags=["events", "default"],
@@ -82,6 +89,9 @@ def handle_add_event_template(
         }
 
 
+@required_env_vars({
+    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.DELETE_ITEM],
+})
 @api_tool(
     path="/vu-agent/remove-event-template",
     tags=["events", "default"],
@@ -115,6 +125,9 @@ def handle_remove_event_template(current_user, access_token, tag):
         }
 
 
+@required_env_vars({
+    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @api_tool(
     path="/vu-agent/get-event-template",
     tags=["events", "default"],
@@ -194,6 +207,9 @@ def handle_get_event_template(current_user, access_token, tag):
         }
 
 
+@required_env_vars({
+    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.SCAN],
+})
 @api_tool(
     path="/vu-agent/list-event-templates",
     tags=["events", "default"],
@@ -261,6 +277,9 @@ def handle_list_event_templates_for_user(current_user, access_token):
         }
 
 
+@required_env_vars({
+    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.SCAN],
+})
 @api_tool(
     path="/vu-agent/list-event-template-tags",
     tags=["events", "default"],
@@ -296,6 +315,9 @@ def handle_list_event_template_tags(current_user, access_token):
         }
 
 
+@required_env_vars({
+    "EMAIL_SENDER_CONTROLS_TABLE": [DynamoDBOperation.PUT_ITEM],
+})
 @api_tool(
     path="/vu-agent/add-allowed-sender",
     tags=["email", "default"],
@@ -335,6 +357,9 @@ def handle_add_allowed_sender(current_user, access_token, tag, sender):
         }
 
 
+@required_env_vars({
+    "EMAIL_SENDER_CONTROLS_TABLE": [DynamoDBOperation.DELETE_ITEM],
+})
 @api_tool(
     path="/vu-agent/remove-allowed-sender",
     tags=["email", "default"],
@@ -374,6 +399,9 @@ def handle_remove_allowed_sender(current_user, access_token, tag, sender):
         }
 
 
+@required_env_vars({
+    "AGENT_QUEUE": [SQSOperation.SEND_MESSAGE],
+})
 @api_tool(
     path="/vu-agent/test-send-email-notification",
     tags=["email", "default"],
@@ -444,6 +472,9 @@ def test_send_email_notification(
         }
 
 
+@required_env_vars({
+    "EMAIL_SENDER_CONTROLS_TABLE": [DynamoDBOperation.SCAN],
+})
 @api_tool(
     path="/vu-agent/list-allowed-senders",
     tags=["email", "default"],
@@ -482,6 +513,9 @@ def handle_list_allowed_senders(current_user, access_token, tag):
         }
 
 
+@required_env_vars({
+    "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.GET_ITEM],
+})
 @api_tool(
     path="/vu-agent/is-event-template-tag-available",
     tags=["events", "default"],

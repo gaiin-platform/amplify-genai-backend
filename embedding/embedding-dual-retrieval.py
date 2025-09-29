@@ -8,6 +8,10 @@ import os
 import time
 import psycopg2
 from pgvector.psycopg2 import register_vector
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SQSOperation, SecretsManagerOperation
+)
 from pycommon.api.credentials import get_credentials
 from shared_functions import generate_embeddings
 import logging
@@ -435,6 +439,16 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
         "required": ["result"],
     },
 )
+@required_env_vars({
+    "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "EMBEDDING_PROGRESS_TABLE": [
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.UPDATE_ITEM,
+    ],
+    "RAG_CHUNK_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
+    "RAG_POSTGRES_DB_SECRET": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated("dual-retrieval")
 def process_input_with_dual_retrieval(event, context, current_user, name, data):
     """
@@ -561,6 +575,13 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     return response
 
 
+@required_env_vars({
+    "EMBEDDING_PROGRESS_TABLE": [
+        DynamoDBOperation.GET_ITEM,
+        DynamoDBOperation.UPDATE_ITEM,
+    ],
+    "RAG_CHUNK_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
+})
 @validated("embeddings-check")
 def queue_missing_embeddings(event, context, current_user, name, data):
     """

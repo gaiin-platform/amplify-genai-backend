@@ -6,6 +6,12 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import {DeleteMessageCommand, SQSClient} from '@aws-sdk/client-sqs';
 import {routeRequest} from "./router.js";
 import {findResult, StreamResultCollector} from "./common/streams.js";
+import { 
+    withEnvVarsTracking, 
+    DynamoDBOperation, 
+    S3Operation, 
+    SQSOperation 
+} from './common/envVarsTracking.js';
 
 const sqsClient = new SQSClient();
 const s3Client = new S3Client();
@@ -31,7 +37,7 @@ const saveResultToS3 = async (resultKey, result, status, message) => {
     }
 }
 
-export const handler = async (event, context) => {
+const assistantQueueHandler = async (event, context) => {
 
     logger.debug("Received event for assistant");
 
@@ -89,3 +95,50 @@ export const handler = async (event, context) => {
     }
 
 };
+
+// Export handler with environment variable tracking (using original name)
+export const handler = withEnvVarsTracking({
+    // SQS queue operations - require IAM permissions
+    "assistant_task_queue_url": [SQSOperation.DELETE_MESSAGE],
+    
+    // DynamoDB tables - require IAM permissions (via routeRequest)
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+    "CHAT_USAGE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.QUERY],
+    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+    "MODEL_RATE_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY],
+    "REQUEST_STATE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.DELETE_ITEM],
+    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY],
+    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.QUERY],
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+    "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
+    "DATASOURCE_REGISTRY_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    
+    // S3 buckets - require IAM permissions
+    "ASSISTANT_TASK_RESULTS_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
+    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "ASSISTANT_LOGS_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    
+    // Secrets Manager - require IAM permissions (via routeRequest)
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE]
+    
+    // Configuration-only variables (no AWS permissions needed):
+    // "COGNITO_USER_POOL_ID": [], // Used for JWT verification only
+    // "COGNITO_CLIENT_ID": [], // Used for JWT verification only
+    // "IDP_PREFIX": [], // String processing only
+    // "API_BASE_URL": [], // HTTP requests to other services
+    // "SERVICE_NAME": [], // Tracking metadata only
+    // "STAGE": [], // Tracking metadata only
+    // "TRACING_ENABLED": [], // Boolean flag only
+    // "DEP_REGION": [], // Region string for AWS SDK
+    // "BEDROCK_GUARDRAIL_ID": [], // Config passed to Bedrock calls
+    // "BEDROCK_GUARDRAIL_VERSION": [], // Config passed to Bedrock calls
+}, assistantQueueHandler);

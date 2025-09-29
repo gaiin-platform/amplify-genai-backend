@@ -1,4 +1,4 @@
-git+https://github.com/gaiin-platform/pycommon.git@v0.1.0
+git+https://github.com/gaiin-platform/pycommon.git@v0.1.0dev
 absl-py==2.3.0
 affine==2.4.0
 aiofiles==24.1.0
