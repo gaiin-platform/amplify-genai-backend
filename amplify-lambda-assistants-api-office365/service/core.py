@@ -2795,13 +2795,13 @@ def check_event_conflicts_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
         },
-        "required": ["item_id", "worksheet_id"],
+        "required": ["item_id", "worksheet_name"],
     },
 )
 def get_worksheet_handler(current_user, data):
-    return common_handler(get_worksheet, item_id=None, worksheet_id=None)(
+    return common_handler(get_worksheet, item_id=None, worksheet_name=None)(
         current_user, data
     )
 
@@ -2839,13 +2839,13 @@ def create_worksheet_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
         },
-        "required": ["item_id", "worksheet_id"],
+        "required": ["item_id", "worksheet_name"],
     },
 )
 def delete_worksheet_handler(current_user, data):
-    return common_handler(delete_worksheet, item_id=None, worksheet_id=None)(
+    return common_handler(delete_worksheet, item_id=None, worksheet_name=None)(
         current_user, data
     )
 
@@ -2862,7 +2862,7 @@ def delete_worksheet_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
             "address": {
                 "type": "string",
                 "description": "Range address for the table (e.g., 'A1:D4')",
@@ -2873,14 +2873,14 @@ def delete_worksheet_handler(current_user, data):
                 "description": "Specifies if the table has headers",
             },
         },
-        "required": ["item_id", "worksheet_id", "address"],
+        "required": ["item_id", "worksheet_name", "address"],
     },
 )
 def create_table_excel_handler(current_user, data):
     return common_handler(
         create_table_excel,
         item_id=None,
-        worksheet_id=None,
+        worksheet_name=None,
         address=None,
         has_headers=True,
     )(current_user, data)
@@ -2942,13 +2942,13 @@ def get_table_range_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
         },
-        "required": ["item_id", "worksheet_id"],
+        "required": ["item_id", "worksheet_name"],
     },
 )
 def list_charts_handler(current_user, data):
-    return common_handler(list_charts, item_id=None, worksheet_id=None)(
+    return common_handler(list_charts, item_id=None, worksheet_name=None)(
         current_user, data
     )
 
@@ -2965,14 +2965,14 @@ def list_charts_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
-            "chart_id": {"type": "string", "description": "Chart identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
+            "chart_name": {"type": "string", "description": "Chart name"},
         },
-        "required": ["item_id", "worksheet_id", "chart_id"],
+        "required": ["item_id", "worksheet_name", "chart_name"],
     },
 )
 def get_chart_handler(current_user, data):
-    return common_handler(get_chart, item_id=None, worksheet_id=None, chart_id=None)(
+    return common_handler(get_chart, item_id=None, worksheet_name=None, chart_name=None)(
         current_user, data
     )
 
@@ -2989,7 +2989,7 @@ def get_chart_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
             "chart_type": {"type": "string", "description": "Chart type"},
             "source_range": {
                 "type": "string",
@@ -3004,7 +3004,7 @@ def get_chart_handler(current_user, data):
         },
         "required": [
             "item_id",
-            "worksheet_id",
+            "worksheet_name",
             "chart_type",
             "source_range",
             "series_by",
@@ -3015,10 +3015,10 @@ def create_chart_handler(current_user, data):
     return common_handler(
         create_chart,
         item_id=None,
-        worksheet_id=None,
+        worksheet_name=None,
         chart_type=None,
         source_range=None,
-        seriesBy=None,
+        series_by=None,
         title="",
     )(current_user, data)
 
@@ -3035,14 +3035,14 @@ def create_chart_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
-            "chart_id": {"type": "string", "description": "Chart identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
+            "chart_name": {"type": "string", "description": "Chart name"},
         },
-        "required": ["item_id", "worksheet_id", "chart_id"],
+        "required": ["item_id", "worksheet_name", "chart_name"],
     },
 )
 def delete_chart_handler(current_user, data):
-    return common_handler(delete_chart, item_id=None, worksheet_id=None, chart_id=None)(
+    return common_handler(delete_chart, item_id=None, worksheet_name=None, chart_name=None)(
         current_user, data
     )
 
