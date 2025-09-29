@@ -101,6 +101,7 @@ provider:
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
     USER_TAGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-tags
+    USER_STORAGE_TABLE: ${self:service}-${sls:stage}-user-storage
 
     # Imported Variables
     # AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
@@ -126,6 +127,15 @@ provider:
         - arn:aws:iam::${aws:accountId}:policy/${self:provider.environment.LAMBDA_IAM_POLICY_NAME}
 
 functions:
+
+  user_data_router:
+    handler: state/user_data.route
+    timeout: 30
+    events:
+      - http:
+          path: /user-data/{proxy+}
+          method: post
+          cors: true
 
   tools_op:
     handler: tools_ops.api_tools_handler
@@ -651,6 +661,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -1211,6 +1223,33 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
+
+    UserStorageTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.USER_STORAGE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: UUID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: UUID-index
+            KeySchema:
+              - AttributeName: UUID
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
 
   Outputs:
       AccountingChatUsageDynamoStreamArn:

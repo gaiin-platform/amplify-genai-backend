@@ -17,7 +17,7 @@ from schemata import permissions
 
 setup_validated(rules, permissions.get_permission_checker)
 from pycommon.api.ops import api_tool, set_route_data, set_permissions_by_state
-from service.routes import route_data
+from state.routes import route_data
 
 set_route_data(route_data)
 set_permissions_by_state(permissions)
