@@ -94,6 +94,8 @@ from integrations.o365.onenote import (
     list_pages_in_section,
     create_page_in_section,
     get_page_content,
+    create_page_with_image,
+    create_page_with_attachment,
     create_page_with_image_and_attachment,
 )
 
@@ -1748,6 +1750,94 @@ def get_page_content_handler(current_user, data):
 
 
 @api_tool(
+    path="/microsoft/integrations/create_page_with_image",
+    tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
+    name="microsoftCreatePageWithImage",
+    description="Creates a page with an embedded image.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "section_id": {"type": "string", "description": "Section ID"},
+            "title": {"type": "string", "description": "Page title"},
+            "html_body": {"type": "string", "description": "HTML content for the page"},
+            "image_name": {"type": "string", "description": "Name of the image file"},
+            "image_content": {
+                "type": "string",
+                "description": "Image content as base64 encoded string",
+            },
+            "image_content_type": {
+                "type": "string",
+                "description": "Image MIME type (e.g. 'image/png')",
+            },
+        },
+        "required": [
+            "section_id",
+            "title",
+            "html_body",
+            "image_name",
+            "image_content",
+            "image_content_type",
+        ],
+    },
+)
+def create_page_with_image_handler(current_user, data):
+    return common_handler(
+        create_page_with_image,
+        section_id=None,
+        title=None,
+        html_body=None,
+        image_name=None,
+        image_content=None,
+        image_content_type=None,
+    )(current_user, data)
+
+
+
+
+@api_tool(
+    path="/microsoft/integrations/create_page_with_attachment",
+    tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
+    name="microsoftCreatePageWithAttachment",
+    description="Creates a page with a file attachment.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "section_id": {"type": "string", "description": "Section ID"},
+            "title": {"type": "string", "description": "Page title"},
+            "html_body": {"type": "string", "description": "HTML content for the page"},
+            "file_name": {"type": "string", "description": "Name of the attachment"},
+            "file_content": {
+                "type": "string",
+                "description": "File content as base64 encoded string",
+            },
+            "file_content_type": {
+                "type": "string",
+                "description": "File MIME type (e.g. 'application/pdf')",
+            },
+        },
+        "required": [
+            "section_id",
+            "title",
+            "html_body",
+            "file_name",
+            "file_content",
+            "file_content_type",
+        ],
+    },
+)
+def create_page_with_attachment_handler(current_user, data):
+    return common_handler(
+        create_page_with_attachment,
+        section_id=None,
+        title=None,
+        html_body=None,
+        file_name=None,
+        file_content=None,
+        file_content_type=None,
+    )(current_user, data)
+
+
+@api_tool(
     path="/microsoft/integrations/create_page_with_image_and_attachment",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
     name="microsoftCreatePageWithImageAndAttachment",
@@ -1784,7 +1874,7 @@ def get_page_content_handler(current_user, data):
         ],
     },
 )
-def create_page_with_attachments_handler(current_user, data):
+def create_page_with_image_and_attachment_handler(current_user, data):
     return common_handler(
         create_page_with_image_and_attachment,
         section_id=None,
