@@ -515,6 +515,21 @@ functions:
     events:
       - schedule: cron(0 0 ? * SUN *) # Run every Sunday at midnight          
 
+  process_zip_file:
+    handler: files/file.process_zip_file
+    timeout: 30
+    events:
+      - http:
+          path: zip/upload-zip
+          method: put
+          cors: true
+      - s3:
+          bucket: ${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}
+          event: s3:ObjectCreated:Put
+          rules:
+            - suffix: .zip
+          existing: true
+
   cleanup_missed_rag_secrets:
     handler: rag/rag_secrets.lambda_handler
     layers:
