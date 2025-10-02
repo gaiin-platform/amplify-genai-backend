@@ -1,168 +1,155 @@
-from integrations.oauth import MissingCredentialsError
-
-from integrations.o365.onedrive import (
-    list_drive_items,
-    upload_file,
-    download_file,
-    delete_item,
-    get_drive_item,
-    create_folder,
-    update_drive_item,
-    copy_drive_item,
-    move_drive_item,
-    create_sharing_link,
-    invite_to_drive_item,
-)
-from integrations.o365.excel import (
-    list_worksheets,
-    list_tables,
-    add_row_to_table,
-    read_range,
-    update_range,
-    get_worksheet,
-    create_worksheet,
-    delete_worksheet,
-    create_table as create_table_excel,
-    delete_table,
-    get_table_range,
-    list_charts,
-    get_chart,
-    create_chart,
-    delete_chart,
-)
-from integrations.o365.outlook import (
-    list_messages,
-    get_message_details,
-    send_mail,
-    delete_message,
-    get_attachments as get_attachments_outlook,
-    download_attachment,
-    update_message,
-    create_draft,
-    send_draft,
-    reply_to_message,
-    reply_all_message,
-    forward_message,
-    move_message,
-    list_folders,
-    get_folder_details,
-    add_attachment,
-    delete_attachment,
-    search_messages,
-)
-
-from integrations.o365.planner import (
-    list_plans_in_group,
-    list_buckets_in_plan,
-    list_tasks_in_plan,
-    create_task,
-    update_task,
-    delete_task,
-)
-
-from integrations.o365.sharepoint import (
-    list_sites,
-    get_site_by_path,
-    list_site_lists,
-    get_list_items,
-    create_list_item,
-    update_list_item,
-    delete_list_item,
-)
-
-from integrations.o365.teams import (
-    list_teams,
-    list_channels,
-    create_channel,
-    send_channel_message,
-    get_chat_messages,
-    schedule_meeting,
-)
-
-from integrations.o365.user_groups import (
-    list_users,
-    get_user_details,
-    list_groups,
-    get_group_details,
-    create_group,
-    delete_group,
-)
-
-from integrations.o365.onenote import (
-    list_notebooks,
-    list_sections_in_notebook,
-    list_pages_in_section,
-    create_page_in_section,
-    get_page_content,
-    create_page_with_image,
-    create_page_with_attachment,
-    create_page_with_image_and_attachment,
-)
-
-from integrations.o365.contacts import (
-    list_contacts,
-    get_contact_details,
-    create_contact,
-    delete_contact,
-)
+import copy
+import re
 
 from integrations.o365.calendar import (
+    add_attachment,
+    check_event_conflicts,
+    create_calendar,
     create_event,
-    update_event,
+    create_recurring_event,
+    delete_attachment,
+    delete_calendar,
     delete_event,
+    find_meeting_times,
+    get_calendar_permissions,
     get_event_details,
     get_events_between_dates,
     list_calendar_events,
     list_calendars,
-    create_calendar,
-    delete_calendar,
-    respond_to_event,
-    find_meeting_times,
-    create_recurring_event,
-    update_recurring_event,
-    add_attachment,
-    get_attachments as get_attachments_calendar,
-    delete_attachment,
-    get_calendar_permissions,
-    share_calendar,
     remove_calendar_sharing,
-    check_event_conflicts,
+    respond_to_event,
+    share_calendar,
+    update_event,
+    update_recurring_event,
 )
-
+from integrations.o365.calendar import get_attachments as get_attachments_calendar
+from integrations.o365.contacts import (
+    create_contact,
+    delete_contact,
+    get_contact_details,
+    list_contacts,
+)
+from integrations.o365.excel import (
+    add_row_to_table,
+    create_chart,
+    create_worksheet,
+    delete_chart,
+    delete_table,
+    delete_worksheet,
+    get_chart,
+    get_table_range,
+    get_worksheet,
+    list_charts,
+    list_tables,
+    list_worksheets,
+    read_range,
+    update_range,
+)
+from integrations.o365.excel import create_table as create_table_excel
+from integrations.o365.onedrive import (
+    copy_drive_item,
+    create_folder,
+    create_sharing_link,
+    delete_item,
+    download_file,
+    get_drive_item,
+    invite_to_drive_item,
+    list_drive_items,
+    move_drive_item,
+    update_drive_item,
+    upload_file,
+)
+from integrations.o365.onenote import (
+    create_page_in_section,
+    create_page_with_attachment,
+    get_page_content,
+    list_notebooks,
+    list_pages_in_section,
+    list_sections_in_notebook,
+)
+from integrations.o365.outlook import (
+    add_attachment,
+    create_draft,
+    delete_attachment,
+    delete_message,
+    download_attachment,
+    forward_message,
+    get_folder_details,
+    get_message_details,
+    list_folders,
+    list_messages,
+    move_message,
+    reply_all_message,
+    reply_to_message,
+    search_messages,
+    send_draft,
+    send_mail,
+    update_message,
+)
+from integrations.o365.outlook import get_attachments as get_attachments_outlook
+from integrations.o365.planner import (
+    create_task,
+    delete_task,
+    list_buckets_in_plan,
+    list_plans_in_group,
+    list_tasks_in_plan,
+    update_task,
+)
+from integrations.o365.sharepoint import (
+    create_list_item,
+    delete_list_item,
+    get_list_items,
+    get_site_by_path,
+    list_site_lists,
+    list_sites,
+    update_list_item,
+)
+from integrations.o365.teams import (
+    create_channel,
+    get_chat_messages,
+    list_channels,
+    list_teams,
+    schedule_meeting,
+    send_channel_message,
+)
+from integrations.o365.user_groups import (
+    create_group,
+    delete_group,
+    get_group_details,
+    get_user_details,
+    list_groups,
+    list_users,
+)
 from integrations.o365.word_doc import (
     add_comment,
-    get_document_statistics,
-    search_document,
     apply_formatting,
-    get_document_sections,
-    insert_section,
-    replace_text,
-    create_table as create_table_word,
-    update_table_cell,
-    create_list,
-    insert_page_break,
-    set_header_footer,
-    insert_image,
-    get_document_versions,
-    restore_version,
-    delete_document,
-    list_documents,
-    share_document,
-    get_document_permissions,
-    remove_permission,
-    get_document_content,
-    update_document_content,
     create_document,
+    create_list,
+    delete_document,
+    get_document_content,
+    get_document_permissions,
+    get_document_sections,
+    get_document_statistics,
+    get_document_versions,
+    insert_image,
+    insert_page_break,
+    insert_section,
+    list_documents,
+    remove_permission,
+    replace_text,
+    restore_version,
+    search_document,
+    set_header_footer,
+    share_document,
+    update_document_content,
+    update_table_cell,
 )
-
-from service.routes import route_data
-import re
-import copy
+from integrations.o365.word_doc import create_table as create_table_word
+from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
-
+from pycommon.api.ops import api_tool, set_op_type, set_route_data
 from service.routes import route_data
-from pycommon.api.ops import api_tool, set_route_data, set_op_type
 
 set_route_data(route_data)
 set_op_type("integration")
@@ -1750,51 +1737,6 @@ def get_page_content_handler(current_user, data):
 
 
 @api_tool(
-    path="/microsoft/integrations/create_page_with_image",
-    tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
-    name="microsoftCreatePageWithImage",
-    description="Creates a page with an embedded image.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "section_id": {"type": "string", "description": "Section ID"},
-            "title": {"type": "string", "description": "Page title"},
-            "html_body": {"type": "string", "description": "HTML content for the page"},
-            "image_name": {"type": "string", "description": "Name of the image file"},
-            "image_content": {
-                "type": "string",
-                "description": "Image content as base64 encoded string",
-            },
-            "image_content_type": {
-                "type": "string",
-                "description": "Image MIME type (e.g. 'image/png')",
-            },
-        },
-        "required": [
-            "section_id",
-            "title",
-            "html_body",
-            "image_name",
-            "image_content",
-            "image_content_type",
-        ],
-    },
-)
-def create_page_with_image_handler(current_user, data):
-    return common_handler(
-        create_page_with_image,
-        section_id=None,
-        title=None,
-        html_body=None,
-        image_name=None,
-        image_content=None,
-        image_content_type=None,
-    )(current_user, data)
-
-
-
-
-@api_tool(
     path="/microsoft/integrations/create_page_with_attachment",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
     name="microsoftCreatePageWithAttachment",
@@ -1835,59 +1777,6 @@ def create_page_with_attachment_handler(current_user, data):
         file_content=None,
         file_content_type=None,
     )(current_user, data)
-
-
-@api_tool(
-    path="/microsoft/integrations/create_page_with_image_and_attachment",
-    tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
-    name="microsoftCreatePageWithImageAndAttachment",
-    description="Creates a page with embedded image and file attachment.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "section_id": {"type": "string", "description": "Section ID"},
-            "title": {"type": "string", "description": "Page title"},
-            "html_body": {"type": "string", "description": "HTML content"},
-            "image_name": {"type": "string", "description": "Name of the image file"},
-            "image_content": {
-                "type": "string",
-                "description": "Base64 encoded image content",
-            },
-            "image_content_type": {"type": "string", "description": "Image MIME type"},
-            "file_name": {"type": "string", "description": "Name of the attachment"},
-            "file_content": {
-                "type": "string",
-                "description": "Base64 encoded file content",
-            },
-            "file_content_type": {"type": "string", "description": "File MIME type"},
-        },
-        "required": [
-            "section_id",
-            "title",
-            "html_body",
-            "image_name",
-            "image_content",
-            "image_content_type",
-            "file_name",
-            "file_content",
-            "file_content_type",
-        ],
-    },
-)
-def create_page_with_image_and_attachment_handler(current_user, data):
-    return common_handler(
-        create_page_with_image_and_attachment,
-        section_id=None,
-        title=None,
-        html_body=None,
-        image_name=None,
-        image_content=None,
-        image_content_type=None,
-        file_name=None,
-        file_content=None,
-        file_content_type=None,
-    )(current_user, data)
-
 
 ### contacts ###
 

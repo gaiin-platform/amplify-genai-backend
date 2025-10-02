@@ -1,12 +1,12 @@
+import base64
 import json
 import uuid
-import requests
-import base64
-from urllib.parse import unquote
-from typing import Dict, List, Optional, Union, BinaryIO
-from integrations.oauth import get_ms_graph_session
 from datetime import datetime, timezone
+from typing import BinaryIO, Dict, List, Optional, Union
+from urllib.parse import unquote
 
+import requests
+from integrations.oauth import get_ms_graph_session
 
 integration_name = "microsoft_onenote"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
@@ -240,6 +240,7 @@ def _sanitize_block_name(name: str) -> str:
     Removes extension and replaces invalid characters with underscores.
     """
     import re
+
     # Remove file extension
     name_without_ext = name.rsplit('.', 1)[0] if '.' in name else name
     # Replace invalid characters with underscores and ensure it starts with a letter
@@ -293,28 +294,6 @@ def _build_html_part(boundary: str, title: str, html_body: str) -> bytearray:
     return payload
 
 
-def _build_image_part(boundary: str, block_name: str, image_content: Union[bytes, str],
-                     image_content_type: str) -> bytearray:
-    """Build image part of multipart payload."""
-    payload = bytearray()
-
-    # Image part - using Microsoft's exact format
-    payload.extend(f"--{boundary}\r\n".encode("utf-8"))
-    payload.extend(f'Content-Disposition: form-data; name="{block_name}"\r\n'.encode("utf-8"))
-    payload.extend(f"Content-Type: {image_content_type}\r\n\r\n".encode("utf-8"))
-
-    if hasattr(image_content, "read"):
-        decoded_content = image_content.read()
-    else:
-        decoded_content = _decode_content(image_content)
-
-
-    payload.extend(decoded_content)
-    payload.extend(b"\r\n")
-
-    return payload
-
-
 def _build_file_part(boundary: str, block_name: str, file_content: Union[bytes, str],
                     file_content_type: str) -> bytearray:
     """Build file attachment part of multipart payload."""
@@ -332,96 +311,6 @@ def _build_file_part(boundary: str, block_name: str, file_content: Union[bytes, 
     payload.extend(b"\r\n")
 
     return payload
-
-
-def create_page_with_image(
-    current_user: str,
-    section_id: str,
-    title: str,
-    html_body: str,
-    image_name: str,
-    image_content: Union[bytes, str, BinaryIO],
-    image_content_type: str,
-    access_token: str,
-) -> Dict:
-    """
-    Creates a page with an embedded image.
-
-    Args:
-        current_user: User identifier
-        section_id: Section ID
-        title: Page title
-        html_body: HTML content
-        image_name: Name of the image file
-        image_content: Image content as bytes, base64 string, or file object
-        image_content_type: Image MIME type
-
-    Returns:
-        Dict containing created page details
-
-    Raises:
-        SectionNotFoundError: If section doesn't exist
-        OneNoteError: For other failures
-    """
-    try:
-        session = get_ms_graph_session(current_user, integration_name, access_token)
-
-        # Input validation
-        if not title:
-            raise OneNoteError("Title cannot be empty")
-        if not image_content:
-            raise OneNoteError("Image content is required")
-
-        # Create multipart form data (matching working attachment format)
-        boundary = f"----OneNoteFormBoundary{uuid.uuid4()}"
-        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
-
-        # Build payload using helper functions
-        payload = bytearray()
-
-        # Create dynamic block name from image name
-        image_block_name = _sanitize_block_name(image_name)
-
-        # Add HTML part with proper image reference
-        # Check for filename match first (more specific), then block name match
-        if f'name:{image_name}' in html_body:
-            # Handle case where HTML uses full filename, replace with sanitized name
-            html_with_image = html_body.replace(f'name:{image_name}', f'name:{image_block_name}')
-        elif f'name:{image_block_name}' in html_body and f'name:{image_name}' not in html_body:
-            # Use HTML as-is only if it has the block name but NOT the filename
-            html_with_image = html_body
-        elif 'name:imageBlock1' in html_body:
-            # Legacy support: replace imageBlock1 with dynamic name
-            html_with_image = html_body.replace('name:imageBlock1', f'name:{image_block_name}')
-        else:
-            # Append image automatically for backward compatibility
-            html_with_image = f"{html_body}<p><img src='name:{image_block_name}' alt='EmbeddedImage' /></p>"
-
-
-        payload.extend(_build_html_part(boundary, title, html_with_image))
-
-        # Add image part with dynamic block name
-        payload.extend(_build_image_part(boundary, image_block_name, image_content, image_content_type))
-
-        # Close boundary
-        payload.extend(f"--{boundary}--\r\n".encode("utf-8"))
-
-        url = f"{GRAPH_ENDPOINT}/me/onenote/sections/{section_id}/pages"
-        response = session.post(url, headers=headers, data=payload)
-
-        if not response.ok:
-            handle_graph_error(response)
-
-        page_response = response.json()
-
-
-        return format_page(page_response)
-
-    except requests.RequestException as e:
-        raise OneNoteError(f"Network error while creating page: {str(e)}")
-
-
-
 
 
 def create_page_with_attachment(
@@ -506,123 +395,6 @@ def create_page_with_attachment(
     except requests.RequestException as e:
         raise OneNoteError(f"Network error while creating page: {str(e)}")
 
-
-def create_page_with_image_and_attachment(
-    current_user: str,
-    section_id: str,
-    title: str,
-    html_body: str,
-    image_name: str,
-    image_content: Union[bytes, str, BinaryIO],
-    image_content_type: str,
-    file_name: str,
-    file_content: Union[bytes, str, BinaryIO],
-    file_content_type: str,
-    access_token: str,
-) -> Dict:
-    """
-    Creates a page with embedded image and file attachment.
-
-    Args:
-        current_user: User identifier
-        section_id: Section ID
-        title: Page title
-        html_body: HTML content
-        image_name: Name of the image file
-        image_content: Image content as bytes or file object
-        image_content_type: Image MIME type
-        file_name: Name of the attachment
-        file_content: File content as bytes or file object
-        file_content_type: File MIME type
-
-    Returns:
-        Dict containing created page details
-
-    Raises:
-        SectionNotFoundError: If section doesn't exist
-        OneNoteError: For other failures
-    """
-    try:
-        session = get_ms_graph_session(current_user, integration_name, access_token)
-
-        # Input validation
-        if not title:
-            raise OneNoteError("Title cannot be empty")
-        if not image_content:
-            raise OneNoteError("Image content is required")
-        if not file_content:
-            raise OneNoteError("File content is required")
-
-        # Create multipart form data
-        boundary = f"----OneNoteFormBoundary{uuid.uuid4()}"
-        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
-
-        # Build payload using helper functions
-        payload = bytearray()
-
-        # Create dynamic block names from file names
-        image_block_name = _sanitize_block_name(image_name)
-        file_block_name = _sanitize_block_name(file_name)
-
-        # Add HTML part with image and attachment references
-        # Check if HTML already contains references and only add missing ones
-        html_with_both = html_body
-
-        # Handle image references - check filename match first (more specific)
-        if f'name:{image_name}' in html_body:
-            # Handle case where HTML uses full filename, replace with sanitized name
-            html_with_both = html_with_both.replace(f'name:{image_name}', f'name:{image_block_name}')
-        elif f'name:{image_block_name}' in html_body and f'name:{image_name}' not in html_body:
-            # Custom placement already present with correct block name
-            pass
-        elif 'name:imageBlock1' in html_body:
-            # Legacy support: replace imageBlock1 with dynamic name
-            html_with_both = html_with_both.replace('name:imageBlock1', f'name:{image_block_name}')
-        else:
-            # Add image if not already present
-            html_with_both += f"""
-<p>Here is an embedded image:</p>
-<img src="name:{image_block_name}" alt="EmbeddedImage" />"""
-
-        # Handle file attachment references - check filename match first (more specific)
-        if f'name:{file_name}' in html_body:
-            # Handle case where HTML uses full filename, replace with sanitized name
-            html_with_both = html_with_both.replace(f'name:{file_name}', f'name:{file_block_name}')
-        elif f'name:{file_block_name}' in html_body and f'name:{file_name}' not in html_body:
-            # Custom placement already present with correct block name
-            pass
-        elif 'name:fileBlock1' in html_body:
-            # Legacy support: replace fileBlock1 with dynamic name
-            html_with_both = html_with_both.replace('name:fileBlock1', f'name:{file_block_name}')
-        else:
-            # Add file attachment if not already present
-            html_with_both += f"""
-<p>Here is an attached file:</p>
-<object data-attachment="{file_name}" data="name:{file_block_name}" type="{file_content_type}" />"""
-
-        payload.extend(_build_html_part(boundary, title, html_with_both))
-
-        # Add image part with dynamic block name
-        payload.extend(_build_image_part(boundary, image_block_name, image_content, image_content_type))
-
-        # Add file part with dynamic block name
-        payload.extend(_build_file_part(boundary, file_block_name, file_content, file_content_type))
-
-        # Close boundary
-        payload.extend(f"--{boundary}--\r\n".encode("utf-8"))
-
-        url = f"{GRAPH_ENDPOINT}/me/onenote/sections/{section_id}/pages"
-        response = session.post(url, headers=headers, data=payload)
-
-        if not response.ok:
-            handle_graph_error(response)
-
-        return format_page(response.json())
-
-    except requests.RequestException as e:
-        raise OneNoteError(f"Network error while creating page: {str(e)}")
-
-
 def _format_created_time() -> str:
     """Returns ISO8601 formatted current time"""
     return datetime.now(timezone.utc).isoformat()
@@ -673,4 +445,5 @@ def format_page(page: Dict) -> Dict:
         "lastModifiedDateTime": page.get("lastModifiedDateTime", ""),
         "contentUrl": page.get("contentUrl", ""),
         "links": page.get("links", {}),
+    }
     }
