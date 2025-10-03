@@ -19,37 +19,62 @@ function calculateMD5(content) {
 }
 
 async function uploadToS3(assistantId, conversationId, content) {
-    const bucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME;
-    const key = `${assistantId}/${conversationId}.txt`;
+    const consolidationBucketName = process.env.S3_CONSOLIDATION_BUCKET_NAME;
+    const legacyBucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME; // Marked for deletion
+    const consolidationKey = `agentConversations/${assistantId}/${conversationId}.txt`;
+    const legacyKey = `${assistantId}/${conversationId}.txt`;
 
     try {
-        // Check if the file already exists
+        let existingContent = null;
+        let foundInConsolidation = false;
+
+        // Check consolidation bucket first for existing content
         try {
             const existingObject = await s3Client.send(new GetObjectCommand({
-                Bucket: bucketName,
-                Key: key,
+                Bucket: consolidationBucketName,
+                Key: consolidationKey,
             }));
-
-            // If file exists, append new content
-            const existingContent = await existingObject.Body.transformToString();
-            content = existingContent + '\n' + content;
+            existingContent = await existingObject.Body.transformToString();
+            foundInConsolidation = true;
         } catch (error) {
-            // If file doesn't exist, we'll create a new one
             if (error.name !== 'NoSuchKey') {
                 throw error;
             }
         }
 
+        // If not found in consolidation bucket, check legacy bucket
+        if (!foundInConsolidation && legacyBucketName) {
+            try {
+                const existingObject = await s3Client.send(new GetObjectCommand({
+                    Bucket: legacyBucketName,
+                    Key: legacyKey,
+                }));
+                existingContent = await existingObject.Body.transformToString();
+            } catch (error) {
+                if (error.name !== 'NoSuchKey') {
+                    throw error;
+                }
+            }
+        }
+
+        // If existing content found, append new content
+        if (existingContent) {
+            content = existingContent + '\n' + content;
+        }
+
+        // Always upload to consolidation bucket (for new or updated content)
         await s3Client.send(new PutObjectCommand({
-            Bucket: bucketName,
-            Key: key,
+            Bucket: consolidationBucketName,
+            Key: consolidationKey,
             Body: content,
             ContentType: 'text/plain',
             ContentMD5: calculateMD5(content)
         }));
 
-        logger.debug(`Successfully uploaded conversation to S3: ${key}`);
-        return `s3://${bucketName}/${key}`;
+        logger.debug(`Successfully uploaded conversation to consolidation S3: ${consolidationKey}`);
+        
+        // Return just the key path (without s3:// prefix) to indicate migrated record
+        return consolidationKey;
     } catch (error) {
         console.error(`Error uploading to S3: ${error}`);
         throw error;

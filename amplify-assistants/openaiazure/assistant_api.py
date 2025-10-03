@@ -138,20 +138,23 @@ def send_file_to_s3(
     file_content, file_key, file_name, user_id, content_type="binary/octet-stream"
 ):
     print("Sending files to s3")
-    bucket_name = os.environ["ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME"]
+    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    
+    # Use consolidation bucket format for new files
+    consolidation_key = f"codeInterpreter/{file_key}"
 
     try:
-        print("Transfer file to s3 bucket: ".format(bucket_name))
+        print("Transfer file to consolidation s3 bucket: {}".format(consolidation_bucket))
         file_stream = BytesIO(file_content)
         print("File Stream: ", file_stream)
         s3.upload_fileobj(
             file_stream,
-            bucket_name,
-            file_key,
+            consolidation_bucket,
+            consolidation_key,
             ExtraArgs={"ACL": "private", "ContentType": content_type},
         )
 
-        print(f"File uploaded to S3 bucket '{bucket_name}' with key '{file_key}'")
+        print(f"File uploaded to consolidation S3 bucket '{consolidation_bucket}' with key '{consolidation_key}'")
 
         file_url = get_presigned_download_url(file_key, user_id, file_name)
         if file_url["success"]:
@@ -230,8 +233,10 @@ def determine_content_type(file_name):
 
 
 def get_presigned_download_url(key, current_user, download_filename=None):
+    """Generate presigned download URL with backward compatibility for legacy and consolidation buckets"""
     s3 = boto3.client("s3")
-    bucket_name = os.environ["ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME"]
+    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    legacy_bucket = os.environ.get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME")  # Marked for deletion
 
     print(f"Getting presigned download URL for {key} for user {current_user}")
     if not (current_user in key):
@@ -246,23 +251,44 @@ def get_presigned_download_url(key, current_user, download_filename=None):
         else {}
     )
 
-    # If the user matches, generate a presigned URL for downloading the file from S3
+    # Try consolidation bucket first (new format)
+    consolidation_key = f"codeInterpreter/{key}"
     try:
+        print(f"Trying consolidation bucket: {consolidation_bucket}/{consolidation_key}")
         presigned_url = s3.generate_presigned_url(
             ClientMethod="get_object",
-            Params={"Bucket": bucket_name, "Key": key, **response_headers},
+            Params={"Bucket": consolidation_bucket, "Key": consolidation_key, **response_headers},
             ExpiresIn=28800,  # Expires in 12 hrs
         )
-    except ClientError as e:
-        print(f"Error generating presigned download URL: {e}")
-        return {"success": False, "message": "File not found"}
-
-    if presigned_url:
-        # print("Successfully retrieved a new presigned url: ", presigned_url)
+        
+        # Verify the object exists before returning the URL
+        s3.head_object(Bucket=consolidation_bucket, Key=consolidation_key)
+        print(f"Successfully found file in consolidation bucket")
         return {"success": True, "downloadUrl": presigned_url}
-    else:
-        print("Failed to retrieve a new presigned url")
-        return {"success": False, "message": "File not found"}
+        
+    except ClientError as e:
+        print(f"File not found in consolidation bucket: {str(e)}")
+    
+    # Fallback to legacy bucket if available
+    if legacy_bucket:
+        try:
+            print(f"Trying legacy bucket: {legacy_bucket}/{key}")
+            presigned_url = s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={"Bucket": legacy_bucket, "Key": key, **response_headers},
+                ExpiresIn=28800,  # Expires in 12 hrs
+            )
+            
+            # Verify the object exists before returning the URL
+            s3.head_object(Bucket=legacy_bucket, Key=key)
+            print(f"Successfully found file in legacy bucket")
+            return {"success": True, "downloadUrl": presigned_url}
+            
+        except ClientError as e:
+            print(f"File not found in legacy bucket either: {str(e)}")
+
+    print("Failed to retrieve presigned url from any bucket")
+    return {"success": False, "message": "File not found"}
 
 
 def chat_with_code_interpreter(

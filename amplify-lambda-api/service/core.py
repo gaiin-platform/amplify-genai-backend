@@ -27,7 +27,7 @@ setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.API_KEY.value])
 
 s3 = boto3.client("s3")
-bucket_name = os.environ["S3_API_DOCUMENTATION_BUCKET"]
+consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 dynamodb = boto3.resource("dynamodb")
 api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
 table = dynamodb.Table(api_keys_table_name)
@@ -471,7 +471,7 @@ def get_system_ids(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
 })
 @validated("read")
 def get_documentation(event, context, current_user, name, data):
@@ -502,8 +502,8 @@ def generate_presigned_url(file):
         return s3.generate_presigned_url(
             ClientMethod="get_object",
             Params={
-                "Bucket": bucket_name,
-                "Key": file,
+                "Bucket": consolidation_bucket_name,
+                "Key": f"apiDocumentation/{file}",
                 "ResponseContentDisposition": f"attachment; filename={file}",
             },
             ExpiresIn=7200,  # Expires in 3 hrs
@@ -520,7 +520,7 @@ def formatRateLimit(rateLimit):
 
 
 @required_env_vars({
-    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated("upload")
 def get_api_doc_presigned_urls(event, context, current_user, name, data):
@@ -545,8 +545,8 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
         presigned = s3.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": bucket_name,
-                "Key": filename,
+                "Bucket": consolidation_bucket_name,
+                "Key": f"apiDocumentation/{filename}",
                 "ContentType": file_names[filename],
                 "ContentMD5": md5_content,
             },
@@ -563,15 +563,16 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
 })
 @validated("read")
 def get_api_document_templates(event, context, current_user, name, data):
-    templates_key = "Amplify_API_Templates.zip"
+    templates_key = "apiDocumentation/Amplify_API_Templates.zip"
+    filename = "Amplify_API_Templates.zip"
 
     try:
         # List objects in the bucket and check if templates file exists
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=templates_key)
+        response = s3.list_objects_v2(Bucket=consolidation_bucket_name, Prefix=templates_key)
         file_exists = response.get("Contents") and any(
             obj["Key"] == templates_key for obj in response.get("Contents", [])
         )
@@ -593,7 +594,7 @@ def get_api_document_templates(event, context, current_user, name, data):
 
                 with open(file_path, "rb") as f:
                     s3.put_object(
-                        Bucket=bucket_name,
+                        Bucket=consolidation_bucket_name,
                         Key=templates_key,
                         Body=f,
                         ContentType="application/zip",  # Content type for a zip file
@@ -619,7 +620,7 @@ def get_api_document_templates(event, context, current_user, name, data):
         return {"success": False, "message": f"Failed to check for template file: {e}"}
 
     # Now that the file should be in S3, generate the presigned URL
-    presigned_url = generate_presigned_url(templates_key)
+    presigned_url = generate_presigned_url(filename)
     if presigned_url:
         return {"success": True, "presigned_url": presigned_url}
     else:

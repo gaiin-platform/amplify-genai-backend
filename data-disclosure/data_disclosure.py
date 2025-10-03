@@ -47,7 +47,7 @@ def get_latest_version_details(table):
 
 
 @required_env_vars({
-    "DATA_DISCLOSURE_STORAGE_BUCKET": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated(op="upload")
 def get_presigned_data_disclosure(event, context, current_user, name, data):
@@ -57,19 +57,19 @@ def get_presigned_data_disclosure(event, context, current_user, name, data):
     data = data["data"]
     content_md5 = data.get("md5")
     content_type = data.get("contentType")
-    fileKey = data.get("fileName")
+    fileKey = f"dataDisclosure/{data.get('fileName')}"
 
     config = Config(signature_version="s3v4")  # Force AWS Signature Version 4
     s3_client = boto3.client("s3", config=config)
-    bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
-
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+ 
     try:
         # Generate a presigned URL for put_object
         print("Presigned url generated")
         presigned_url = s3_client.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": bucket_name,
+                "Bucket": consolidation_bucket_name,
                 "Key": fileKey,
                 "ContentType": content_type,
                 "ContentMD5": content_md5,
@@ -176,7 +176,7 @@ def convert_uploaded_data_disclosure(event, context):
     s3 = boto3.client("s3")
     dynamodb = boto3.resource("dynamodb")
 
-    bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     versions_table_name = os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"]
 
     try:
@@ -186,12 +186,13 @@ def convert_uploaded_data_disclosure(event, context):
         print(f"Error parsing event: {e}")
         return generate_error_response(400, "Invalid event format, cannot find PDF key")
 
-    # extract time stamp from dd name
+    # extract time stamp from dd name - handle dataDisclosure/ prefix
+    filename = pdf_key.replace("dataDisclosure/", "")
     prefix = "data_disclosure_"
     suffix = ".pdf"
 
-    if pdf_key.startswith(prefix) and pdf_key.endswith(suffix):
-        timestamp = pdf_key[len(prefix) : -len(suffix)]
+    if filename.startswith(prefix) and filename.endswith(suffix):
+        timestamp = filename[len(prefix) : -len(suffix)]
     else:
         raise ValueError("latest_dd_name is not in the expected format.")
 
@@ -199,7 +200,7 @@ def convert_uploaded_data_disclosure(event, context):
     pdf_local_path = "/tmp/input.pdf"
 
     try:
-        s3.download_file(bucket_name, pdf_key, pdf_local_path)
+        s3.download_file(consolidation_bucket_name, pdf_key, pdf_local_path)
         print(f"File downloaded successfully to {pdf_local_path}")
     except Exception as e:
         print(f"Error downloading PDF from S3: {e}")
@@ -232,7 +233,7 @@ def convert_uploaded_data_disclosure(event, context):
                 "pdf_id": pdf_key,
                 "html_content": html_content,
                 "timestamp": timestamp,
-                "s3_reference": f"s3://{bucket_name}/{pdf_key}",
+                "s3_reference": f"s3://{consolidation_bucket_name}/{pdf_key}",
             }
         )
         return {
@@ -336,12 +337,12 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
 # Pull the most recent data disclosure from the DataDisclosureVersionsTable
 @required_env_vars({
     "DATA_DISCLOSURE_VERSIONS_TABLE": [DynamoDBOperation.QUERY],
-    "DATA_DISCLOSURE_STORAGE_BUCKET": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
 })
 @validated(op="get_latest_data_disclosure")
 def get_latest_data_disclosure(event, context, current_user, name, data):
     versions_table = dynamodb.Table(os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"])
-    bucket_name = os.environ["DATA_DISCLOSURE_STORAGE_BUCKET"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     try:
         latest_version_details = get_latest_version_details(versions_table)
@@ -356,7 +357,7 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
             pdf_pre_signed_url = s3.generate_presigned_url(
                 "get_object",
                 Params={
-                    "Bucket": bucket_name,
+                    "Bucket": consolidation_bucket_name,
                     "Key": pdf_document_name,
                 },
                 ExpiresIn=360,  # URL expires in 6 mins

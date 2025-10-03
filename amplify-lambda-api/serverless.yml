@@ -53,7 +53,7 @@ provider:
 
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket
+    S3_API_DOCUMENTATION_BUCKET: ${self:service}-${sls:stage}-documentation-bucket #Marked for future deletion
 
     # Imported Variables
     # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
@@ -70,6 +70,7 @@ provider:
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
   iam:
     role:
@@ -197,14 +198,16 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*" 
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: Allow
               Action:
                 - s3:GetObject
                 - s3:PutObject
                 - s3:ListBucket
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"   
+                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}/*"    #Marked for future deletion
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -222,7 +225,7 @@ resources:
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
 
-    APIDocumentBucket:
+    APIDocumentBucket: #Marked for future deletion
         Type: 'AWS::S3::Bucket'
         Properties:
           BucketName: ${self:provider.environment.S3_API_DOCUMENTATION_BUCKET}

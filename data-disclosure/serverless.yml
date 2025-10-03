@@ -54,7 +54,7 @@ provider:
     # Locally Defined Variables
     DATA_DISCLOSURE_ACCEPTANCE_TABLE: ${self:service}-${sls:stage}-acceptance
     DATA_DISCLOSURE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    DATA_DISCLOSURE_STORAGE_BUCKET: ${self:service}-${sls:stage}-storage
+    DATA_DISCLOSURE_STORAGE_BUCKET: ${self:service}-${sls:stage}-storage #Marked for future deletion
     DATA_DISCLOSURE_VERSIONS_TABLE: ${self:service}-${sls:stage}-versions
 
     # Imported Variables
@@ -68,6 +68,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
   iam:
     role:
@@ -160,6 +161,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: "Allow"
               Action:
                 - "s3:PutObject"
@@ -167,8 +170,8 @@ resources:
                 - "s3:HeadObject"
                 - "s3:PutBucketNotification"
               Resource: 
-                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"  
-                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*" 
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"   #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  #Marked for future deletion
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -224,7 +227,7 @@ resources:
         TableName: ${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}
 
     # contains all versions of the data disclosure
-    DataDisclosureStorage:
+    DataDisclosureStorage: #Marked for future deletion
       Type: 'AWS::S3::Bucket'
       DependsOn: DataDisclosureIAMPolicy
       Properties:

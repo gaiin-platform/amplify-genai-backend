@@ -350,7 +350,7 @@ def update_pptx_data(pptx_type, update_data):
 
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.LIST_BUCKET],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET],
     "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
@@ -480,13 +480,13 @@ def initialize_config(config_type):
 
     elif config_type == AdminConfigTypes.PPTX_TEMPLATES:
         # Initialize PPTX_TEMPLATES
-        output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
         s3_client = boto3.client("s3")
 
         try:
-            # List objects in the 'templates/' prefix
+            # List objects in the 'powerPointTemplates/' prefix
             paginator = s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=output_bucket_name, Prefix="templates/")
+            pages = paginator.paginate(Bucket=consolidation_bucket_name, Prefix="powerPointTemplates/")
 
             templates = []
             for page in pages:
@@ -494,8 +494,8 @@ def initialize_config(config_type):
                     key = obj["Key"]
                     if key.endswith("/"):  # Skip folders
                         continue
-                    # Remove 'templates/' prefix to get the name
-                    name = key[len("templates/") :]
+                    # Remove 'powerPointTemplates/' prefix to get the name
+                    name = key[len("powerPointTemplates/") :]
                     if name:
                         templates.append(
                             {"name": name, "isAvailable": False, "amplifyGroups": []}
@@ -707,7 +707,7 @@ def get_pptx_for_users(event, context, current_user, name, data):
 
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
 })
 @validated(op="delete")
 def delete_pptx_by_admin(event, context, current_user, name, data):
@@ -727,7 +727,7 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         return {"success": False, "message": "User is not an authorized admin."}
 
     s3_client = boto3.client("s3")
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     try:
         # Retrieve Existing PPTX_TEMPLATES Configuration
@@ -758,9 +758,9 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         )
 
         #  Delete the PPTX File from S3
-        pptx_key = f"templates/{template_name}"
+        pptx_key = f"powerPointTemplates/{template_name}"
         try:
-            s3_client.delete_object(Bucket=output_bucket_name, Key=pptx_key)
+            s3_client.delete_object(Bucket=consolidation_bucket_name, Key=pptx_key)
         except Exception as e:
             print(f"Error deleting PPTX file from S3: {str(e)}")
             return {
@@ -781,7 +781,7 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
 @required_env_vars({
     "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated(op="upload")
 def generate_presigned_url_for_upload(event, context, current_user, name, data):
@@ -813,8 +813,8 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
     if not authorized_admin(current_user):
         return {"success": False, "message": "User is not an authorized admin."}
 
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
-    pptx_key = f"templates/{template_name}"
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    pptx_key = f"powerPointTemplates/{template_name}"
 
     try:
         config = Config(signature_version="s3v4")  # Force AWS Signature Version 4
@@ -823,7 +823,7 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
         presigned_url = s3_client.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": output_bucket_name,
+                "Bucket": consolidation_bucket_name,
                 "Key": pptx_key,
                 "ContentType": content_type,
                 "Metadata": {

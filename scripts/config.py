@@ -19,21 +19,17 @@ CONFIG = {
     "DATASOURCE_REGISTRY_DYNAMO_TABLE": "amplify-v6-amplify-js-dev-datasource-registry",
     "DATA_DISCLOSURE_ACCEPTANCE_TABLE": "amplify-v6-data-disclosure-dev-acceptance",
     "DB_CONNECTIONS_TABLE": "amplify-v6-lambda-dev-db-connections",
-    "DYNAMO_DYNAMIC_CODE_TABLE": "amplify-v6-lambda-basic-ops-dev-dynamic-code-entries",
     "EMAIL_SETTINGS_DYNAMO_TABLE": "amplify-v6-agent-loop-dev-email-allowed-senders",
     "FILES_DYNAMO_TABLE": "amplify-v6-lambda-dev-user-files",
     "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": "amplify-v6-assistants-dev-group-assistant-conversations",
     "HASH_FILES_DYNAMO_TABLE": "amplify-v6-lambda-dev-hash-files",
     "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": "amplify-v6-lambda-dev-history-cost-calculations",
-    "JOB_STATUS_TABLE": "amplify-v6-assistants-api-dev-job-status",
     "OAUTH_STATE_TABLE": "amplify-v6-assistants-api-dev-oauth-state",
     "OAUTH_USER_TABLE": "amplify-v6-assistants-api-dev-user-oauth-integrations",
     "OBJECT_ACCESS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-object-access",
     "OPS_DYNAMODB_TABLE": "amplify-v6-lambda-ops-dev-ops",
     "SCHEDULED_TASKS_TABLE": "amplify-v6-agent-loop-dev-scheduled-tasks",
     "SHARES_DYNAMODB_TABLE": "amplify-v6-lambda-dev",
-    "USER_RECORDS_DYNAMODB_TABLE_NAME": "amplify-v6-lambda-basic-ops-dev-work-records",
-    "USER_SESSIONS_DYNAMODB_TABLE_NAME": "amplify-v6-lambda-basic-ops-dev-work-sessions",
     "USER_STORAGE_TABLE": "amplify-v6-lambda-basic-ops-dev-user-storage",
     "USER_TAGS_DYNAMO_TABLE": "amplify-v6-lambda-dev-user-tags",
     "WORKFLOW_TEMPLATES_TABLE": "amplify-v6-agent-loop-dev-workflow-registry",
@@ -43,46 +39,39 @@ CONFIG = {
     "OP_LOG_DYNAMO_TABLE": "amplify-v6-assistants-api-dev-op-log",
     "REQUEST_STATE_DYNAMO_TABLE": "amplify-v6-amplify-js-dev-request-state",
     "needs_edit": {
-        "non_user_related": {
+        "non_user_related_tables": {
             "DATA_DISCLOSURE_VERSIONS_TABLE": "amplify-v6-data-disclosure-dev-versions",
             "MODEL_RATE_TABLE": "amplify-v6-chat-billing-dev-model-rates",
             "DATASOURCE_REGISTRY_DYNAMO_TABLE": "amplify-v6-amplify-js-dev-datasource-registry",
         },
-        "buckets_requiring_migration": {
-            "S3_CONVERSATIONS_BUCKET_NAME": "amplify-v6-lambda-dev-user-conversations",
+        "consolidated_buckets": {
+            "S3_CONVERSATIONS_BUCKET_NAME": "amplify-v6-lambda-dev-user-conversations", #REQUIRES MIGRATION  ***
+            "S3_SHARE_BUCKET_NAME": "amplify-v6-lambda-dev-share", # POINTER   ***
+            "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": "amplify-v6-assistants-dev-code-interpreter-files", # NOT CURRENTLY TRACKED  - RETURNED TO USER IN CHAT RESPONSE BODY AND FORGOTTEN  ***
+            "AGENT_STATE_BUCKET": "amplify-v6-agent-loop-dev-agent-state", # POINTER  *** 
+            "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": "amplify-v6-assistants-dev-group-conversations-content", # POINTER ***
+            "S3_CONVERSION_INPUT_BUCKET_NAME": "amplify-v6-lambda-dev-document-conversion-input", # *** 
+            "S3_CONVERSION_OUTPUT_BUCKET_NAME": "amplify-v6-lambda-dev-document-conversion-output", # templates/ folder contents must remain unchanged ***
+            "S3_ZIP_FILE_BUCKET_NAME": "amplify-v6-lambda-dev-zip-files", # used for uploading individual files only   NOT DONE YET
+           
+            # non user related buckets
+            "DATA_DISCLOSURE_STORAGE_BUCKET": "amplify-v6-data-disclosure-dev-storage", # ***
+            # "S3_ACCESS_LOGS_BUCKET_NAME": "amplify-v6-lambda-dev-access-logs",
+            "S3_API_DOCUMENTATION_BUCKET": "amplify-v6-api-dev-documentation-bucket", # ***
+            
         },
-        "lower_priority_buckets": {
-            "AGENT_STATE_BUCKET": "amplify-v6-agent-loop-dev-agent-state", # POINTER 
-            "SCHEDULED_TASKS_LOGS_BUCKET": "amplify-v6-agent-loop-dev-scheduled-tasks-logs", # POINTER 
-            "S3_ARTIFACTS_BUCKET": "amplify-v6-artifacts-dev-bucket", # POINTER 
-            "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": "amplify-v6-assistants-dev-group-conversations-content", # POINTER 
-            "S3_SHARE_BUCKET_NAME": "amplify-v6-lambda-dev-share", # POINTER 
-            "WORKFLOW_TEMPLATES_BUCKET": "amplify-v6-agent-loop-dev-workflow-templates", # POINTER 
-            "TRACE_BUCKET_NAME": "amplify-v6-lambda-dev-chat-traces", # not even turned on at this time 
-            "S3_ZIP_FILE_BUCKET_NAME": "amplify-v6-lambda-dev-zip-files", # used for uploading individual files only 
+        "to_user_storage_table": {
+            "SCHEDULED_TASKS_LOGS_BUCKET": "amplify-v6-agent-loop-dev-scheduled-tasks-logs", # POINTER   *****
+            "S3_ARTIFACTS_BUCKET": "amplify-v6-artifacts-dev-bucket", # POINTER    *****
+            "WORKFLOW_TEMPLATES_BUCKET": "amplify-v6-agent-loop-dev-workflow-templates", # POINTER    *****
         },
-        "one_and_done_skip": {
-            "S3_CONVERSION_INPUT_BUCKET_NAME": "amplify-v6-lambda-dev-document-conversion-input",
-            "S3_CONVERSION_OUTPUT_BUCKET_NAME": "amplify-v6-lambda-dev-document-conversion-output", # templates/ folder contents must remain unchanged
-            "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": "amplify-v6-assistants-dev-code-interpreter-files", # NOT CURRENTLY TRACKED  - RETURNED TO USER IN CHAT RESPONSE BODY AND FORGOTTEN 
+        "skip_possibly": {
+            "TRACE_BUCKET_NAME": "amplify-v6-lambda-dev-chat-traces", # not even turned on at this time  Can SKIP
         },
         "cannot_change": {
             "S3_IMAGE_INPUT_BUCKET_NAME": "amplify-v6-lambda-dev-image-input",
             "S3_RAG_INPUT_BUCKET_NAME": "amplify-v6-lambda-dev-rag-input",
             "S3_FILE_TEXT_BUCKET_NAME": "amplify-v6-lambda-dev-file-text",
-        },
-        "unsure_if_in_use": {
-            "DYNAMIC_CODE_BUCKET": "amplify-v6-lambda-basic-ops-dev-dynamic-code",
-            "ASSISTANT_TASK_RESULTS_BUCKET_NAME": "amplify-v6-amplify-v6-amplify-js-dev-ast-results",
-            "JOB_RESULTS_BUCKET": "amplify-v6-assistants-api-dev-job-results", # unsure if in use
-            "S3_ASSISTANT_UPLOADS_BUCKET_NAME": "amplify-v6-lambda-dev-assistant-uploads", # unsure
-            "ATTACHMENT_STORAGE_S3_BUCKET_NAME": "amplify-v6-lambda-basic-ops-dev-work-record-attachments",
-            "ASSISTANT_LOGS_BUCKET_NAME": "amplify-v6-dev-assistant-chat-logs",
-        },
-        "non_user_related_buckets": {
-            "DATA_DISCLOSURE_STORAGE_BUCKET": "amplify-v6-data-disclosure-dev-storage",
-            "S3_ACCESS_LOGS_BUCKET_NAME": "amplify-v6-lambda-dev-access-logs",
-            "S3_API_DOCUMENTATION_BUCKET": "amplify-v6-api-dev-documentation-bucket",
             "S3_RAG_CHUNKS_BUCKET_NAME": "amplify-v6-lambda-dev-rag-chunks", # double check
         }
     }

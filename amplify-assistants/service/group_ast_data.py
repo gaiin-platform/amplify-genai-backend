@@ -193,7 +193,8 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for deletion - legacy fallback
 })
 @validated(op="get_group_conversations_data")
 def get_group_conversations_data(event, context, current_user, name, data):
@@ -213,13 +214,33 @@ def get_group_conversations_data(event, context, current_user, name, data):
     assistant_id = data["data"]["assistantId"]
 
     s3 = boto3.client("s3")
-    bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
-    key = f"{assistant_id}/{conversation_id}.txt"
-
+    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    legacy_bucket = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]  # Marked for deletion
+    
+    # For this function, we need to find the conversation record to check its migration status
+    # We'll first try the consolidation bucket format, then fallback to legacy
+    
+    # Try consolidation bucket first (migrated records)
+    consolidation_key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
     try:
-        response = s3.get_object(Bucket=bucket_name, Key=key)
+        response = s3.get_object(Bucket=consolidation_bucket, Key=consolidation_key)
         content = response["Body"].read().decode("utf-8")
-
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"content": content}),
+        }
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "NoSuchKey":
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": "Error retrieving conversation content"}),
+            }
+    
+    # Fallback to legacy bucket
+    legacy_key = f"{assistant_id}/{conversation_id}.txt"
+    try:
+        response = s3.get_object(Bucket=legacy_bucket, Key=legacy_key)
+        content = response["Body"].read().decode("utf-8")
         return {
             "statusCode": 200,
             "body": json.dumps({"content": content}),
@@ -246,7 +267,8 @@ def get_group_conversations_data(event, context, current_user, name, data):
 # - include conversation content: true/false (default false, meaning content of conversations is not provided)
 @required_env_vars({
     "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY],
-    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], #Marked for deletion - legacy fallback
 })
 @validated(op="get_group_assistant_dashboards")
 def get_group_assistant_dashboards(event, context, current_user, name, data):
@@ -377,22 +399,46 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
         if include_conversation_data or include_conversation_content:
             s3 = boto3.client("s3")
-            bucket_name = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]
+            consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+            legacy_bucket = os.environ["S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME"]  # Marked for deletion
 
             for conv in conversations:
                 if include_conversation_content:
                     conversation_id = conv.get("conversationId")
+                    s3_location = conv.get("s3Location", "")
+                    
                     if conversation_id:
-                        key = f"{assistant_id}/{conversation_id}.txt"
+                        # Determine bucket and key based on migration status
+                        if s3_location.startswith("s3://"):
+                            # Legacy record - use legacy bucket and extract key from s3Location
+                            import re
+                            match = re.search(r's3://[^/]+/(.+)', s3_location)
+                            if match:
+                                key = match.group(1)  # Extract "astgp/..." from s3Location
+                                bucket_to_use = legacy_bucket
+                            else:
+                                # Fallback to constructed key if s3Location parsing fails
+                                key = f"{assistant_id}/{conversation_id}.txt"
+                                bucket_to_use = legacy_bucket
+                        else:
+                            # Migrated record - use consolidation bucket
+                            # s3Location should be like "agentConversations/astgp/..." 
+                            if s3_location.startswith("agentConversations/"):
+                                key = s3_location
+                            else:
+                                # Fallback construction for migrated records
+                                key = f"agentConversations/{assistant_id}/{conversation_id}.txt"
+                            bucket_to_use = consolidation_bucket
+                        
                         try:
-                            obj = s3.get_object(Bucket=bucket_name, Key=key)
+                            obj = s3.get_object(Bucket=bucket_to_use, Key=key)
                             conv["conversationContent"] = (
                                 obj["Body"].read().decode("utf-8")
                             )
                         except ClientError as e:
                             if e.response["Error"]["Code"] == "NoSuchKey":
                                 print(
-                                    f"Conversation content not found for {conversation_id}"
+                                    f"Conversation content not found for {conversation_id} at {bucket_to_use}/{key}"
                                 )
                             else:
                                 print(
@@ -403,11 +449,11 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
 
             # Generate a unique filename
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            filename = f"conversation_data_{assistant_id}_{timestamp}.json"
+            filename = f"agentConversations/exports/conversation_data_{assistant_id}_{timestamp}.json"
 
-            # Upload conversation data to S3
+            # Upload conversation data to consolidation S3 bucket
             s3.put_object(
-                Bucket=bucket_name,
+                Bucket=consolidation_bucket,
                 Key=filename,
                 Body=json.dumps(conversations, cls=CustomPydanticJSONEncoder),
                 ContentType="application/json",
@@ -416,7 +462,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
             # Generate a pre-signed URL that's valid for 1 hour
             presigned_url = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket_name, "Key": filename},
+                Params={"Bucket": consolidation_bucket, "Key": filename},
                 ExpiresIn=3600,
             )
 

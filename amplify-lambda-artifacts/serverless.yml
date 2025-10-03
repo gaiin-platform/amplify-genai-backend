@@ -54,7 +54,7 @@ provider:
     # Locally Defined Variables
     ARTIFACTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-user-artifacts
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    S3_ARTIFACTS_BUCKET: ${self:service}-${sls:stage}-bucket
+    S3_ARTIFACTS_BUCKET: ${self:service}-${sls:stage}-bucket #Marked for future deletion
 
     # Imported Variables
     # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
@@ -69,6 +69,8 @@ provider:
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
+    # USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
+
 
   iam:
     role:
@@ -153,8 +155,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_ARTIFACTS_BUCKET}/"
-                - "arn:aws:s3:::${self:provider.environment.S3_ARTIFACTS_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_ARTIFACTS_BUCKET}/" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_ARTIFACTS_BUCKET}/*" #Marked for future deletion
+                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -172,7 +176,7 @@ resources:
               Resource:
                 - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
 
-    AmplifyArtifactsBucket:
+    AmplifyArtifactsBucket: #Marked for future deletion
         Type: 'AWS::S3::Bucket'
         DeletionPolicy: Retain
         Properties:

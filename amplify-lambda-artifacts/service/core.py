@@ -8,6 +8,7 @@ import boto3
 import json
 import re
 from pycommon.api.amplify_users import are_valid_amplify_users
+from pycommon.api.user_data import load_user_data, save_user_data, delete_user_data
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation
@@ -23,11 +24,25 @@ dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 artifacts_table_name = os.environ["ARTIFACTS_DYNAMODB_TABLE"]
 artifact_table = dynamodb.Table(artifacts_table_name)
-artifact_bucket = os.environ["S3_ARTIFACTS_BUCKET"]
+artifact_bucket = os.environ["S3_ARTIFACTS_BUCKET"] #Marked for future deletion
+
+def get_app_id(current_user: str) -> str:
+    return f"{current_user}#amplify-artifacts"
+
+def is_migrated_artifact(artifact_key: str) -> bool:
+    """
+    Determine if an artifact is migrated based on key format.
+    Pre-migration: "user@email.com/20250305/Game:v3" 
+    Post-migration: "20250305/Game:v3"
+    """
+    migrated_pattern = r"^\d{8}/"
+    return bool(re.match(migrated_pattern, artifact_key))
+
+
 
 
 @required_env_vars({
-    "S3_ARTIFACTS_BUCKET": [S3Operation.GET_OBJECT],
+    "S3_ARTIFACTS_BUCKET": [S3Operation.GET_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
 })
 @validated("read")
@@ -45,15 +60,24 @@ def get_artifact(event, context, current_user, name, data):
         }
 
     try:
-        print("Retrieve the artifact from S3 using the artifact_key")
-
-        response = s3.get_object(Bucket=artifact_bucket, Key=artifact_key)
-
-        # Read the artifact contents
-        contents = response["Body"].read().decode("utf-8")
-
-        # Return the artifact data
-        return {"success": True, "data": json.loads(contents)}
+        if is_migrated_artifact(artifact_key):
+            # New format: Get from USER_STORAGE_TABLE
+            print(f"Retrieving migrated artifact from USER_STORAGE_TABLE: {artifact_key}")
+            
+            app_id = get_app_id(current_user)
+            artifact_content = load_user_data(data["access_token"], app_id, "artifact-content", artifact_key)
+            
+            if artifact_content is None:
+                return {"success": False, "message": "Migrated artifact not found."}
+                
+            return {"success": True, "data": artifact_content}
+        else:
+            # Old format: Get from S3
+            print(f"Retrieving legacy artifact from S3: {artifact_key}")
+            
+            response = s3.get_object(Bucket=artifact_bucket, Key=artifact_key)
+            contents = response["Body"].read().decode("utf-8")
+            return {"success": True, "data": json.loads(contents)}
 
     except Exception as e:
         print(f"Error retrieving artifact: {e}")
@@ -83,7 +107,7 @@ def get_artifacts_info(event, context, current_user, name, data):
 
 
 @required_env_vars({
-    "S3_ARTIFACTS_BUCKET": [S3Operation.DELETE_OBJECT],
+    "S3_ARTIFACTS_BUCKET": [S3Operation.DELETE_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
 })
 @validated("delete")
@@ -101,13 +125,23 @@ def delete_artifact(event, context, current_user, name, data):
         }
 
     try:
-        # delete the artifact from S3 using the artifact_key
-        print("delete the artifact from S3 using the artifact_key")
+        # Delete artifact content from either S3 or USER_STORAGE_TABLE
+        if is_migrated_artifact(artifact_key):
+            # New format: Delete from USER_STORAGE_TABLE
+            print(f"Deleting migrated artifact from USER_STORAGE_TABLE: {artifact_key}")
+            
+            app_id = get_app_id(current_user)
+            result = delete_user_data(data["access_token"], app_id, "artifact-content", artifact_key)
+            
+            if result is None:
+                return {"success": False, "message": "Failed to delete migrated artifact."}
+        else:
+            # Old format: Delete from S3
+            print(f"Deleting legacy artifact from S3: {artifact_key}")
+            s3.delete_object(Bucket=artifact_bucket, Key=artifact_key)
 
-        s3.delete_object(Bucket=artifact_bucket, Key=artifact_key)
-
-        # After successfully deleting from S3, remove the artifact from the DynamoDB table
-        print("Remove artifact from table")
+        # After successfully deleting content, remove the artifact from the DynamoDB metadata table
+        print("Remove artifact from metadata table")
         response = artifact_table.get_item(Key={"user_id": current_user})
         if "Item" in response:
             artifacts = response["Item"].get("artifacts", [])
@@ -138,26 +172,27 @@ def create_artifact_keys(current_user, artifact):
     created_at_dt = datetime.strptime(created_at_str, "%b %d, %Y")
     created_at_num = created_at_dt.strftime("%Y%m%d")
     name = artifact["name"].replace(" ", "_")
-    artifact_key = f"{current_user}/{created_at_num}/{name}:v{artifact['version']}"
+    # New format: clean key without user prefix
+    artifact_key = f"{created_at_num}/{name}:v{artifact['version']}"
     artifact_id = f"{name}:v{artifact['version']}-{created_at_num}"
 
     return artifact_key, artifact_id, created_at_str
 
 
 @required_env_vars({
-    "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT],
+    # "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
 })
 @validated("save")
 def save_artifact(event, context, current_user, name, data):
-    return save_artifact_for_user(current_user, data["data"]["artifact"])
+    return save_artifact_for_user(current_user, data["data"]["artifact"], data["access_token"])
 
 
-def save_artifact_for_user(current_user, artifact, sharedBy=None):
+def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
     print("saving artifact for user ", current_user)
-    artifact_key, artifact_id, created_at_str = create_artifact_keys(
-        current_user, artifact
-    )
+    
+    # Use updated create_artifact_keys which now returns clean format
+    artifact_key, artifact_id, created_at_str = create_artifact_keys(current_user, artifact)
 
     artifact_table_data = {
         "key": artifact_key,
@@ -171,6 +206,7 @@ def save_artifact_for_user(current_user, artifact, sharedBy=None):
     if sharedBy:
         print("sharedBy: ", sharedBy)
         artifact_table_data["sharedBy"] = sharedBy
+        
     try:
         print("Adding artifact details to the table")
         createdAt = ""
@@ -186,7 +222,7 @@ def save_artifact_for_user(current_user, artifact, sharedBy=None):
         # Append the new artifact data
         artifacts.append(artifact_table_data)
 
-        # Update DynamoDB with new artifact
+        # Update DynamoDB with new artifact metadata
         artifact_table.put_item(
             Item={
                 "user_id": current_user,
@@ -196,13 +232,15 @@ def save_artifact_for_user(current_user, artifact, sharedBy=None):
             }
         )
 
-        print("Store artifact in s3 bucket")
+        print("Store artifact content in USER_STORAGE_TABLE")
 
-        # Store the contents in S3
+        # Store the contents in USER_STORAGE_TABLE (new approach)
         artifact["artifactId"] = artifact_id
-        s3.put_object(
-            Bucket=artifact_bucket, Key=artifact_key, Body=json.dumps(artifact)
-        )
+        app_id = get_app_id(current_user)
+        result = save_user_data(access_token, app_id, "artifact-content", artifact_key, artifact)
+        
+        if result is None:
+            return {"success": False, "message": "Failed to save artifact content"}
 
         # Return success with appended artifact data
         return {"success": True, "data": artifact_table_data}
@@ -213,7 +251,7 @@ def save_artifact_for_user(current_user, artifact, sharedBy=None):
 
 
 @required_env_vars({
-    "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT],
+    "S3_ARTIFACTS_BUCKET": [S3Operation.PUT_OBJECT], #Marked for future deletion
     "ARTIFACTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
 })
 @validated("share")
@@ -238,7 +276,7 @@ def share_artifact(event, context, current_user, name, data):
     for email in valid_users:
         try:
             print(f"Sharing artifact with user {email}")
-            save_artifact_for_user(email, artifact, current_user)
+            save_artifact_for_user(email, artifact, access_token, current_user)
         except Exception as e:
             print(f"Error sharing artifact with {email}: {e}")
             errors.append({"email": email, "message": str(e)})

@@ -18,7 +18,8 @@ class LambdaFileTracker:
         self.existing_mappings: Dict[str, str] = {}
         self.initial_state: Dict[str, Dict] = {}
         self.s3_client = boto3.client("s3")
-        self.bucket = os.getenv("AGENT_STATE_BUCKET")
+        self.consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
+        self.legacy_bucket = os.getenv("AGENT_STATE_BUCKET")  # Marked for deletion
         self.data_sources: Dict[str, str] = {}  # Maps source ID -> local filename
         self.deleted_files: List[str] = []  # Track files that have been deleted
 
@@ -56,12 +57,12 @@ class LambdaFileTracker:
         return file_info
 
     def find_existing_session(self) -> Optional[Dict]:
-        """Look for existing session files in S3."""
+        """Look for existing session files in S3 with backward compatibility."""
         try:
-            # Look for index.json directly under user/session_id
-            index_key = f"{self.current_user}/{self.session_id}/index.json"
+            # Try consolidation bucket first (migrated records)
+            consolidation_index_key = f"agentState/{self.current_user}/{self.session_id}/index.json"
             try:
-                response = self.s3_client.get_object(Bucket=self.bucket, Key=index_key)
+                response = self.s3_client.get_object(Bucket=self.consolidation_bucket, Key=consolidation_index_key)
                 session_data = json.loads(response["Body"].read().decode("utf-8"))
                 # Store existing mappings when session is found
                 self.existing_mappings = session_data.get("mappings", {})
@@ -69,13 +70,37 @@ class LambdaFileTracker:
                 self.data_sources = session_data.get("data_sources", {})
                 # Load list of deleted files
                 self.deleted_files = session_data.get("deleted_files", [])
+                # Mark as using consolidation bucket
+                session_data["_bucket_type"] = "consolidation"
                 return session_data
 
             except ClientError as e:
-                print(f"Error checking for existing session: {e}")
-                if e.response["Error"]["Code"] == "NoSuchKey":
-                    return None
-                raise
+                if e.response["Error"]["Code"] == "NoSuchKey" and self.legacy_bucket:
+                    # Fallback to legacy bucket
+                    legacy_index_key = f"{self.current_user}/{self.session_id}/index.json"
+                    try:
+                        response = self.s3_client.get_object(Bucket=self.legacy_bucket, Key=legacy_index_key)
+                        session_data = json.loads(response["Body"].read().decode("utf-8"))
+                        # Store existing mappings when session is found
+                        self.existing_mappings = session_data.get("mappings", {})
+                        # Load data sources mapping
+                        self.data_sources = session_data.get("data_sources", {})
+                        # Load list of deleted files
+                        self.deleted_files = session_data.get("deleted_files", [])
+                        # Mark as using legacy bucket
+                        session_data["_bucket_type"] = "legacy"
+                        return session_data
+
+                    except ClientError as legacy_e:
+                        print(f"Error checking for existing session in both buckets: consolidation={e}, legacy={legacy_e}")
+                        if legacy_e.response["Error"]["Code"] == "NoSuchKey":
+                            return None
+                        raise legacy_e
+                else:
+                    print(f"Error checking for existing session in consolidation bucket: {e}")
+                    if e.response["Error"]["Code"] == "NoSuchKey":
+                        return None
+                    raise
 
         except Exception as e:
             print(f"Error checking for existing session: {e}")
@@ -84,6 +109,15 @@ class LambdaFileTracker:
     def restore_session_files(self, index_content: Dict) -> bool:
         """Restore files from a previous session to the working directory."""
         try:
+            # Determine which bucket and key prefix to use
+            bucket_type = index_content.get("_bucket_type", "legacy")
+            if bucket_type == "consolidation":
+                bucket_to_use = self.consolidation_bucket
+                key_prefix = f"agentState/{self.current_user}/{self.session_id}/"
+            else:
+                bucket_to_use = self.legacy_bucket
+                key_prefix = f"{self.current_user}/{self.session_id}/"
+
             # Load list of files that were previously deleted
             deleted_files = index_content.get("deleted_files", [])
             files_restored = 0
@@ -100,9 +134,9 @@ class LambdaFileTracker:
                     files_skipped += 1
                     continue
 
-                # Construct the S3 key without date
-                s3_key = f"{self.current_user}/{self.session_id}/{s3_name}"
-                print(f"Restoring {original_path} from {s3_key}")
+                # Construct the S3 key based on bucket type
+                s3_key = f"{key_prefix}{s3_name}"
+                print(f"Restoring {original_path} from {s3_key} (bucket: {bucket_to_use})")
                 local_path = os.path.join(self.working_dir, original_path)
 
                 # Ensure the target directory exists
@@ -110,7 +144,7 @@ class LambdaFileTracker:
 
                 try:
                     # Download the file
-                    self.s3_client.download_file(self.bucket, s3_key, local_path)
+                    self.s3_client.download_file(bucket_to_use, s3_key, local_path)
                     files_restored += 1
                 except ClientError as e:
                     print(f"Error downloading file {s3_key}: {e}")
@@ -181,18 +215,34 @@ class LambdaFileTracker:
         current_files = self.scan_directory()
         print(f"Found {len(current_files)} files in working directory")
 
-        # First get index for mappings and existing files
+        # First get index for mappings and existing files with backward compatibility
         tracked_files = {}
         try:
-            index_key = f"{self.current_user}/{self.session_id}/index.json"
+            filename_mappings = {}
+            version_history = {}
+            
+            # Try consolidation bucket first
+            consolidation_index_key = f"agentState/{self.current_user}/{self.session_id}/index.json"
             try:
-                response = self.s3_client.get_object(Bucket=self.bucket, Key=index_key)
+                response = self.s3_client.get_object(Bucket=self.consolidation_bucket, Key=consolidation_index_key)
                 index_data = json.loads(response["Body"].read().decode("utf-8"))
                 filename_mappings = index_data.get("mappings", {})
                 version_history = index_data.get("version_history", {})
-            except ClientError:
-                filename_mappings = {}
-                version_history = {}
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "NoSuchKey" and self.legacy_bucket:
+                    # Fallback to legacy bucket
+                    legacy_index_key = f"{self.current_user}/{self.session_id}/index.json"
+                    try:
+                        response = self.s3_client.get_object(Bucket=self.legacy_bucket, Key=legacy_index_key)
+                        index_data = json.loads(response["Body"].read().decode("utf-8"))
+                        filename_mappings = index_data.get("mappings", {})
+                        version_history = index_data.get("version_history", {})
+                    except ClientError:
+                        filename_mappings = {}
+                        version_history = {}
+                else:
+                    filename_mappings = {}
+                    version_history = {}
 
             for filepath, info in current_files.items():
                 # Get the S3 filename from mappings if it exists
@@ -303,8 +353,8 @@ class LambdaFileTracker:
         Returns:
             A dictionary with status and information about the data source
         """
-        if not self.bucket:
-            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+        if not self.consolidation_bucket:
+            raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
 
         # Extract information from the data source
         source_id = data_source.get("id")
@@ -462,7 +512,8 @@ class LambdaFileTracker:
                 print(f"Downloading {s3_key} to {local_path}")
 
                 try:
-                    self.s3_client.download_file(self.bucket, s3_key, local_path)
+                    # Use consolidation bucket for new data source downloads
+                    self.s3_client.download_file(self.consolidation_bucket, s3_key, local_path)
                     print(f"Downloaded data source {source_id} to {local_path}")
 
                     # Convert base64 encoded images to binary if needed
@@ -535,9 +586,9 @@ class LambdaFileTracker:
         return changed_files, filename_mapping, version_info, deleted_files
 
     def upload_changed_files(self) -> Dict:
-        """Upload changed files to S3 and return upload information."""
-        if not self.bucket:
-            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+        """Upload changed files to consolidation S3 bucket and return upload information."""
+        if not self.consolidation_bucket:
+            raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
 
         changed_files, filename_mapping, version_info, deleted_files = (
             self.get_changed_files()
@@ -552,10 +603,10 @@ class LambdaFileTracker:
             }
 
         try:
-            # Get existing index if it exists
+            # Get existing index if it exists - always use consolidation bucket for new uploads
+            consolidation_index_key = f"agentState/{self.current_user}/{self.session_id}/index.json"
             try:
-                index_key = f"{self.current_user}/{self.session_id}/index.json"
-                response = self.s3_client.get_object(Bucket=self.bucket, Key=index_key)
+                response = self.s3_client.get_object(Bucket=self.consolidation_bucket, Key=consolidation_index_key)
                 existing_index = json.loads(response["Body"].read().decode("utf-8"))
                 # Ensure version_history exists
                 if "version_history" not in existing_index:
@@ -602,24 +653,24 @@ class LambdaFileTracker:
                 # Save deleted files to instance variable for next session
                 self.deleted_files = existing_index["deleted_files"]
 
-            # Upload index file
+            # Upload index file to consolidation bucket
             self.s3_client.put_object(
-                Bucket=self.bucket,
-                Key=index_key,
+                Bucket=self.consolidation_bucket,
+                Key=consolidation_index_key,
                 Body=json.dumps(existing_index, indent=2),
                 ContentType="application/json",
             )
 
-            # Upload changed files
+            # Upload changed files to consolidation bucket with agentState/ prefix
             upload_results = {}
             for original_path in changed_files:
                 safe_name = filename_mapping[original_path]
-                s3_key = f"{self.current_user}/{self.session_id}/{safe_name}"
+                s3_key = f"agentState/{self.current_user}/{self.session_id}/{safe_name}"
                 local_path = os.path.join(self.working_dir, original_path)
 
                 try:
                     with open(local_path, "rb") as file:
-                        self.s3_client.upload_fileobj(file, self.bucket, s3_key)
+                        self.s3_client.upload_fileobj(file, self.consolidation_bucket, s3_key)
                     upload_results[original_path] = {
                         "status": "success",
                         "s3_key": s3_key,
@@ -636,7 +687,7 @@ class LambdaFileTracker:
                 "deleted_files": deleted_files,
                 "mappings": filename_mapping,
                 "upload_results": upload_results,
-                "index_location": {"bucket": self.bucket, "key": index_key},
+                "index_location": {"bucket": self.consolidation_bucket, "key": consolidation_index_key},
             }
 
         except Exception as e:
@@ -689,7 +740,7 @@ def get_presigned_url_by_id(
     current_user: str, session_id: str, file_id: str, expiration: int = 3600
 ) -> Optional[str]:
     """
-    Generate a presigned URL for a file version in the agent state bucket.
+    Generate a presigned URL for a file version with backward compatibility for consolidation and legacy buckets.
 
     Args:
         current_user (str): The user ID
@@ -697,46 +748,69 @@ def get_presigned_url_by_id(
         file_id (str): The UUID string representing either the current file or a specific version
     """
     s3_client = boto3.client("s3")
-    bucket = os.getenv("AGENT_STATE_BUCKET")
+    consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
+    legacy_bucket = os.getenv("AGENT_STATE_BUCKET")  # Marked for deletion
 
-    if not bucket:
-        raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+    if not consolidation_bucket:
+        raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
 
-    index_key = f"{current_user}/{session_id}/index.json"
+    # Try consolidation bucket first (migrated records)
+    consolidation_index_key = f"agentState/{current_user}/{session_id}/index.json"
     try:
-        response = s3_client.get_object(Bucket=bucket, Key=index_key)
+        response = s3_client.get_object(Bucket=consolidation_bucket, Key=consolidation_index_key)
         index_content = json.loads(response["Body"].read().decode("utf-8"))
 
-        # First check current mappings
-        filename_mappings = index_content.get("mappings", {})
-        for _, s3_filename in filename_mappings.items():
-            if s3_filename.rsplit(".", 1)[0] == file_id:
-                s3_key = f"{current_user}/{session_id}/{s3_filename}"
-                break
-        else:
-            # If not found in current mappings, check version history
-            version_history = index_content.get("version_history", {})
-            s3_key = None
-            for _, versions in version_history.items():
-                for version in versions:
-                    if version.get("s3_name", "").rsplit(".", 1)[0] == file_id:
-                        s3_key = f"{current_user}/{session_id}/{version['s3_name']}"
-                        break
-                if s3_key:
-                    break
-
-            if not s3_key:
-                print(
-                    f"File ID {file_id} not found in session mappings or version history"
-                )
+        # Found in consolidation bucket - use agentState/ prefix
+        bucket_to_use = consolidation_bucket
+        key_prefix = f"agentState/{current_user}/{session_id}/"
+        
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchKey" and legacy_bucket:
+            # Fallback to legacy bucket
+            legacy_index_key = f"{current_user}/{session_id}/index.json"
+            try:
+                response = s3_client.get_object(Bucket=legacy_bucket, Key=legacy_index_key)
+                index_content = json.loads(response["Body"].read().decode("utf-8"))
+                bucket_to_use = legacy_bucket
+                key_prefix = f"{current_user}/{session_id}/"
+            except ClientError:
+                print(f"File index not found in either bucket for session {session_id}")
                 return None
+        else:
+            print(f"Error accessing consolidation bucket index: {e}")
+            return None
+    
+    # Search for file in mappings and version history
+    filename_mappings = index_content.get("mappings", {})
+    s3_key = None
+    
+    # First check current mappings
+    for _, s3_filename in filename_mappings.items():
+        if s3_filename.rsplit(".", 1)[0] == file_id:
+            s3_key = f"{key_prefix}{s3_filename}"
+            break
+    
+    # If not found in current mappings, check version history
+    if not s3_key:
+        version_history = index_content.get("version_history", {})
+        for _, versions in version_history.items():
+            for version in versions:
+                if version.get("s3_name", "").rsplit(".", 1)[0] == file_id:
+                    s3_key = f"{key_prefix}{version['s3_name']}"
+                    break
+            if s3_key:
+                break
 
+    if not s3_key:
+        print(f"File ID {file_id} not found in session mappings or version history")
+        return None
+
+    try:
         # Generate the presigned URL
         url = s3_client.generate_presigned_url(
-            "get_object", Params={"Bucket": bucket, "Key": s3_key}, ExpiresIn=expiration
+            "get_object", Params={"Bucket": bucket_to_use, "Key": s3_key}, ExpiresIn=expiration
         )
         return url
-
     except ClientError as e:
         print(f"Error generating presigned URL: {e}")
         return None

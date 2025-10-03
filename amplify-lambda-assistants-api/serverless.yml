@@ -72,7 +72,8 @@ provider:
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONVERSION_OUTPUT_BUCKET_NAME}
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONVERSION_OUTPUT_BUCKET_NAME} #Marked for future deletion
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
   iam:
     role:
@@ -231,6 +232,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -261,7 +264,7 @@ resources:
                 - s3:PutObject
                 - s3:GetObject
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*" #Marked for future deletion
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

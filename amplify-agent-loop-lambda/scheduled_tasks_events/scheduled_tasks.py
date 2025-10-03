@@ -13,8 +13,9 @@ from decimal import Decimal
 from events.event_handler import MessageHandler
 from delegation.api_keys import get_api_key_directly_by_id
 from events.event_templates import get_assistant_by_alias
-from pycommon.api.user_data import load_user_data
+from pycommon.api.user_data import load_user_data, save_user_data
 from pycommon.api.ses_email import send_email
+from pycommon.lzw import safe_compress
 from croniter import croniter
 
 
@@ -116,6 +117,7 @@ class TasksMessageHandler(MessageHandler):
                     "source": source,
                 },
                 execution_id=session_id,
+                api_key
             )
 
             return event_payload
@@ -163,6 +165,7 @@ class TasksMessageHandler(MessageHandler):
                     "source": task_data.get("source", "unknown"),
                 },
                 execution_id=session_id,
+                access_token=event.get("metadata").get("accessToken"),
             )
             return
 
@@ -199,7 +202,7 @@ class TasksMessageHandler(MessageHandler):
             return
 
         print(f"Task success handler called for task {task_id}")
-        task_completed(user_id, task_id, task_data, agent_result)
+        task_completed(user_id, task_id, task_data, agent_result) 
 
     def _reset_task_check_status(self, user_id, task_id, last_run_at):
         """Reset the lastCheckedAt field to allow the task to be retried."""
@@ -295,6 +298,7 @@ def task_completed(user_id, task_id, task_data, result):
                 "source": task_data.get("source"),
             },
             execution_id=session_id,
+            access_token=task_data.get("apiKey")
         )
 
         if source == "scheduled-task":
@@ -373,6 +377,7 @@ def task_failed(user_id, task_id, error, task_data):
                 "source": task_data.get("source"),
             },
             execution_id=session_id,
+            access_token=task_data.get("apiKey")
         )
 
         if task_data.get("source") == "scheduled-task":
@@ -469,7 +474,7 @@ def email_task_details(api_key, email_subject, email_body, email_addresses):
             print(f"Failed to send task notification to {address}")
 
 
-def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None):
+def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None, access_token=None):
     """
     Add execution record to a task's logs.
 
@@ -485,7 +490,7 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
     """
     # Get environment variables
     table_name = os.environ.get("SCHEDULED_TASKS_TABLE")
-    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")
+    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")  #Marked for future deletion
 
     if not table_name or not logs_bucket:
         raise ValueError(
@@ -523,25 +528,72 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
             "source": details.get("source", "unknown"),
         }
 
-        # Store details in S3 if provided
+        # Check if task has migrated logs (no detailsKey entries)
+        logs = []
+        if "logs" in response["Item"]:
+            logs = deserializer.deserialize(response["Item"]["logs"])
+        
+        has_details_keys = any(log_entry.get("detailsKey") for log_entry in logs)
+        
+        # Store details based on migration status
         if details:
-            s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
-            s3.put_object(
-                Bucket=logs_bucket,
-                Key=s3_key,
-                Body=json.dumps(details),
-                ContentType="application/json",
-            )
-            execution_record["detailsKey"] = s3_key
+            if has_details_keys:
+                # Legacy mode: Store in S3
+                s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
+                s3.put_object(
+                    Bucket=logs_bucket,
+                    Key=s3_key,
+                    Body=json.dumps(details),
+                    ContentType="application/json",
+                )
+                execution_record["detailsKey"] = s3_key
+            else:
+                # Migrated mode: Store in USER_STORAGE_TABLE dictionary with compression
+                if access_token:
+                    try:
+                        # Get existing logs dictionary or create new
+                        app_id = f"{current_user}#amplify-agent-logs"
+                        existing_logs_data = None
+                        try:
+                            existing_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
+                        except Exception:
+                            pass  # New consolidated log entry
+                        
+                        if existing_logs_data and "logs" in existing_logs_data:
+                            logs_dict = existing_logs_data["logs"]
+                        else:
+                            logs_dict = {}
+                        
+                        # Add compressed log data directly to dictionary
+                        compressed_details = safe_compress(details)
+                        logs_dict[execution_id] = compressed_details
+                        
+                        # Save logs dictionary
+                        consolidated_data = {
+                            "taskId": task_id,
+                            "user": current_user,
+                            "logs": logs_dict
+                        }
+                        
+                        save_user_data(access_token, app_id, "scheduled-task-logs", task_id, consolidated_data)
+                        print(f"Stored execution {execution_id} in logs dictionary for task {task_id}")
+                    except Exception as e:
+                        print(f"Failed to store in USER_STORAGE_TABLE, falling back to S3: {e}")
+                        # Fallback to S3 if USER_STORAGE_TABLE fails
+                        s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
+                        s3.put_object(
+                            Bucket=logs_bucket,
+                            Key=s3_key,
+                            Body=json.dumps(details),
+                            ContentType="application/json",
+                        )
+                        execution_record["detailsKey"] = s3_key
 
         # Update the task in DynamoDB to add the record to logs and update lastRunAt
         deserializer = TypeDeserializer()
         serializer = TypeSerializer()
 
-        # Get current logs
-        logs = []
-        if "logs" in response["Item"]:
-            logs = deserializer.deserialize(response["Item"]["logs"])
+        # Use previously loaded logs
 
         # Find existing record with same execution_id and update it, or insert new record
         existing_record_index = None
@@ -967,6 +1019,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
                 "source": task_source,
             },
             execution_id=session_id,
+            task["apiKey"],
         )
     return {"successful": successful, "failed": failed}
 

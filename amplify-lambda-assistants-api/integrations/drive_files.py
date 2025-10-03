@@ -97,7 +97,7 @@ def list_files(integration_provider, token, folder_id=None):
 
 
 @required_env_vars({
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated("download_file")
 def download_integration_file(event, context, current_user, name, data):
@@ -149,9 +149,9 @@ def prepare_download_link(integration, integration_provider, file_id, current_us
                     return {"success": False, "error": "Failed to get file contents"}
 
                 # Create an S3 key using the safe file name; no double extension.
-                key = f"temp_integration_file/{current_user}/{safe_file_name}"
+                key = f"tempIntegrationFiles/{current_user}/{safe_file_name}"
 
-                bucket = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+                bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
                 print(f"Saving file to S3 bucket: {bucket}, key: {key}")
 
                 try:
@@ -318,7 +318,7 @@ MIME_TO_EXT = {
 
 
 @required_env_vars({
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @validated("upload_files")
 def drive_files_to_data_sources(event, context, current_user, name, data):

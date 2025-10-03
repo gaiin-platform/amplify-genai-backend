@@ -77,10 +77,10 @@ provider:
     ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-thread-runs
     ASSISTANT_THREADS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-threads
     ASSISTANTS_ALIASES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistant-aliases
-    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files
+    ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME: ${self:service}-${sls:stage}-code-interpreter-files #Marked for future deletion
     ASSISTANTS_DYNAMODB_TABLE: ${self:service}-${sls:stage}-assistants
     GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE: ${self:service}-${sls:stage}-group-assistant-conversations
-    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content
+    S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-group-conversations-content #Marked for future deletion
 
     # Imported Variables
     # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
@@ -104,6 +104,7 @@ provider:
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
     ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
@@ -111,7 +112,7 @@ provider:
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
-    S3_SHARE_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_SHARE_BUCKET_NAME}
+    S3_SHARE_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_SHARE_BUCKET_NAME} #Marked for future deletion
     SHARES_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/SHARES_DYNAMODB_TABLE}
 
   iam:
@@ -607,7 +608,7 @@ resources:
     AssistantsFilesBucket:
       Type: 'AWS::S3::Bucket'
       Properties:
-        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}
+        BucketName: ${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME} #Marked for future deletion
         CorsConfiguration:
           CorsRules:
             - AllowedOrigins: ['*']
@@ -619,7 +620,7 @@ resources:
             - ServerSideEncryptionByDefault:
                 SSEAlgorithm: AES256
     
-    GroupAssistantConversationsBucket:
+    GroupAssistantConversationsBucket: #Marked for future deletion
       Type: 'AWS::S3::Bucket'
       DeletionPolicy: Retain
       Properties:
@@ -677,15 +678,17 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE}/*"
-                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
 
             - Effect: Allow
               Action:
@@ -698,7 +701,7 @@ resources:
               Action:
                 - s3:PutObject
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}" #Marked for future deletion
             
             - Effect: Allow
               Action:

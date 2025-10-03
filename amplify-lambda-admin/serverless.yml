@@ -73,7 +73,8 @@ provider:
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONVERSION_OUTPUT_BUCKET_NAME}
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONVERSION_OUTPUT_BUCKET_NAME} #Marked for future deletion
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
   iam:
     role:
@@ -228,8 +229,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COST_CALCULATIONS_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: Allow
               Action:
                 - dynamodb:Scan

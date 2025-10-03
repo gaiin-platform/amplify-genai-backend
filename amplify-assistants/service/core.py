@@ -866,11 +866,12 @@ def create_assistant(event, context, current_user, name, data):
     },
 )
 @required_env_vars({
-    "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
     "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
     "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
+    # "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT], #Marked for deletion
 })
 @validated(op="share_assistant")
 def share_assistant(event, context, current_user, name, data):
@@ -1041,14 +1042,17 @@ def assistant_share_save(current_user, shared_with, note, assistant):
             "folders": [],
             "sharedBy": current_user,
         }
-        bucket_name = os.environ["S3_SHARE_BUCKET_NAME"]
+        consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
         s3_client = boto3.client("s3")
 
-        print("Put assistant in s3")
+        # Use consolidation bucket format for new shares
+        consolidation_key = f"shares/{s3_key}"
+
+        print("Put assistant in consolidation s3")
         s3_client.put_object(
             Body=json.dumps(shared_data, default=str).encode(),
-            Bucket=bucket_name,
-            Key=s3_key,
+            Bucket=consolidation_bucket,
+            Key=consolidation_key,
         )
 
         dynamodb = boto3.resource("dynamodb")
@@ -1077,7 +1081,7 @@ def assistant_share_save(current_user, shared_with, note, assistant):
                         "sharedBy": current_user,
                         "note": note,
                         "sharedAt": timestamp,
-                        "key": s3_key,
+                        "key": consolidation_key,
                     }
                 ],
                 "createdAt": timestamp,
@@ -1098,7 +1102,7 @@ def assistant_share_save(current_user, shared_with, note, assistant):
                             "sharedBy": current_user,
                             "note": note,
                             "sharedAt": timestamp,
-                            "key": s3_key,
+                            "key": consolidation_key,
                         }
                     ],
                     ":updatedAt": timestamp,

@@ -87,16 +87,16 @@ provider:
     HASH_FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-hash-files
     LAMBDA_IAM_POLICY_NAME: ${self:service}-${sls:stage}-lambda-policy
     S3_ACCESS_LOGS_BUCKET_NAME: ${self:service}-${sls:stage}-access-logs
-    S3_ASSISTANT_UPLOADS_BUCKET_NAME: ${self:service}-${sls:stage}-assistant-uploads
-    S3_SHARE_BUCKET_NAME: ${self:service}-${sls:stage}-share
-    S3_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-user-conversations
-    S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input
-    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output
+    S3_SHARE_BUCKET_NAME: ${self:service}-${sls:stage}-share #Marked for future deletion
+    S3_CONVERSATIONS_BUCKET_NAME: ${self:service}-${sls:stage}-user-conversations #Marked for future deletion
+    S3_CONVERSION_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-input #Marked for future deletion
+    S3_CONVERSION_OUTPUT_BUCKET_NAME: ${self:service}-${sls:stage}-document-conversion-output #Marked for future deletion
     S3_FILE_TEXT_BUCKET_NAME: ${self:service}-${sls:stage}-file-text
     S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
     S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
     S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
+    S3_CONSOLIDATION_BUCKET_NAME: ${self:service}-${sls:stage}-consolidation
     SHARES_DYNAMODB_TABLE: ${self:service}-${sls:stage}
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
     SQS_RAG_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-index-queue
@@ -434,9 +434,11 @@ functions:
     timeout: 180
     events:
       - s3:
-          bucket: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
+          bucket: ${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
           event: s3:ObjectCreated:*
           existing: true
+          rules:
+            - prefix: conversion/input/
     
   handlePptxUpload:
     handler: powerpoints/core.handle_pptx_upload
@@ -444,11 +446,11 @@ functions:
       - Ref: PythonRequirementsLambdaLayer
     events:
       - s3:
-          bucket: ${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}
+          bucket: ${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
           event: s3:ObjectCreated:*
           existing: true
           rules:
-            - prefix: templates/
+            - prefix: powerPointTemplates/
             - suffix: .pptx 
       
   process_document_for_rag:
@@ -580,8 +582,8 @@ resources:
                 - s3:PutObject
                 - s3:DeleteObject
               Resource:
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}/*" #Marked for future deletion
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
@@ -638,13 +640,12 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AMPLIFY_ADMIN_DYNAMODB_TABLE}*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
-                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*"
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_SHARE_BUCKET_NAME}/*" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}/*" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONVERSION_OUTPUT_BUCKET_NAME}/*" #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_CHUNKS_BUCKET_NAME}/*"
@@ -656,6 +657,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
@@ -673,7 +676,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
 
-    StateBucket:
+    StateBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.S3_SHARE_BUCKET_NAME}
@@ -687,23 +690,7 @@ resources:
           DestinationBucketName: 
             Ref: AccessLogsBucket
           LogFilePrefix: S3AccessLogs/
-
-    AssistantUploadsBucket:
-      Type: AWS::S3::Bucket
-      Properties:
-        BucketName: ${self:provider.environment.S3_ASSISTANT_UPLOADS_BUCKET_NAME}
-        CorsConfiguration:
-          CorsRules:
-            - AllowedOrigins: ['*']
-              AllowedMethods: ['PUT', 'POST']
-              AllowedHeaders: ['*']
-              MaxAge: 3000
-        LoggingConfiguration:
-          DestinationBucketName: 
-            Ref: AccessLogsBucket
-          LogFilePrefix: S3AccessLogs/              
-
-
+         
     UserStateDynamoDbTable:
       Type: 'AWS::DynamoDB::Table'
       Properties:
@@ -952,7 +939,7 @@ resources:
             Projection:
               ProjectionType: ALL
 
-    ConversionInputBucket:
+    ConversionInputBucket: #Marked for future deletion
          Type: AWS::S3::Bucket
          Properties:
           BucketName: ${self:provider.environment.S3_CONVERSION_INPUT_BUCKET_NAME}
@@ -967,7 +954,7 @@ resources:
               Ref: AccessLogsBucket 
             LogFilePrefix: S3AccessLogs/
 
-    ConversionOutputBucket:
+    ConversionOutputBucket: #Marked for future deletion
          Type: AWS::S3::Bucket
          DependsOn: LambdaIAMPolicy
          Properties:
@@ -1115,7 +1102,7 @@ resources:
             VisibilityTimeout: 300
             QueueName: ${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}
     
-    remoteConversationsBucket:
+    remoteConversationsBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.S3_CONVERSATIONS_BUCKET_NAME}
@@ -1149,6 +1136,28 @@ resources:
       Type: 'AWS::S3::Bucket'
       Properties:
         BucketName: ${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}
+
+    ConsolidationBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: ['GET', 'PUT', 'POST', 'DELETE']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+        LoggingConfiguration:
+          DestinationBucketName: 
+            Ref: AccessLogsBucket
+          LogFilePrefix: S3AccessLogs/
+        VersioningConfiguration:
+          Status: Enabled
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
 
     AccessLogsBucketPolicy:
       Type: 'AWS::S3::BucketPolicy'
