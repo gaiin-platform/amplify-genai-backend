@@ -16,7 +16,6 @@ from pycommon.dal.providers.aws.resource_perms import (
 
 @required_env_vars({
     "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "SCHEDULED_TASKS_QUEUE": [SQSOperation.SEND_MESSAGE],
 })
 @api_tool(
     path="/vu-agent/create-scheduled-task",
@@ -207,7 +206,7 @@ def create_scheduled_task_handler(
 )
 def get_scheduled_task_handler(current_user, access_token, task_id):
     try:
-        task = get_scheduled_task(current_user, task_id)
+        task = get_scheduled_task(current_user, task_id, access_token)
         if task is None:
             return {"success": False, "message": "Task not found"}
         return {"success": True, "task": task, "message": "Task retrieved successfully"}
@@ -397,7 +396,7 @@ def update_scheduled_task_handler(
 
 @required_env_vars({
     "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.DELETE_ITEM],
-    "SCHEDULED_TASKS_QUEUE": [SQSOperation.SEND_MESSAGE],
+    # "SCHEDULED_TASKS_LOGS_BUCKET": [S3Operation.GET_OBJECT], #Marked for future deletion
 })
 @api_tool(
     path="/vu-agent/delete-scheduled-task",
@@ -437,7 +436,7 @@ def delete_scheduled_task_handler(current_user, access_token, task_id):
 
 @required_env_vars({
     "SCHEDULED_TASKS_TABLE": [DynamoDBOperation.GET_ITEM],
-    "SCHEDULED_TASK_EXECUTION_LOGS_BUCKET": [S3Operation.GET_OBJECT],
+    # "SCHEDULED_TASKS_LOGS_BUCKET": [S3Operation.GET_OBJECT], #Marked for future deletion
 })
 @api_tool(
     path="/vu-agent/get-task-execution-details",
@@ -547,7 +546,7 @@ def get_task_execution_details_handler(
     current_user, access_token, task_id, execution_id
 ):
     try:
-        details = get_task_execution_details(current_user, task_id, execution_id)
+        details = get_task_execution_details(current_user, task_id, execution_id, access_token)
         if details is None:
             return {"success": False, "message": "Execution record not found"}
         return {

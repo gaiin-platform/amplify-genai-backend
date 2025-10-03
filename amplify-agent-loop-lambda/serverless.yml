@@ -67,13 +67,13 @@ provider:
     # Locally Defined Variables
     AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-event-templates
     AGENT_FAT_CONTAINER_URL: ${cf:${self:service}-${sls:stage}.AgentRouterFnUrlContainerFatLambdaFunctionUrl}
-    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state
+    AGENT_STATE_BUCKET: ${self:service}-${sls:stage}-agent-state #Marked for future deletion
     AGENT_STATE_DYNAMODB_TABLE: ${self:service}-${sls:stage}-agent-states
     EMAIL_SETTINGS_DYNAMO_TABLE: ${self:service}-${sls:stage}-email-allowed-senders
     LAMBDA_AGENT_LOOP_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy-updated
-    SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs
+    SCHEDULED_TASKS_LOGS_BUCKET: ${self:service}-${sls:stage}-scheduled-tasks-logs #Marked for future deletion
     SCHEDULED_TASKS_TABLE: ${self:service}-${sls:stage}-scheduled-tasks
-    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates
+    WORKFLOW_TEMPLATES_BUCKET: ${self:service}-${sls:stage}-workflow-templates #Marked for future deletion
     WORKFLOW_TEMPLATES_TABLE: ${self:service}-${sls:stage}-workflow-registry
 
     # Imported Variables
@@ -107,9 +107,11 @@ provider:
     MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
     REQUEST_STATE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/REQUEST_STATE_DYNAMO_TABLE}
+    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
+    # USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
 
   iam:
     role:
@@ -235,6 +237,8 @@ resources:
                 - s3:ListBucket
                 - s3:DeleteObject
               Resource:
+                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
+                # - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANTS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DB_CONNECTIONS_TABLE}"
@@ -255,16 +259,16 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.AGENT_STATE_BUCKET}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.CHAT_USAGE_DYNAMO_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.MODEL_RATE_TABLE}/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.WORKFLOW_TEMPLATES_TABLE}/*"
-                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}" #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}/*" #Marked for future deletion
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.REQUEST_STATE_DYNAMO_TABLE}"
                 - "arn:aws:s3:::${self:provider.environment.S3_RAG_INPUT_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_IMAGE_INPUT_BUCKET_NAME}/*"
@@ -274,8 +278,10 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_TAGS_DYNAMO_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SCHEDULED_TASKS_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.SCHEDULED_TASKS_TABLE}/index/*"
-                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}"
-                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"
+                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}"  #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.SCHEDULED_TASKS_LOGS_BUCKET}/*"  #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 
             - Effect: Allow
               Action:
@@ -345,7 +351,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
 
-    AgentStateBucket:
+    AgentStateBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.AGENT_STATE_BUCKET}
@@ -486,7 +492,7 @@ resources:
             KeyType: RANGE
         TableName: ${self:provider.environment.EMAIL_SETTINGS_DYNAMO_TABLE}
 
-    WorkflowTemplatesBucket:
+    WorkflowTemplatesBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.WORKFLOW_TEMPLATES_BUCKET}
@@ -534,7 +540,7 @@ resources:
         PointInTimeRecoverySpecification:
           PointInTimeRecoveryEnabled: true
           
-    ScheduledTasksLogsBucket:
+    ScheduledTasksLogsBucket: #Marked for future deletion
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:service}-${sls:stage}-scheduled-tasks-logs

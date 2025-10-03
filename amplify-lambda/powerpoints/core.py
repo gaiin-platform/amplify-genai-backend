@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ.get("AMPLIFY_ADMIN_DYNAMODB_TABLE"))
 s3_client = boto3.client("s3")
-output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
 PPTX_TEMPLATES = "powerPointTemplates"
 
@@ -23,12 +23,12 @@ def handle_pptx_upload(event, context):
             print("Skipping record: missing bucket_name or object_key.")
             continue
 
-        # Make sure this is in the templates/ prefix
-        if not object_key.startswith("templates/"):
-            print(f"Skipping record: object {object_key} is not in templates/ prefix.")
+        # Make sure this is in the powerPointTemplates/ prefix
+        if not object_key.startswith("powerPointTemplates/"):
+            print(f"Skipping record: object {object_key} is not in powerPointTemplates/ prefix.")
             continue
 
-        template_name = object_key.replace("templates/", "")
+        template_name = object_key.replace("powerPointTemplates/", "")
 
         try:
             obj_head = s3_client.head_object(Bucket=bucket_name, Key=object_key)

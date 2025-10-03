@@ -162,7 +162,8 @@ add_api_access_types([APIAccessType.ASSISTANTS.value])
     "ADDITIONAL_CHARGES_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT], #Marked for future deletion
 })
 @validated(op="chat")
 def chat_with_code_interpreter(event, context, current_user, name, data):
@@ -459,7 +460,8 @@ def delete_assistant_thread(event, context, current_user, name, data):
     },
 )
 @required_env_vars({
-    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for future deletion
 })
 @validated(op="download")
 def get_presigned_url_code_interpreter(event, context, current_user, name, data):
@@ -471,7 +473,7 @@ def get_presigned_url_code_interpreter(event, context, current_user, name, data)
 
 
 def is_valid_query_param_id(id, current_user, prefix):
-    pattern = f"^{re.escape(current_user)}/{re.escape(prefix)}/[0-9a-fA-F-]{{36}}$"
+    pattern = f"^[^/]+/{re.escape(prefix)}/[0-9a-fA-F-]{{36}}$"
     if re.match(pattern, id):
         return True
     return False

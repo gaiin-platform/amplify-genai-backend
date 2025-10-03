@@ -66,14 +66,12 @@ def parse_s3_key(s3_key):
     else:
         return None, None, None, None
 @required_env_vars({
-    "S3_CONVERSION_INPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
 })
 @validated("convert")
 def submit_conversion_job(event, context, user, name, data):
     print(f"User {user} submitted conversion job")
-    input_bucket_name = os.environ["S3_CONVERSION_INPUT_BUCKET_NAME"]
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     data = data["data"]
     to_convert = data["content"]
@@ -119,35 +117,35 @@ date: {formatted_date}
     # Generate a unique UUID
     unique_uuid = str(uuid.uuid4())
 
-    # Construct the key
-    s3_key = f"{user}/{unique_uuid}-to-{fmat}.md"
+    # Construct the key with consolidation bucket prefix
+    consolidation_s3_key = f"conversion/input/{user}/{unique_uuid}-to-{fmat}.md"
 
     # Initialize the S3 client
     s3_client = boto3.client("s3")
 
     print(
-        f"Saving file to S3 with key: {s3_key} and content type: text/markdown and bucket: {input_bucket_name}"
+        f"Saving file to S3 with key: {consolidation_s3_key} and content type: text/markdown and bucket: {consolidation_bucket_name}"
     )
-    # Save the contents to the bucket
+    # Save the contents to the consolidation bucket
     s3_client.put_object(
         Body=contents_to_convert,
-        Bucket=input_bucket_name,
-        Key=s3_key,
+        Bucket=consolidation_bucket_name,
+        Key=consolidation_s3_key,
         ContentType="text/markdown",
     )
 
-    print(f"File saved to S3 with key: {s3_key}")
+    print(f"File saved to S3 with key: {consolidation_s3_key}")
 
     if templateName and templateName != "":
         put_template_to_s3(user, unique_uuid, templateName)
 
-    s3_output_key = f"{user}/{unique_uuid}.{fmat}"
+    s3_output_key = f"conversion/output/{user}/{unique_uuid}.{fmat}"
 
-    print(f"Returning presigned URL for key: {s3_output_key} and bucket: {output_bucket_name}")
+    print(f"Returning presigned URL for key: {s3_output_key} and bucket: {consolidation_bucket_name}")
 
     presigned_url = s3_client.generate_presigned_url(
         "get_object",
-        Params={"Bucket": output_bucket_name, "Key": s3_output_key},
+        Params={"Bucket": consolidation_bucket_name, "Key": s3_output_key},
         ExpiresIn=3600,  # URL expires in 1 hour
     )
 
@@ -164,9 +162,9 @@ date: {formatted_date}
 def put_template_to_s3(user: str, unique_uuid: str, template_name: str):
     try:
         s3_client = boto3.client("s3")
-        output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
-        s3_template_key = f"{user}/{unique_uuid}.template"
+        s3_template_key = f"conversion/output/{user}/{unique_uuid}.template"
         print(
             f"Uploading template name '{template_name}' to S3 with key: {s3_template_key}"
         )
@@ -175,7 +173,7 @@ def put_template_to_s3(user: str, unique_uuid: str, template_name: str):
         # Put the content string into S3
         s3_client.put_object(
             Body=content,
-            Bucket=output_bucket_name,
+            Bucket=consolidation_bucket_name,
             Key=s3_template_key,
             ContentType="text/plain",
         )
@@ -188,16 +186,16 @@ def put_template_to_s3(user: str, unique_uuid: str, template_name: str):
 
 def get_template_from_s3(user: str, unique_uuid: str):
     # Construct the template key
-    s3_template_key = f"{user}/{unique_uuid}.template"
+    s3_template_key = f"conversion/output/{user}/{unique_uuid}.template"
 
     # Initialize the S3 client
     s3_client = boto3.client("s3")
 
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     try:
         # Try to get the object from S3
-        response = s3_client.get_object(Bucket=output_bucket_name, Key=s3_template_key)
+        response = s3_client.get_object(Bucket=consolidation_bucket_name, Key=s3_template_key)
 
         # Read the content from the body
         data = response["Body"].read()
@@ -220,8 +218,7 @@ def get_template_from_s3(user: str, unique_uuid: str):
 
 def handler(event, context):
 
-    input_bucket_name = os.environ["S3_CONVERSION_INPUT_BUCKET_NAME"]
-    output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
     supported_mime_types = {
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -256,7 +253,14 @@ def handler(event, context):
 
         input_bucket = record["s3"]["bucket"]["name"]
 
-        email, uuid, fmat, extension = parse_s3_key(key)
+        # Extract user path from consolidation bucket format
+        # Consolidation bucket keys: conversion/input/{user}/{uuid}-to-{format}.md
+        if not key.startswith("conversion/input/"):
+            print(f"Unexpected key format: {key}, expected conversion/input/ prefix")
+            return
+
+        user_path = key[len("conversion/input/"):]
+        email, uuid, fmat, extension = parse_s3_key(user_path)
 
         print(f"bucket:{input_bucket} user: {email}, uuid: {uuid}, format: {fmat}, extension: {extension}")
 
@@ -277,14 +281,14 @@ def handler(event, context):
 
         if template_name and template_name != "":
             try:
-                template_key = f"templates/{template_name}"
+                template_key = f"powerPointTemplates/{template_name}"
                 suffix = template_key.rsplit(".", 1)[1]
                 print(f"template_key: {template_key}, suffix: {suffix}")
                 template_file = tempfile.NamedTemporaryFile(
                     suffix="." + suffix, delete=False
                 )
                 download_file_from_s3(
-                    output_bucket_name, template_key, template_file.name
+                    consolidation_bucket_name, template_key, template_file.name
                 )
                 has_template = True
             except Exception as e:
@@ -312,13 +316,13 @@ def handler(event, context):
 
         print("converted", input_bucket, key, "to", output_file.name)
 
-        output_key = email + "/" + uuid + "." + fmat
+        output_key = f"conversion/output/{email}/{uuid}.{fmat}"
 
-        print("uploading", output_bucket_name, output_key, "using", output_file.name)
+        print("uploading", consolidation_bucket_name, output_key, "using", output_file.name)
 
-        upload_file_to_s3(output_bucket_name, output_key, output_file.name, mime_type)
+        upload_file_to_s3(consolidation_bucket_name, output_key, output_file.name, mime_type)
 
-        print("uploaded", output_bucket_name, output_key, "using", output_file.name)
+        print("uploaded", consolidation_bucket_name, output_key, "using", output_file.name)
 
         input_file.close()
         output_file.close()

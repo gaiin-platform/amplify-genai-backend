@@ -28,12 +28,33 @@ setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.SHARE.value])
 
 
-def get_s3_data(bucket_name, s3_key):
-    print("Fetching data from S3: {}/{}".format(bucket_name, s3_key))
+def get_s3_data(s3_key):
+    """Fetch data from S3 with backward compatibility for legacy and consolidation buckets"""
     s3 = boto3.resource("s3")
-    obj = s3.Object(bucket_name, s3_key)
-    data = obj.get()["Body"].read().decode("utf-8")
-    return data
+    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    shares_bucket = os.environ.get("S3_SHARE_BUCKET_NAME")  # Legacy bucket
+    
+    # Try consolidation bucket first (new format)  
+    consolidation_key = f"shares/{s3_key}"
+    try:
+        print("Fetching data from consolidation bucket: {}/{}".format(consolidation_bucket, consolidation_key))
+        obj = s3.Object(consolidation_bucket, consolidation_key)
+        data = obj.get()["Body"].read().decode("utf-8")
+        return data
+    except Exception as e:
+        print(f"Not found in consolidation bucket: {str(e)}")
+    
+    # Fallback to legacy bucket if available
+    if shares_bucket:
+        try:
+            print("Fetching data from legacy bucket: {}/{}".format(shares_bucket, s3_key))
+            obj = s3.Object(shares_bucket, s3_key) 
+            data = obj.get()["Body"].read().decode("utf-8")
+            return data
+        except Exception as e:
+            print(f"Not found in legacy bucket either: {str(e)}")
+            
+    raise Exception(f"Data not found in either bucket for key: {s3_key}")
 
 
 def get_data_from_dynamodb(user, name):
@@ -95,7 +116,8 @@ def get_data_from_dynamodb(user, name):
 )
 @required_env_vars({
     "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-    "S3_SHARE_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    # "S3_SHARE_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for deletion
 })
 @validated("load")
 def load_data_from_s3(event, context, current_user, name, data):
@@ -122,30 +144,36 @@ def load_data_from_s3(event, context, current_user, name, data):
         print("Loading data from S3: {}".format(s3_key))
         return {
             "success": True,
-            "item": get_s3_data(os.environ["S3_SHARE_BUCKET_NAME"], s3_key),
+            "item": get_s3_data(s3_key),
         }
 
     else:
         return {"success": False, "message": "Data not found"}
 
 
-def put_s3_data(bucket_name, filename, data):
+def put_s3_data(filename, data):
+    """Put data in consolidation bucket with shares/ prefix"""
     s3_client = boto3.client("s3")
+    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    
+    # Use consolidation bucket format for new shares
+    consolidation_key = f"shares/{filename}"
 
     # Check if bucket exists
     try:
-        s3_client.head_bucket(Bucket=bucket_name)
+        s3_client.head_bucket(Bucket=consolidation_bucket)
     except boto3.exceptions.botocore.exceptions.ClientError:
         # If bucket does not exist, create it
-        s3_client.create_bucket(Bucket=bucket_name)
+        s3_client.create_bucket(Bucket=consolidation_bucket)
 
     # Now put the object (file)
-    # print(f"Putting data: {data} in the share S3 bucket")
+    # print(f"Putting data: {data} in the consolidation S3 bucket")
     s3_client.put_object(
-        Body=json.dumps(data).encode(), Bucket=bucket_name, Key=filename
+        Body=json.dumps(data).encode(), Bucket=consolidation_bucket, Key=consolidation_key
     )
-
-    return filename
+    
+    print(f"Successfully uploaded share to consolidation bucket: {consolidation_key}")
+    return consolidation_key  # Return the full key path for DynamoDB storage
 
 
 def handle_conversation_datasource_permissions(
@@ -273,7 +301,8 @@ def handle_share_assistant(access_token, prompts, recipient_users):
 )
 @required_env_vars({
     "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    # "S3_SHARE_BUCKET_NAME": [S3Operation.PUT_OBJECT], #Marked for deletion
 })
 @validated("append")
 def share_with_users(event, context, current_user, name, data):
@@ -324,7 +353,7 @@ def share_with_users(event, context, current_user, name, data):
                 user, current_user, dt_string, str(uuid.uuid4())
             )
 
-            put_s3_data(os.environ["S3_SHARE_BUCKET_NAME"], s3_key, new_data)
+            stored_key = put_s3_data(s3_key, new_data)
 
             dynamodb = boto3.resource("dynamodb")
             table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
@@ -352,7 +381,7 @@ def share_with_users(event, context, current_user, name, data):
                             "sharedBy": current_user,
                             "note": note,
                             "sharedAt": timestamp,
-                            "key": s3_key,
+                            "key": stored_key,
                         }
                     ],
                     "createdAt": timestamp,
@@ -374,7 +403,7 @@ def share_with_users(event, context, current_user, name, data):
                                 "sharedBy": current_user,
                                 "note": note,
                                 "sharedAt": timestamp,
-                                "key": s3_key,
+                                "key": stored_key,
                             }
                         ],
                         ":updatedAt": timestamp,

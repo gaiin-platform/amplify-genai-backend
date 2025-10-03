@@ -15,6 +15,17 @@ from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.conditions import Attr
 
 from config import CONFIG as tables
+from s3_data_migration import (
+    migrate_workflow_templates_bucket_for_user, 
+    migrate_scheduled_tasks_logs_bucket_for_user,
+    migrate_artifacts_bucket_for_user,
+    migrate_user_settings_for_user,
+    migrate_conversations_bucket_for_user,
+    migrate_shares_bucket_for_user,
+    migrate_code_interpreter_files_bucket_for_user,
+    migrate_agent_state_bucket_for_user,
+    migrate_group_assistant_conversations_bucket_for_user
+)
 
 dynamodb = boto3.resource("dynamodb")
 
@@ -358,39 +369,56 @@ def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
 def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all API keys associated with the old user ID to the new user ID."""
     # NOTE: This table does not allow us to query by the old user ID, so we
-    # have to scan the entire table. This is not efficient, but it is a one-time
-    # operation.
+    # have to scan the entire table for both owner and delegate fields. 
+    # This is not efficient, but it is a one-time operation.
+    # CRITICAL: api_owner_id is NOT updated per user requirements.
     msg = f"[update_api_keys][dry-run: {dry_run}] %s"
     table = table_names.get("API_KEYS_DYNAMODB_TABLE")
+    if not table:
+        log(msg % f"Table API_KEYS_DYNAMODB_TABLE not found, skipping")
+        return True
+        
     try:
         api_keys_table = dynamodb.Table(table)
-
-        # Get all API key records for the old user ID
-        # by finding the 'api_owner_id' field that starts with
-        # the old user ID
-        # TODO(Karely): Should we search by owner_id instead?
-
-        # TODO:  NOTICE SAM
-        # 1. "api_owner_id"  Cannot update - this is referenced for cost tracking, agent use, etc.
-        # 2. "owner" attribute needs to be updated DONE
-        # 3. "delegate" attribute needs to be updated
-
         ret = False
-        for item in paginated_scan(table, "api_owner_id", old_id, begins_with=True):
-            log(
-                msg
-                % f"Found API keys record for user ID {old_id}.\n\tExisting Data: {item}"
-            )
-            item["api_owner_id"] = item["api_owner_id"].replace(old_id, new_id)
-            # TODO(Karely): Does 'owner' need to reflect the new ID?
-            # TODO(Karely): Confirmed we need delegated field updated
-            item["owner"] = new_id
-            if dry_run:
-                log(msg % f"Would update API key item to:\n\tNew Data: {item}")
-            else:
-                log(msg % f"Updating API key item to:\n\tNew Data: {item}")
-                api_keys_table.put_item(Item=item)
-            ret = True
+
+        # Single scan of entire table checking both owner and delegate fields
+        scanner = api_keys_table.scan()
+        while True:
+            for item in scanner.get('Items', []):
+                updated = False
+                
+                # Check and update owner field
+                if "owner" in item and item["owner"] == old_id:
+                    log(
+                        msg
+                        % f"Found API keys record with owner {old_id}.\n\tExisting Data: {item}"
+                    )
+                    item["owner"] = new_id
+                    updated = True
+                
+                # Check and update delegate field
+                if "delegate" in item and item["delegate"] == old_id:
+                    log(
+                        msg
+                        % f"Found API keys record with delegate {old_id}.\n\tExisting Data: {item}"
+                    )
+                    item["delegate"] = new_id
+                    updated = True
+                
+                # Only save if we made changes
+                if updated:
+                    if dry_run:
+                        log(msg % f"Would update API key item to:\n\tNew Data: {item}")
+                    else:
+                        log(msg % f"Updating API key item to:\n\tNew Data: {item}")
+                        api_keys_table.put_item(Item=item)
+                    ret = True
+            
+            if 'LastEvaluatedKey' not in scanner:
+                break
+            scanner = api_keys_table.scan(ExclusiveStartKey=scanner['LastEvaluatedKey'])
+
         return ret
 
     except Exception as e:
@@ -399,6 +427,7 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "ARTIFACTS_DYNAMODB_TABLE" : "amplify-v6-artifacts-dev-user-artifacts",
+# "S3_ARTIFACTS_BUCKET": "amplify-v6-artifacts-dev-bucket"
 # DONE
 def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all artifacts records associated with the old user ID to the new user ID."""
@@ -412,20 +441,39 @@ def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                 msg
                 % f"Found artifacts record for user ID {old_id}.\n\tExisting Data: {item}"
             )
+            
+            # IMPLEMENTED: Artifacts S3 to USER_STORAGE_TABLE migration
+            # - "key": Transformed from "user@email.com/20250305/Game:v3" to "20250305/Game:v3" format
+            # - S3 content: Downloaded from S3_ARTIFACTS_BUCKET and migrated to USER_STORAGE_TABLE
+            # - "user_id": Updated from old_id to new_id (part of USER_STORAGE_TABLE PK)
+            # - "artifacts": Array updated with new clean key format for each artifact
+            # Migration detection: Key format detection (date pattern vs user prefix)
+            # 
+            # Processing flow:
+            # 1. Call migrate_artifacts_bucket_for_user() to migrate S3 content and transform keys
+            # 2. Update "user_id" attribute from old_id to new_id  
+            # 3. Update "artifacts" array with transformed clean keys (handled by migration function)
+            success, updated_artifacts = migrate_artifacts_bucket_for_user(old_id, new_id, dry_run, item)
+            
+            # Update user_id and artifacts array while preserving ALL other columns
             item["user_id"] = new_id
+            if success and updated_artifacts:
+                item["artifacts"] = updated_artifacts
+            
             if dry_run:
                 log(msg % f"Would update artifact item to:\n\tNew Data: {item}")
             else:
                 log(msg % f"Updating artifact item to:\n\tNew Data: {item}")
                 artifacts_table.put_item(Item=item)
+            
             ret = True
         return ret
+        
     except Exception as e:
-        log(
-            msg % f"Error updating artifacts for user ID from {old_id} to {new_id}: {e}"
-        )
+        log(msg % f"Error updating artifacts for user ID from {old_id} to {new_id}: {e}")
         return False
 
+     
 
 # "OPS_DYNAMODB_TABLE" : "amplify-v6-lambda-ops-dev-ops",
 def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -458,19 +506,88 @@ def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "SHARES_DYNAMODB_TABLE" : "amplify-v6-lambda-dev",
+# "S3_SHARE_BUCKET_NAME": "amplify-v6-lambda-dev-share", #Marked for deletion
 def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all shares records associated with the old user ID to the new user ID."""
     msg = f"[update_shares_table][dry-run: {dry_run}] %s"
     table = table_names.get("SHARES_DYNAMODB_TABLE")
+    
+    # IMPLEMENTED: Shares S3 to S3_CONSOLIDATION_BUCKET migration
+    # - Shares: Migrated from S3_SHARE_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME  
+    # - Old format: "recipient_user/sharer_user/date/file.json" 
+    # - New format: "shares/recipient_user/sharer_user/date/file.json"
+    # - User ID updates: old_id replaced with new_id in recipient/sharer positions
+    # - DynamoDB updates: "user", "id", and "sharedBy" fields in data array updated
+    #
+    # Processing flow:
+    # 1. Call migrate_shares_bucket_for_user() to migrate S3 shares files
+    # 2. Update "user" field from old_id to new_id in SHARES_DYNAMODB_TABLE
+    # 3. Update "id" prefix from old_id to new_id  
+    # 4. Update "sharedBy" fields in data array from old_id to new_id
+    success = migrate_shares_bucket_for_user(old_id, new_id, dry_run)
+    
+    if not success:
+        log(msg % f"Failed to migrate shares for user {old_id}")
+        return False
+    
     shares_table = dynamodb.Table(table)
 
-    # TODO:
-    # 1. "id"
-    # 2. maybe useless attribute "user"
-    # 3. "data" attribute -> List <Dict ({ "sharedBy": str (users_ids)})>
-    # Opportunity to migrate settings column elsewhere #TODO
-
-
+    # Process shares records to update user IDs and sharedBy fields
+    # 1. "id" field: Update prefix from old_id to new_id
+    # 2. "user" field: Update from old_id to new_id  
+    # 3. "data" array -> "sharedBy" fields: Update from old_id to new_id
+    
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found shares record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            
+            # Migrate user settings from SHARES_DYNAMODB_TABLE settings column to USER_STORAGE_TABLE
+            migrate_user_settings_for_user(old_id, new_id, dry_run, item)
+            
+            # Update user field from old_id to new_id
+            item["user"] = new_id
+            
+            # Update id field: replace old_id with new_id in the ID
+            if "id" in item and old_id in item["id"]:
+                old_item_id = item["id"]
+                item["id"] = item["id"].replace(old_id, new_id)
+                log(msg % f"Updated id: {old_item_id} -> {item['id']}")
+            
+            # Update sharedBy fields in data array
+            if "data" in item and isinstance(item["data"], list):
+                for data_entry in item["data"]:
+                    if isinstance(data_entry, dict) and "sharedBy" in data_entry:
+                        if data_entry["sharedBy"] == old_id:
+                            data_entry["sharedBy"] = new_id
+                            log(msg % f"Updated sharedBy: {old_id} -> {new_id}")
+                            
+                    # Update key paths in data entries if they reference old_id
+                    if isinstance(data_entry, dict) and "key" in data_entry:
+                        old_key = data_entry["key"]
+                        if old_id in old_key:
+                            # Update key path to use new_id where old_id appears
+                            key_parts = old_key.split('/')
+                            new_key_parts = []
+                            for part in key_parts:
+                                new_key_parts.append(new_id if part == old_id else part)
+                            data_entry["key"] = f"shares/{'/'.join(new_key_parts)}"
+                            log(msg % f"Updated key: {old_key} -> {data_entry['key']}")
+            
+            if dry_run:
+                log(msg % f"Would update shares item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating shares item to:\n\tNew Data: {item}")
+                shares_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(msg % f"Error updating shares for user ID from {old_id} to {new_id}: {e}")
+        return False
+    
 # "OBJECT_ACCESS_DYNAMODB_TABLE" : "amplify-v6-object-access-dev-object-access",
 # DONE
 def update_object_access_table(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -578,27 +695,93 @@ def update_assistants_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-code-interpreter-assistants",
+# "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": "amplify-v6-assistants-dev-code-interpreter-files", #Marked for deletion
 def update_assistant_code_interpreter_table(
     old_id: str, new_id: str, dry_run: bool
 ) -> bool:
     """Update all assistant code interpreter records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_code_interpreter_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE")
+    
+    # IMPLEMENTED: Code interpreter files S3 to S3_CONSOLIDATION_BUCKET migration
+    # - Files: Migrated from ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME  
+    # - Old format: "{user_id}/{message_id}-{file_id}-FN-{filename}"
+    # - New format: "codeInterpreter/{user_id}/{message_id}-{file_id}-FN-{filename}"
+    # - User ID updates: old_id replaced with new_id in file paths
+    # - DynamoDB updates: "user" field updated from old_id to new_id
+    #
+    # Processing flow:
+    # 1. Call migrate_code_interpreter_files_bucket_for_user() to migrate S3 files
+    # 2. Update "user" field from old_id to new_id in ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE
+    success = migrate_code_interpreter_files_bucket_for_user(old_id, new_id, dry_run)
+    
+    if not success:
+        log(msg % f"Failed to migrate code interpreter files for user {old_id}")
+        return False
+    
+    if not table:
+        log(msg % f"Table ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE not found, skipping DynamoDB updates")
+        return success  # S3 migration was successful, so return that status
+    
     assistant_code_interpreter_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found assistant code interpreter record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            
+            # Update user field from old_id to new_id
+            item["user"] = new_id
+            
+            if dry_run:
+                log(msg % f"Would update assistant code interpreter item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating assistant code interpreter item to:\\n\\tNew Data: {item}")
+                assistant_code_interpreter_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant code interpreter records for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_THREADS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-threads",
 def update_assistant_threads_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistant threads records associated with the old user ID to the new user ID."""
-    msg = f"[update_assistant_threads_table][dry-run: {dry-run}] %s"
+    msg = f"[update_assistant_threads_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_THREADS_DYNAMODB_TABLE")
+    if not table:
+        log(msg % f"Table ASSISTANT_THREADS_DYNAMODB_TABLE not found, skipping")
+        return True
+        
     assistant_threads_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Query by user via UserIndex GSI
+        for item in paginated_query(table, "user", old_id, index_name="UserIndex"):
+            log(
+                msg
+                % f"Found assistant threads record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update assistant threads item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating assistant threads item to:\n\tNew Data: {item}")
+                assistant_threads_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant threads for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-thread-runs",
@@ -606,10 +789,33 @@ def update_assistant_thread_runs_table(old_id: str, new_id: str, dry_run: bool) 
     """Update all assistant thread runs records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_thread_runs_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE")
+    if not table:
+        log(msg % f"Table ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE not found, skipping")
+        return True
+        
     assistant_thread_runs_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Query by user via UserIndex GSI
+        for item in paginated_query(table, "user", old_id, index_name="UserIndex"):
+            log(
+                msg
+                % f"Found assistant thread runs record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update assistant thread runs item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating assistant thread runs item to:\n\tNew Data: {item}")
+                assistant_thread_runs_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant thread runs for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_GROUPS_DYNAMO_TABLE" : "amplify-v6-object-access-dev-amplify-groups",
@@ -617,10 +823,47 @@ def update_assistant_groups_table(old_id: str, new_id: str, dry_run: bool) -> bo
     """Update all assistant groups records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_groups_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_GROUPS_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table ASSISTANT_GROUPS_DYNAMO_TABLE not found, skipping")
+        return True
+        
     assistant_groups_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "createdBy"
-    # 2. "members" -> Dict < str (user_id), str (permission)>
+    ret = False
+    try:
+        # Scan required - no GSI for user fields
+        for item in paginated_scan(table, "createdBy", old_id):
+            log(
+                msg
+                % f"Found assistant groups record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            
+            # Update createdBy field
+            if "createdBy" in item and item["createdBy"] == old_id:
+                item["createdBy"] = new_id
+            
+            # Update members dict - keys are user_ids, values are permissions
+            if "members" in item and isinstance(item["members"], dict):
+                members = item["members"]
+                if old_id in members:
+                    permission = members[old_id]
+                    del members[old_id]
+                    members[new_id] = permission
+                    log(msg % f"Updated member: {old_id} -> {new_id} with permission {permission}")
+                item["members"] = members
+            
+            if dry_run:
+                log(msg % f"Would update assistant groups item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating assistant groups item to:\\n\\tNew Data: {item}")
+                assistant_groups_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant groups for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_LOOKUP_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-lookup",
@@ -628,22 +871,130 @@ def update_assistant_lookup_table(old_id: str, new_id: str, dry_run: bool) -> bo
     """Update all assistant lookup records associated with the old user ID to the new user ID."""
     msg = f"[update_assistant_lookup_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_LOOKUP_DYNAMODB_TABLE")
+    if not table:
+        log(msg % f"Table ASSISTANT_LOOKUP_DYNAMODB_TABLE not found, skipping")
+        return True
+        
     assistant_lookup_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "createdBy"
-    # 2. "accessTo" -> Dict < "users": List <str (user_id)>>
+    ret = False
+    try:
+        # Scan required - no GSI for user fields
+        for item in paginated_scan(table, "createdBy", old_id):
+            log(
+                msg
+                % f"Found assistant lookup record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            
+            # Update createdBy field
+            if "createdBy" in item and item["createdBy"] == old_id:
+                item["createdBy"] = new_id
+            
+            # Update accessTo dict - contains "users" key with list of user IDs
+            if "accessTo" in item and isinstance(item["accessTo"], dict):
+                access_to = item["accessTo"]
+                if "users" in access_to and isinstance(access_to["users"], list):
+                    users_list = access_to["users"]
+                    if old_id in users_list:
+                        # Replace old_id with new_id in the users list
+                        users_list = [new_id if user_id == old_id else user_id for user_id in users_list]
+                        access_to["users"] = users_list
+                        log(msg % f"Updated accessTo users: replaced {old_id} -> {new_id}")
+                item["accessTo"] = access_to
+            
+            if dry_run:
+                log(msg % f"Would update assistant lookup item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating assistant lookup item to:\\n\\tNew Data: {item}")
+                assistant_lookup_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant lookup for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE" : "amplify-v6-assistants-dev-group-assistant-conversations",
+# "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": "amplify-v6-assistants-dev-group-conversations-content" #Marked for deletion
 def update_group_assistant_conversations_table(
     old_id: str, new_id: str, dry_run: bool
 ) -> bool:
     """Update all group assistant conversations records associated with the old user ID to the new user ID."""
     msg = f"[update_group_assistant_conversations_table][dry-run: {dry_run}] %s"
     table = table_names.get("GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE")
-    group_assistant_conversations_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
+    
+    # IMPLEMENTED: Group assistant conversation files S3 to S3_CONSOLIDATION_BUCKET migration
+    # - Files: Migrated from S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME  
+    # - Old format: "astgp/{assistant-id}/{conversation-id}.txt"
+    # - New format: "agentConversations/astgp/{assistant-id}/{conversation-id}.txt"
+    # - DynamoDB updates: "user" field updated from old_id to new_id
+    # - s3Location field: Remove s3:// prefix to indicate migration (use consolidation bucket)
+    #
+    # Processing flow:
+    # 1. Call migrate_group_assistant_conversations_bucket_for_user() to migrate S3 files
+    # 2. Update "user" field from old_id to new_id in GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE
+    # 3. Update "s3Location" field to remove s3:// prefix (backward compatibility detection)
+    success = migrate_group_assistant_conversations_bucket_for_user(old_id, new_id, dry_run)
+    
+    if not success:
+        log(msg % f"Failed to migrate group assistant conversation files for user {old_id}")
+        return False
+    
+    if not table:
+        log(msg % f"Table GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE not found, skipping DynamoDB updates")
+        return success  # S3 migration was successful, so return that status
+    
+    try:
+        group_assistant_conversations_table = dynamodb.Table(table)
+
+        ret = False
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found group assistant conversation record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            
+            # Update user field from old_id to new_id
+            item["user"] = new_id
+            
+            # Update s3Location field if present - remove s3:// prefix to indicate migration
+            if "s3Location" in item and isinstance(item["s3Location"], str):
+                s3_location = item["s3Location"]
+                
+                # Check if it's still in legacy format with s3:// prefix
+                if s3_location.startswith("s3://"):
+                    # Extract key from s3Location (remove s3://bucket-name/ prefix)
+                    # Example: "s3://amplify-v6-assistants-dev-group-conversations-content/astgp/..." -> "agentConversations/astgp/..."
+                    import re
+                    # Find the part after the bucket name (should start with "astgp/")
+                    match = re.search(r's3://[^/]+/(.+)', s3_location)
+                    if match:
+                        key_path = match.group(1)  # Extract "astgp/..." 
+                        if key_path.startswith("astgp/"):
+                            # Transform to consolidated format
+                            item["s3Location"] = f"agentConversations/{key_path}"
+                        else:
+                            log(msg % f"Unexpected s3Location format, keeping as-is: {s3_location}")
+                    else:
+                        log(msg % f"Could not parse s3Location format: {s3_location}")
+                # If it doesn't start with s3://, it's already migrated - leave as-is
+            
+            if dry_run:
+                log(msg % f"Would update group assistant conversation item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating group assistant conversation item to:\n\tNew Data: {item}")
+                group_assistant_conversations_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating group assistant conversation records for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
+
 
 
 ### Data source related tables ###
@@ -652,10 +1003,33 @@ def update_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all files records associated with the old user ID to the new user ID."""
     msg = f"[update_files_table][dry-run: {dry_run}] %s"
     table = table_names.get("FILES_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table FILES_DYNAMO_TABLE not found, skipping")
+        return True
+        
     files_table = dynamodb.Table(table)
-    ### TODO
-    # "createdBy"
-    # File IDs CAN remain unchanged during migration
+    ret = False
+    try:
+        # Query by createdBy via createdBy GSI
+        for item in paginated_query(table, "createdBy", old_id, index_name="createdBy"):
+            log(
+                msg
+                % f"Found files record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["createdBy"] = new_id
+            if dry_run:
+                log(msg % f"Would update files item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating files item to:\n\tNew Data: {item}")
+                files_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating files for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "HASH_FILES_DYNAMO_TABLE" : "amplify-v6-lambda-dev-hash-files",
@@ -663,10 +1037,33 @@ def update_hash_files_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all hash files records associated with the old user ID to the new user ID."""
     msg = f"[update_hash_files_table][dry-run: {dry_run}] %s"
     table = table_names.get("HASH_FILES_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table HASH_FILES_DYNAMO_TABLE not found, skipping")
+        return True
+        
     hash_files_table = dynamodb.Table(table)
-    ### TODO
-    # "originalCreator"
-    # Hash File IDs CAN remain unchanged during migration
+    ret = False
+    try:
+        # Scan required - no GSI for originalCreator
+        for item in paginated_scan(table, "originalCreator", old_id):
+            log(
+                msg
+                % f"Found hash files record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["originalCreator"] = new_id
+            if dry_run:
+                log(msg % f"Would update hash files item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating hash files item to:\n\tNew Data: {item}")
+                hash_files_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating hash files for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "EMBEDDING_PROGRESS_TABLE" : "amplify-v6-embedding-dev-embedding-progress",
@@ -674,9 +1071,33 @@ def update_embedding_progress_table(old_id: str, new_id: str, dry_run: bool) -> 
     """Update all embedding progress records associated with the old user ID to the new user ID."""
     msg = f"[update_embedding_progress_table][dry-run: {dry_run}] %s"
     table = table_names.get("EMBEDDING_PROGRESS_TABLE")
+    if not table:
+        log(msg % f"Table EMBEDDING_PROGRESS_TABLE not found, skipping")
+        return True
+        
     embedding_progress_table = dynamodb.Table(table)
-    ### TODO
-    # "originalCreator"
+    ret = False
+    try:
+        # Scan required - no GSI for originalCreator
+        for item in paginated_scan(table, "originalCreator", old_id):
+            log(
+                msg
+                % f"Found embedding progress record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["originalCreator"] = new_id
+            if dry_run:
+                log(msg % f"Would update embedding progress item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating embedding progress item to:\n\tNew Data: {item}")
+                embedding_progress_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating embedding progress for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "USER_TAGS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-user-tags",
@@ -684,22 +1105,68 @@ def update_user_tags_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all user tags records associated with the old user ID to the new user ID."""
     msg = f"[update_user_tags_table][dry-run: {dry_run}] %s"
     table = table_names.get("USER_TAGS_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table USER_TAGS_DYNAMO_TABLE not found, skipping")
+        return True
+        
     user_tags_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Query directly via primary key - "user" is the hash key
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found user tags record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update user tags item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating user tags item to:\\n\\tNew Data: {item}")
+                user_tags_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating user tags for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 ### AGENT LOOP TABLES ###
 # "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-states"   *LESS IMPORTANT*
 # NOTE Previously named "amplify-v6-agent-loop-dev-agent-state" and
 # renamed to "amplify-v6-agent-loop-dev-agent-states"
-# Likely no changes needed
+# "AGENT_STATE_BUCKET": "amplify-v6-agent-loop-dev-agent-state" #Marked for deletion
 def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all agent state records associated with the old user ID to the new user ID."""
-    # TODO(Karely): This table seems to have an S3 bucket associated with it we'll need
-    # to coordinate that change as well.
     msg = f"[update_agent_state_table][dry-run: {dry_run}] %s"
     table = table_names.get("AGENT_STATE_DYNAMODB_TABLE")
+    
+    # IMPLEMENTED: Agent state files S3 to S3_CONSOLIDATION_BUCKET migration
+    # - Files: Migrated from AGENT_STATE_BUCKET to S3_CONSOLIDATION_BUCKET_NAME  
+    # - Old format: "{user_id}/{session_id}/agent_state.json" and "{user_id}/{session_id}/index.json"
+    # - New format: "agentState/{user_id}/{session_id}/agent_state.json" and "agentState/{user_id}/{session_id}/index.json"
+    # - User ID updates: old_id replaced with new_id in file paths
+    # - DynamoDB updates: "user" field updated from old_id to new_id
+    # - Memory field updates: Remove "bucket" field to indicate migrated state (use consolidation bucket)
+    #
+    # Processing flow:
+    # 1. Call migrate_agent_state_bucket_for_user() to migrate S3 files
+    # 2. Update "user" field from old_id to new_id in AGENT_STATE_DYNAMODB_TABLE
+    # 3. Remove "memory.bucket" field to indicate migration (backward compatibility detection)
+    # 4. Update "memory.key" to use new agentState/ prefix path
+    success = migrate_agent_state_bucket_for_user(old_id, new_id, dry_run)
+    
+    if not success:
+        log(msg % f"Failed to migrate agent state files for user {old_id}")
+        return False
+    
+    if not table:
+        log(msg % f"Table AGENT_STATE_DYNAMODB_TABLE not found, skipping DynamoDB updates")
+        return success  # S3 migration was successful, so return that status
+    
     try:
         agent_state_table = dynamodb.Table(table)
 
@@ -709,7 +1176,28 @@ def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                 msg
                 % f"Found agent state records for user ID {old_id}.\n\tExisting Data: {item}"
             )
+            
+            # Update user field from old_id to new_id
             item["user"] = new_id
+            
+            # Update memory field if present - remove bucket and update key path
+            if "memory" in item and isinstance(item["memory"], dict):
+                memory = item["memory"]
+                
+                # Remove bucket field to indicate migrated state
+                if "bucket" in memory:
+                    del memory["bucket"]
+                
+                # Update key path to use new agentState/ prefix
+                if "key" in memory:
+                    old_key = memory["key"]
+                    if old_key.startswith(f"{old_id}/"):
+                        # Transform: "{old_id}/{session_id}/..." -> "agentState/{new_id}/{session_id}/..."
+                        key_suffix = old_key[len(f"{old_id}/"):]  # Remove old user prefix
+                        memory["key"] = f"agentState/{new_id}/{key_suffix}"
+                
+                item["memory"] = memory
+            
             if dry_run:
                 log(msg % f"Would update agent state item to:\n\tNew Data: {item}")
             else:
@@ -759,7 +1247,7 @@ def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) 
 
 
 # "WORKFLOW_TEMPLATES_TABLE" : "amplify-v6-agent-loop-dev-workflow-registry",
-# TODO(Karely): Do we need to consider the S3 key here?
+# "WORKFLOW_TEMPLATES_BUCKET": "amplify-v6-agent-loop-dev-workflow-templates",
 def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all workflow templates records associated with the old user ID to the new user ID."""
     msg = f"[update_workflow_templates_table][dry-run: {dry_run}] %s"
@@ -772,7 +1260,24 @@ def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> 
                 msg
                 % f"Found workflow templates record for user ID {old_id}.\n\tExisting Data: {item}"
             )
+            
+            # IMPLEMENTED: Workflow templates S3 to USER_STORAGE_TABLE migration
+            # - "s3_key": Downloaded from S3 and migrated to USER_STORAGE_TABLE, then removed from record
+            # - "template_uuid": Used directly as USER_STORAGE_TABLE SK (no transformation needed)
+            # - "user": Updated from old_id to new_id (part of USER_STORAGE_TABLE PK)
+            # Migration detection: Records without s3_key are considered migrated
+            # 
+            # Processing flow:
+            # 1. Call migrate_workflow_templates_bucket_for_user() to migrate S3 content
+            # 2. Update "user" attribute from old_id to new_id
+            # 3. Remove "s3_key" from record (handled by migration function)
+            success, updated_item = migrate_workflow_templates_bucket_for_user(old_id, new_id, dry_run, item)
+            
+            # Update user_id and remove s3_key while preserving ALL other columns
+            if updated_item:
+                item = updated_item  # Use the updated item from migration
             item["user"] = new_id
+            
             if dry_run:
                 log(
                     msg % f"Would update workflow template item to:\n\tNew Data: {item}"
@@ -795,20 +1300,138 @@ def update_email_settings_table(old_id: str, new_id: str, dry_run: bool) -> bool
     """Update all email settings records associated with the old user ID to the new user ID."""
     msg = f"[update_email_settings_table][dry-run: {dry_run}] %s"
     table = table_names.get("EMAIL_SETTINGS_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table EMAIL_SETTINGS_DYNAMO_TABLE not found, skipping")
+        return True
+        
     email_settings_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "email"
-    # 2. "allowed_senders" -> List <str (users_ids)>
+    ret = False
+    try:
+        # Scan entire table - need to check both email field and allowedSenders list
+        table_obj = dynamodb.Table(table)
+        
+        # Scan for records where email == old_id
+        for item in paginated_scan(table, "email", old_id):
+            log(
+                msg
+                % f"Found email settings record with email {old_id}.\\n\\tExisting Data: {item}"
+            )
+            
+            # Update email field
+            item["email"] = new_id
+            
+            # Update allowedSenders list - replace old_id in any patterns
+            if "allowedSenders" in item and isinstance(item["allowedSenders"], list):
+                updated_senders = []
+                for sender_pattern in item["allowedSenders"]:
+                    # Replace old_id with new_id in the pattern string
+                    updated_pattern = sender_pattern.replace(old_id, new_id)
+                    updated_senders.append(updated_pattern)
+                    if updated_pattern != sender_pattern:
+                        log(msg % f"Updated allowedSender: {sender_pattern} -> {updated_pattern}")
+                item["allowedSenders"] = updated_senders
+            
+            if dry_run:
+                log(msg % f"Would update email settings item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating email settings item to:\\n\\tNew Data: {item}")
+                email_settings_table.put_item(Item=item)
+            ret = True
+        
+        # Also scan for records that have old_id in allowedSenders but different email
+        scanner = table_obj.scan()
+        while True:
+            for item in scanner.get('Items', []):
+                # Skip if we already processed this item (email == old_id)
+                if item.get("email") == old_id:
+                    continue
+                    
+                # Check allowedSenders list for old_id
+                if "allowedSenders" in item and isinstance(item["allowedSenders"], list):
+                    updated_senders = []
+                    has_updates = False
+                    for sender_pattern in item["allowedSenders"]:
+                        # Replace old_id with new_id in the pattern string
+                        updated_pattern = sender_pattern.replace(old_id, new_id)
+                        updated_senders.append(updated_pattern)
+                        if updated_pattern != sender_pattern:
+                            has_updates = True
+                            log(msg % f"Updated allowedSender: {sender_pattern} -> {updated_pattern}")
+                    
+                    if has_updates:
+                        log(
+                            msg
+                            % f"Found email settings record with old_id in allowedSenders.\\n\\tExisting Data: {item}"
+                        )
+                        item["allowedSenders"] = updated_senders
+                        
+                        if dry_run:
+                            log(msg % f"Would update email settings item to:\\n\\tNew Data: {item}")
+                        else:
+                            log(msg % f"Updating email settings item to:\\n\\tNew Data: {item}")
+                            email_settings_table.put_item(Item=item)
+                        ret = True
+            
+            if 'LastEvaluatedKey' not in scanner:
+                break
+            scanner = table_obj.scan(ExclusiveStartKey=scanner['LastEvaluatedKey'])
+        
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating email settings for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "SCHEDULED_TASKS_TABLE" : "amplify-v6-agent-loop-dev-scheduled-tasks",
+# "SCHEDULED_TASKS_LOGS_BUCKET": "amplify-v6-agent-loop-dev-scheduled-tasks-logs"
 def update_scheduled_tasks_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all scheduled tasks records associated with the old user ID to the new user ID."""
     msg = f"[update_scheduled_tasks_table][dry-run: {dry_run}] %s"
     table = table_names.get("SCHEDULED_TASKS_TABLE")
     scheduled_tasks_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user" only
+    ret = False
+    try:
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found scheduled tasks record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            
+            # IMPLEMENTED: Scheduled tasks logs S3 to USER_STORAGE_TABLE migration
+            # - "logs": Array consolidated from multiple S3 detailsKey files to single USER_STORAGE_TABLE entry
+            # - "taskId": Used directly as USER_STORAGE_TABLE SK (no transformation needed)
+            # - "user": Updated from old_id to new_id (part of USER_STORAGE_TABLE PK)  
+            # - "detailsKey": Removed from logs array entries after migration (this is how we detect migrated logs)
+            # Migration detection: Logs without detailsKey entries are considered migrated
+            # Size monitoring: 350KB threshold warning for DynamoDB 400KB limit
+            # 
+            # Processing flow:
+            # 1. Call migrate_scheduled_tasks_logs_bucket_for_user() to consolidate S3 logs
+            # 2. Update "user" attribute from old_id to new_id
+            # 3. Remove "detailsKey" from logs array entries (handled by migration function)
+            success, updated_item = migrate_scheduled_tasks_logs_bucket_for_user(old_id, new_id, dry_run, item)
+            
+            # Update user_id and logs array while preserving ALL other columns
+            if updated_item:
+                item = updated_item  # Use the updated item from migration
+            item["user"] = new_id
+            
+            if dry_run:
+                log(msg % f"Would update scheduled task item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating scheduled task item to:\n\tNew Data: {item}")
+                scheduled_tasks_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating scheduled tasks for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "DB_CONNECTIONS_TABLE" : "amplify-v6-lambda-dev-db-connections",
@@ -816,9 +1439,33 @@ def update_db_connections_table(old_id: str, new_id: str, dry_run: bool) -> bool
     """Update all db connections records associated with the old user ID to the new user ID."""
     msg = f"[update_db_connections_table][dry-run: {dry_run}] %s"
     table = table_names.get("DB_CONNECTIONS_TABLE")
+    if not table:
+        log(msg % f"Table DB_CONNECTIONS_TABLE not found, skipping")
+        return True
+        
     db_connections_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Query by user via UserIndex GSI
+        for item in paginated_query(table, "user", old_id, index_name="UserIndex"):
+            log(
+                msg
+                % f"Found db connections record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update db connections item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating db connections item to:\\n\\tNew Data: {item}")
+                db_connections_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating db connections for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 ### INTEGRATION TABLES ###
@@ -864,9 +1511,41 @@ def update_oauth_user_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all OAuth user records associated with the old user ID to the new user ID."""
     msg = f"[update_oauth_user_table][dry-run: {dry_run}] %s"
     table = table_names.get("OAUTH_USER_TABLE")
+    if not table:
+        log(msg % f"Table OAUTH_USER_TABLE not found, skipping")
+        return True
+        
     oauth_user_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user_integration" prefix must be updated
+    ret = False
+    try:
+        # Scan required - composite primary key, need to check user_integration prefix
+        for item in paginated_scan(table, "user_integration", old_id, begins_with=True):
+            log(
+                msg
+                % f"Found OAuth user record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            
+            # Update user_integration prefix: old_id/service -> new_id/service
+            if "user_integration" in item:
+                old_integration = item["user_integration"]
+                if old_integration.startswith(f"{old_id}/"):
+                    suffix = old_integration[len(f"{old_id}/"):]
+                    item["user_integration"] = f"{new_id}/{suffix}"
+                    log(msg % f"Updated user_integration: {old_integration} -> {item['user_integration']}")
+            
+            if dry_run:
+                log(msg % f"Would update OAuth user item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating OAuth user item to:\n\tNew Data: {item}")
+                oauth_user_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating OAuth user for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "DATA_DISCLOSURE_ACCEPTANCE_TABLE" : "amplify-v6-data-disclosure-dev-acceptance",
@@ -876,9 +1555,33 @@ def update_data_disclosure_acceptance_table(
     """Update all data disclosure acceptance records associated with the old user ID to the new user ID."""
     msg = f"[update_data_disclosure_acceptance_table][dry-run: {dry_run}] %s"
     table = table_names.get("DATA_DISCLOSURE_ACCEPTANCE_TABLE")
+    if not table:
+        log(msg % f"Table DATA_DISCLOSURE_ACCEPTANCE_TABLE not found, skipping")
+        return True
+        
     data_disclosure_acceptance_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Query directly via primary key - "user" is the hash key
+        for item in paginated_query(table, "user", old_id):
+            log(
+                msg
+                % f"Found data disclosure acceptance record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update data disclosure acceptance item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating data disclosure acceptance item to:\\n\\tNew Data: {item}")
+                data_disclosure_acceptance_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating data disclosure acceptance for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 ### Cost calculation related tables ###
@@ -887,9 +1590,36 @@ def update_cost_calculations_table(old_id: str, new_id: str, dry_run: bool) -> b
     """Update all cost calculations records associated with the old user ID to the new user ID."""
     msg = f"[update_cost_calculations_table][dry-run: {dry_run}] %s"
     table = table_names.get("COST_CALCULATIONS_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table COST_CALCULATIONS_DYNAMO_TABLE not found, skipping")
+        return True
+        
     cost_calculations_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "id"
+    ret = False
+    try:
+        # Scan for all records where id == old_id
+        for item in paginated_scan(table, "id", old_id):
+            log(
+                msg
+                % f"Found cost calculations record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            
+            # Update id field from old_id to new_id
+            item["id"] = new_id
+            
+            if dry_run:
+                log(msg % f"Would update cost calculations item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating cost calculations item to:\\n\\tNew Data: {item}")
+                cost_calculations_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating cost calculations for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE" : "amplify-v6-lambda-dev-history-cost-calculations",
@@ -899,9 +1629,41 @@ def update_history_cost_calculations_table(
     """Update all history cost calculations records associated with the old user ID to the new user ID."""
     msg = f"[update_history_cost_calculations_table][dry-run: {dry_run}] %s"
     table = table_names.get("HISTORY_COST_CALCULATIONS_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table HISTORY_COST_CALCULATIONS_DYNAMO_TABLE not found, skipping")
+        return True
+        
     history_cost_calculations_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "user" prefix must be updated
+    ret = False
+    try:
+        # Scan for records with userDate prefix matching old_id
+        for item in paginated_scan(table, "userDate", old_id, begins_with=True):
+            log(
+                msg
+                % f"Found history cost calculations record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            
+            # Update userDate prefix: old_id#date -> new_id#date
+            if "userDate" in item:
+                old_user_date = item["userDate"]
+                if old_user_date.startswith(f"{old_id}#"):
+                    date_suffix = old_user_date[len(f"{old_id}#"):]
+                    item["userDate"] = f"{new_id}#{date_suffix}"
+                    log(msg % f"Updated userDate: {old_user_date} -> {item['userDate']}")
+            
+            if dry_run:
+                log(msg % f"Would update history cost calculations item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating history cost calculations item to:\n\tNew Data: {item}")
+                history_cost_calculations_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating history cost calculations for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ADDITIONAL_CHARGES_TABLE": "amplify-v6-chat-billing-dev-additional-charges",
@@ -909,10 +1671,33 @@ def update_additional_charges_table(old_id: str, new_id: str, dry_run: bool) -> 
     """Update all additional charges records associated with the old user ID to the new user ID."""
     msg = f"[update_additional_charges_table][dry-run: {dry_run}] %s"
     table = table_names.get("ADDITIONAL_CHARGES_TABLE")
+    if not table:
+        log(msg % f"Table ADDITIONAL_CHARGES_TABLE not found, skipping")
+        return True
+        
     additional_charges_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Scan required - no GSI for user field
+        for item in paginated_scan(table, "user", old_id):
+            log(
+                msg
+                % f"Found additional charges record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update additional charges item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating additional charges item to:\\n\\tNew Data: {item}")
+                additional_charges_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating additional charges for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 ### Chat related tables ###
@@ -921,21 +1706,88 @@ def update_chat_usage_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all chat usage records associated with the old user ID to the new user ID."""
     msg = f"[update_chat_usage_table][dry-run: {dry_run}] %s"
     table = table_names.get("CHAT_USAGE_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table CHAT_USAGE_DYNAMO_TABLE not found, skipping")
+        return True
+        
     chat_usage_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    ret = False
+    try:
+        # Query by user via UserUsageTimeIndex GSI
+        for item in paginated_query(table, "user", old_id, index_name="UserUsageTimeIndex"):
+            log(
+                msg
+                % f"Found chat usage record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update chat usage item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating chat usage item to:\\n\\tNew Data: {item}")
+                chat_usage_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating chat usage for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "CONVERSATION_METADATA_TABLE" : "amplify-v6-lambda-dev-conversation-metadata",
+# "S3_CONVERSATIONS_BUCKET_NAME": "amplify-v6-lambda-dev-user-conversations", #Marked for deletion
 def update_conversation_metadata_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all conversation metadata records associated with the old user ID to the new user ID."""
     msg = f"[update_conversation_metadata_table][dry-run: {dry_run}] %s"
     table = table_names.get("CONVERSATION_METADATA_TABLE")
-    conversation_metadata_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user_id"
+    
+    # IMPLEMENTED: Conversations S3 to S3_CONSOLIDATION_BUCKET migration
+    # - Conversations: Migrated from S3_CONVERSATIONS_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME
+    # - Old prefix: "{old_id}/" → New prefix: "conversations/{new_id}/"
+    # - Migration detection: Not needed - all conversations move to consolidation bucket
+    # - DynamoDB updates: "user_id" field and "s3_key" prefix updated
+    #
+    # Processing flow:
+    # 1. Call migrate_conversations_bucket_for_user() to migrate S3 conversations
+    # 2. Update "user_id" field from old_id to new_id in CONVERSATION_METADATA_TABLE
+    # 3. Update "s3_key" prefix from old_id to new_id
+    success = migrate_conversations_bucket_for_user(old_id, new_id, dry_run)
+    
+    if not success:
+        log(msg % f"Failed to migrate conversations for user {old_id}")
+        return False
+    
+    try:
+        conversation_metadata_table = dynamodb.Table(table)
+        ret = False
+        
+        for item in paginated_query(table, "user_id", old_id):
+            log(
+                msg
+                % f"Found conversation metadata record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            
+            # Update user_id and s3_key prefix
+            item["user_id"] = new_id
+            if "s3_key" in item and item["s3_key"].startswith(f"{old_id}/"):
+                old_s3_key = item["s3_key"]
+                conversation_id = old_s3_key[len(f"{old_id}/"):]
+                item["s3_key"] = f"conversations/{new_id}/{conversation_id}"
+                
+            if dry_run:
+                log(msg % f"Would update conversation metadata item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating conversation metadata item to:\\n\\tNew Data: {item}")
+                conversation_metadata_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating conversation metadata for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "USER_STORAGE_TABLE" : "amplify-v6-lambda-basic-ops-dev-user-storage",
@@ -943,17 +1795,50 @@ def update_user_storage_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all user storage records associated with the old user ID to the new user ID."""
     msg = f"[update_user_storage_table][dry-run: {dry_run}] %s"
     table = table_names.get("USER_STORAGE_TABLE")
+    if not table:
+        log(msg % f"Table USER_STORAGE_TABLE not found, skipping")
+        return True
+        
     user_storage_table = dynamodb.Table(table)
-    # TODO:
-    # 1. "PK" prefix must be updated
-    # 2. "appId" prefix must be updated
+    ret = False
+    try:
+        # Scan for records with PK prefix matching old_id
+        for item in paginated_scan(table, "PK", old_id, begins_with=True):
+            log(
+                msg
+                % f"Found user storage record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            
+            # Update PK prefix: old_id#suffix -> new_id#suffix
+            if "PK" in item:
+                old_pk = item["PK"]
+                if old_pk.startswith(f"{old_id}#"):
+                    pk_suffix = old_pk[len(f"{old_id}#"):]
+                    item["PK"] = f"{new_id}#{pk_suffix}"
+                    log(msg % f"Updated PK: {old_pk} -> {item['PK']}")
+            
+            # Update appId prefix: old_id#suffix -> new_id#suffix
+            if "appId" in item:
+                old_app_id = item["appId"]
+                if old_app_id.startswith(f"{old_id}#"):
+                    app_id_suffix = old_app_id[len(f"{old_id}#"):]
+                    item["appId"] = f"{new_id}#{app_id_suffix}"
+                    log(msg % f"Updated appId: {old_app_id} -> {item['appId']}")
+            
+            if dry_run:
+                log(msg % f"Would update user storage item to:\n\tNew Data: {item}")
+            else:
+                log(msg % f"Updating user storage item to:\n\tNew Data: {item}")
+                user_storage_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating user storage for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
-
-### Unsure if in use tables ###
-# "DYNAMO_DYNAMIC_CODE_TABLE" : "amplify-v6-lambda-basic-ops-dev-dynamic-code-entries",
-# "JOB_STATUS_TABLE" : "amplify-v6-assistants-api-dev-job-status",
-# "USER_RECORDS_DYNAMODB_TABLE_NAME" : "amplify-v6-lambda-basic-ops-dev-work-records",
-# "USER_SESSIONS_DYNAMODB_TABLE_NAME" : "amplify-v6-lambda-basic-ops-dev-work-sessions",
 
 
 ### VERY MUCH LESS IMPORTANT TABLES ###

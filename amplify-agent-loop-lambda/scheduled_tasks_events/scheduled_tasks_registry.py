@@ -6,6 +6,8 @@ import json
 import uuid
 from boto3.dynamodb.types import TypeSerializer, TypeDeserializer
 from pycommon.api.api_key import deactivate_key
+from pycommon.api.user_data import load_user_data, delete_user_data
+from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
 from delegation.api_keys import create_agent_event_api_key
 from scheduled_tasks_events.scheduled_tasks import send_tasks_to_queue
 
@@ -120,7 +122,7 @@ def create_scheduled_task(
         raise RuntimeError(f"Failed to create scheduled task: {e}")
 
 
-def get_scheduled_task(current_user, task_id):
+def get_scheduled_task(current_user, task_id, access_token=None):
     """
     Get a scheduled task by ID.
 
@@ -158,6 +160,10 @@ def get_scheduled_task(current_user, task_id):
             for key, value in response["Item"].items()
         }
 
+        # Return logs array as-is (metadata only)
+        # Frontend will call get_task_execution_details() for actual log data
+        logs_array = task.get("logs", [])
+        
         # Convert to expected format for frontend
         result = {
             "taskId": task["taskId"],
@@ -168,7 +174,7 @@ def get_scheduled_task(current_user, task_id):
             "objectInfo": task["objectInfo"],
             "cronExpression": task["cronExpression"],
             "active": task["active"] == 1,
-            "logs": task.get("logs", []),
+            "logs": logs_array,
         }
 
         # Add optional fields if they exist
@@ -387,12 +393,14 @@ def delete_scheduled_task(current_user, task_id, access_token):
     """
     # Get environment variables
     table_name = os.environ.get("SCHEDULED_TASKS_TABLE")
+    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")  #Marked for future deletion
 
     if not table_name:
         raise ValueError("Environment variable 'SCHEDULED_TASKS_TABLE' must be set.")
 
-    # Initialize AWS client
+    # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
+    s3 = boto3.client("s3")
 
     try:
         # First, check if the task exists and belongs to the user
@@ -410,11 +418,52 @@ def delete_scheduled_task(current_user, task_id, access_token):
 
         scheduled_task = response["Item"]
         
-        # Deserialize the apiKeyId from DynamoDB format
+        # Deserialize the task to access logs
         deserializer = TypeDeserializer()
-        api_key_id = deserializer.deserialize(scheduled_task["apiKeyId"])
+        task_data = {key: deserializer.deserialize(value) for key, value in scheduled_task.items()}
+        
+        api_key_id = task_data["apiKeyId"]
+        logs = task_data.get("logs", [])
         
         print(f"Deleting task {task_id} with api key id {api_key_id}")
+        
+        # Clean up logs before deleting the task
+        if logs:
+            legacy_logs_count = 0
+            migrated_logs_count = 0
+            
+            # Check if we have legacy logs (with detailsKey)
+            for log_entry in logs:
+                if "detailsKey" in log_entry:
+                    legacy_logs_count += 1
+                    
+                    # Delete legacy S3 log files
+                    if logs_bucket:
+                        try:
+                            s3.delete_object(
+                                Bucket=logs_bucket,
+                                Key=log_entry["detailsKey"]
+                            )
+                            print(f"Deleted S3 log file: {log_entry['detailsKey']}")
+                        except Exception as e:
+                            print(f"Warning: Could not delete S3 log file {log_entry['detailsKey']}: {e}")
+                else:
+                    migrated_logs_count += 1
+            
+            # Delete migrated logs from USER_STORAGE_TABLE if present
+            if migrated_logs_count > 0:
+                try:
+                    app_id = f"{current_user}#amplify-agent-logs"
+                    delete_user_data(access_token, app_id, "scheduled-task-logs", task_id)
+                    print(f"Deleted migrated logs for task {task_id} from USER_STORAGE_TABLE")
+                except Exception as e:
+                    print(f"Warning: Could not delete migrated logs for task {task_id}: {e}")
+            
+            print(f"Log cleanup completed: {legacy_logs_count} legacy logs, {migrated_logs_count} migrated logs")
+        else:
+            print(f"No logs to clean up for task {task_id}")
+        
+        # Deactivate the API key
         deactivate_key(access_token, api_key_id)
 
         # Delete the task from DynamoDB
@@ -430,7 +479,7 @@ def delete_scheduled_task(current_user, task_id, access_token):
         raise RuntimeError(f"Failed to delete scheduled task: {e}")
 
 
-def get_task_execution_details(current_user, task_id, execution_id):
+def get_task_execution_details(current_user, task_id, execution_id, access_token=None):
     """
     Get the detailed logs for a specific task execution.
 
@@ -444,7 +493,7 @@ def get_task_execution_details(current_user, task_id, execution_id):
     """
     # Get environment variables
     table_name = os.environ.get("SCHEDULED_TASKS_TABLE")
-    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")
+    logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")  #Marked for future deletion
 
     if not table_name or not logs_bucket:
         raise ValueError(
@@ -482,8 +531,9 @@ def get_task_execution_details(current_user, task_id, execution_id):
         if not execution_record:
             return None
 
-        # If the record has details in S3, fetch them
+        # Check if legacy (has detailsKey) or migrated (no detailsKey)
         if "detailsKey" in execution_record:
+            # Legacy execution: Fetch details from S3
             try:
                 s3_response = s3.get_object(
                     Bucket=logs_bucket, Key=execution_record["detailsKey"]
@@ -493,6 +543,38 @@ def get_task_execution_details(current_user, task_id, execution_id):
             except Exception as e:
                 print(f"Error fetching execution details from S3: {e}")
                 execution_record["detailsError"] = str(e)
+        else:
+            # Migrated execution: Direct dictionary lookup from USER_STORAGE_TABLE
+            if access_token:
+                try:
+                    app_id = f"{current_user}#amplify-agent-logs"
+                    consolidated_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
+                    
+                    if consolidated_logs_data and "logs" in consolidated_logs_data:
+                        logs_dict = consolidated_logs_data["logs"]
+                        
+                        # Direct lookup by execution_id
+                        if execution_id in logs_dict:
+                            compressed_data = logs_dict[execution_id]
+                            
+                            # Decompress only this specific log
+                            if is_lzw_compressed_format(compressed_data):
+                                try:
+                                    execution_record["details"] = lzw_uncompress(compressed_data)
+                                except Exception as e:
+                                    print(f"Failed to decompress log data for {execution_id}: {e}")
+                                    execution_record["detailsError"] = f"Failed to decompress: {e}"
+                            else:
+                                execution_record["details"] = compressed_data
+                        else:
+                            execution_record["detailsError"] = f"Execution {execution_id} not found in migrated logs"
+                    else:
+                        execution_record["detailsError"] = "No migrated logs found for this task"
+                except Exception as e:
+                    print(f"Error fetching migrated execution details: {e}")
+                    execution_record["detailsError"] = str(e)
+            else:
+                execution_record["detailsError"] = "Access token required for migrated logs"
 
         return execution_record
 

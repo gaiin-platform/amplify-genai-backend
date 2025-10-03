@@ -64,18 +64,18 @@ def save_conversation_state(
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(os.getenv("AGENT_STATE_DYNAMODB_TABLE"))
 
-        # Get bucket name from environment
-        bucket = os.getenv("AGENT_STATE_BUCKET")
-        if not bucket:
-            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
+        # Get consolidation bucket name from environment
+        consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
+        if not consolidation_bucket:
+            raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
 
-        # Construct S3 key
-        s3_key = f"{current_user}/{session_id}/agent_state.json"
+        # Construct S3 key with agentState prefix
+        s3_key = f"agentState/{current_user}/{session_id}/agent_state.json"
 
-        # Convert conversation results to JSON and store in S3
+        # Convert conversation results to JSON and store in consolidation S3 bucket
         try:
             s3.put_object(
-                Bucket=bucket,
+                Bucket=consolidation_bucket,
                 Key=s3_key,
                 Body=json.dumps(conversation_results, indent=2),
                 ContentType="application/json",
@@ -95,7 +95,6 @@ def save_conversation_state(
                 UpdateExpression="SET memory = :memory, lastUpdated = :timestamp",
                 ExpressionAttributeValues={
                     ":memory": {
-                        "bucket": bucket,
                         "key": s3_key,
                         "lastModified": datetime.utcnow().isoformat(),
                     },
@@ -110,7 +109,7 @@ def save_conversation_state(
                 "details": str(e),
             }
 
-        return {"success": True, "s3_location": {"bucket": bucket, "key": s3_key}}
+        return {"success": True, "s3_location": {"bucket": consolidation_bucket, "key": s3_key}}
 
     except Exception as e:
         print(f"Unexpected error in save_conversation_state: {e}")
@@ -178,7 +177,7 @@ def event_printer(
 
 @required_env_vars({
     "AGENT_STATE_DYNAMODB_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.QUERY],
-    "AGENT_STATE_BUCKET": [S3Operation.PUT_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
 })
 @api_tool(
     path="/vu-agent/handle-event",
@@ -808,20 +807,47 @@ def generate_file_download_urls(
     """Generate presigned URLs for downloading files from S3."""
     try:
         s3_client = boto3.client("s3")
-        bucket = os.getenv("AGENT_STATE_BUCKET")
+        # Use consolidation bucket by default, fallback to legacy bucket for backward compatibility
+        consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
+        legacy_bucket = os.getenv("AGENT_STATE_BUCKET")  # Marked for deletion
+        
+        if not consolidation_bucket:
+            raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
 
-        if not bucket:
-            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
-
-        # Get the index file for mappings and version history
-        index_key = f"{current_user}/{session_id}/index.json"
+        # Get the index file for mappings and version history with backward compatibility
+        filename_mappings = {}
+        version_history = {}
+        bucket_to_use = None
+        
+        # Try consolidation bucket first (migrated records)
+        consolidation_index_key = f"agentState/{current_user}/{session_id}/index.json"
         try:
-            response = s3_client.get_object(Bucket=bucket, Key=index_key)
+            response = s3_client.get_object(Bucket=consolidation_bucket, Key=consolidation_index_key)
             index_content = json.loads(response["Body"].read().decode("utf-8"))
             filename_mappings = index_content.get("mappings", {})
             version_history = index_content.get("version_history", {})
+            bucket_to_use = consolidation_bucket
+            s3_key_prefix = f"agentState/{current_user}/{session_id}/"
         except ClientError as e:
-            print(f"Error reading index file: {e}")
+            if e.response["Error"]["Code"] == "NoSuchKey" and legacy_bucket:
+                # Fallback to legacy bucket
+                legacy_index_key = f"{current_user}/{session_id}/index.json"
+                try:
+                    response = s3_client.get_object(Bucket=legacy_bucket, Key=legacy_index_key)
+                    index_content = json.loads(response["Body"].read().decode("utf-8"))
+                    filename_mappings = index_content.get("mappings", {})
+                    version_history = index_content.get("version_history", {})
+                    bucket_to_use = legacy_bucket
+                    s3_key_prefix = f"{current_user}/{session_id}/"
+                except ClientError as legacy_e:
+                    print(f"Error reading index file from both buckets: consolidation={e}, legacy={legacy_e}")
+                    return {}
+            else:
+                print(f"Error reading index file from consolidation bucket: {e}")
+                return {}
+
+        if not bucket_to_use:
+            print("No valid bucket found for session files")
             return {}
 
         download_info = {}
@@ -835,12 +861,12 @@ def generate_file_download_urls(
                 print(f"Warning: No S3 filename found for {original_name}")
                 continue
 
-            s3_key = f"{current_user}/{session_id}/{s3_filename}"
+            s3_key = f"{s3_key_prefix}{s3_filename}"
 
             try:
                 url = s3_client.generate_presigned_url(
                     "get_object",
-                    Params={"Bucket": bucket, "Key": s3_key},
+                    Params={"Bucket": bucket_to_use, "Key": s3_key},
                     ExpiresIn=expiration,
                 )
 
@@ -868,7 +894,8 @@ def generate_file_download_urls(
 
 
 @required_env_vars({
-    "AGENT_STATE_BUCKET": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "AGENT_STATE_BUCKET": [S3Operation.GET_OBJECT], #Marked for deletion - legacy fallback
 })
 @api_tool(
     path="/vu-agent/get-file-download-urls",
@@ -943,7 +970,8 @@ def extract_data_sources_from_messages(
 
 @required_env_vars({
     "AGENT_STATE_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
-    "AGENT_STATE_BUCKET": [S3Operation.GET_OBJECT],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "AGENT_STATE_BUCKET": [S3Operation.GET_OBJECT], #Marked for deletion - legacy fallback
 })
 @api_tool(
     path="/vu-agent/get-latest-agent-state",
@@ -1045,13 +1073,27 @@ def get_latest_agent_state(current_user, session_id):
             except Exception as e:
                 print(f"Warning: Failed to mark result as consumed: {e}")
 
-            # Extract S3 location from memory
+            # Extract S3 location from memory with backward compatibility
             memory = latest_item["memory"]
-            bucket = memory.get("bucket")
             key = memory.get("key")
 
-            if not bucket or not key:
+            if not key:
                 return {"success": False, "error": "Invalid S3 location in memory"}
+
+            # Determine which bucket to use based on migration status
+            # If no bucket field is present, record has been migrated to consolidation bucket
+            bucket = memory.get("bucket")
+            if not bucket:
+                # Migrated record - use consolidation bucket
+                consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
+                if not consolidation_bucket:
+                    return {"success": False, "error": "S3_CONSOLIDATION_BUCKET_NAME environment variable not set"}
+                bucket = consolidation_bucket
+                # Key should already have agentState/ prefix for migrated records
+            else:
+                # Legacy record - use bucket from memory field
+                # Key format: {user_id}/{session_id}/agent_state.json
+                pass
 
             try:
                 # Fetch conversation results from S3
@@ -1061,10 +1103,17 @@ def get_latest_agent_state(current_user, session_id):
                     s3_response["Body"].read().decode("utf-8")
                 )
 
-                # Fetch session files from index.json
+                # Fetch session files from index.json with backward compatibility
                 session_files = {}
                 try:
-                    index_key = f"{current_user}/{session_id}/index.json"
+                    # Determine index.json key based on migration status
+                    if not memory.get("bucket"):
+                        # Migrated record - use agentState/ prefix
+                        index_key = f"agentState/{current_user}/{session_id}/index.json"
+                    else:
+                        # Legacy record - use old format
+                        index_key = f"{current_user}/{session_id}/index.json"
+                    
                     index_response = s3.get_object(Bucket=bucket, Key=index_key)
                     index_data = json.loads(
                         index_response["Body"].read().decode("utf-8")
@@ -1078,9 +1127,16 @@ def get_latest_agent_state(current_user, session_id):
                         # Remove extension to get base UUID (file_id)
                         file_id = s3_filename.rsplit(".", 1)[0]
 
-                        # Get file stats from S3 if available
+                        # Get file stats from S3 if available with backward compatibility
                         try:
-                            file_s3_key = f"{current_user}/{session_id}/{s3_filename}"
+                            # Construct file S3 key based on migration status
+                            if not memory.get("bucket"):
+                                # Migrated record - use agentState/ prefix
+                                file_s3_key = f"agentState/{current_user}/{session_id}/{s3_filename}"
+                            else:
+                                # Legacy record - use old format
+                                file_s3_key = f"{current_user}/{session_id}/{s3_filename}"
+                            
                             file_response = s3.head_object(
                                 Bucket=bucket, Key=file_s3_key
                             )

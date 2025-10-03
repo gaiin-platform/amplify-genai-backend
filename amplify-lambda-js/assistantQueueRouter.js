@@ -122,9 +122,8 @@ export const handler = withEnvVarsTracking({
     "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], //Marked for future deletion
     "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    "ASSISTANT_LOGS_BUCKET_NAME": [S3Operation.PUT_OBJECT],
     
     // Secrets Manager - require IAM permissions (via routeRequest)
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],

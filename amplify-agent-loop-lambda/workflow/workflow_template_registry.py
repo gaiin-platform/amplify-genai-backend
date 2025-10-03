@@ -4,7 +4,10 @@ import boto3
 import uuid
 from boto3.dynamodb.types import TypeSerializer, TypeDeserializer
 import json
+from pycommon.api.user_data import load_user_data, save_user_data, delete_user_data
 
+def get_app_id(current_user: str) -> str:
+    return f"{current_user}#amplify-workflows"
 
 def register_workflow_template(
     current_user,
@@ -15,41 +18,39 @@ def register_workflow_template(
     output_schema,
     is_base_template,
     is_public,
+    access_token,
 ):
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
 
-    if not table_name or not bucket_name:
+    if not table_name:
         raise ValueError(
-            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
+            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
-    s3 = boto3.client("s3")
 
     # Generate a unique UUID for the new workflow template
     template_id = str(uuid.uuid4())  # Changed from template_uuid to template_id
-    s3_key = f"{current_user}/{template_id}.json"
     print("registering workflow template: ", template_id)
     try:
-        # Save the template to S3
-        s3.put_object(
-            Bucket=bucket_name,
-            Key=s3_key,
-            Body=json.dumps(template),
-            ContentType="application/json",
-        )
+        # Save the template to USER_STORAGE_TABLE (new approach - no more S3)
+        app_id = get_app_id(current_user)
+        result = save_user_data(access_token, app_id, "workflow-templates", template_id, template)
+        
+        if result is None:
+            raise RuntimeError("Failed to save workflow template to USER_STORAGE_TABLE")
 
         # Prepare the item to be inserted into the DynamoDB table using camel case
+        # NOTE: No s3Key field for new workflows - this is how we detect migrated workflows
         serializer = TypeSerializer()
         item = {
             "user": serializer.serialize(current_user),
             "templateId": serializer.serialize(template_id),  # Use camel case
             "isBaseTemplate": serializer.serialize(is_base_template),
             "isPublic": {"N": "1" if is_public else "0"},
-            "s3Key": serializer.serialize(s3_key),  # Use camel case
+            # "s3Key": REMOVED - new workflows don't have s3Key
             "name": serializer.serialize(name),
             "description": serializer.serialize(description),
             "inputSchema": serializer.serialize(input_schema),  # Use camel case
@@ -67,20 +68,19 @@ def register_workflow_template(
 
 
 def get_workflow_template(
-    current_user, template_id
+    current_user, template_id, access_token
 ):  # Changed from template_uuid to template_id
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") #Marked for future deletion
 
-    if not table_name or not bucket_name:
+    if not table_name:
         raise ValueError(
-            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
+            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
-    s3 = boto3.client("s3")
 
     try:
         # Lookup the workflow template in the DynamoDB table by hash = current_user, range = template_id
@@ -117,10 +117,29 @@ def get_workflow_template(
             for key, value in response["Item"].items()
         }
 
-        # Fetch the template from S3 using the s3Key
-        s3_key = deserialized_item["s3Key"]  # Use camel case
-        s3_response = s3.get_object(Bucket=bucket_name, Key=s3_key)
-        template = json.loads(s3_response["Body"].read().decode("utf-8"))
+        # BACKWARDS COMPATIBILITY: Check if this is a migrated workflow or legacy S3 workflow
+        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
+            # Legacy workflow: Fetch template from S3
+            print(f"Retrieving legacy workflow template from S3: {template_id}")
+            
+            if not bucket_name:
+                raise ValueError(
+                    "Environment variable 'WORKFLOW_TEMPLATES_BUCKET' must be set for legacy workflows."
+                )
+            
+            s3 = boto3.client("s3")
+            s3_key = deserialized_item["s3Key"]  # Use camel case
+            s3_response = s3.get_object(Bucket=bucket_name, Key=s3_key)
+            template = json.loads(s3_response["Body"].read().decode("utf-8"))
+        else:
+            # New workflow: Fetch template from USER_STORAGE_TABLE
+            print(f"Retrieving migrated workflow template from USER_STORAGE_TABLE: {template_id}")
+            
+            app_id = get_app_id(current_user)
+            template = load_user_data(access_token, app_id, "workflow-templates", template_id)
+            
+            if template is None:
+                raise RuntimeError(f"Workflow template not found in USER_STORAGE_TABLE: {template_id}")
 
         # Combine metadata and template into a single object using camel case
         result = {
@@ -134,7 +153,7 @@ def get_workflow_template(
             "isBaseTemplate": deserialized_item.get("isBaseTemplate", False),
         }
 
-        # Remove s3Key
+        # Remove s3Key from result (should not be exposed)
         result.pop("s3Key", None)
 
         return result
@@ -213,19 +232,18 @@ def list_workflow_templates(current_user, include_public_templates=False):
         raise RuntimeError(f"Failed to list workflow templates: {e}")
 
 
-def delete_workflow_template(current_user, template_id):
+def delete_workflow_template(current_user, template_id, access_token):
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") #Marked for future deletion
 
-    if not table_name or not bucket_name:
+    if not table_name:
         raise ValueError(
-            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
+            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
-    s3 = boto3.client("s3")
 
     try:
         # First, check if the template exists and belongs to the user
@@ -241,17 +259,44 @@ def delete_workflow_template(current_user, template_id):
                 "message": "Template not found or you don't have permission to delete it",
             }
 
-        # Get the S3 key before deleting the DynamoDB record
-        s3_key = TypeDeserializer().deserialize(response["Item"]["s3Key"])
+        # Deserialize the response item to check for s3Key
+        deserializer = TypeDeserializer()
+        deserialized_item = {
+            key: deserializer.deserialize(value)
+            for key, value in response["Item"].items()
+        }
 
-        # Delete the template from DynamoDB
+        # BACKWARDS COMPATIBILITY: Delete template content from either S3 or USER_STORAGE_TABLE
+        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
+            # Legacy workflow: Delete from S3
+            print(f"Deleting legacy workflow template from S3: {template_id}")
+            
+            if not bucket_name:
+                raise ValueError(
+                    "Environment variable 'WORKFLOW_TEMPLATES_BUCKET' must be set for legacy workflows."
+                )
+            
+            s3 = boto3.client("s3")
+            s3_key = deserialized_item["s3Key"]
+            s3.delete_object(Bucket=bucket_name, Key=s3_key)
+        else:
+            # New workflow: Delete from USER_STORAGE_TABLE
+            print(f"Deleting migrated workflow template from USER_STORAGE_TABLE: {template_id}")
+            
+            app_id = get_app_id(current_user)
+            result = delete_user_data(access_token, app_id, "workflow-templates", template_id)
+            
+            if result is None:
+                return {
+                    "success": False,
+                    "message": "Failed to delete workflow template from USER_STORAGE_TABLE",
+                }
+
+        # Delete the metadata from DynamoDB (always done regardless of storage type)
         dynamodb.delete_item(
             TableName=table_name,
             Key={"user": {"S": current_user}, "templateId": {"S": template_id}},
         )
-
-        # Delete the template from S3
-        s3.delete_object(Bucket=bucket_name, Key=s3_key)
 
         return {
             "success": True,
@@ -273,19 +318,19 @@ def update_workflow_template(
     output_schema,
     is_base_template,
     is_public,
+    access_token,
 ):
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") #Marked for future deletion
 
-    if not table_name or not bucket_name:
+    if not table_name:
         raise ValueError(
-            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
+            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
-    s3 = boto3.client("s3")
 
     try:
         # First, check if the template exists and belongs to the user
@@ -301,16 +346,43 @@ def update_workflow_template(
                 "message": "Template not found or you don't have permission to update it",
             }
 
-        # Get the existing S3 key
-        s3_key = TypeDeserializer().deserialize(response["Item"]["s3Key"])
+        # Deserialize the response item to check for s3Key
+        deserializer = TypeDeserializer()
+        deserialized_item = {
+            key: deserializer.deserialize(value)
+            for key, value in response["Item"].items()
+        }
 
-        # Update the template in S3
-        s3.put_object(
-            Bucket=bucket_name,
-            Key=s3_key,
-            Body=json.dumps(template),
-            ContentType="application/json",
-        )
+        # BACKWARDS COMPATIBILITY: Update template content in either S3 or USER_STORAGE_TABLE
+        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
+            # Legacy workflow: Update S3
+            print(f"Updating legacy workflow template in S3: {template_id}")
+            
+            if not bucket_name:
+                raise ValueError(
+                    "Environment variable 'WORKFLOW_TEMPLATES_BUCKET' must be set for legacy workflows."
+                )
+            
+            s3 = boto3.client("s3")
+            s3_key = deserialized_item["s3Key"]
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=s3_key,
+                Body=json.dumps(template),
+                ContentType="application/json",
+            )
+        else:
+            # New workflow: Update USER_STORAGE_TABLE
+            print(f"Updating migrated workflow template in USER_STORAGE_TABLE: {template_id}")
+            
+            app_id = get_app_id(current_user)
+            result = save_user_data(access_token, app_id, "workflow-templates", template_id, template)
+            
+            if result is None:
+                return {
+                    "success": False,
+                    "message": "Failed to update workflow template in USER_STORAGE_TABLE",
+                }
 
         # Prepare the updated item for DynamoDB using camel case
         serializer = TypeSerializer()
@@ -319,13 +391,16 @@ def update_workflow_template(
             "templateId": serializer.serialize(template_id),
             "isBaseTemplate": serializer.serialize(is_base_template),
             "isPublic": {"N": "1" if is_public else "0"},
-            "s3Key": serializer.serialize(s3_key),
             "name": serializer.serialize(name),
             "description": serializer.serialize(description),
             "inputSchema": serializer.serialize(input_schema),
             "outputSchema": serializer.serialize(output_schema),
             "updatedAt": serializer.serialize(datetime.now().isoformat()),
         }
+        
+        # Only include s3Key if it existed in the original record (legacy workflows)
+        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
+            updated_item["s3Key"] = serializer.serialize(deserialized_item["s3Key"])
 
         # Preserve the original creation timestamp if it exists
         if "createdAt" in response["Item"]:
