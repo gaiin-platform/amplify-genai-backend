@@ -328,6 +328,7 @@ def update_amplify_admin_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 ### User object related tables ###
 # "ACCOUNTS_DYNAMO_TABLE": "amplify-v6-lambda-dev-accounts",
+# DONE
 def update_accounts(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all accounts associated with the old user ID to the new user ID."""
     msg = f"[update_accounts][dry-run: {dry_run}] %s"
@@ -578,6 +579,8 @@ def update_assistants_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 # "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-code-interpreter-assistants",
+# DONE
+# Change Type: UPDATE
 def update_assistant_code_interpreter_table(
     old_id: str, new_id: str, dry_run: bool
 ) -> bool:
@@ -585,9 +588,38 @@ def update_assistant_code_interpreter_table(
     msg = f"[update_assistant_code_interpreter_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE")
     assistant_code_interpreter_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    try:
+        ret = False
+        for item in paginated_query(table, "user", old_id, index_name="UserIndex"):
+            log(
+                msg
+                % f"Found assistant code interpreter record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(
+                    msg
+                    % f"Would update assistant code interpreter item to:\n\tNew Data: {item}"
+                )
+            else:
+                log(
+                    msg
+                    % f"Updating assistant code interpreter item to:\n\tNew Data: {item}"
+                )
+                assistant_code_interpreter_table.update_item(
+                    Key={"id": item["id"]},
+                    UpdateExpression="SET #user = :new_id",
+                    ExpressionAttributeNames={"#user": "user"},
+                    ExpressionAttributeValues={":new_id": new_id},
+                )
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant code interpreter for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_THREADS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-threads",
@@ -835,7 +867,6 @@ def update_oauth_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         # just update the existing ones in place. Still, this is consistent with what
         # we're doing elsewhere. So, we'll need to delete the old records later.
 
-        # SAM dont think we can query it at this time
         ret = False
         for item in paginated_scan(table, "user", old_id):
             log(
@@ -1063,9 +1094,16 @@ if __name__ == "__main__":
             #         f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records."
             #     )
 
-            if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
+            # if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
+            #     log(
+            #         f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records."
+            #     )
+
+            if not update_assistant_code_interpreter_table(
+                old_user_id, new_user_id, args.dry_run
+            ):
                 log(
-                    f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records."
+                    f"Unable to update assistant code interpreter records for {old_user_id}. This is assumed reasonable as not all users have assistant code interpreter records."
                 )
 
     except Exception as e:
