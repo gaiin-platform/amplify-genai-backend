@@ -581,6 +581,7 @@ def update_assistants_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 # "ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-code-interpreter-assistants",
 # DONE
 # Change Type: UPDATE
+# True Tested (with Change): False
 def update_assistant_code_interpreter_table(
     old_id: str, new_id: str, dry_run: bool
 ) -> bool:
@@ -623,14 +624,42 @@ def update_assistant_code_interpreter_table(
 
 
 # "ASSISTANT_THREADS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-threads",
+# DONE
+# Update Type: UPDATE
+# True Tested (with Change): False
 def update_assistant_threads_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all assistant threads records associated with the old user ID to the new user ID."""
-    msg = f"[update_assistant_threads_table][dry-run: {dry-run}] %s"
+    msg = f"[update_assistant_threads_table][dry-run: {dry_run}] %s"
     table = table_names.get("ASSISTANT_THREADS_DYNAMODB_TABLE")
     assistant_threads_table = dynamodb.Table(table)
-
-    # TODO:
-    # 1. "user"
+    try:
+        ret = False
+        for item in paginated_query(table, "user", old_id, index_name="UserNameIndex"):
+            log(
+                msg
+                % f"Found assistant threads record for user ID {old_id}.\n\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(
+                    msg % f"Would update assistant threads item to:\n\tNew Data: {item}"
+                )
+            else:
+                log(msg % f"Updating assistant threads item to:\n\tNew Data: {item}")
+                assistant_threads_table.update_item(
+                    Key={"id": item["id"]},
+                    UpdateExpression="SET #user = :new_id",
+                    ExpressionAttributeNames={"#user": "user"},
+                    ExpressionAttributeValues={":new_id": new_id},
+                )
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating assistant threads for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
 
 
 # "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE" : "amplify-v6-assistants-dev-assistant-thread-runs",
@@ -1104,6 +1133,13 @@ if __name__ == "__main__":
             ):
                 log(
                     f"Unable to update assistant code interpreter records for {old_user_id}. This is assumed reasonable as not all users have assistant code interpreter records."
+                )
+
+            if not update_assistant_threads_table(
+                old_user_id, new_user_id, args.dry_run
+            ):
+                log(
+                    f"Unable to update assistant threads records for {old_user_id}. This is assumed reasonable as not all users have assistant threads records."
                 )
 
     except Exception as e:
