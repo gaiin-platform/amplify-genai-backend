@@ -8,6 +8,7 @@ import time
 import boto3
 import json
 import uuid
+import requests
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from decimal import Decimal
@@ -867,7 +868,7 @@ def create_assistant(event, context, current_user, name, data):
 )
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM], #Marked for future deletion
     "OBJECT_ACCESS_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
     "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.PUT_ITEM],
@@ -986,7 +987,7 @@ def share_assistant_with(
             # if api accessed
             if share_to_S3:
                 print("API_accessed, sending to s3...")
-                result = assistant_share_save(current_user, user, note, assistant_entry)
+                result = assistant_share_save(access_token, current_user, user, note, assistant_entry)
                 if not result["success"]:
                     print("Failed share for: ", user)
                     failed_shares.append(user)
@@ -1005,7 +1006,7 @@ def share_assistant_with(
         }
 
 
-def assistant_share_save(current_user, shared_with, note, assistant):
+def assistant_share_save(access_token, current_user, shared_with, note, assistant):
     try:
         # Generate a unique file key for each user
         dt_string = datetime.now().strftime("%Y-%m-%d")
@@ -1055,62 +1056,55 @@ def assistant_share_save(current_user, shared_with, note, assistant):
             Key=consolidation_key,
         )
 
-        dynamodb = boto3.resource("dynamodb")
-        table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
-
-        name = "/state/share"
-        response = table.query(
-            IndexName="UserNameIndex",
-            KeyConditionExpression=Key("user").eq(shared_with) & Key("name").eq(name),
-        )
-
-        items = response.get("Items")
+        # Store in USER_STORAGE_TABLE via HTTP request to user-data API (cross-service)
         timestamp = int(time.time() * 1000)
+        dt_string = datetime.now().strftime("%Y-%m-%d")
+        share_id = f"{current_user}#{dt_string}#{str(uuid.uuid4())}"
+        
+        # Prepare share data
+        share_data = {
+            "sharedBy": current_user,
+            "note": note,
+            "sharedAt": timestamp,
+            "key": s3_key,  # Clean key without shares/ prefix
+        }
 
-        if not items:
-            # No item found with user and name, create a new item
-            id_key = "{}/{}".format(
-                shared_with, str(uuid.uuid4())
-            )  # add the user's name to the key in DynamoDB
-            new_item = {
-                "id": id_key,
-                "user": shared_with,
-                "name": name,
-                "data": [
-                    {
-                        "sharedBy": current_user,
-                        "note": note,
-                        "sharedAt": timestamp,
-                        "key": consolidation_key,
-                    }
-                ],
-                "createdAt": timestamp,
-                "updatedAt": timestamp,
+        # Make HTTP request to user-data API (cross-service call)
+        api_base_url = os.environ.get("API_BASE_URL", "http://localhost:3015")  # Default for local dev
+        
+        user_data_payload = {
+            "data": {
+                "appId": "amplify-shares",
+                "entityType": "received", 
+                "itemId": share_id,
+                "data": share_data
             }
-            table.put_item(Item=new_item)
-
-        else:
-            # Otherwise, update the existing item
-            item = items[0]
-
-            result = table.update_item(
-                Key={"id": item["id"]},
-                ExpressionAttributeNames={"#data": "data"},
-                ExpressionAttributeValues={
-                    ":data": [
-                        {
-                            "sharedBy": current_user,
-                            "note": note,
-                            "sharedAt": timestamp,
-                            "key": consolidation_key,
-                        }
-                    ],
-                    ":updatedAt": timestamp,
-                },
-                UpdateExpression="SET #data = list_append(#data, :data), updatedAt = :updatedAt",
-                ReturnValues="ALL_NEW",
+        }
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}"  # Use the access token from function parameter
+        }
+        
+        try:
+            response = requests.post(
+                f"{api_base_url}/user-data/put",
+                json=user_data_payload,
+                headers=headers,
+                timeout=30
             )
-        print("Added to table")
+            
+            if response.status_code == 200:
+                print("Successfully stored share in USER_STORAGE_TABLE")
+            else:
+                print(f"Failed to store share in USER_STORAGE_TABLE: {response.status_code} - {response.text}")
+                return {"success": False}
+                
+        except Exception as e:
+            print(f"Error making cross-service call to user-data API: {e}")
+            return {"success": False}
+            
+        print("Added to USER_STORAGE_TABLE")
 
         return {"success": True}
 

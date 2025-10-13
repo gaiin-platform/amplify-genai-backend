@@ -38,6 +38,7 @@ CONFIG = {
     "AMPLIFY_GROUP_LOGS_DYNAMODB_TABLE": "amplify-v6-object-access-dev-amplify-group-logs",
     "OP_LOG_DYNAMO_TABLE": "amplify-v6-assistants-api-dev-op-log",
     "REQUEST_STATE_DYNAMO_TABLE": "amplify-v6-amplify-js-dev-request-state",
+    "MEMORY_DYNAMO_TABLE": "amplify-v6-memory-dev-memory",
     "needs_edit": {
         "non_user_related_tables": {
             "DATA_DISCLOSURE_VERSIONS_TABLE": "amplify-v6-data-disclosure-dev-versions",

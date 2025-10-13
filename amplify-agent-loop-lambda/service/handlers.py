@@ -29,7 +29,7 @@ from agent.tools.ops import ops_to_tools, get_default_ops_as_tools
 from pycommon.api.ops import api_tool
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, S3Operation
+    DynamoDBOperation, S3Operation, SecretsManagerOperation
 )
 from datetime import datetime
 from typing import List, Dict, Any
@@ -178,6 +178,8 @@ def event_printer(
 @required_env_vars({
     "AGENT_STATE_DYNAMODB_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.QUERY],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @api_tool(
     path="/vu-agent/handle-event",
@@ -708,6 +710,14 @@ def handle_event(
 
         if not save_result["success"]:
             print(f"Warning: Failed to save conversation state: {save_result['error']}")
+        if not save_result.get("s3_location"):
+            print(f"Failed to save conversation state: {save_result['error']}")
+            return {
+                "handled": False,
+                "error": f"Failed to save conversation state: {save_result['error']}",
+                "details": save_result.get('details')
+            }
+            
 
         print(f"Conversation state saved to S3: {save_result['s3_location']}")
         print(f"Checking for changed files...")

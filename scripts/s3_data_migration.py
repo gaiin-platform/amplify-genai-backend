@@ -10,8 +10,7 @@ from decimal import Decimal
 from pycommon.lzw import safe_compress
 
 # DynamoDB table for user storage
-#TODO: CHANGE TO AMPLIFY-LAMBDA VERSION AFTER DEPLOYING 
-USER_STORAGE_TABLE = "amplify-v6-lambda-basic-ops-dev-user-storage"
+USER_STORAGE_TABLE = "amplify-v6-lambda-dev-user-data-storage"
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -88,7 +87,32 @@ def migrate_conversations_bucket_for_user(old_id: str, new_id: str, dry_run: boo
         log(f"Scanning for conversation files with prefix: {old_prefix}")
         
         try:
-            # Get list of objects with old user prefix
+            # First check if files already exist in consolidation bucket
+            log(f"Checking for existing files in consolidation bucket with prefix: {new_prefix}")
+            try:
+                existing_paginator = s3_client.get_paginator('list_objects_v2')
+                existing_iterator = existing_paginator.paginate(
+                    Bucket=consolidation_bucket,
+                    Prefix=new_prefix
+                )
+                
+                existing_files = set()
+                for page in existing_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            # Extract conversation ID from consolidation bucket key
+                            conversation_id = obj['Key'][len(new_prefix):]
+                            existing_files.add(conversation_id)
+                
+                if existing_files:
+                    log(f"Found {len(existing_files)} files already migrated in consolidation bucket")
+                
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'NoSuchBucket':
+                    log(f"Warning: Could not check consolidation bucket: {str(e)}")
+                existing_files = set()
+            
+            # Get list of objects with old user prefix from source bucket
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(
                 Bucket=conversations_bucket,
@@ -96,13 +120,25 @@ def migrate_conversations_bucket_for_user(old_id: str, new_id: str, dry_run: boo
             )
             
             conversation_files = []
+            skipped_files = []
             for page in page_iterator:
                 if 'Contents' in page:
                     for obj in page['Contents']:
-                        conversation_files.append(obj)
+                        conversation_id = obj['Key'][len(old_prefix):]
+                        if conversation_id in existing_files:
+                            skipped_files.append(obj)
+                            log(f"Skipping already migrated conversation: {conversation_id}")
+                        else:
+                            conversation_files.append(obj)
+            
+            if skipped_files:
+                log(f"Skipped {len(skipped_files)} already migrated conversation files")
             
             if not conversation_files:
-                log(f"No conversation files found for user {old_id}")
+                if skipped_files:
+                    log(f"All conversation files already migrated for user {old_id}")
+                else:
+                    log(f"No conversation files found for user {old_id}")
                 return True
                 
             log(f"Found {len(conversation_files)} conversation files to migrate")
@@ -212,11 +248,38 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
         log(f"Scanning for share files involving user: {old_id}")
         
         try:
+            # First check if share files already exist in consolidation bucket  
+            log(f"Checking for existing share files in consolidation bucket")
+            try:
+                existing_paginator = s3_client.get_paginator('list_objects_v2')
+                existing_iterator = existing_paginator.paginate(
+                    Bucket=consolidation_bucket,
+                    Prefix="shares/"
+                )
+                
+                existing_shares = set()
+                for page in existing_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            # Extract original share path from consolidation bucket key
+                            if obj['Key'].startswith('shares/'):
+                                original_path = obj['Key'][7:]  # Remove 'shares/' prefix
+                                existing_shares.add(original_path)
+                
+                if existing_shares:
+                    log(f"Found {len(existing_shares)} share files already migrated in consolidation bucket")
+                
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'NoSuchBucket':
+                    log(f"Warning: Could not check consolidation bucket for shares: {str(e)}")
+                existing_shares = set()
+            
             # Get list of objects in shares bucket - we'll filter by old_id patterns
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(Bucket=shares_bucket)
             
             share_files = []
+            skipped_files = []
             for page in page_iterator:
                 if 'Contents' in page:
                     for obj in page['Contents']:
@@ -225,10 +288,26 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
                         # Pattern: recipient/sharer/date/file.json
                         key_parts = key.split('/')
                         if len(key_parts) >= 2 and (key_parts[0] == old_id or key_parts[1] == old_id):
-                            share_files.append(obj)
+                            # Create new key with updated user IDs for comparison
+                            new_key_parts = []
+                            for part in key_parts:
+                                new_key_parts.append(new_id if part == old_id else part)
+                            new_key_path = '/'.join(new_key_parts)
+                            
+                            if new_key_path in existing_shares:
+                                skipped_files.append(obj)
+                                log(f"Skipping already migrated share: {key}")
+                            else:
+                                share_files.append(obj)
+            
+            if skipped_files:
+                log(f"Skipped {len(skipped_files)} already migrated share files")
             
             if not share_files:
-                log(f"No share files found for user {old_id}")
+                if skipped_files:
+                    log(f"All share files already migrated for user {old_id}")
+                else:
+                    log(f"No share files found for user {old_id}")
                 return True
                 
             log(f"Found {len(share_files)} share files to migrate")
@@ -348,6 +427,30 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
             log(f"Missing template_uuid for workflow template, cannot migrate for user {old_id}.")
             return (False, None)
         
+        # Check if template already exists in USER_STORAGE_TABLE
+        if not dry_run:
+            try:
+                user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+                hash_key = _create_hash_key(new_id, "amplify-workflows")
+                
+                response = user_storage_table.get_item(
+                    Key={
+                        "PK": f"{hash_key}#workflow-templates",
+                        "SK": template_uuid
+                    }
+                )
+                
+                if 'Item' in response:
+                    log(f"Workflow template already migrated to USER_STORAGE_TABLE for user {old_id}, template: {template_uuid}")
+                    # Return workflow item with s3_key removed since it's already migrated
+                    updated_workflow_item = workflow_table_row.copy()
+                    if "s3_key" in updated_workflow_item:
+                        del updated_workflow_item["s3_key"]
+                    return (True, updated_workflow_item)
+                    
+            except Exception as e:
+                log(f"Warning: Could not check USER_STORAGE_TABLE for existing workflow template: {str(e)}")
+        
         log(f"Found workflow template record for user ID {old_id}.")
         log(f"    S3 Key: {s3_key}")
         log(f"    Template UUID: {template_uuid}")
@@ -453,6 +556,35 @@ def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_r
         if not has_details_keys:
             log(f"Scheduled task logs already migrated (no detailsKey found) for task {task_id} for user {old_id}.")
             return (True, scheduled_tasks_table_row)
+        
+        # Check if consolidated logs already exist in USER_STORAGE_TABLE
+        if not dry_run:
+            try:
+                user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+                hash_key = _create_hash_key(new_id, "amplify-agent-logs")
+                
+                response = user_storage_table.get_item(
+                    Key={
+                        "PK": f"{hash_key}#scheduled-task-logs",
+                        "SK": task_id
+                    }
+                )
+                
+                if 'Item' in response:
+                    log(f"Scheduled task logs already migrated to USER_STORAGE_TABLE for user {old_id}, task: {task_id}")
+                    # Return task item with detailsKeys removed since it's already migrated
+                    updated_task_item = scheduled_tasks_table_row.copy()
+                    updated_logs = []
+                    for log_entry in logs_array:
+                        updated_log = log_entry.copy()
+                        if "detailsKey" in updated_log:
+                            del updated_log["detailsKey"]
+                        updated_logs.append(updated_log)
+                    updated_task_item["logs"] = updated_logs
+                    return (True, updated_task_item)
+                    
+            except Exception as e:
+                log(f"Warning: Could not check USER_STORAGE_TABLE for existing scheduled task logs: {str(e)}")
         
         log(f"Found scheduled task record for user ID {old_id}.")
         log(f"    Task ID: {task_id}")
@@ -629,6 +761,57 @@ def migrate_artifacts_bucket_for_user(old_id: str, new_id: str, dry_run: bool = 
         log(f"Found artifacts record for user ID {old_id}.")
         log(f"    Existing Data: {user_artifacts_item}")
         
+        # Check if artifacts already migrated to USER_STORAGE_TABLE
+        if not dry_run:
+            try:
+                user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+                hash_key = _create_hash_key(new_id, "amplify-artifacts")
+                
+                # Check if any artifacts already exist for this user
+                response = user_storage_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('PK').eq(f"{hash_key}#artifact-content")
+                )
+                
+                existing_artifacts = set()
+                for item in response.get('Items', []):
+                    existing_artifacts.add(item['SK'])  # SK contains the artifact key
+                
+                if existing_artifacts:
+                    log(f"Found {len(existing_artifacts)} artifacts already migrated to USER_STORAGE_TABLE")
+                    # Filter out already migrated artifacts from the array
+                    filtered_artifacts = []
+                    skipped_count = 0
+                    
+                    for artifact_metadata in artifacts_array:
+                        old_key = artifact_metadata.get("key", "")
+                        new_key = _transform_artifact_key(old_key, old_id)
+                        
+                        if new_key in existing_artifacts:
+                            skipped_count += 1
+                            log(f"Skipping already migrated artifact: {new_key}")
+                        else:
+                            filtered_artifacts.append(artifact_metadata)
+                    
+                    if skipped_count > 0:
+                        log(f"Skipped {skipped_count} already migrated artifacts")
+                    
+                    if not filtered_artifacts:
+                        log(f"All artifacts already migrated for user {old_id}")
+                        # Return the transformed artifact keys for consistency
+                        transformed_artifacts = []
+                        for artifact_metadata in artifacts_array:
+                            updated_metadata = artifact_metadata.copy()
+                            old_key = artifact_metadata.get("key", "")
+                            updated_metadata["key"] = _transform_artifact_key(old_key, old_id)
+                            transformed_artifacts.append(updated_metadata)
+                        return (True, transformed_artifacts)
+                    
+                    # Update artifacts_array to only include non-migrated artifacts
+                    artifacts_array = filtered_artifacts
+                    
+            except Exception as e:
+                log(f"Warning: Could not check USER_STORAGE_TABLE for existing artifacts: {str(e)}")
+        
         # Initialize clients
         s3_client = boto3.client('s3')
         user_storage_table = None if dry_run else boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
@@ -792,6 +975,26 @@ def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = Fal
             print(f"No settings data found for user {old_id}, skipping migration")
             return True
         
+        # Check if user settings already exist in USER_STORAGE_TABLE
+        try:
+            dynamodb = boto3.resource('dynamodb')
+            table = dynamodb.Table(USER_STORAGE_TABLE)
+            hash_key = _create_hash_key(new_id, "amplify-user-settings")
+            
+            response = table.get_item(
+                Key={
+                    "PK": f"{hash_key}#user-settings",
+                    "SK": "user-settings"
+                }
+            )
+            
+            if 'Item' in response:
+                print(f"User settings already migrated to USER_STORAGE_TABLE for user {old_id} -> {new_id}")
+                return True
+                
+        except Exception as e:
+            print(f"Warning: Could not check USER_STORAGE_TABLE for existing user settings: {str(e)}")
+        
         if dry_run:
             print(f"[DRY RUN] Would migrate settings for user {old_id} -> {new_id}")
             print(f"[DRY RUN] Settings data size: {len(str(settings_data))} characters")
@@ -865,6 +1068,31 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
         log(f"Scanning for code interpreter files with prefix: {old_prefix}")
         
         try:
+            # First check if files already exist in consolidation bucket
+            log(f"Checking for existing code interpreter files in consolidation bucket with prefix: {new_prefix}")
+            try:
+                existing_paginator = s3_client.get_paginator('list_objects_v2')
+                existing_iterator = existing_paginator.paginate(
+                    Bucket=consolidation_bucket,
+                    Prefix=new_prefix
+                )
+                
+                existing_files = set()
+                for page in existing_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            # Extract file path from consolidation bucket key
+                            file_path = obj['Key'][len(new_prefix):]
+                            existing_files.add(file_path)
+                
+                if existing_files:
+                    log(f"Found {len(existing_files)} code interpreter files already migrated in consolidation bucket")
+                
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'NoSuchBucket':
+                    log(f"Warning: Could not check consolidation bucket for code interpreter files: {str(e)}")
+                existing_files = set()
+            
             # Get list of objects with old user prefix
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(
@@ -873,13 +1101,25 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
             )
             
             code_interpreter_files = []
+            skipped_files = []
             for page in page_iterator:
                 if 'Contents' in page:
                     for obj in page['Contents']:
-                        code_interpreter_files.append(obj)
+                        file_path = obj['Key'][len(old_prefix):]
+                        if file_path in existing_files:
+                            skipped_files.append(obj)
+                            log(f"Skipping already migrated code interpreter file: {file_path}")
+                        else:
+                            code_interpreter_files.append(obj)
+            
+            if skipped_files:
+                log(f"Skipped {len(skipped_files)} already migrated code interpreter files")
             
             if not code_interpreter_files:
-                log(f"No code interpreter files found for user {old_id}")
+                if skipped_files:
+                    log(f"All code interpreter files already migrated for user {old_id}")
+                else:
+                    log(f"No code interpreter files found for user {old_id}")
                 return True
                 
             log(f"Found {len(code_interpreter_files)} code interpreter files to migrate")
@@ -991,6 +1231,31 @@ def migrate_agent_state_bucket_for_user(old_id: str, new_id: str, dry_run: bool 
         log(f"Scanning for agent state files with prefix: {old_prefix}")
         
         try:
+            # First check if files already exist in consolidation bucket
+            log(f"Checking for existing agent state files in consolidation bucket with prefix: {new_prefix}")
+            try:
+                existing_paginator = s3_client.get_paginator('list_objects_v2')
+                existing_iterator = existing_paginator.paginate(
+                    Bucket=consolidation_bucket,
+                    Prefix=new_prefix
+                )
+                
+                existing_files = set()
+                for page in existing_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            # Extract file path from consolidation bucket key
+                            file_path = obj['Key'][len(new_prefix):]
+                            existing_files.add(file_path)
+                
+                if existing_files:
+                    log(f"Found {len(existing_files)} agent state files already migrated in consolidation bucket")
+                
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'NoSuchBucket':
+                    log(f"Warning: Could not check consolidation bucket for agent state files: {str(e)}")
+                existing_files = set()
+            
             # Get list of objects with old user prefix
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(
@@ -999,13 +1264,25 @@ def migrate_agent_state_bucket_for_user(old_id: str, new_id: str, dry_run: bool 
             )
             
             agent_state_files = []
+            skipped_files = []
             for page in page_iterator:
                 if 'Contents' in page:
                     for obj in page['Contents']:
-                        agent_state_files.append(obj)
+                        file_path = obj['Key'][len(old_prefix):]
+                        if file_path in existing_files:
+                            skipped_files.append(obj)
+                            log(f"Skipping already migrated agent state file: {file_path}")
+                        else:
+                            agent_state_files.append(obj)
+            
+            if skipped_files:
+                log(f"Skipped {len(skipped_files)} already migrated agent state files")
             
             if not agent_state_files:
-                log(f"No agent state files found for user {old_id}")
+                if skipped_files:
+                    log(f"All agent state files already migrated for user {old_id}")
+                else:
+                    log(f"No agent state files found for user {old_id}")
                 return True
                 
             log(f"Found {len(agent_state_files)} agent state files to migrate")
@@ -1116,20 +1393,57 @@ def migrate_group_assistant_conversations_bucket_for_user(old_id: str, new_id: s
         log(f"Scanning for all group assistant conversation files (migration is assistant-based, not user-specific)")
         
         try:
+            # First check if files already exist in consolidation bucket
+            log(f"Checking for existing group assistant conversation files in consolidation bucket")
+            try:
+                existing_paginator = s3_client.get_paginator('list_objects_v2')
+                existing_iterator = existing_paginator.paginate(
+                    Bucket=consolidation_bucket,
+                    Prefix="agentConversations/"
+                )
+                
+                existing_files = set()
+                for page in existing_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            # Extract original path from consolidation bucket key
+                            if obj['Key'].startswith('agentConversations/'):
+                                original_path = obj['Key'][19:]  # Remove 'agentConversations/' prefix
+                                existing_files.add(original_path)
+                
+                if existing_files:
+                    log(f"Found {len(existing_files)} group assistant conversation files already migrated in consolidation bucket")
+                
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'NoSuchBucket':
+                    log(f"Warning: Could not check consolidation bucket for group conversations: {str(e)}")
+                existing_files = set()
+            
             # Get list of all objects in the bucket (no user-specific prefix)
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(Bucket=group_conversations_bucket)
             
             conversation_files = []
+            skipped_files = []
             for page in page_iterator:
                 if 'Contents' in page:
                     for obj in page['Contents']:
                         # Only include files with astgp/ prefix (group assistant conversations)
                         if obj['Key'].startswith('astgp/'):
-                            conversation_files.append(obj)
+                            if obj['Key'] in existing_files:
+                                skipped_files.append(obj)
+                                log(f"Skipping already migrated group conversation: {obj['Key']}")
+                            else:
+                                conversation_files.append(obj)
+            
+            if skipped_files:
+                log(f"Skipped {len(skipped_files)} already migrated group assistant conversation files")
             
             if not conversation_files:
-                log(f"No group assistant conversation files found")
+                if skipped_files:
+                    log(f"All group assistant conversation files already migrated")
+                else:
+                    log(f"No group assistant conversation files found")
                 return True
                 
             log(f"Found {len(conversation_files)} group assistant conversation files to migrate")

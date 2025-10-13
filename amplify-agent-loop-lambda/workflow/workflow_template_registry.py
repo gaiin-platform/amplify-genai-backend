@@ -140,6 +140,11 @@ def get_workflow_template(
             
             if template is None:
                 raise RuntimeError(f"Workflow template not found in USER_STORAGE_TABLE: {template_id}")
+            
+            # Extract steps from nested structure for USER_STORAGE_TABLE workflows
+            if "data" in template and "steps" in template["data"]:
+                # Flatten the structure - move steps to root level
+                template["steps"] = template["data"]["steps"]
 
         # Combine metadata and template into a single object using camel case
         result = {

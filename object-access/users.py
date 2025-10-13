@@ -206,9 +206,3 @@ def create_or_update_user(event, context):
         print(f"Token error: {str(e)}")
         return {"statusCode": 401, "body": json.dumps({"message": f"Unauthorized: {str(e)}"})}
 
-
-def upgrade_user(event, context):
-    print("Upgrading user")
-    print(event)
-    print(context)
-    pass

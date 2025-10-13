@@ -13,7 +13,7 @@ import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 import AWSXRay from "aws-xray-sdk";
-import {requiredEnvVars, DynamoDBOperation, S3Operation, SQSOperation} from "./common/envVarsTracking.js";
+import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation} from "./common/envVarsTracking.js";
 
 
 const doTrace = process.env.TRACING_ENABLED === 'true';
@@ -254,7 +254,12 @@ export const routeRequest = requiredEnvVars({
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
+    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], //Marked for future deletion
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
+    "LLM_ENDPOINTS_SECRETS_NAME_ARN": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE]
 })(routeRequestCore);
 
 

@@ -41,7 +41,7 @@ pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
 pg_database = os.environ["RAG_POSTGRES_DB_NAME"]
 rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 api_version = os.environ["API_VERSION"]
-object_access_table = os.environ["OBJECT_ACCESS_TABLE"]
+object_access_table = os.environ["OBJECT_ACCESS_DYNAMODB_TABLE"]
 queue_url = os.environ["RAG_CHUNK_DOCUMENT_QUEUE_URL"]
 s3_bucket = os.environ["S3_FILE_TEXT_BUCKET_NAME"]
 sqs = boto3.client("sqs")
@@ -204,7 +204,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
 
     # Initialize a DynamoDB resource using boto3
     dynamodb = boto3.resource("dynamodb")
-    groups_table = os.environ["GROUPS_DYNAMO_TABLE"]
+    groups_table = os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"]
     group_table = dynamodb.Table(groups_table)
     obj_access_table = dynamodb.Table(object_access_table)
     # if user meets the following criteria for a group then all datasources are approved
@@ -448,6 +448,8 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
     ],
     "RAG_CHUNK_DOCUMENT_QUEUE_URL": [SQSOperation.SEND_MESSAGE],
     "RAG_POSTGRES_DB_SECRET": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "LLM_ENDPOINTS_SECRETS_NAME_ARN": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated("dual-retrieval")
 def process_input_with_dual_retrieval(event, context, current_user, name, data):

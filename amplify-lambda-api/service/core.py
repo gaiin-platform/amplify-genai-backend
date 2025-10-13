@@ -28,6 +28,7 @@ add_api_access_types([APIAccessType.API_KEY.value])
 
 s3 = boto3.client("s3")
 consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+api_documentation_bucket_name = os.environ["S3_API_DOCUMENTATION_BUCKET"]  # Legacy bucket for backward compatibility
 dynamodb = boto3.resource("dynamodb")
 api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
 table = dynamodb.Table(api_keys_table_name)
@@ -498,19 +499,39 @@ def get_documentation(event, context, current_user, name, data):
 
 def generate_presigned_url(file):
     s3 = boto3.client("s3")
-    try:
-        return s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": consolidation_bucket_name,
-                "Key": f"apiDocumentation/{file}",
-                "ResponseContentDisposition": f"attachment; filename={file}",
-            },
-            ExpiresIn=7200,  # Expires in 3 hrs
-        )
-    except ClientError as e:
-        print(f"Error generating presigned download URL for file {file}: {e}")
-        return None
+    
+    # BACKWARD COMPATIBILITY: Try consolidation bucket first, then fall back to legacy bucket
+    buckets_to_try = [
+        (consolidation_bucket_name, f"apiDocumentation/{file}"),  # New location
+        (api_documentation_bucket_name, file)  # Legacy location (direct file, no subfolder)
+    ]
+    
+    for bucket_name, key in buckets_to_try:
+        try:
+            # First check if file exists in this bucket/location
+            s3.head_object(Bucket=bucket_name, Key=key)
+            
+            # File exists, generate presigned URL
+            print(f"Found {file} in bucket {bucket_name} at key {key}")
+            return s3.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": bucket_name,
+                    "Key": key,
+                    "ResponseContentDisposition": f"attachment; filename={file}",
+                },
+                ExpiresIn=7200,  # Expires in 2 hrs
+            )
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                print(f"File {file} not found in bucket {bucket_name} at key {key}")
+                continue  # Try next bucket
+            else:
+                print(f"Error checking file {file} in bucket {bucket_name}: {e}")
+                continue  # Try next bucket
+    
+    print(f"File {file} not found in any bucket")
+    return None
 
 
 def formatRateLimit(rateLimit):
@@ -564,62 +585,79 @@ def get_api_doc_presigned_urls(event, context, current_user, name, data):
 
 @required_env_vars({
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
+    "S3_API_DOCUMENTATION_BUCKET": [S3Operation.LIST_BUCKET, S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
 })
 @validated("read")
 def get_api_document_templates(event, context, current_user, name, data):
-    templates_key = "apiDocumentation/Amplify_API_Templates.zip"
+    templates_key_new = "apiDocumentation/Amplify_API_Templates.zip"  # New location
+    templates_key_legacy = "Amplify_API_Templates.zip"  # Legacy location
     filename = "Amplify_API_Templates.zip"
 
+    # BACKWARD COMPATIBILITY: Check both buckets
+    file_exists = False
+    templates_key = None
+    bucket_to_use = None
+
     try:
-        # List objects in the bucket and check if templates file exists
-        response = s3.list_objects_v2(Bucket=consolidation_bucket_name, Prefix=templates_key)
-        file_exists = response.get("Contents") and any(
-            obj["Key"] == templates_key for obj in response.get("Contents", [])
-        )
-
-        if not file_exists:
-            print("templates.zip does not exist in S3. Uploading now...")
-            # Upload from local to S3
-            try:
-
-                file_path = os.path.abspath(
-                    os.path.join(
-                        os.path.dirname(__file__),
-                        "..",
-                        "api_documentation",
-                        "templates",
-                        "Amplify_API_Templates.zip",
-                    )
-                )
-
-                with open(file_path, "rb") as f:
-                    s3.put_object(
-                        Bucket=consolidation_bucket_name,
-                        Key=templates_key,
-                        Body=f,
-                        ContentType="application/zip",  # Content type for a zip file
-                    )
-                print("Succesfully put templates.zip in the s3 bucket")
-            except FileNotFoundError:
-                print("Local templates.zip file not found in the Lambda package")
-                return {
-                    "success": False,
-                    "message": "Local templates.zip file not found in the Lambda package",
-                }
-            except ClientError as e:
-                print(f"Error uploading {templates_key} to S3: {e}")
-                return {
-                    "success": False,
-                    "message": f"Error uploading {templates_key} to S3: {e}",
-                }
+        # First try consolidation bucket (new location)
+        response = s3.list_objects_v2(Bucket=consolidation_bucket_name, Prefix=templates_key_new)
+        if response.get("Contents") and any(obj["Key"] == templates_key_new for obj in response.get("Contents", [])):
+            file_exists = True
+            templates_key = templates_key_new
+            bucket_to_use = consolidation_bucket_name
+            print(f"Found templates in consolidation bucket: {templates_key}")
         else:
-            print("templates.zip exists in S3")
-
+            # Try legacy bucket
+            response = s3.list_objects_v2(Bucket=api_documentation_bucket_name, Prefix=templates_key_legacy)
+            if response.get("Contents") and any(obj["Key"] == templates_key_legacy for obj in response.get("Contents", [])):
+                file_exists = True
+                templates_key = templates_key_legacy
+                bucket_to_use = api_documentation_bucket_name
+                print(f"Found templates in legacy bucket: {templates_key}")
     except ClientError as e:
-        print(f"Error checking for template in S3: {e}")
-        return {"success": False, "message": f"Failed to check for template file: {e}"}
+        print(f"Error checking for templates in buckets: {e}")
+        # Continue to upload logic if needed
 
-    # Now that the file should be in S3, generate the presigned URL
+    if not file_exists:
+        print("templates.zip does not exist in either bucket. Uploading to consolidation bucket...")
+        # Upload from local to consolidation bucket (new location)
+        try:
+            file_path = os.path.abspath(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "api_documentation",
+                    "templates",
+                    "Amplify_API_Templates.zip",
+                )
+            )
+
+            with open(file_path, "rb") as f:
+                s3.put_object(
+                    Bucket=consolidation_bucket_name,
+                    Key=templates_key_new,  # Use new location for uploads
+                    Body=f,
+                    ContentType="application/zip",
+                )
+            print("Successfully put templates.zip in the consolidation bucket")
+            templates_key = templates_key_new
+            bucket_to_use = consolidation_bucket_name
+        except FileNotFoundError:
+            print("Local templates.zip file not found in the Lambda package")
+            return {
+                "success": False,
+                "message": "Local templates.zip file not found in the Lambda package",
+            }
+        except ClientError as e:
+            print(f"Error uploading {templates_key_new} to S3: {e}")
+            return {
+                "success": False,
+                "message": f"Error uploading {templates_key_new} to S3: {e}",
+            }
+    else:
+        print(f"templates.zip exists in S3: {bucket_to_use}/{templates_key}")
+
+    # Generate presigned URL using the backward-compatible function
     presigned_url = generate_presigned_url(filename)
     if presigned_url:
         return {"success": True, "presigned_url": presigned_url}
