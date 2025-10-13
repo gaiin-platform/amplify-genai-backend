@@ -24,10 +24,18 @@ from s3_data_migration import (
     migrate_shares_bucket_for_user,
     migrate_code_interpreter_files_bucket_for_user,
     migrate_agent_state_bucket_for_user,
-    migrate_group_assistant_conversations_bucket_for_user
+    migrate_group_assistant_conversations_bucket_for_user,
+    main as s3_migration_main
 )
+from user_storage_backup import backup_user_storage_table
 
 dynamodb = boto3.resource("dynamodb")
+
+# Import USER_STORAGE_TABLE functions
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'amplify-lambda'))
+from data.user import CommonData
 
 
 def paginated_query(table_name: str, key_name: str, value: str, index_name: str = None):
@@ -92,6 +100,16 @@ def parse_args():
     )
     parser.add_argument(
         "--log", required=True, help="Log output to the specified file."
+    )
+    parser.add_argument(
+        "--old-table", 
+        default="amplify-v6-lambda-basic-ops-dev-user-storage",
+        help="Source user storage table name (default: amplify-v6-lambda-basic-ops-dev-user-storage)"
+    )
+    parser.add_argument(
+        "--new-table", 
+        default="amplify-v6-lambda-dev-user-data-storage",
+        help="Target user storage table name (default: amplify-v6-lambda-dev-user-data-storage)"
     )
     return parser.parse_args()
 
@@ -1156,9 +1174,7 @@ def update_user_tags_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 
 ### AGENT LOOP TABLES ###
-# "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-states"   *LESS IMPORTANT*
-# NOTE Previously named "amplify-v6-agent-loop-dev-agent-state" and
-# renamed to "amplify-v6-agent-loop-dev-agent-states"
+# "AGENT_STATE_DYNAMODB_TABLE": "amplify-v6-agent-loop-dev-agent-state"   *LESS IMPORTANT*
 # "AGENT_STATE_BUCKET": "amplify-v6-agent-loop-dev-agent-state" #Marked for deletion
 def update_agent_state_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     """Update all agent state records associated with the old user ID to the new user ID."""
@@ -1860,6 +1876,331 @@ def update_user_storage_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         return False
 
 
+# "MEMORY_DYNAMO_TABLE": "amplify-v6-memory-dev-memory",
+def update_memory_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all memory records associated with the old user ID to the new user ID."""
+    msg = f"[update_memory_table][dry-run: {dry_run}] %s"
+    table = table_names.get("MEMORY_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table MEMORY_DYNAMO_TABLE not found, skipping")
+        return True
+
+    try:
+        memory_table = dynamodb.Table(table)
+        log(msg % f"Processing table {table}")
+
+        # Query using UserIndex GSI to find all memories for this user
+        items_updated = 0
+        for item in paginated_query(table, "user", old_id, "UserIndex"):
+            memory_id = item.get("id")
+            current_user = item.get("user")
+            
+            if current_user == old_id:
+                log(msg % f"Found memory record with old user ID. Memory ID: {memory_id}")
+                
+                if dry_run:
+                    log(msg % f"Would update memory {memory_id} from user '{old_id}' to '{new_id}'")
+                    items_updated += 1
+                else:
+                    # Update the user field for this memory
+                    try:
+                        memory_table.update_item(
+                            Key={"id": memory_id},
+                            UpdateExpression="SET #user = :new_user",
+                            ExpressionAttributeNames={"#user": "user"},
+                            ExpressionAttributeValues={":new_user": new_id}
+                        )
+                        log(msg % f"Updated memory {memory_id} from user '{old_id}' to '{new_id}'")
+                        items_updated += 1
+                    except Exception as e:
+                        log(msg % f"Failed to update memory {memory_id}: {str(e)}")
+                        return False
+
+        log(msg % f"Processed {items_updated} memory records for user {old_id}")
+        return True
+
+    except Exception as e:
+        log(msg % f"Error processing memory table {table}: {str(e)}")
+        return False
+
+def ensure_user_storage_migration(dry_run: bool, old_table: str, new_table: str) -> bool:
+    """
+    Ensure user storage table migration from basic-ops to amplify-lambda.
+    
+    Steps:
+    1. Check if backup CSV exists, if not create it
+    2. Check if new table exists (user-data-storage suffix)  
+    3. If new table exists, migrate data from CSV
+    """
+    msg = f"[ensure_user_storage_migration][dry-run: {dry_run}] %s"
+    
+    # Backup CSV filename
+    backup_csv = "user_storage_backup.csv"
+    
+    log(msg % f"Checking user storage migration status...")
+    
+    try:
+        # Check if backup CSV exists
+        import os
+        if not os.path.exists(backup_csv):
+            log(msg % f"Backup CSV {backup_csv} not found. Creating backup...")
+            
+            if dry_run:
+                log(msg % f"[DRY RUN] Would create backup of {old_table}")
+                return True
+            else:
+                # Create backup
+                backup_file, item_count = backup_user_storage_table(old_table)
+                if not backup_file:
+                    log(msg % f"Failed to create backup of {old_table}")
+                    return False
+                
+                # Rename to expected filename
+                os.rename(backup_file, backup_csv)
+                log(msg % f"Created backup: {backup_csv} with {item_count} items")
+        else:
+            log(msg % f"Backup CSV {backup_csv} already exists")
+        
+        # Check if new table exists
+        dynamodb_client = boto3.client('dynamodb')
+        try:
+            dynamodb_client.describe_table(TableName=new_table)
+            log(msg % f"New table {new_table} exists, migrating data...")
+            
+            if dry_run:
+                log(msg % f"[DRY RUN] Would migrate data from {backup_csv} to {new_table}")
+                return True
+            else:
+                # Import data to new table
+                success = import_user_storage_from_csv(backup_csv, new_table)
+                if success:
+                    log(msg % f"Successfully migrated user storage data to {new_table}")
+                    return True
+                else:
+                    log(msg % f"Failed to migrate user storage data to {new_table}")
+                    return False
+                    
+        except dynamodb_client.exceptions.ResourceNotFoundException:
+            log(msg % f"New table {new_table} does not exist yet. Migration will occur after deployment.")
+            return True
+            
+    except Exception as e:
+        log(msg % f"Error during user storage migration check: {e}")
+        return False
+
+
+def import_user_storage_from_csv(csv_file: str, table_name: str) -> bool:
+    """Import user storage data from CSV to new DynamoDB table."""
+    
+    try:
+        import csv
+        import json
+        
+        dynamodb_client = boto3.client('dynamodb')
+        
+        items = []
+        with open(csv_file, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            
+            for row in reader:
+                # Convert CSV row back to DynamoDB format
+                item = {}
+                
+                for key, value in row.items():
+                    if key == '_backup_timestamp' or not value.strip():
+                        continue
+                        
+                    # Convert based on field patterns
+                    if key in ['createdAt', 'updatedAt'] and value.isdigit():
+                        item[key] = {'N': value}
+                    elif key == 'data' and value.startswith('{'):
+                        # JSON data field
+                        try:
+                            parsed_data = json.loads(value)
+                            item[key] = convert_dict_to_dynamodb_map(parsed_data)
+                        except:
+                            item[key] = {'S': value}
+                    else:
+                        item[key] = {'S': value}
+                
+                if item:
+                    items.append(item)
+        
+        # Batch write items
+        batch_size = 25
+        for i in range(0, len(items), batch_size):
+            batch = items[i:i + batch_size]
+            
+            request_items = {
+                table_name: [
+                    {"PutRequest": {"Item": item}} for item in batch
+                ]
+            }
+            
+            dynamodb_client.batch_write_item(RequestItems=request_items)
+        
+        print(f"Imported {len(items)} items to {table_name}")
+        return True
+        
+    except Exception as e:
+        print(f"Error importing user storage data: {e}")
+        return False
+
+
+def convert_dict_to_dynamodb_map(obj):
+    """Convert Python dict to DynamoDB Map format."""
+    if isinstance(obj, dict):
+        dynamodb_map = {}
+        for k, v in obj.items():
+            dynamodb_map[k] = convert_dict_to_dynamodb_map(v)
+        return {'M': dynamodb_map}
+    elif isinstance(obj, list):
+        return {'L': [convert_dict_to_dynamodb_map(item) for item in obj]}
+    elif isinstance(obj, str):
+        return {'S': obj}
+    elif isinstance(obj, (int, float)):
+        return {'N': str(obj)}
+    elif isinstance(obj, bool):
+        return {'BOOL': obj}
+    elif obj is None:
+        return {'NULL': True}
+    else:
+        return {'S': str(obj)}
+
+
+def migrate_shares_to_user_storage_table(dry_run: bool) -> bool:
+    """
+    Migrate SHARES_DYNAMODB_TABLE data to USER_STORAGE_TABLE.
+    
+    Transform schema from legacy shares format to:
+    - PK: "{user_id}#amplify-shares#received"  
+    - SK: "{sharer_id}#{date}#{uuid}"
+    - data: share metadata (sharedBy, note, sharedAt, key)
+    """
+    msg = f"[migrate_shares_to_user_storage_table][dry-run: {dry_run}] %s"
+    shares_table_name = table_names.get("SHARES_DYNAMODB_TABLE")
+    
+    if not shares_table_name:
+        log(msg % "SHARES_DYNAMODB_TABLE not found in config, skipping migration")
+        return True
+    
+    try:
+        shares_table = dynamodb.Table(shares_table_name)
+        migrated_count = 0
+        
+        # Scan the entire SHARES_DYNAMODB_TABLE
+        log(msg % f"Starting migration from {shares_table_name}")
+        
+        paginator = shares_table.scan()
+        while True:
+            for item in paginator.get('Items', []):
+                user_id = item.get('user')
+                share_name = item.get('name')  # Usually '/state/share'
+                share_data_array = item.get('data', [])
+                
+                if not user_id or not isinstance(share_data_array, list):
+                    log(msg % f"Skipping invalid share record: {item}")
+                    continue
+                
+                log(msg % f"Processing shares for user {user_id}, found {len(share_data_array)} shares")
+                
+                # Process each share in the data array
+                for share_entry in share_data_array:
+                    try:
+                        # Extract share metadata
+                        shared_by = share_entry.get('sharedBy', '')
+                        shared_at = share_entry.get('sharedAt', 0)
+                        note = share_entry.get('note', '')
+                        key = share_entry.get('key', '')
+                        
+                        if not shared_by or not key:
+                            log(msg % f"Skipping share entry missing required fields: {share_entry}")
+                            continue
+                        
+                        # Generate new schema components
+                        # Extract date from timestamp or use current date
+                        if shared_at:
+                            try:
+                                from datetime import datetime
+                                dt_obj = datetime.fromtimestamp(shared_at / 1000)  # Convert ms to seconds
+                                date_str = dt_obj.strftime("%Y-%m-%d")
+                            except:
+                                date_str = datetime.now().strftime("%Y-%m-%d")
+                        else:
+                            date_str = datetime.now().strftime("%Y-%m-%d")
+                        
+                        # Generate unique share ID: "{sharer_id}#{date}#{uuid}"
+                        import uuid as uuid_lib
+                        share_id = f"{shared_by}#{date_str}#{str(uuid_lib.uuid4())}"
+                        
+                        # Prepare USER_STORAGE_TABLE data
+                        user_storage_data = {
+                            "sharedBy": shared_by,
+                            "note": note,
+                            "sharedAt": shared_at,
+                            "key": key
+                        }
+                        
+                        if dry_run:
+                            log(msg % f"Would migrate share: user={user_id}, sharer={shared_by}, key={key}")
+                        else:
+                            # Use CommonData to store in USER_STORAGE_TABLE
+                            try:
+                                common_data = CommonData()
+                                result = common_data.put_item(
+                                    user_id=user_id,
+                                    app_id="amplify-shares",
+                                    entity_type="received",
+                                    item_id=share_id,
+                                    data=user_storage_data
+                                )
+                                
+                                if result:
+                                    log(msg % f"Successfully migrated share: user={user_id}, sharer={shared_by}")
+                                    migrated_count += 1
+                                else:
+                                    log(msg % f"Failed to migrate share for user {user_id}, sharer {shared_by}")
+                                    return False
+                                    
+                            except Exception as e:
+                                log(msg % f"Error migrating share for user {user_id}: {e}")
+                                return False
+                        
+                    except Exception as e:
+                        log(msg % f"Error processing share entry {share_entry}: {e}")
+                        continue
+                
+                # After successful migration of all shares for this user, delete the legacy record
+                if not dry_run and share_data_array:
+                    try:
+                        shares_table.delete_item(
+                            Key={
+                                'user': user_id,
+                                'name': share_name
+                            }
+                        )
+                        log(msg % f"Deleted legacy share record for user {user_id}")
+                    except Exception as e:
+                        log(msg % f"Error deleting legacy share record for user {user_id}: {e}")
+                        # Don't fail the migration for delete errors
+            
+            # Check for more pages
+            if 'LastEvaluatedKey' not in paginator:
+                break
+            paginator = shares_table.scan(ExclusiveStartKey=paginator['LastEvaluatedKey'])
+        
+        if dry_run:
+            log(msg % f"Migration dry run completed. Would migrate shares data to USER_STORAGE_TABLE")
+        else:
+            log(msg % f"Migration completed successfully. Migrated {migrated_count} shares to USER_STORAGE_TABLE")
+        
+        return True
+        
+    except Exception as e:
+        log(msg % f"Error during shares migration: {e}")
+        return False
+
+
 
 ### VERY MUCH LESS IMPORTANT TABLES ###
 # "AMPLIFY_ADMIN_LOGS_DYNAMODB_TABLE" : "amplify-v6-admin-dev-admin-logs",
@@ -1887,6 +2228,20 @@ if __name__ == "__main__":
         sys.stdout = logfile
         sys.stderr = logfile
         log(f"Starting user ID migration. Dry run: {args.dry_run}")
+        
+        # Step 1: Ensure user storage table migration from basic-ops to amplify-lambda
+        log(f"\n=== USER STORAGE TABLE MIGRATION ===")
+        if not ensure_user_storage_migration(args.dry_run, args.old_table, args.new_table):
+            log(f"User storage migration check failed. Continuing with user ID migration...")
+        else:
+            log(f"User storage migration check completed successfully.")
+        
+        # Step 1.5: Migrate SHARES_DYNAMODB_TABLE to USER_STORAGE_TABLE
+        log(f"\n=== SHARES TABLE CONSOLIDATION ===")
+        if not migrate_shares_to_user_storage_table(args.dry_run):
+            log(f"Shares table migration failed. Continuing with user ID migration...")
+        else:
+            log(f"Shares table migration completed successfully.")
 
         # loop through our users
         for u in get_users_from_csv(args.csv_file).items():
@@ -1986,6 +2341,67 @@ if __name__ == "__main__":
                 log(
                     f"Unable to update assistant threads records for {old_user_id}. This is assumed reasonable as not all users have assistant threads records."
                 )
+
+            if not update_memory_table(old_user_id, new_user_id, args.dry_run):
+                log(
+                    f"Unable to update memory records for {old_user_id}. This is assumed reasonable as not all users have memory records."
+                )
+        
+        # Step 2: Ask user if they want to run S3 bucket migration
+        log(f"\n=== S3 BUCKET MIGRATION ===")
+        
+        if not args.dry_run:
+            # Restore stdout temporarily to ask user for input
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
+            
+            print("\n" + "="*60)
+            print("USER ID MIGRATION COMPLETED")
+            print("="*60)
+            print("\nNext step: S3 Bucket Migration")
+            print("This will migrate data from legacy S3 buckets to consolidation bucket.")
+            print("This includes:")
+            print("- Data disclosure files")
+            print("- API documentation")
+            print("- Group assistant conversations (not user-specific)")
+            print("\nWARNING: Ensure environment variables are set for S3 migration!")
+            
+            response = input("\nDo you want to run the S3 bucket migration now? (yes/no): ").lower().strip()
+            
+            # Restore file logging
+            sys.stdout = logfile
+            sys.stderr = logfile
+            
+            if response in ['yes', 'y']:
+                log(f"User confirmed S3 bucket migration. Starting...")
+                try:
+                    # Run S3 migration with same dry_run setting
+                    import sys as sys_module
+                    original_argv = sys_module.argv
+                    
+                    # Set up argv for s3_migration_main
+                    sys_module.argv = ['s3_data_migration.py', '--bucket', 'all']
+                    if args.dry_run:
+                        sys_module.argv.append('--dry-run')
+                    
+                    # Call S3 migration main function
+                    s3_success = s3_migration_main()
+                    
+                    # Restore original argv
+                    sys_module.argv = original_argv
+                    
+                    if s3_success:
+                        log(f"S3 bucket migration completed successfully!")
+                    else:
+                        log(f"S3 bucket migration failed!")
+                        
+                except Exception as s3_error:
+                    log(f"Error running S3 migration: {s3_error}")
+                    
+            else:
+                log(f"User declined S3 bucket migration. Run manually: python3 s3_data_migration.py --bucket all")
+        else:
+            log(f"[DRY RUN] S3 bucket migration would be offered to user after real migration")
 
     except Exception as e:
         log(f"Error processing users: {e}")

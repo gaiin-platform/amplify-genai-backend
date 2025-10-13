@@ -117,7 +117,7 @@ class TasksMessageHandler(MessageHandler):
                     "source": source,
                 },
                 execution_id=session_id,
-                api_key
+                access_token=api_key
             )
 
             return event_payload
@@ -500,6 +500,10 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
     s3 = boto3.client("s3")
+    
+    # Initialize deserializer and serializer early
+    deserializer = TypeDeserializer()
+    serializer = TypeSerializer()
 
     try:
         # First, check if the task exists and belongs to the user
@@ -1019,7 +1023,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
                 "source": task_source,
             },
             execution_id=session_id,
-            task["apiKey"],
+            access_token=task["apiKey"]
         )
     return {"successful": successful, "failed": failed}
 

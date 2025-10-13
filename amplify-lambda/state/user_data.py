@@ -88,8 +88,9 @@ def common_handler(operation, func_schema, **optional_params):
 
             print("Invoking operation")
             response = operation(**args)
-
-            return {"success": True, "data": response}
+            success = response.get("success", True)
+            print(f"Returning response success: {success}")
+            return {"success": success, "data": response}
         except Exception as e:
             import traceback
 

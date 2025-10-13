@@ -24,6 +24,7 @@ async function uploadToS3(assistantId, conversationId, content) {
     const consolidationKey = `agentConversations/${assistantId}/${conversationId}.txt`;
     const legacyKey = `${assistantId}/${conversationId}.txt`;
 
+
     try {
         let existingContent = null;
         let foundInConsolidation = false;
@@ -147,7 +148,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const modelUsed = data.model.id;
     const advancedModel = data.advancedModel;
     const numberPrompts = data.numberPrompts || 0; // Use the numberPrompts from options, default to 0 if not set
-    console.log(`!!!!!! Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
+    console.log(`Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
     const employeeType = data.groupType;
     const entryPoint = data.source || "Amplify";
 

@@ -119,7 +119,7 @@ set_route_data(route_data)
 set_op_type("integration")
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation
+    DynamoDBOperation, SecretsManagerOperation
 )
 from pycommon.authz import validated
 
@@ -232,6 +232,7 @@ def common_handler(operation, *required_params, **optional_params):
 
 @required_env_vars({
     "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "OAUTH_ENCRYPTION_PARAMETER": [SecretsManagerOperation.GET_SECRET_VALUE],
 })
 @validated("route", False)
 def route_request(event, context, current_user, name, data):

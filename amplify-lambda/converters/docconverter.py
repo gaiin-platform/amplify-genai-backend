@@ -70,6 +70,9 @@ def parse_s3_key(s3_key):
 })
 @validated("convert")
 def submit_conversion_job(event, context, user, name, data):
+    # URL decode the user parameter to ensure consistent key format
+    from urllib.parse import unquote
+    user = unquote(user)
     print(f"User {user} submitted conversion job")
     consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
@@ -141,6 +144,7 @@ date: {formatted_date}
 
     s3_output_key = f"conversion/output/{user}/{unique_uuid}.{fmat}"
 
+    print(f"Creating presigned URL for user: '{user}' (decoded)")
     print(f"Returning presigned URL for key: {s3_output_key} and bucket: {consolidation_bucket_name}")
 
     presigned_url = s3_client.generate_presigned_url(
@@ -219,6 +223,15 @@ def get_template_from_s3(user: str, unique_uuid: str):
 def handler(event, context):
 
     consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    
+    # Check if this is not a document conversion file
+    for record in event["Records"]:
+        key = unquote(record["s3"]["object"]["key"])
+        
+        # Only process files in conversion/input/ prefix
+        if not key.startswith("conversion/input/"):
+            print(f"Skipping non-conversion file: {key}")
+            return
 
     supported_mime_types = {
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -256,7 +269,7 @@ def handler(event, context):
         # Extract user path from consolidation bucket format
         # Consolidation bucket keys: conversion/input/{user}/{uuid}-to-{format}.md
         if not key.startswith("conversion/input/"):
-            print(f"Unexpected key format: {key}, expected conversion/input/ prefix")
+            print(f"Unexpected key format for document conversion: {key}, expected conversion/input/ prefix")
             return
 
         user_path = key[len("conversion/input/"):]
@@ -281,7 +294,7 @@ def handler(event, context):
 
         if template_name and template_name != "":
             try:
-                template_key = f"powerPointTemplates/{template_name}"
+                template_key = f"conversion/templates/{template_name}"
                 suffix = template_key.rsplit(".", 1)[1]
                 print(f"template_key: {template_key}, suffix: {suffix}")
                 template_file = tempfile.NamedTemporaryFile(
@@ -317,7 +330,9 @@ def handler(event, context):
         print("converted", input_bucket, key, "to", output_file.name)
 
         output_key = f"conversion/output/{email}/{uuid}.{fmat}"
-
+        
+        print(f"Handler parsed email: '{email}' from key: '{key}'")
+        print(f"Handler saving file to output key: '{output_key}'")
         print("uploading", consolidation_bucket_name, output_key, "using", output_file.name)
 
         upload_file_to_s3(consolidation_bucket_name, output_key, output_file.name, mime_type)

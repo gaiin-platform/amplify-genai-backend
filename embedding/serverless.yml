@@ -1,4 +1,4 @@
-service: amplify-${self:custom.stageVars.DEP_NAME}-embedding
+service: amplify-${self:custom.depName}-embedding
 
 frameworkVersion: '3'
 
@@ -21,8 +21,11 @@ custom:
     slim: false
 
 
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
+  depName: ${self:custom.stageVars.DEP_NAME}
+
   cf-changesets:
-    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
     
 
   prune:
@@ -30,14 +33,14 @@ custom:
     includeLayers: true
     number: 5
 
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
+ 
   stages:
     - dev
     - staging
     - prod
 
   # Base paths for Parameter Store
-  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.stageVars.DEP_NAME}
+  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
   deploymentBucket:
     versioning: true
@@ -65,20 +68,20 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
   environment:
-    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    CHANGE_SET_BOOLEAN: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
 
-    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
-    API_VERSION: ${self:custom.stageVars.API_VERSION}
-    APP_ARN_NAME: ${sls:stage}-amplify-app-vars
-    COGNITO_USER_POOL_ID: ${self:custom.stageVars.COGNITO_USER_POOL_ID}
-    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    MAX_ACU: ${self:custom.stageVars.MAX_ACU}
-    MIN_ACU: ${self:custom.stageVars.MIN_ACU}
-    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
-    PRIVATE_SUBNET_ONE: ${self:custom.stageVars.PRIVATE_SUBNET_ONE}
-    PRIVATE_SUBNET_TWO: ${self:custom.stageVars.PRIVATE_SUBNET_TWO}
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
+    API_VERSION: ${ssm:/amplify/${sls:stage}/shared/API_VERSION}
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/APP_ARN_NAME}
+    COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/shared/COGNITO_USER_POOL_ID}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    MAX_ACU: ${ssm:/amplify/${sls:stage}/shared/MAX_ACU}
+    MIN_ACU: ${ssm:/amplify/${sls:stage}/shared/MIN_ACU}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/shared/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/shared/OAUTH_ISSUER_BASE_URL}
+    PRIVATE_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/shared/PRIVATE_SUBNET_ONE}
+    PRIVATE_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/shared/PRIVATE_SUBNET_TWO}
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
     RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
@@ -87,8 +90,8 @@ provider:
     REGION: ${self:provider.region}
     STAGE: ${sls:stage}
     SERVICE_NAME: ${self:service}
-    VPC_CIDR: ${self:custom.stageVars.VPC_CIDR}
-    VPC_ID: ${self:custom.stageVars.VPC_ID}
+    VPC_CIDR: ${ssm:/amplify/${sls:stage}/shared/VPC_CIDR}
+    VPC_ID: ${ssm:/amplify/${sls:stage}/shared/VPC_ID}
     # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
 
@@ -97,23 +100,7 @@ provider:
     EMBEDDING_PROGRESS_TABLE: ${self:service}-${sls:stage}-embedding-progress
     RAG_POSTGRES_DB_CLUSTER: ${sls:stage}-${self:service}-rag-cluster
 
-    # Imported Variables
-    # ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
-    # AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
-    # API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
-    # CHAT_USAGE_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-chat-usage
-    # COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
-    # ASSISTANT_GROUPS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-amplify-groups
-    # HASH_FILES_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-hash-files
-    # MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
-    # OBJECT_ACCESS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-object-access
-    # OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
-    # S3_FILE_TEXT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-file-text
-    # S3_IMAGE_INPUT_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-image-input
-    # S3_RAG_CHUNKS_BUCKET_NAME: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-chunks
-    # ENV_VARS_TRACKING_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-env-vars-tracking
-
-    # Parameter Store Version
+    # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
@@ -155,7 +142,7 @@ functions:
       RAG_POSTGRES_DB_NAME: ${self:provider.environment.RAG_POSTGRES_DB_NAME} #RagVectorDb_${sls:stage}
       RAG_POSTGRES_DB_USERNAME: ${self:provider.environment.RAG_POSTGRES_DB_USERNAME} #ragadmin_${sls:stage}
       RAG_POSTGRES_DB_WRITE_ENDPOINT: ${self:provider.environment.RAG_POSTGRES_DB_WRITE_ENDPOINT} #!GetAtt RagPostgresDbCluster.Endpoint.Address          
-      OPS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-ops-${sls:stage}-ops
+      OPS_DYNAMODB_TABLE: amplify-${self:custom.depName}-lambda-ops-${sls:stage}-ops
 
 
   process_chunk_for_embedding:
@@ -180,9 +167,9 @@ functions:
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-        LLM_ENDPOINTS_SECRETS_NAME_ARN: ${self:custom.stageVars.LLM_ENDPOINTS_SECRETS_NAME_ARN}
-        MODEL_RATE_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-chat-billing-${sls:stage}-model-rates
-        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-admin-${sls:stage}-admin-configs
+        LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+        MODEL_RATE_TABLE: amplify-${self:custom.depName}-chat-billing-${sls:stage}-model-rates
+        AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.depName}-admin-${sls:stage}-admin-configs
         API_VERSION: ${self:provider.environment.API_VERSION}
         EMBEDDING_CHUNKS_INDEX_QUEUE: !ImportValue "${sls:stage}-EmbeddingChunksIndexQueueUrl"
         REGION: ${self:provider.region}
@@ -347,8 +334,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ASSISTANT_LOOKUP_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:service}-${sls:stage}-embedding-progress"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-queue"
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-embedding-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-queue"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-embedding-${sls:stage}-embedding-chunks-index-dlq"
                 - "arn:aws:bedrock:*:*:foundation-model/*"
                 - "arn:aws:bedrock:*:*:inference-profile/*"
                 - 'arn:aws:secretsmanager:us-east-1:*:secret:${self:provider.environment.APP_ARN_NAME}*'
@@ -360,7 +347,7 @@ resources:
               Action:
                 - sqs:SendMessage
               Resource:
-                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-rag-document-chunk-queue"
+                - "arn:aws:sqs:${aws:region}:*:amplify-${self:custom.depName}-lambda-${sls:stage}-rag-document-chunk-queue"
             - Effect: Allow
               Action:
                 - ssm:GetParameter

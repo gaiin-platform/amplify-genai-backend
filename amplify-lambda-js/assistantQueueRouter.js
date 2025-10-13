@@ -123,21 +123,11 @@ export const handler = withEnvVarsTracking({
     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
     "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], //Marked for future deletion
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
     "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
     
     // Secrets Manager - require IAM permissions (via routeRequest)
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE]
-    
-    // Configuration-only variables (no AWS permissions needed):
-    // "COGNITO_USER_POOL_ID": [], // Used for JWT verification only
-    // "COGNITO_CLIENT_ID": [], // Used for JWT verification only
-    // "IDP_PREFIX": [], // String processing only
-    // "API_BASE_URL": [], // HTTP requests to other services
-    // "SERVICE_NAME": [], // Tracking metadata only
-    // "STAGE": [], // Tracking metadata only
-    // "TRACING_ENABLED": [], // Boolean flag only
-    // "DEP_REGION": [], // Region string for AWS SDK
-    // "BEDROCK_GUARDRAIL_ID": [], // Config passed to Bedrock calls
-    // "BEDROCK_GUARDRAIL_VERSION": [], // Config passed to Bedrock calls
+
 }, assistantQueueHandler);

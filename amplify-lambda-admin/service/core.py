@@ -351,6 +351,7 @@ def update_pptx_data(pptx_type, update_data):
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.LIST_BUCKET],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.LIST_BUCKET], #Marked for deletion
     "APP_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
@@ -479,33 +480,46 @@ def initialize_config(config_type):
         item["data"] = transformed_flags
 
     elif config_type == AdminConfigTypes.PPTX_TEMPLATES:
-        # Initialize PPTX_TEMPLATES
+        # Initialize PPTX_TEMPLATES - BACKWARD COMPATIBLE: Check both buckets
         consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
         s3_client = boto3.client("s3")
 
-        try:
-            # List objects in the 'powerPointTemplates/' prefix
-            paginator = s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=consolidation_bucket_name, Prefix="powerPointTemplates/")
+        templates = []
+        template_names_seen = set()  # Prevent duplicates across buckets
 
-            templates = []
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.endswith("/"):  # Skip folders
-                        continue
-                    # Remove 'powerPointTemplates/' prefix to get the name
-                    name = key[len("powerPointTemplates/") :]
-                    if name:
-                        templates.append(
-                            {"name": name, "isAvailable": False, "amplifyGroups": []}
-                        )
+        # Check both buckets for templates
+        buckets_to_check = [
+            (consolidation_bucket_name, "powerPointTemplates/"),  # New location
+            (legacy_bucket_name, "conversion/templates/"),         # Legacy location
+        ]
 
-            item["data"] = templates
+        for bucket_name, prefix in buckets_to_check:
+            try:
+                # List objects in the bucket with prefix
+                paginator = s3_client.get_paginator("list_objects_v2")
+                pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-        except Exception as e:
-            item["data"] = []
-            print(f"Error listing PPTX templates from S3: {str(e)}")
+                for page in pages:
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith("/"):  # Skip folders
+                            continue
+                        # Remove prefix to get the name
+                        name = key[len(prefix):]
+                        if name and name.endswith(".pptx") and name not in template_names_seen:
+                            template_names_seen.add(name)
+                            templates.append(
+                                {"name": name, "isAvailable": False, "amplifyGroups": []}
+                            )
+                            print(f"Found PPTX template: {name} in bucket {bucket_name}")
+
+            except Exception as e:
+                print(f"Error listing PPTX templates from bucket {bucket_name}: {str(e)}")
+                continue  # Try next bucket
+
+        item["data"] = templates
+        print(f"Initialized {len(templates)} PPTX templates from both buckets")
 
     elif config_type == AdminConfigTypes.AMPLIFY_GROUPS:
         item["data"] = (
@@ -708,6 +722,7 @@ def get_pptx_for_users(event, context, current_user, name, data):
 @required_env_vars({
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
+    "S3_CONVERSION_OUTPUT_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
 })
 @validated(op="delete")
 def delete_pptx_by_admin(event, context, current_user, name, data):
@@ -757,15 +772,38 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
             }
         )
 
-        #  Delete the PPTX File from S3
-        pptx_key = f"powerPointTemplates/{template_name}"
-        try:
-            s3_client.delete_object(Bucket=consolidation_bucket_name, Key=pptx_key)
-        except Exception as e:
-            print(f"Error deleting PPTX file from S3: {str(e)}")
+        # BACKWARD COMPATIBLE: Delete the PPTX File from S3 (check both buckets)
+        legacy_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
+        
+        # Try to delete from both buckets (file might exist in either)
+        buckets_to_try = [
+            (consolidation_bucket_name, f"powerPointTemplates/{template_name}", "consolidation"),
+            (legacy_bucket_name, f"conversion/templates/{template_name}", "legacy")
+        ]
+        
+        deleted_from_bucket = None
+        for bucket_name, pptx_key, bucket_type in buckets_to_try:
+            try:
+                # First check if file exists in this bucket
+                s3_client.head_object(Bucket=bucket_name, Key=pptx_key)
+                # File exists, delete it
+                s3_client.delete_object(Bucket=bucket_name, Key=pptx_key)
+                deleted_from_bucket = bucket_type
+                print(f"Deleted PPTX template from {bucket_type} bucket: {template_name}")
+                break  # Successfully deleted, don't try other bucket
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    print(f"Template not found in {bucket_type} bucket: {template_name}")
+                    continue  # Try next bucket
+                else:
+                    print(f"Error checking/deleting PPTX from {bucket_type} bucket: {str(e)}")
+                    continue  # Try next bucket
+        
+        if not deleted_from_bucket:
+            print(f"Template {template_name} not found in any bucket")
             return {
                 "success": False,
-                "message": f"Error deleting PPTX file from S3: {str(e)}",
+                "message": f"Template {template_name} not found in any S3 bucket",
             }
 
         return {

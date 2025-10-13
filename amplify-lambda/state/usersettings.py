@@ -15,7 +15,7 @@ from state.user_data import handle_get_item, handle_put_item
 
 setup_validated(rules, get_permission_checker)
 
-tableName = os.environ["SHARES_DYNAMODB_TABLE"]
+tableName = os.environ["SHARES_DYNAMODB_TABLE"] #Marked for future deletion
 dynamodb = boto3.resource("dynamodb")
 users_table = dynamodb.Table(tableName)
 
@@ -24,7 +24,7 @@ def get_app_id(current_user: str) -> str:
 
 
 @required_env_vars({
-    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.SCAN],
+    "SHARES_DYNAMODB_TABLE": [DynamoDBOperation.SCAN], #Marked for future deletion
 })
 @validated("get")
 def get_settings(event, context, current_user, name, data):
