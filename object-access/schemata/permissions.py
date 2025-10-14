@@ -60,6 +60,7 @@ permissions_by_state_type = {
     "/utilities/simulate_access_to_objects": {
         "simulate_access_to_objects": can_get_permissions
     },
+    "/utilities/validate_users": {"validate_users": can_get_permissions},
     "/utilities/create_cognito_group": {"create_cognito_group": can_create},
     "/utilities/get_user_groups": {"read": can_read},
     "/utilities/in_cognito_amp_groups": {"in_group": can_read},
