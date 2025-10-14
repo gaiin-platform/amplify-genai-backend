@@ -301,12 +301,12 @@ def format_table_row(row: Dict) -> Dict:
 
 
 def get_worksheet(
-    current_user: str, item_id: str, worksheet_id: str, access_token: str
+    current_user: str, item_id: str, worksheet_name: str, access_token: str
 ) -> Dict:
     """Retrieves details of a specific worksheet."""
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}"
         response = session.get(url)
         if not response.ok:
             handle_graph_error(response)
@@ -332,15 +332,15 @@ def create_worksheet(
 
 
 def delete_worksheet(
-    current_user: str, item_id: str, worksheet_id: str, access_token: str
+    current_user: str, item_id: str, worksheet_name: str, access_token: str
 ) -> Dict:
     """Deletes a worksheet from the workbook."""
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}"
         response = session.delete(url)
         if response.status_code == 204:
-            return {"status": "deleted", "worksheet_id": worksheet_id}
+            return {"status": "deleted", "worksheet_name": worksheet_name}
         handle_graph_error(response)
     except requests.RequestException as e:
         raise ExcelError(f"Network error while deleting worksheet: {str(e)}")
@@ -349,7 +349,7 @@ def delete_worksheet(
 def create_table(
     current_user: str,
     item_id: str,
-    worksheet_id: str,
+    worksheet_name: str,
     address: str,
     has_headers: bool = True,
     access_token: str = None,
@@ -358,7 +358,7 @@ def create_table(
 
     Args:
         item_id: OneDrive item ID of the workbook.
-        worksheet_id: Worksheet identifier.
+        worksheet_name: Worksheet name.
         address: Range address for the table (e.g., 'A1:D4').
         has_headers: Specifies if the table has headers.
 
@@ -367,7 +367,7 @@ def create_table(
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}/tables/add"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}/tables/add"
         body = {"address": address, "hasHeaders": has_headers}
         response = session.post(url, json=body)
         if not response.ok:
@@ -408,12 +408,12 @@ def get_table_range(
 
 
 def list_charts(
-    current_user: str, item_id: str, worksheet_id: str, access_token: str
+    current_user: str, item_id: str, worksheet_name: str, access_token: str
 ) -> List[Dict]:
     """Lists all charts in a specified worksheet."""
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}/charts"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}/charts"
         response = session.get(url)
         if not response.ok:
             handle_graph_error(response)
@@ -423,12 +423,12 @@ def list_charts(
 
 
 def get_chart(
-    current_user: str, item_id: str, worksheet_id: str, chart_id: str, access_token: str
+    current_user: str, item_id: str, worksheet_name: str, chart_name: str, access_token: str
 ) -> Dict:
     """Retrieves details of a specified chart."""
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}/charts/{chart_id}"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}/charts/{chart_name}"
         response = session.get(url)
         if not response.ok:
             handle_graph_error(response)
@@ -440,10 +440,10 @@ def get_chart(
 def create_chart(
     current_user: str,
     item_id: str,
-    worksheet_id: str,
+    worksheet_name: str,
     chart_type: str,
     source_range: str,
-    seriesBy: str,
+    series_by: str,
     title: str = "",
     access_token: str = None,
 ) -> Dict:
@@ -460,11 +460,11 @@ def create_chart(
     """
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}/charts"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}/charts/add"
         body = {
-            "chartType": chart_type,
+            "type": chart_type,
             "sourceData": source_range,
-            "seriesBy": seriesBy,
+            "seriesBy": series_by,
         }
         if title:
             body["title"] = {"text": title}
@@ -477,15 +477,17 @@ def create_chart(
 
 
 def delete_chart(
-    current_user: str, item_id: str, worksheet_id: str, chart_id: str, access_token: str
+    current_user: str, item_id: str, worksheet_name: str, chart_name: str, access_token: str
 ) -> Dict:
     """Deletes a specified chart from a worksheet."""
     try:
         session = get_ms_graph_session(current_user, integration_name, access_token)
-        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_id}/charts/{chart_id}"
+        url = f"{GRAPH_ENDPOINT}/me/drive/items/{item_id}/workbook/worksheets/{worksheet_name}/charts/{chart_name}"
         response = session.delete(url)
         if response.status_code == 204:
-            return {"status": "deleted", "chart_id": chart_id}
+            return {"status": "deleted", "chart_name": chart_name}
         handle_graph_error(response)
     except requests.RequestException as e:
+        raise ExcelError(f"Network error while deleting chart: {str(e)}")
+        raise ExcelError(f"Network error while deleting chart: {str(e)}")
         raise ExcelError(f"Network error while deleting chart: {str(e)}")

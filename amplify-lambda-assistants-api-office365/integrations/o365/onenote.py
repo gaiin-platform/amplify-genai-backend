@@ -1,10 +1,12 @@
+import base64
 import json
 import uuid
-import requests
-from typing import Dict, List, Optional, Union, BinaryIO
-from integrations.oauth import get_ms_graph_session
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import BinaryIO, Dict, List, Optional, Union
+from urllib.parse import unquote
 
+import requests
+from integrations.oauth import get_ms_graph_session
 
 integration_name = "microsoft_onenote"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
@@ -232,32 +234,105 @@ def get_page_content(current_user: str, page_id: str, access_token: str) -> str:
         raise OneNoteError(f"Network error while getting page content: {str(e)}")
 
 
-def create_page_with_image_and_attachment(
+def _sanitize_block_name(name: str) -> str:
+    """
+    Sanitizes a filename to create a valid block name for OneNote.
+    Removes extension and replaces invalid characters with underscores.
+    """
+    import re
+
+    # Remove file extension
+    name_without_ext = name.rsplit('.', 1)[0] if '.' in name else name
+    # Replace invalid characters with underscores and ensure it starts with a letter
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name_without_ext)
+    # Ensure it starts with a letter (prepend 'img_' if it starts with a number)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"img_{sanitized}"
+    # Fallback if empty or invalid
+    return sanitized if sanitized else "image_block"
+
+
+def _decode_content(content: Union[bytes, str]) -> bytes:
+    """Helper to decode base64/URL encoded content to bytes."""
+    if isinstance(content, str):
+        try:
+            # URL decode first, then base64 decode
+            decoded_content = unquote(content)
+            # Add padding if needed for proper base64 decoding
+            missing_padding = len(decoded_content) % 4
+            if missing_padding:
+                decoded_content += '=' * (4 - missing_padding)
+            return base64.b64decode(decoded_content)
+        except Exception as e:
+            raise OneNoteError(f"Failed to decode base64 content: {e}")
+    return content
+
+
+def _build_html_part(boundary: str, title: str, html_body: str) -> bytearray:
+    """Build HTML part of multipart payload."""
+    payload = bytearray()
+
+    # HTML part
+    payload.extend(f"--{boundary}\r\n".encode("utf-8"))
+    payload.extend(b'Content-Disposition: form-data; name="Presentation"\r\n')
+    payload.extend(b"Content-Type: text/html\r\n\r\n")
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{title}</title>
+    <meta name="created" content="{_format_created_time()}"/>
+</head>
+<body>
+    {html_body}
+</body>
+</html>"""
+
+    payload.extend(html_content.encode("utf-8"))
+    payload.extend(b"\r\n")
+
+    return payload
+
+
+def _build_file_part(boundary: str, block_name: str, file_content: Union[bytes, str],
+                    file_content_type: str) -> bytearray:
+    """Build file attachment part of multipart payload."""
+    payload = bytearray()
+
+    # File part
+    payload.extend(f"--{boundary}\r\n".encode("utf-8"))
+    payload.extend(f'Content-Disposition: form-data; name="{block_name}"\r\n'.encode("utf-8"))
+    payload.extend(f"Content-Type: {file_content_type}\r\n\r\n".encode("utf-8"))
+
+    if hasattr(file_content, "read"):
+        payload.extend(file_content.read())
+    else:
+        payload.extend(_decode_content(file_content))
+    payload.extend(b"\r\n")
+
+    return payload
+
+
+def create_page_with_attachment(
     current_user: str,
     section_id: str,
     title: str,
     html_body: str,
-    image_name: str,
-    image_content: Union[bytes, BinaryIO],
-    image_content_type: str,
     file_name: str,
-    file_content: Union[bytes, BinaryIO],
+    file_content: Union[bytes, str, BinaryIO],
     file_content_type: str,
     access_token: str,
 ) -> Dict:
     """
-    Creates a page with embedded image and file attachment.
+    Creates a page with a file attachment.
 
     Args:
         current_user: User identifier
         section_id: Section ID
         title: Page title
         html_body: HTML content
-        image_name: Name of the image file
-        image_content: Image content as bytes or file object
-        image_content_type: Image MIME type
         file_name: Name of the attachment
-        file_content: File content as bytes or file object
+        file_content: File content as bytes, base64 string, or file object
         file_content_type: File MIME type
 
     Returns:
@@ -273,10 +348,6 @@ def create_page_with_image_and_attachment(
         # Input validation
         if not title:
             raise OneNoteError("Title cannot be empty")
-
-        if not image_content:
-            raise OneNoteError("Image content is required")
-
         if not file_content:
             raise OneNoteError("File content is required")
 
@@ -284,55 +355,31 @@ def create_page_with_image_and_attachment(
         boundary = f"----OneNoteFormBoundary{uuid.uuid4()}"
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
-        # Build payload
+        # Build payload using helper functions
         payload = bytearray()
 
-        # HTML part
-        payload.extend(f"--{boundary}\r\n".encode("utf-8"))
-        payload.extend(b"Content-Type: text/html; charset=utf-8\r\n\r\n")
+        # Create dynamic block name from file name
+        file_block_name = _sanitize_block_name(file_name)
 
-        html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>{title}</title>
-    <meta name="created" content="{_format_created_time()}"/>
-</head>
-<body>
-    <h1>{title}</h1>
-    <p>{html_body}</p>
-    <p>Here is an embedded image:</p>
-    <img src="name:imageBlock1" alt="EmbeddedImage" />
-    <p>Here is an attached file:</p>
-    <object data-attachment="{file_name}" data="name:fileBlock1" type="{file_content_type}" />
-</body>
-</html>"""
-
-        payload.extend(html_content.encode("utf-8"))
-        payload.extend(b"\r\n")
-
-        # Image part
-        payload.extend(f"--{boundary}\r\n".encode("utf-8"))
-        payload.extend(
-            f'Content-Disposition: form-data; name="imageBlock1"\r\n'.encode("utf-8")
-        )
-        payload.extend(f"Content-Type: {image_content_type}\r\n\r\n".encode("utf-8"))
-        if hasattr(image_content, "read"):
-            payload.extend(image_content.read())
+        # Add HTML part with proper attachment reference
+        # Check for filename match first (more specific), then block name match
+        if f'name:{file_name}' in html_body:
+            # Handle case where HTML uses full filename, replace with sanitized name
+            html_with_attachment = html_body.replace(f'name:{file_name}', f'name:{file_block_name}')
+        elif f'name:{file_block_name}' in html_body and f'name:{file_name}' not in html_body:
+            # Use HTML as-is only if it has the block name but NOT the filename
+            html_with_attachment = html_body
+        elif 'name:fileBlock1' in html_body:
+            # Legacy support: replace fileBlock1 with dynamic name
+            html_with_attachment = html_body.replace('name:fileBlock1', f'name:{file_block_name}')
         else:
-            payload.extend(image_content)
-        payload.extend(b"\r\n")
+            # Append attachment automatically for backward compatibility
+            html_with_attachment = f"{html_body}<p>Attached file: <object data-attachment='{file_name}' data='name:{file_block_name}' type='{file_content_type}' /></p>"
 
-        # File part
-        payload.extend(f"--{boundary}\r\n".encode("utf-8"))
-        payload.extend(
-            f'Content-Disposition: form-data; name="fileBlock1"\r\n'.encode("utf-8")
-        )
-        payload.extend(f"Content-Type: {file_content_type}\r\n\r\n".encode("utf-8"))
-        if hasattr(file_content, "read"):
-            payload.extend(file_content.read())
-        else:
-            payload.extend(file_content)
-        payload.extend(b"\r\n")
+        payload.extend(_build_html_part(boundary, title, html_with_attachment))
+
+        # Add file part with dynamic block name
+        payload.extend(_build_file_part(boundary, file_block_name, file_content, file_content_type))
 
         # Close boundary
         payload.extend(f"--{boundary}--\r\n".encode("utf-8"))
@@ -348,10 +395,9 @@ def create_page_with_image_and_attachment(
     except requests.RequestException as e:
         raise OneNoteError(f"Network error while creating page: {str(e)}")
 
-
 def _format_created_time() -> str:
     """Returns ISO8601 formatted current time"""
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def format_notebook(notebook: Dict) -> Dict:
@@ -399,4 +445,5 @@ def format_page(page: Dict) -> Dict:
         "lastModifiedDateTime": page.get("lastModifiedDateTime", ""),
         "contentUrl": page.get("contentUrl", ""),
         "links": page.get("links", {}),
+    }
     }

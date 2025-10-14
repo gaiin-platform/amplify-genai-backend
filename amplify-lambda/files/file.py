@@ -221,8 +221,8 @@ def can_access_file(table_item, current_user, key, group_id, access_token):
 def reprocess_document_for_rag(event, context, current_user, name, data):
     """
     Reprocess a document that has already been processed.
-    This function deletes the hash entry and then queues the document for processing again,
-    while preserving the original metadata.
+    This function simply flags the document for reprocessing - the embedding service
+    will handle all cleanup and determine what needs to be reprocessed.
     """
     s3 = boto3.client("s3")
     access_token = data["access_token"]
@@ -247,13 +247,13 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
 
     print(f"Reprocessing document: {bucket}/{key}")
     files_table = dynamodb.Table(os.environ["FILES_DYNAMO_TABLE"])
-    # verify this is not an image file
+    
     try:
         response = files_table.get_item(Key={"id": key})
         if "Item" not in response:
-            # User doesn't match or item doesn't exist
             print(f"File not found for user {current_user}: {response}")
             return {"success": False, "message": "File not found"}
+        
         item = response["Item"]
         file_type = item.get("type")
         if file_type and file_type in IMAGE_FILE_TYPES:
@@ -262,6 +262,7 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
                 "success": False,
                 "message": "Image files are not supported for reprocessing",
             }
+        
         access_result = can_access_file(item, current_user, key, group_id, access_token)
         if not access_result["success"]:
             return access_result
@@ -270,9 +271,9 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
         print(f"Error getting file metadata from DynamoDB: {e}")
         error_message = e.response["Error"]["Message"]
         return {"success": False, "message": error_message}
+    
     try:
-
-        # First, verify the file exists and get its metadata
+        # Verify the file exists
         try:
             s3.head_object(Bucket=bucket, Key=key)
         except Exception as e:
@@ -287,15 +288,18 @@ def reprocess_document_for_rag(event, context, current_user, name, data):
                 "success": False,
                 "message": "Failed to store RAG secrets for document",
             }
-        # Create a synthetic S3 event to trigger processing
+
+        # Create synthetic S3 event with force_reprocess flag
+        # Embedding service will handle all cleanup and selective logic
         record = {
-            "force_reprocess": True,  # This will be included in the JSON sent to SQS
+            "force_reprocess": True,
             "s3": {"bucket": {"name": bucket}, "object": {"key": key}},
         }
-        # Queue the document for processing
+        
         queue_url = os.environ["RAG_PROCESS_DOCUMENT_QUEUE_URL"]
         message_body = json.dumps(record)
-        print(f"Sending message to queue: {message_body}")
+        print(f"Sending reprocess message to queue: {message_body}")
+        
         sqs = boto3.client("sqs")
         sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
         print(f"Message sent to queue: {message_body}")
