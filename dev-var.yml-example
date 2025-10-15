@@ -1,6 +1,12 @@
 # amplify-lambda
+AGENT_ENDPOINT: "" #leave blank for future release
 AWS_ACCOUNT_ID: "" #12 digit account ID for environment
-CHAT_ENDPOINT: ""
+BEDROCK_GUARDRAIL_ID: "" #Bedrock Guardrail ID to apply (optional)
+BEDROCK_GUARDRAIL_VERSION: "" #Version of Guardrail to use (option)
+CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
+CHAT_ENDPOINT: "" #function url for lambda
+COGNITO_USER_POOL_ID: "" #cognito_user_pool_id from IAC output
+COGNITO_CLIENT_ID: "" #cognito_client_id from IAC output
 CUSTOM_API_DOMAIN: "" #domain name without protocol for Cognito domain
 DEP_NAME: "" #name of the deployment; must be less than 10 characters and not contain spaces
 DEP_REGION: "us-east-1" #region of the deployment. Deployment has not been tested with other regions. 
@@ -8,23 +14,17 @@ HOSTED_ZONE_ID: "" #app_route53_zone_id from IAC output
 IDP_PREFIX: "AmplifyGenAI" #should match the value for provider_name in Cognito vars of the IAC deployment
 LLM_ENDPOINTS_SECRETS_NAME_ARN: "" #openai_endpoints_secret_arn from IAC output
 LLM_ENDPOINTS_SECRETS_NAME: "" #openai_endpoints_secret_name from IAC output
-OAUTH_AUDIENCE: "" #base of application
+OAUTH_AUDIENCE: "" #base of application including protocol
 OAUTH_ISSUER_BASE_URL: "" #Cognito user pool url from IAC
-CUSTOM_API_DOMAIN: "" #custom domain for the API
-COGNITO_USER_POOL_ID: "" #cognito_user_pool_id from IAC output
-COGNITO_CLIENT_ID: "" #cognito_client_id from IAC output
 OPENAI_API_KEY: "" #openai_api_key_secret_name from IAC output
 ORGANIZATION_EMAIL_DOMAIN: "" #organization email domain
 PANDOC_LAMBDA_LAYER_ARN: "" #value provided by IAC output
 PRIVATE_SUBNET_ONE: "" #private subnet one id from IAC output
 PRIVATE_SUBNET_TWO: ""  #private subnet two id from IAC output
-RDS_HOSTED_ZONE_ID: "" #'Z2R2ITUGPM61AM' is us-east-1, use the RDS Hosted Zone ID for your region
+RDS_HOSTED_ZONE_ID: "" #'Z2R2ITUGPM61AM' for us-east-1, use the RDS Hosted Zone ID for your region
 SECRETS_ARN_NAME: "" #app_secrets_secret_arn from IAC output
 VPC_CIDR: "" #vpc_cidr_block of deployment from IAC output
 VPC_ID: "" #vpc_id of deployment from IAC output
-CHANGE_SET_BOOLEAN: false #BOOLEAN FOR WHETHER CHANGE SETS ARE REQUIRED FOR DEPLOYMENTS
-CHAT_ENDPOINT: "" #function url for lambda
-AGENT_ENDPOINT: "" #leave blank for future release
 
 # Embeddings Configuration
 #
