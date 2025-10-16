@@ -2,20 +2,20 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {newStatus} from "../common/status.js";
+import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
-import {getChatFn, isOpenAIModel} from "../common/params.js";
-import {reportWriterAssistant} from "./reportWriter.js";
-import {documentAssistant} from "./documents.js";
+import { callLiteLLM } from "../litellm/litellmClient.js";
+import { getTokenCountOptimized } from "../common/optimizedDataSources.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
-import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
 import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.js";
 import { mapReduceAssistant } from "./mapReduceAssistant.js";
 import { ArtifactModeAssistant } from "./ArtifactModeAssistant.js";
 import { agentInstructions, getTools } from "./agent.js"
 
 const logger = getLogger("assistants");
+
 
 
 const defaultAssistant = {
@@ -29,17 +29,16 @@ const defaultAssistant = {
     },
     description: "Default assistant that can handle arbitrary requests with any data type but may " +
         "not be as good as a specialized assistant.",
-    handler: async (llm, params, body, ds, responseStream) => {
+    handler: async (params, body, dataSources, responseStream) => {
 
                         // already ensures model has been mapped to our backend version in router
         const model = (body.options && body.options.model) ? body.options.model : params.model;
 
         logger.debug("Using model: ", model);
 
-        const {dataSources} = await getDataSourcesByUse(params, body, ds);
-
         const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
-        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
+        // ✅ PERFORMANCE OPTIMIZATION: Use cached token counting
+        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCountOptimized(ds, model), 0);
         const aboveLimit = requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
@@ -51,21 +50,19 @@ const defaultAssistant = {
         }
 
         if (!body.options.ragOnly && aboveLimit){
-            return mapReduceAssistant.handler(llm, params, body, dataSources, responseStream);
+            return mapReduceAssistant.handler(params, body, dataSources, responseStream);
+        } else if (dataSources.length > 0 && !body.options.ragOnly) {
+            // ✅ Use chatWithData for RAG processing with data sources
+            const {chatWithDataStateless} = await import("../common/chatWithData.js");
+            return chatWithDataStateless(params, model, body, dataSources, responseStream);
         } else {
-            return llm.prompt(body, dataSources);
+            // ✅ Direct LiteLLM call when no RAG needed (ragOnly mode or no data sources)
+            return await callLiteLLM(body, model, params.account, responseStream, [], true);
         }
     }
 };
 
 
-// These assistants should NOT be in the list
-// right now
-//documentSearchAssistant
-//mapReduceAssistant
-//documentAssistant,
-//reportWriterAssistant,
-//csvAssistant,
 
 export const defaultAssistants = [
     defaultAssistant,
@@ -110,102 +107,12 @@ export const buildAssistantDescriptionMessages = (assistants) => {
     `;
 }
 
-export const chooseAssistantForRequestWithLLM = async (llm, body, dataSources, assistants = defaultAssistants) => {
-    // console.log(chooseAssistantForRequestWithLLM);
-
-    const messages = [
-        {
-            "role": "system",
-            "content": `
-            Help the user choose the best assistant for the task.
-            You only need to output the name of the assistant. YOU MUST
-            honor the user's choice if they request a specific assistant.
-            `
-        },
-        // {
-        //     "role": "user",
-        //     "content": `
-        //     Think step by step how to perform the task. What are the steps?
-        //     Which assistant is the best fit to solve the given task based on the
-        //     steps? Is the user asking for a specific assistant?
-        //
-        //     If you are not sure, please choose the default assistant.
-        //
-        //     ${buildAssistantDescriptionMessages(assistants)}
-        //     ${buildDataSourceDescriptionMessages(dataSources)}
-        //
-        //     Please choose the best assistant to help with the task:
-        //     ---------------
-        //     ${body.messages.slice(-1)[0].content}
-        //     ---------------
-        //     `
-        // },
-
-    ];
-
-    const prompt = `
-Think step by step how to perform the task. What are the steps? 
-Which assistant is the best fit to solve the given task based on the
-steps? Is the user asking for a specific assistant?
-
-If you are not sure, please choose the default assistant.
-
-${buildAssistantDescriptionMessages(assistants)}
-${buildDataSourceDescriptionMessages(dataSources)}
-
-Please choose the best assistant to help with the task:
----------------
-${body.messages.slice(-1)[0].content}
----------------
-`;
-    const model = body.options.advancedModel;
-    const updatedBody = {messages, options:{ model }};
-
-    const names = assistants.map((a) => a.name);
-
-    const chatFn = async (body, writable, context) => {
-        return await getChatFn(model, body, writable, context);
-    }
-    const llmClone = llm.clone(chatFn);
-
-    //return await llm.promptForChoice({messages, options:{model}}, names, []);
-    const result = await llmClone.promptForData(updatedBody, [], prompt,
-        {bestAssistant:names.join("|")}, null, (r) => {
-       return r.bestAssistant && assistants.find((a) => a.name === r.bestAssistant);
-    }, 3);
-
-    return result.bestAssistant || defaultAssistant.name;
-}
-
-const getTokenCount = (dataSource, model) => {
-    if (dataSource.metadata && dataSource.metadata.totalTokens ) {
-        const totalTokens = dataSource.metadata.totalTokens;
-        if (isImage(dataSource)) {
-            return isOpenAIModel (model.id) ? totalTokens.gpt : 
-                 model.id.includes("anthropic") ? totalTokens.claude : 1000;
-        }
-        if (!dataSource.metadata.ragOnly) return totalTokens;
-    }
-    else if(dataSource.metadata && dataSource.metadata.ragOnly){
-        return 0;
-    }
-    return 1000;
-}
-
-export const getAvailableAssistantsForDataSources = (model, dataSources, assistants = defaultAssistants) => {
-    console.log("getAvailableAssistantsForDataSources function")
-
-    // if (!dataSources || dataSources.length === 0) {
-    //     return [defaultAssistant];
-    // }
-
-    return assistants.filter((assistant) => {
-        return assistant.handlesDataSources(dataSources) && assistant.handlesModel(model);
-    });
-}
 
 
-export const chooseAssistantForRequest = async (llm, model, body, dataSources, assistants = defaultAssistants) => {
+
+
+export const chooseAssistantForRequest = async (account, model, body, dataSources, responseStream) => {
+    // 🚀 BREAKTHROUGH: Direct streaming without LLM dependency
     logger.info(`Choose Assistant for Request `);
 
     const clientSelectedAssistant = body.options?.assistantId ?? null;
@@ -213,19 +120,19 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     let selectedAssistant = null;
     if (clientSelectedAssistant) {
         logger.info(`Client Selected Assistant: `, clientSelectedAssistant);
-        // For group ast
-        const user = llm.params.account.user;
-        const token = llm.params.account.accessToken;
+        // For group assistants
+        const user = account.user;
+        const token = account.accessToken;
         
         selectedAssistant = await getUserDefinedAssistant(user, defaultAssistant, clientSelectedAssistant, token);
         if (!selectedAssistant) {
-            llm.sendStatus(newStatus(
+            sendStatusEventToStream(responseStream, newStatus(
                 {   inProgress: false,
                     message: "Selected Assistant Not Found",
                     icon: "assistant",
                     sticky: true
                 }));
-            llm.forceFlush();
+            forceFlush(responseStream);
 
             if (body.options.api_accessed) {
                 throw new Error("Provided Assistant ID is invalid or user does not have access to this assistant.");
@@ -257,38 +164,7 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
 
     
     if (selectedAssistant === null) {
-        const status = newStatus({inProgress: true, message: "Choosing an assistant to help..."});
-        llm.sendStatus(status);
-        llm.forceFlush();
-
-        // Look for any body.messages.data.state.currentAssistant going in reverse order through the messages
-        // and choose the first one that is found.
-        const currentAssistant = body.messages.map((m) => {
-            return (m.data && m.data.state && m.data.state.currentAssistant) ? m.data.state.currentAssistant : null;
-        }).reverse().find((a) => a !== null);
-
-        // Hack to make AWS lambda send the status update and not buffer
-        let availableAssistants = getAvailableAssistantsForDataSources(model, dataSources, assistants);
-
-        if (availableAssistants.some((a) => a.name === currentAssistant) &&
-            (!dataSources || dataSources.length === 0)) {
-            // Future, we can automatically default to the last used assistant to speed things
-            // up unless some predetermined condition is met.
-            availableAssistants = [assistants.find((a) => a.name === currentAssistant)]
-        }
-
-        const start = new Date().getTime();
-        const selectedAssistantName = (availableAssistants.length > 1 ) ?
-            await chooseAssistantForRequestWithLLM(llm, body, dataSources,
-                availableAssistants) : availableAssistants[0].name;
-        const timeToChoose = new Date().getTime() - start;
-        logger.info(`Selected assistant ${selectedAssistantName}`);
-        logger.info(`Time to choose assistant: ${timeToChoose}ms`);
-
-        selectedAssistant = assistants.find((a) => a.name === selectedAssistantName);
-
-        status.inProgress = false;
-        llm.sendStatus(status);
+        selectedAssistant = defaultAssistant;
     }
 
     const selected = selectedAssistant || defaultAssistant;
@@ -300,16 +176,16 @@ export const chooseAssistantForRequest = async (llm, model, body, dataSources, a
     }
     if (selectedAssistant.disclaimer) stateInfo = {...stateInfo, currentAssistantDisclaimer : selectedAssistant.disclaimer};
     
-    llm.sendStateEventToStream(stateInfo);
+    sendStateEventToStream(responseStream, stateInfo);
 
-    llm.sendStatus(newStatus(
+    sendStatusEventToStream(responseStream, newStatus(
         {
             inProgress: false,
             message: "The \"" + selected.displayName + " Assistant\" is responding.",
             icon: "assistant",
             sticky: true
         }));
-    llm.forceFlush();
+    forceFlush(responseStream);
 
     return selected;
 }

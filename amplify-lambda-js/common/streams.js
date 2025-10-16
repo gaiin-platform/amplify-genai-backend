@@ -324,6 +324,15 @@ export const endStream = (resultStream) => {
     resultStream.write(`data: ${JSON.stringify({ s: "result", type: 'end' })}\n\n`);
 }
 
+// 🚨 CRITICAL: AWS Lambda streaming flush hack - forces buffer to flush for real-time UX
+export const forceFlush = (resultStream) => {
+    // Send invisible status with large payload to trigger AWS Lambda stream flush
+    sendStatusEventToStream(resultStream, newStatus({
+        inProgress: false,
+        message: " ".repeat(100000)  // Large payload forces flush
+    }));
+}
+
 export const findResultKey = (result) => {
     const resultKey = Object.keys(result).find((k) => !k.startsWith("__tokens_"));
     return resultKey;

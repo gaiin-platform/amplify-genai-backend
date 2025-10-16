@@ -1,10 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {chat as openaiChat} from "../azure/openai.js";
-import {chat as geminiChat} from "../gemini/gemini.js";
-import { chatBedrock } from "../bedrock/bedrock.js";
-import {getLLMConfig} from "../common/secrets.js";
+// Removed chatFn imports - now using LiteLLM unified interface
 
 export const getRequestId = (params) => {
     return params.requestId;
@@ -71,21 +68,6 @@ export const getBudgetTokens = (params, maxTokens) => {
     return budget_tokens;
 
 }
-
-export const getChatFn = (model, body, writable, context) => {
-
-    if (isOpenAIModel(model.id)) {
-        return openaiChat(getLLMConfig, body, writable, context);
-    } else if (model.provider === 'Bedrock') {
-        return chatBedrock(body, writable, context);
-    } else if (isGeminiModel(model.id)) {
-        return geminiChat(body, writable, context);
-    } else {
-        console.log(`Error: Model ${model} does not have a corresponding chatFn`)
-        return null;
-    }
-}
-
 
 export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));

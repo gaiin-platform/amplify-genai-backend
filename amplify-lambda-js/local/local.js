@@ -7,7 +7,7 @@ import {chat} from "../azure/openai.js";
 import {getLLMConfig} from "./common/secrets.js";
 import {getSecret} from "../common/secrets.js";
 import * as fs from "fs";
-import {LLM} from "../common/llm.js";
+import {getInternalLLM} from "../common/internalLLM.js";
 import {workflowSchema} from "../workflow/workflow.js";
 
 
@@ -113,19 +113,21 @@ async function main() {
 
     dataSources = dataSources.map((s) => ({id:s}));
 
-    const chatFn = async (body, writable, context, options) => {
-        return await chat(getLLMConfig, body, writable, context);
-    }
+    // ✅ ELIMINATED: No longer need chatFn - InternalLLM handles this internally
+    // const chatFn = async (body, writable, context, options) => {
+    //     return await chat(getLLMConfig, body, writable, context);
+    // }
 
-    const llm = new LLM(
-            chatFn,
-            {account: {user: "console"}, model: model},
-            new ConsoleWritableStream(true));
+    // 🚀 BREAKTHROUGH: Use InternalLLM for local testing
+    const account = {user: "console"};
+    const responseStream = new ConsoleWritableStream(true);
+    const llm = getInternalLLM(model, account, responseStream);
 
     let response;
 
     if(promptForBoolean){
-        response = await llm.promptForBoolean(chatRequest, dataSources);
+        // Note: promptForBoolean not implemented in InternalLLM - use promptForString
+        response = await llm.promptForString(chatRequest, dataSources, "Answer with true or false only");
     }
     else if(promptForWorkflow){
         response = await llm.promptForJson(chatRequest, workflowSchema, dataSources);
@@ -134,10 +136,11 @@ async function main() {
         response = await llm.promptForJson(chatRequest, jsonschema, dataSources);
     }
     else if(choices.length > 0){
-        response = await llm.promptForChoice(chatRequest, choices, dataSources);
+        // Note: promptForChoice not implemented in InternalLLM - use promptForString
+        response = await llm.promptForString(chatRequest, dataSources, `Choose from: ${choices.join(', ')}`);
     }
     else {
-        response = await llm.prompt(chatRequest, dataSources);
+        response = await llm.promptForString(chatRequest, dataSources);
     }
 
     if(response){

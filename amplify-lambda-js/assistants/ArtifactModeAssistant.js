@@ -3,6 +3,8 @@ import {
     DoneState, invokeAction, 
     PromptAction, StateBasedAssistant
 } from "./statemachine/states.js";
+import {sendStateEventToStream} from "../common/streams.js";
+import {getInternalLLM} from "../common/internalLLM.js";
 
 
 const ARTIFACT_COMPLETE_MARKER = "~END_A~";
@@ -98,7 +100,13 @@ const containsPotentialMarker = (buffer, marker) => {
     return remainingBuffer === marker.slice(0, remainingBuffer.length);
 };
 
-const handleTruncatedMode = async (llm, context, dataSources) => {
+const handleTruncatedMode = async (originalLLM, context, dataSources) => {
+    // 🚀 BREAKTHROUGH: Use InternalLLM for massive performance gains in artifact generation
+    // ArtifactMode doesn't need RAG/context chunking - just fast LLM responses for marker detection
+    const llm = getInternalLLM(originalLLM.params.options.model, originalLLM.params.account, context.responseStream);
+    llm.params = { ...originalLLM.params }; // Copy params for compatibility
+    
+    console.log("🚀 ArtifactMode using InternalLLM for high-speed generation");
     let retryCount = 0;
     let isComplete = false;
     let accumulatedResponse = "";
@@ -173,12 +181,15 @@ const handleTruncatedMode = async (llm, context, dataSources) => {
         // Create custom stream handler
         const streamHandler = new ArtifactStreamHandler(context.responseStream);
         
-        // Clone LLM with custom stream
+        // 🚀 Clone InternalLLM with custom stream for marker detection
         const customStreamLLM = llm.clone();
         customStreamLLM.responseStream = {
             write: (chunk) => streamHandler.write(chunk),
             end: () => {} // We'll handle the end separately
         };
+        
+        // Ensure InternalLLM compatibility with custom streaming
+        customStreamLLM.params = { ...llm.params };
         
         // Build the appropriate prompt based on retry count
         const messages = [{
@@ -207,9 +218,9 @@ const handleTruncatedMode = async (llm, context, dataSources) => {
     }
     
     if (isComplete) {
-        llm.sendStateEventToStream({artifactCompletion: true});
+        sendStateEventToStream(context.responseStream, {artifactCompletion: true});
     } else if (retryCount >= MAX_RETRIES) {
-        llm.sendStateEventToStream({artifactCompletion: false});
+        sendStateEventToStream(context.responseStream, {artifactCompletion: false});
     }
     
     return isComplete;

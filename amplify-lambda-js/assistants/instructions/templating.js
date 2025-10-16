@@ -1,6 +1,7 @@
 import Handlebars from "handlebars";
 import yaml from "js-yaml";
 import {formatOps, getOps} from "../ops/ops.js";
+import {sendStateEventToStream} from "../../common/streams.js";
 
 
 function parseAllOpsOccurrences(templateStr) {
@@ -19,7 +20,8 @@ function parseAllOpsOccurrences(templateStr) {
     return results;
   }
 
-export const fillInTemplate = async (llm, params, body, ds, templateStr, contextData) => {
+export const fillInTemplate = async (responseStream, params, body, ds, templateStr, contextData) => {
+    // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
     contextData = {
         ...contextData,
@@ -47,7 +49,7 @@ export const fillInTemplate = async (llm, params, body, ds, templateStr, context
         }
 
         if ( includedOperations.length > 0) { 
-            llm.sendStateEventToStream({ resolvedOps: includedOperations });
+            sendStateEventToStream(responseStream, { resolvedOps: includedOperations });
             contextData[ASSISTANT_OPS_STR] = includedOperations;
             
             if (!hasTemplateForOps) {

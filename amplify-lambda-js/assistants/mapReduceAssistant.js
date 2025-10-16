@@ -2,10 +2,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import {getLogger} from "../common/logging.js";
 import {executeWorkflow} from "../workflow/workflow.js";
-
-const logger = getLogger("sequentialChat");
 
 
 export const mapReduceAssistant = {
@@ -18,7 +15,8 @@ export const mapReduceAssistant = {
         return true;
     },
     description: "An assistant that can handle requests that are larger than the model's context window.",
-    handler: async (llm, params, body, dataSources, responseStream) => {
+    handler: async (params, body, dataSources, responseStream) => {
+        // 🚀 BREAKTHROUGH: No longer need LLM parameter - create our own LiteLLM chatFn
 
         const task = body.messages.slice(-1)[0].content;
 
@@ -52,12 +50,13 @@ access to that information and you should use them to provide the best answer po
 
         console.log("Starting local workflow....");
 
-        const response = await executeWorkflow(
+        // ✅ PHASE 1.3: Use model directly for workflow engine
+        await executeWorkflow(
             {
                 workflow,
                 body,
                 params,
-                chatFn:llm.chatFn,
+                model: params.model,
                 chatRequest:body,
                 dataSources,
                 responseStream,

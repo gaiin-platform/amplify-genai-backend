@@ -5,8 +5,8 @@ import axios from "axios";
 import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
-import {LLM} from "../../llm.js";
-import {getChatFn, getModelByType, ModelTypes} from "../../params.js";
+import {getModelByType, ModelTypes} from "../../params.js";
+import { promptLiteLLMForData } from "../../litellm/litellmClient.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
 
@@ -53,16 +53,6 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 
 export const getContextMessages = async (params, chatBody, dataSources) => {
     const model = getModelByType(params, ModelTypes.CHEAPEST);
-    const ragLLMParams = setModel( {...params, options: {skipRag: true, dataSourceOptions:{}}}, model);
-
-    const chatFn = async (body, writable, context) => {
-        return await getChatFn(model, body, writable, context);
-    }
-
-    const llm = new LLM(
-        chatFn,
-        ragLLMParams,
-        null);
 
     const updatedBody = {
         ...chatBody,
@@ -78,7 +68,7 @@ export const getContextMessages = async (params, chatBody, dataSources) => {
         }
     }
 
-    return await getContextMessagesWithLLM(llm, params, updatedBody, dataSources);
+    return await getContextMessagesWithLLM(model, params, updatedBody, dataSources);
 }
 
 function createSuperset(arrayOfObjects) {
@@ -103,7 +93,7 @@ function createSuperset(arrayOfObjects) {
     return superset;
 }
 
-export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSources) => {
+export const getContextMessagesWithLLM = async (model, params, chatBody, dataSources) => {
 
     try {
         const token = getAccessToken(params);
@@ -146,8 +136,9 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
             keyLookup[key] = ds;
         });
         
-        const searches = await llm.promptForData(
-            chatBody, [],
+        const searches = await promptLiteLLMForData(
+            chatBody.messages,
+            model,
             `
             Imagine that you are looking through a frequently asked questions (FAQ) page on a website.
             The FAQ is based on the documents in this conversation.
@@ -164,10 +155,13 @@ export const getContextMessagesWithLLM = async (llm, params, chatBody, dataSourc
                 "secondQuestion": "Second specific FAQ question to look for.",
                 "thirdQuestion": "Third specific FAQ question to look for.",
             },
-            null,
-            (r)=>{
-                return r.firstQuestion
-            }, 3);
+            params.account, // 🚨 CRITICAL FIX: Add account for usage tracking
+            params.requestId, // 🚨 CRITICAL FIX: Add requestId for usage tracking
+            {
+                maxTokens: 500,
+                temperature: 0.1
+            }
+        );
 
         const result = {
             ideas: [

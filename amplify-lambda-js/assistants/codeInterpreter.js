@@ -2,7 +2,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import {sendDeltaToStream} from "../common/streams.js";
+import {sendDeltaToStream, sendStatusEventToStream, sendStateEventToStream, forceFlush} from "../common/streams.js";
 import {newStatus} from "../common/status.js";
 import {getLogger} from "../common/logging.js";
 
@@ -71,12 +71,12 @@ async function fetchRequest(token, data, url) {
     }
 }
 
-const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 12000) => {
+const fetchWithTimeout = (responseStream, token, chat_data, endpoint, timeout = 12000) => {
     return new Promise((resolve, reject) => {
         let timer;
 
         const handleSendStatusMessage = () => {
-            sendStatusMessage(llm, "Code interpreter needs a few more moments...");
+            sendStatusMessage(responseStream, "Code interpreter needs a few more moments...");
             timer = setTimeout(handleSendStatusMessage, timeout);
         };
         timer = setTimeout(handleSendStatusMessage, timeout);
@@ -93,8 +93,8 @@ const fetchWithTimeout = (llm, token, chat_data, endpoint, timeout = 12000) => {
     });
 };
 
-const sendStatusMessage = (llm, message, inProgress=true, summary='', ) => {
-    llm.sendStatus(newStatus(
+const sendStatusMessage = (responseStream, message, inProgress=true, summary='', ) => {
+    sendStatusEventToStream(responseStream, newStatus(
         {
             inProgress: inProgress,
             message: message,
@@ -102,19 +102,19 @@ const sendStatusMessage = (llm, message, inProgress=true, summary='', ) => {
             icon: "assistant",
             sticky: true
         }));
-    llm.forceFlush();
+    forceFlush(responseStream); // 🚨 CRITICAL: Force flush for real-time status updates
 }
 
-const handleUserErrorMessage = (llm, responseErrorMessage) => {
+const handleUserErrorMessage = (responseStream, responseErrorMessage) => {
     if (responseErrorMessage) {
-        sendStatusMessage(llm, String(responseErrorMessage), false, "Code interpreter response failed. View Error:");
+        sendStatusMessage(responseStream, String(responseErrorMessage), false, "Code interpreter response failed. View Error:");
         logger.debug(`Code interpreter Response was unsuccessful:  ${responseErrorMessage}`);
         const error = responseErrorMessage.includes("Error with run status") ? 'thread' : responseErrorMessage;
-        llm.sendStateEventToStream({ codeInterpreter: { error: error } });
+        sendStateEventToStream(responseStream, { codeInterpreter: { error: error } });
     } else {
-        llm.sendStateEventToStream({ codeInterpreter: { error: "Unknown Error - Internal Server Error" } });
+        sendStateEventToStream(responseStream, { codeInterpreter: { error: "Unknown Error - Internal Server Error" } });
     }
-    sendStatusMessage(llm, "Amplify Assistant is responding...");
+    sendStatusMessage(responseStream, "Amplify Assistant is responding...");
 }
 
 export const codeInterpreterAssistant = async (assistantBase) => {
@@ -131,7 +131,8 @@ export const codeInterpreterAssistant = async (assistantBase) => {
 
         disclaimer: '',
 
-        handler: async (llm, params, body, ds, responseStream) => {
+        handler: async (params, body, ds, responseStream) => {
+            // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
             let codeInterpreterResponse = '';
         
@@ -162,10 +163,10 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     assistantId = responseData.data.assistantId
                     //we need to ensure we send the assistant_id back to be saved in the conversation
                     sendDeltaToStream(responseStream, "codeInterpreter", `codeInterpreterAssistantId=${assistantId}`);
-                    sendStatusMessage(llm, "Code interpreter is making progress on your request...");
+                    sendStatusMessage(responseStream, "Code interpreter is making progress on your request...");
                     logger.debug("Code Interpreter Assistant Created...");
                 } else {
-                    handleUserErrorMessage(llm, String(responseData && responseData.error));
+                    handleUserErrorMessage(responseStream, String(responseData && responseData.error));
                 }
 
             }
@@ -179,15 +180,15 @@ export const codeInterpreterAssistant = async (assistantBase) => {
                     requestId: options.requestId
                 }
 
-                    const responseData = await fetchWithTimeout(llm, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
+                    const responseData = await fetchWithTimeout(responseStream, token, chat_data, process.env.API_BASE_URL + '/assistant/chat/codeinterpreter');
                     // check for successfull response
                     if (responseData && responseData.success && responseData.data) {
-                        sendStatusMessage(llm, "Finalizing code interpreter results...");
+                        sendStatusMessage(responseStream, "Finalizing code interpreter results...");
                         const { textContent, ...messageData } = responseData.data.data;
                         codeInterpreterResponse = textContent;
-                        llm.sendStateEventToStream({ codeInterpreter: messageData });
+                        sendStateEventToStream(responseStream, { codeInterpreter: messageData });
                     } else {
-                        handleUserErrorMessage(llm, String(responseData && responseData.error));
+                        handleUserErrorMessage(responseStream, String(responseData && responseData.error));
                     }
 
             } 

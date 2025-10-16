@@ -72,6 +72,7 @@ provider:
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
     TRACE_BUCKET_NAME: amplify-${self:custom.depName}-lambda-${sls:stage}-chat-traces
+    CONVERSATION_ANALYSIS_QUEUE_URL: amplify-${self:service}-${sls:stage}-conversation-analysis-queue
   
     # Imported Variables from Parameter Store
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
@@ -177,6 +178,16 @@ functions:
           method: post
           cors: true
 
+  conversation_analysis_processor:
+    handler: groupassistants/conversationAnalysis.sqsProcessorHandler
+    memorySize: 512
+    timeout: 300
+    events:
+      - sqs:
+          arn: !GetAtt ConversationAnalysisQueue.Arn
+          batchSize: 1
+          maximumBatchingWindowInSeconds: 5
+
 
 resources:
   Resources:
@@ -201,6 +212,7 @@ resources:
                 - sqs:SendMessage
                 - sqs:DeleteMessage
                 - sqs:GetQueueAttributes
+                - sqs:ReceiveMessage
                 - bedrock:InvokeModelWithResponseStream
                 - bedrock:InvokeModel
               Resource:
@@ -276,6 +288,7 @@ resources:
               Resource:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*"
+                - !GetAtt ConversationAnalysisQueue.Arn
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -383,6 +396,22 @@ resources:
         Type: AWS::S3::Bucket
         Properties:
           BucketName: ${self:provider.environment.TRACE_BUCKET_NAME}
+
+    ConversationAnalysisQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-conversation-analysis
+        VisibilityTimeoutSeconds: 360
+        MessageRetentionPeriod: 1209600 # 14 days
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt ConversationAnalysisDeadLetterQueue.Arn
+          maxReceiveCount: 3
+
+    ConversationAnalysisDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${sls:stage}-conversation-analysis-dlq
+        MessageRetentionPeriod: 1209600 # 14 days
 
     BedrockIAMPolicy:
       Type: AWS::IAM::ManagedPolicy

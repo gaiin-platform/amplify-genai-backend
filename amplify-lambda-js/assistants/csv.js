@@ -5,14 +5,16 @@ import {getContent} from "../datasource/datasources.js";
 import {
     sendDeltaToStream,
     sendResultToStream,
+    sendStatusEventToStream,
+    forceFlush,
     StreamResultCollector
 } from "../common/streams.js";
 import {newStatus} from "../common/status.js";
-import {transform as fnTransformer} from "../common/chat/events/openaifn.js";
 import Bottleneck from "bottleneck";
 import {isKilled} from "../requests/requestState.js";
 import {getUser} from "../common/params.js";
 import {getLogger} from "../common/logging.js";
+import {getInternalLLM} from "../common/internalLLM.js";
 
 const logger = getLogger("csvAssitant");
 
@@ -59,7 +61,14 @@ export const csvAssistant = {
         "that is based on summarizing, explaining high-level details of the dataset, analyzing the " +
         "file as a whole, etc. Ask yourself, do I have to look at every single column in the dataset" +
         "separately? If not, then don't use this assistant.",
-    handler: async (llm, params, body, dataSources, responseStream) => {
+    handler: async (originalLLM, params, body, dataSources, responseStream) => {
+
+        // 🚀 BREAKTHROUGH: Use InternalLLM for massive performance gains on CSV processing
+        // Each row processing is a simple JSON extraction that doesn't need RAG
+        const llm = getInternalLLM(params.options.model, params.account, responseStream);
+        llm.params = { ...params }; // Copy params for compatibility
+        
+        console.log("🚀 CSV Assistant using InternalLLM for batch processing");
 
         const limiter = new Bottleneck({
             maxConcurrent: 5,
@@ -90,7 +99,7 @@ export const csvAssistant = {
                     content.content[0].content : "column1";
 
 
-                llm.sendStatus(newStatus(
+                sendStatusEventToStream(responseStream, newStatus(
                     {
                         inProgress: false,
                         sticky: true,
@@ -98,7 +107,7 @@ export const csvAssistant = {
                         icon: "info",
                     }
                 ));
-                llm.forceFlush();
+                forceFlush(responseStream);
 
                 // This is the schema to represent the row results that will be output
                 const rowsSchema = generateCSVSchema(["Explanation", "Output"]);
@@ -112,7 +121,7 @@ export const csvAssistant = {
                     rows.push(chunk);
                 }
 
-                llm.sendStatus(newStatus(
+                sendStatusEventToStream(responseStream, newStatus(
                     {
                         inProgress: false,
                         sticky: true,
@@ -120,7 +129,7 @@ export const csvAssistant = {
                         icon: "repeat",
                     }
                 ));
-                llm.forceFlush();
+                forceFlush(responseStream);
 
                 const taskMessage = body.messages.slice(-1)[0].content;
 
@@ -144,18 +153,18 @@ export const csvAssistant = {
                 const rowStarted = (index) => {
                     inProcessRows[index] = true;
                     status.message = `Processing rows ${getInProcessRows().join(", ")}`;
-                    llm.sendStatus(status);
-                    llm.forceFlush();
+                    sendStatusEventToStream(responseStream, status);
+                    forceFlush(responseStream);
                 }
 
                 const rowFinished = (index) => {
                     inProcessRows[index] = false;
                     status.message = `Processing rows ${getInProcessRows().join(",")}`;
-                    llm.sendStatus(status);
-                    llm.forceFlush();
+                    sendStatusEventToStream(responseStream, status);
+                    forceFlush(responseStream);
                 }
 
-                llm.enableOutOfOrderStreaming(responseStream);
+                // Out-of-order streaming already handled by responseStream
 
                 // For each group of chunkSize rows, we need to prompt the LLM for results
                 for (const [index, row] of rows.entries()) {
