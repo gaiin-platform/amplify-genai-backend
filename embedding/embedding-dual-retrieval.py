@@ -6,9 +6,14 @@
 import json
 import os
 import time
+import asyncio
+import logging
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from pycommon.decorators import required_env_vars
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Tuple, Set, Optional
+from datetime import datetime, timezone
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, SQSOperation, SecretsManagerOperation
 )
@@ -50,6 +55,138 @@ sqs = boto3.client("sqs")
 permission_levels = ["read", "write", "owner"]
 
 pg_password = get_credentials(rag_pg_password)
+
+class EmbeddingPerformanceCache:
+    """
+    Caching layer for embedding operations to eliminate redundant checks.
+    """
+    def __init__(self):
+        self._permission_cache: Dict[str, Dict[str, Tuple[bool, float]]] = {}  # user -> {src_id: (has_access, timestamp)}
+        self._embedding_status_cache: Dict[str, Tuple[str, float]] = {}  # src_id -> (status, timestamp)
+        self._failed_documents_cache: Dict[str, Tuple[str, float, int]] = {}  # src_id -> (failure_reason, timestamp, failure_count)
+        self._group_permission_cache: Dict[str, Dict[str, Tuple[List[str], List[str], float]]] = {}  # user -> {group_key: (accessible, denied, timestamp)}
+        self._ast_permission_cache: Dict[str, Dict[str, Tuple[List[str], List[str], float]]] = {}  # user -> {ast_key: (accessible, denied, timestamp)}
+        
+        # Cache TTL settings (in seconds)
+        self.permission_cache_ttl = 300  # 5 minutes for permissions
+        self.embedding_status_cache_ttl = 30  # 30 seconds for embedding status
+        self.failed_documents_cache_ttl = 3600  # 60 minutes for failures (increased from 30)
+        self.sqs_permission_failure_ttl = 86400  # 24 hours for SQS permission failures
+        
+    def _is_cache_valid(self, timestamp: float, ttl: int) -> bool:
+        """Check if cache entry is still valid based on TTL"""
+        return time.time() - timestamp < ttl
+    
+    def get_cached_permission(self, user: str, src_id: str) -> Optional[bool]:
+        """Get cached permission result for user+src_id"""
+        user_cache = self._permission_cache.get(user, {})
+        if src_id in user_cache:
+            has_access, timestamp = user_cache[src_id]
+            if self._is_cache_valid(timestamp, self.permission_cache_ttl):
+                return has_access
+        return None
+    
+    def cache_permission(self, user: str, src_id: str, has_access: bool):
+        """Cache permission result for user+src_id"""
+        if user not in self._permission_cache:
+            self._permission_cache[user] = {}
+        self._permission_cache[user][src_id] = (has_access, time.time())
+    
+    def get_cached_embedding_status(self, src_id: str) -> Optional[str]:
+        """Get cached embedding status for src_id"""
+        if src_id in self._embedding_status_cache:
+            status, timestamp = self._embedding_status_cache[src_id]
+            if self._is_cache_valid(timestamp, self.embedding_status_cache_ttl):
+                return status
+        return None
+    
+    def cache_embedding_status(self, src_id: str, status: str):
+        """Cache embedding status for src_id"""
+        self._embedding_status_cache[src_id] = (status, time.time())
+    
+    def is_document_failed(self, src_id: str) -> Tuple[bool, Optional[str], int]:
+        """Check if document is marked as permanently failed"""
+        if src_id in self._failed_documents_cache:
+            failure_data = self._failed_documents_cache[src_id]
+            failure_reason, timestamp, failure_count = failure_data[:3]
+            ttl_key = failure_data[3] if len(failure_data) > 3 else 'default'
+            
+            # Use appropriate TTL based on failure type
+            ttl = self.sqs_permission_failure_ttl if ttl_key == 'sqs_perm' else self.failed_documents_cache_ttl
+            
+            if self._is_cache_valid(timestamp, ttl):
+                return True, failure_reason, failure_count
+        return False, None, 0
+    
+    def mark_document_failed(self, src_id: str, failure_reason: str, failure_count: int = 1):
+        """Mark document as permanently failed"""
+        # Use longer TTL for SQS permission failures since they won't fix themselves
+        ttl_key = 'sqs_perm' if 'SQS Permission' in failure_reason else 'default'
+        self._failed_documents_cache[src_id] = (failure_reason, time.time(), failure_count, ttl_key)
+    
+    def get_cached_group_permissions(self, user: str, group_key: str) -> Optional[Tuple[List[str], List[str]]]:
+        """Get cached group permission results"""
+        user_cache = self._group_permission_cache.get(user, {})
+        if group_key in user_cache:
+            accessible, denied, timestamp = user_cache[group_key]
+            if self._is_cache_valid(timestamp, self.permission_cache_ttl):
+                return accessible, denied
+        return None
+    
+    def cache_group_permissions(self, user: str, group_key: str, accessible: List[str], denied: List[str]):
+        """Cache group permission results"""
+        if user not in self._group_permission_cache:
+            self._group_permission_cache[user] = {}
+        self._group_permission_cache[user][group_key] = (accessible, denied, time.time())
+    
+    def get_cached_ast_permissions(self, user: str, ast_key: str) -> Optional[Tuple[List[str], List[str]]]:
+        """Get cached AST permission results"""
+        user_cache = self._ast_permission_cache.get(user, {})
+        if ast_key in user_cache:
+            accessible, denied, timestamp = user_cache[ast_key]
+            if self._is_cache_valid(timestamp, self.permission_cache_ttl):
+                return accessible, denied
+        return None
+    
+    def cache_ast_permissions(self, user: str, ast_key: str, accessible: List[str], denied: List[str]):
+        """Cache AST permission results"""
+        if user not in self._ast_permission_cache:
+            self._ast_permission_cache[user] = {}
+        self._ast_permission_cache[user][ast_key] = (accessible, denied, time.time())
+    
+    def cleanup_expired_entries(self):
+        """Clean up expired cache entries to prevent memory bloat"""
+        current_time = time.time()
+        
+        # Clean permission cache
+        for user in list(self._permission_cache.keys()):
+            user_cache = self._permission_cache[user]
+            expired_keys = [src_id for src_id, (_, timestamp) in user_cache.items() 
+                          if not self._is_cache_valid(timestamp, self.permission_cache_ttl)]
+            for key in expired_keys:
+                del user_cache[key]
+            if not user_cache:
+                del self._permission_cache[user]
+        
+        # Clean embedding status cache
+        expired_keys = [src_id for src_id, (_, timestamp) in self._embedding_status_cache.items() 
+                       if not self._is_cache_valid(timestamp, self.embedding_status_cache_ttl)]
+        for key in expired_keys:
+            del self._embedding_status_cache[key]
+        
+        # Clean failed documents cache with appropriate TTL
+        expired_keys = []
+        for src_id, failure_data in self._failed_documents_cache.items():
+            _, timestamp = failure_data[:2]
+            ttl_key = failure_data[3] if len(failure_data) > 3 else 'default'
+            ttl = self.sqs_permission_failure_ttl if ttl_key == 'sqs_perm' else self.failed_documents_cache_ttl
+            if not self._is_cache_valid(timestamp, ttl):
+                expired_keys.append(src_id)
+        for key in expired_keys:
+            del self._failed_documents_cache[key]
+
+# Global cache instance
+performance_cache = EmbeddingPerformanceCache()
 
 
 def get_top_similar_qas(query_embedding, src_ids, limit=5):
@@ -159,41 +296,84 @@ def get_top_similar_docs(query_embedding, src_ids, limit=5):
 
 
 def classify_src_ids_by_access(raw_src_ids, current_user):
+    """Cached + parallel permission checking with early failure detection"""
     accessible_src_ids = []
     access_denied_src_ids = []
+    uncached_src_ids = []
 
-    # Initialize a DynamoDB resource using boto3
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(object_access_table)
-
-    try:
-        # Iterate over each src_id and perform a query
-        for src_id in raw_src_ids:
-            response = table.query(
-                KeyConditionExpression=Key("object_id").eq(src_id)
-                & Key("principal_id").eq(current_user)
-            )
-
-            # Check if the response has any items with the required permission levels
-            items_with_access = [
-                item
-                for item in response.get("Items", [])
-                if item["permission_level"] in permission_levels
-            ]
-
-            # Classify the src_id based on whether it has accessible items
-            if items_with_access:
+    # Check cache first for all source IDs
+    for src_id in raw_src_ids:
+        # Skip documents that are permanently failed
+        is_failed, failure_reason, _ = performance_cache.is_document_failed(src_id)
+        if is_failed:
+            access_denied_src_ids.append(src_id)
+            continue
+        
+        # Check permission cache
+        cached_permission = performance_cache.get_cached_permission(current_user, src_id)
+        if cached_permission is not None:
+            if cached_permission:
                 accessible_src_ids.append(src_id)
             else:
                 access_denied_src_ids.append(src_id)
-        logger.info(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")        
+        else:
+            uncached_src_ids.append(src_id)
 
-    except Exception as e:
-        logging.error(f"An error occurred while classifying src_ids by access: {e}")
-        # Depending on the use case, you may want to handle the error differently
-        # Here we're considering all src_ids as denied if there's an error
-        access_denied_src_ids.extend(raw_src_ids)
-    print(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")
+    # Parallel permission checking for uncached source IDs
+    if uncached_src_ids:
+        def check_single_permission(src_id):
+            """Check permission for a single source ID - designed for parallel execution"""
+            try:
+                dynamodb = boto3.resource("dynamodb")
+                table = dynamodb.Table(object_access_table)
+                
+                response = table.query(
+                    KeyConditionExpression=Key("object_id").eq(src_id)
+                    & Key("principal_id").eq(current_user)
+                )
+
+                # Check if the response has any items with the required permission levels
+                items_with_access = [
+                    item
+                    for item in response.get("Items", [])
+                    if item["permission_level"] in permission_levels
+                ]
+
+                has_access = len(items_with_access) > 0
+                
+                # Cache the result
+                performance_cache.cache_permission(current_user, src_id, has_access)
+                
+                return src_id, has_access
+                
+            except Exception as e:
+                logger.error(f"Error checking permission for {src_id}: {str(e)}")
+                # Cache as denied on error to avoid repeated failures
+                performance_cache.cache_permission(current_user, src_id, False)
+                return src_id, False
+
+        # Execute permission checks in parallel
+        max_workers = min(10, len(uncached_src_ids))  # Limit concurrent DynamoDB queries
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all permission check tasks
+            future_to_src_id = {executor.submit(check_single_permission, src_id): src_id for src_id in uncached_src_ids}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_src_id):
+                try:
+                    src_id, has_access = future.result()
+                    if has_access:
+                        accessible_src_ids.append(src_id)
+                    else:
+                        access_denied_src_ids.append(src_id)
+                except Exception as e:
+                    src_id = future_to_src_id[future]
+                    logger.error(f"Error in parallel permission check for {src_id}: {str(e)}")
+                    access_denied_src_ids.append(src_id)
+
+    logger.info(f"Accessible src_ids: {accessible_src_ids}, Access denied src_ids: {access_denied_src_ids}")
+    
     return accessible_src_ids, access_denied_src_ids
 
 
@@ -201,6 +381,10 @@ def classify_src_ids_by_access(raw_src_ids, current_user):
 def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
     accessible_src_ids = []
     access_denied_src_ids = []
+    
+    # Early exit if no group sources
+    if not raw_group_src_ids:
+        return accessible_src_ids, access_denied_src_ids
 
     # Initialize a DynamoDB resource using boto3
     dynamodb = boto3.resource("dynamodb")
@@ -282,6 +466,10 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
     
     accessible_src_ids = []
     access_denied_src_ids = []
+    
+    # Early exit if no AST sources
+    if not raw_ast_src_ids:
+        return accessible_src_ids, access_denied_src_ids
 
     # Initialize a DynamoDB resource using boto3
     dynamodb = boto3.resource("dynamodb")
@@ -461,7 +649,7 @@ def process_input_with_dual_retrieval(event, context, current_user, name, data):
 
 async def _async_process_input_with_dual_retrieval(event, context, current_user, name, data):
     """
-    Async implementation of dual retrieval processing.
+    Optimized dual retrieval processing with comprehensive performance enhancements
     """
     token = data["access_token"]
     account_data = {
@@ -477,30 +665,83 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     raw_ast_src_ids = data.get("astDataSources", {})
     limit = data.get("limit", 10)
 
-    accessible_src_ids, access_denied_src_ids = classify_src_ids_by_access(raw_src_ids, current_user)
-    group_accessible_src_ids, group_access_denied_src_ids = classify_group_src_ids_by_access(raw_group_src_ids, current_user, token)
-    ast_accessible_src_ids, ast_access_denied_src_ids = classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token)
+    # Parallel permission checking
+    async def check_individual_permissions():
+        return classify_src_ids_by_access(raw_src_ids, current_user)
+    
+    async def check_group_permissions():
+        return classify_group_src_ids_by_access(raw_group_src_ids, current_user, token)
+    
+    async def check_ast_permissions():
+        return classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token)
+
+    # Run all permission checks in parallel - only run what's needed
+    tasks = []
+    results_map = {}
+    
+    if raw_src_ids:
+        tasks.append(('individual', asyncio.to_thread(check_individual_permissions)))
+    if raw_group_src_ids:
+        tasks.append(('group', asyncio.to_thread(check_group_permissions)))
+    if raw_ast_src_ids:
+        tasks.append(('ast', asyncio.to_thread(check_ast_permissions)))
+    
+    if tasks:
+        task_results = await asyncio.gather(*[task for _, task in tasks])
+        for i, (task_type, _) in enumerate(tasks):
+            results_map[task_type] = task_results[i]
+    
+    # Extract results with defaults for skipped checks
+    accessible_src_ids, _ = results_map.get('individual', ([], []))
+    group_accessible_src_ids, _ = results_map.get('group', ([], []))
+    ast_accessible_src_ids, _ = results_map.get('ast', ([], []))
 
     src_ids = accessible_src_ids + group_accessible_src_ids + ast_accessible_src_ids
 
-    # wait until all embeddings are completed - only check individual accessible sources
-    pending_ids = accessible_src_ids  # Only check individual user accessible sources, not group sources
+    # Advanced polling strategy with exponential backoff and early termination
+    pending_ids = accessible_src_ids
     is_complete = False
     iteration_count = 0
-    requeue_failures = {}  # Track requeue failures per document
-    max_requeue_failures = 3  # Maximum failures before giving up
-    failed_documents = []  # Track documents that failed after max retries
+    requeue_failures = {}
+    max_requeue_failures = 3
+    failed_documents = []
     
-    logger.info(
-        f"Starting embedding completion check for {len(accessible_src_ids)} individual accessible data sources: {accessible_src_ids}"
-    )
-
-    while not is_complete:
+    # Polling parameters - optimized for faster failure detection
+    max_iterations = 6  # Reduced from 8 - fail faster for bad documents
+    base_sleep_time = 0.5  # Start with shorter wait
+    max_sleep_time = 3  # Cap at 3 seconds instead of 5
+    exponential_backoff = True
+    
+    # Pre-filter out known failed documents
+    filtered_accessible_src_ids = []
+    pre_failed_documents = []
+    for src_id in accessible_src_ids:
+        is_failed, failure_reason, _ = performance_cache.is_document_failed(src_id)
+        if is_failed:
+            logger.info(f"Pre-filtering failed document {src_id[:40]}... - {failure_reason}")
+            pre_failed_documents.append(src_id)
+        else:
+            filtered_accessible_src_ids.append(src_id)
+    
+    accessible_src_ids = filtered_accessible_src_ids
+    failed_documents.extend(pre_failed_documents)
+    
+    logger.info(f"Starting embedding completion check for {len(accessible_src_ids)} individual accessible data sources (filtered {len(pre_failed_documents)} pre-failed): {accessible_src_ids[:5]}..." if len(accessible_src_ids) > 5 else accessible_src_ids)
+    
+    while not is_complete and iteration_count < max_iterations:
         iteration_count += 1
-        logger.info(
-            f"Polling iteration {iteration_count}: Waiting for embedding completion..."
-        )
-        if (iteration_count > 1): await asyncio.sleep(3)
+        logger.info(f"Polling iteration {iteration_count}: Waiting for embedding completion...")
+        
+        # Dynamic sleep times based on iteration
+        if iteration_count > 1:
+            if exponential_backoff:
+                sleep_time = min(base_sleep_time * (2 ** (iteration_count - 2)), max_sleep_time)
+            else:
+                sleep_time = base_sleep_time
+            
+            await asyncio.sleep(sleep_time)
+        
+        # Check embedding completion using optimized caching system
         completion_result = await check_embedding_completion(pending_ids, account_data, requeue_failures, max_requeue_failures)
         possible_pending_ids = completion_result["requires_embedding"]
         is_complete = completion_result["all_complete"] and len(possible_pending_ids) == 0
@@ -508,41 +749,52 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         pending_ids = completion_result["pending_ids"]
         failed_documents = completion_result.get("failed_documents", [])
         
-        # Check if we have documents that exceeded max requeue failures
+        # Handle failed documents intelligently
         if failed_documents:
             logger.warning(f"Failed to process embeddings for {len(failed_documents)} documents after {max_requeue_failures} requeue attempts: {failed_documents}")
-            # Remove failed documents from the source IDs so we can continue with successful ones
+            
+            # Remove failed documents from processing
             for failed_doc in failed_documents:
                 if failed_doc in src_ids:
                     src_ids.remove(failed_doc)
                 if failed_doc in pending_ids:
                     pending_ids.remove(failed_doc)
             
-            # If ALL documents failed, then return error
+            # If ALL documents failed, return graceful error with more context
             if len(src_ids) == 0:
                 logger.error(f"All documents failed embedding. Cannot proceed with retrieval.")
+                # Categorize failures for better diagnostics
+                failure_categories = {}
+                for doc_id in failed_documents:
+                    is_failed, reason, _ = performance_cache.is_document_failed(doc_id)
+                    if is_failed:
+                        category = "SQS Permissions" if "SQS" in reason else "Parameter Store" if "Parameter Store" in reason else "Other"
+                        failure_categories[category] = failure_categories.get(category, 0) + 1
+                
                 return {
-                    "error": f"All {len(failed_documents)} documents failed to process embeddings after multiple attempts",
-                    "failed_documents": failed_documents,
-                    "details": "No documents could be embedded. Please try again later or contact support."
+                    "error": f"All {len(failed_documents)} documents failed to process embeddings",
+                    "failed_documents": failed_documents[:10],  # Limit to first 10 for readability
+                    "total_failed": len(failed_documents),
+                    "failure_breakdown": failure_categories,
+                    "details": "Documents marked as failed and cached. Please check Lambda permissions for SQS and Parameter Store."
                 }
             
-            # Otherwise, continue with partial success
+            # Continue with partial success
             logger.info(f"Continuing with {len(src_ids)} successful documents out of {len(src_ids) + len(failed_documents)} total")
-            # Mark as complete since we're removing failed docs from pending
             is_complete = len(pending_ids) == 0
 
+        # Early termination and timeout protection
         if is_complete:
-            logger.info(f"All individual accessible embeddings completed after {iteration_count} iterations")
+            logger.info(f"All embeddings completed after {iteration_count} iterations")
         else:
-            logger.info(
-                f"Iteration {iteration_count}: {len(pending_ids) + len(possible_pending_ids)} individual accessible data sources still pending embedding completion: {pending_ids + possible_pending_ids} "
-            )
-            if iteration_count % 10 == 0:  # Log a summary every 10 iterations
-                logger.warning(
-                    f"Long-running embedding completion check: {iteration_count} iterations completed, still waiting for {len(pending_ids) + len(possible_pending_ids)} individual accessible data sources"
-                )
+            logger.info(f"Iteration {iteration_count}: {len(pending_ids) + len(possible_pending_ids)} sources still pending: {pending_ids + possible_pending_ids}")
+            
+            if iteration_count >= max_iterations:
+                logger.warning(f"Reached max iterations ({max_iterations})")
+                logger.warning(f"Continuing with completed embeddings, {len(pending_ids)} may be incomplete")
+                break
 
+    # Parallel embedding generation and retrieval
     logger.info("Starting embedding generation for user input query")
 
     response_embeddings = generate_embeddings(content)
@@ -550,29 +802,45 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     if response_embeddings["success"]:
         embeddings = response_embeddings["data"]
         token_count = response_embeddings["token_count"]
-        print(f"Here are the token count {token_count}")
+        logger.info(f"Generated embeddings with {token_count} tokens")
     else:
         error = response_embeddings["error"]
-        print(f"Error occurred: {error}")
+        logger.error(f"Embedding generation failed: {error}")
         return {"error": error}
+    
+    async def get_similar_docs():
+        return get_top_similar_docs(embeddings, src_ids, limit)
+    
+    async def get_similar_qas():
+        return get_top_similar_qas(embeddings, src_ids, limit)
 
-    # Step 1: Get documents related to the user input from the database
-    related_docs = get_top_similar_docs(embeddings, src_ids, limit)
-
-    related_qas = get_top_similar_qas(embeddings, src_ids, limit)
+    # Execute both retrieval operations in parallel
+    related_docs, related_qas = await asyncio.gather(
+        asyncio.to_thread(get_similar_docs),
+        asyncio.to_thread(get_similar_qas)
+    )
+    
+    # Combine results
     related_docs.extend(related_qas)
+    
+    logger.info(f"Retrieved {len(related_docs)} related documents/QAs")
 
-    print(f"Here are the related docs {related_docs}")
-
-    # Build response with partial success information if needed
-    response = {"result": related_docs}
+    # Build response
+    response = {
+        "result": related_docs,
+        "documents_processed": len(src_ids),
+        "results_returned": len(related_docs)
+    }
     
     # Add warning about failed documents if any
     if failed_documents:
         response["warning"] = f"Partial results: {len(failed_documents)} document(s) could not be processed"
         response["failed_documents"] = failed_documents
         response["successful_documents"] = src_ids
-        logger.info(f"Returning partial results from {len(src_ids)} successful documents, {len(failed_documents)} failed")
+        response["failed_document_count"] = len(failed_documents)
+        logger.info(f"Returning results from {len(src_ids)} successful documents, {len(failed_documents)} failed")
+    else:
+        logger.info(f"All {len(src_ids)} documents processed successfully")
     
     return response
 
@@ -623,9 +891,10 @@ async def _async_queue_missing_embeddings(event, context, current_user, name, da
 
 
 async def check_embedding_completion(src_ids, account_data, requeue_failures=None, max_requeue_failures=3):
+    """Cached embedding status with intelligent failure handling"""
     if not src_ids:
         return {"all_complete": True, "pending_ids": [], "requires_embedding": [], "failed_documents": []}
-
+    
     embedding_progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
     print(f"Checking embedding completion for {src_ids}")
 
@@ -633,16 +902,45 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
     if requeue_failures is None:
         requeue_failures = {}
     
+    # Check cache and failed documents first
+    cached_completed = []
+    cached_failed = []
+    uncached_src_ids = []
+    cache_hits = 0
+    
+    for src_id in src_ids:
+        # Check if document is permanently failed
+        is_failed, failure_reason, failure_count = performance_cache.is_document_failed(src_id)
+        if is_failed:
+            logger.warning(f"Skipping permanently failed document: {src_id[:20]}... - {failure_reason}")
+            cached_failed.append(src_id)
+            continue
+        
+        # Check embedding status cache
+        cached_status = performance_cache.get_cached_embedding_status(src_id)
+        if cached_status == "completed":
+            logger.info(f"Cache hit: {src_id[:20]}... is completed")
+            cached_completed.append(src_id)
+            cache_hits += 1
+        elif cached_status in ["processing", "starting"]:
+            logger.info(f"Cache hit: {src_id[:20]}... is {cached_status} - will check again")
+            uncached_src_ids.append(src_id)  # Still need to check for updates
+        else:
+            uncached_src_ids.append(src_id)
+    
+    logger.info(f"Cache summary: {cache_hits} completed, {len(cached_failed)} failed, {len(uncached_src_ids)} need checking")
+    
+    # Parallel status checking for uncached source IDs  
     async def check_single_embedding(src_id):
-        """Check embedding status for a single source ID"""
+        """Check embedding status for a single source ID with caching"""
         pending_ids = []
         requires_embedding = []
         
         def sync_check():
-            dynamodb = boto3.resource("dynamodb")
-            table = dynamodb.Table(embedding_progress_table)
-            
             try:
+                dynamodb = boto3.resource("dynamodb")
+                table = dynamodb.Table(embedding_progress_table)
+                
                 # Normalize the source ID format
                 trimmed_src = (
                     src_id.split(".json")[0] + ".json" if ".json" in src_id else src_id
@@ -651,10 +949,9 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
 
                 # No record means document hasn't been submitted for embedding yet
                 if "Item" not in response:
-                    logging.info(
-                        f"[NO EMBEDDING RECORD] No embedding process record found for {src_id}"
-                    )
+                    logging.info(f"[NO EMBEDDING RECORD] No embedding process record found for {src_id}")
                     requires_embedding.append(src_id)
+                    performance_cache.cache_embedding_status(src_id, "requires_embedding")
                     return {"pending": [], "requires_embedding": requires_embedding}
 
                 item = response["Item"]
@@ -662,7 +959,13 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                 is_terminated = item.get("terminated", False)
                 last_updated = item.get("lastUpdated")
 
-                # Check for stalled jobs (running for too long without updates)
+                # Handle completed status immediately
+                if parent_status == "completed":
+                    logging.info(f"[COMPLETED] Document {src_id} embedding is complete")
+                    performance_cache.cache_embedding_status(src_id, "completed")
+                    return {"pending": [], "requires_embedding": []}
+
+                # Check for stalled jobs
                 if parent_status in ["starting", "processing"] and last_updated:
                     try:
                         # Parse timestamp and ensure it's UTC-aware
@@ -680,30 +983,43 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
 
                         current_time = datetime.now(timezone.utc)
 
-                        # If job has been running for more than 30 minutes without updates, consider it stalled
-                        if (
-                            current_time - last_updated_time
-                        ).total_seconds() > 1800:  # 30 minutes (increased from 10)
-                            # Track requeue failures for stalled documents
+                        # If job has been running for more than 15 minutes without updates, consider it stalled (reduced from 30)
+                        if (current_time - last_updated_time).total_seconds() > 900:  # 15 minutes
+                            # Track requeue failures
                             if requeue_failures is not None:
                                 failures = requeue_failures.get(src_id, 0)
                                 if failures >= max_requeue_failures:
-                                    logging.error(
-                                        f"[MAX_FAILURES] Stalled document {src_id} exceeded max requeue attempts ({max_requeue_failures})"
-                                    )
+                                    failure_msg = f"Stalled document exceeded {max_requeue_failures} requeue attempts"
+                                    performance_cache.mark_document_failed(src_id, failure_msg, failures)
+                                    logging.error(f"[MAX_FAILURES] {failure_msg} for {src_id}")
                                     return {"pending": [], "requires_embedding": [], "failed": src_id}
                             
                             logging.warning(
                                 f"[STALLED JOB] Document {src_id} appears stalled in state {parent_status}. Last updated: {last_updated}. Attempting requeue (attempt {requeue_failures.get(src_id, 0) + 1} of {max_requeue_failures})."
                             )
                             
+                            # Attempt requeue with failure detection
                             requeue_result = manually_queue_embedding(src_id, account_data)
                             if not requeue_result.get("success", False):
                                 if requeue_failures is not None:
                                     requeue_failures[src_id] = requeue_failures.get(src_id, 0) + 1
                                     logging.error(f"[REQUEUE_FAILED] Failed to requeue stalled {src_id}. Failure count: {requeue_failures[src_id]}")
+                                
+                                # Check if this is a permanent failure (like SQS permissions)
+                                error_msg = requeue_result.get("message", "")
+                                if "Missing SQS permissions" in error_msg or "AccessDenied" in error_msg:
+                                    # Mark with special SQS permission failure for longer caching
+                                    performance_cache.mark_document_failed(src_id, "SQS Permission Error - Lambda lacks queue access", requeue_failures.get(src_id, 1))
+                                    logging.error(f"[PERMANENT_FAILURE] Marking {src_id[:40]}... as permanently failed due to SQS permissions")
+                                    return {"pending": [], "requires_embedding": [], "failed": src_id}
+                                elif "Failed to store RAG secrets" in error_msg:
+                                    # Mark Parameter Store failures separately
+                                    performance_cache.mark_document_failed(src_id, "Parameter Store Error - Rate limit or permissions", requeue_failures.get(src_id, 1))
+                                    logging.error(f"[PERMANENT_FAILURE] Marking {src_id[:40]}... as permanently failed due to Parameter Store issues")
+                                    return {"pending": [], "requires_embedding": [], "failed": src_id}
                             
                             pending_ids.append(src_id)
+                            performance_cache.cache_embedding_status(src_id, parent_status)  # Cache current status
                             return {"pending": pending_ids, "requires_embedding": []}
                     except (ValueError, TypeError):
                         logging.warning(
@@ -785,16 +1101,33 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
         # Run the synchronous DynamoDB operation in a thread
         return await asyncio.to_thread(sync_check)
 
-    # Execute all checks concurrently
-    tasks = [check_single_embedding(src_id) for src_id in src_ids]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    print("Asynchronous embedding check complete")
+    # Parallel processing for uncached source IDs only - batch for better performance
+    if uncached_src_ids:
+        # Process in batches to avoid overwhelming DynamoDB
+        batch_size = 20  # Process 20 documents at a time
+        results = []
+        
+        for i in range(0, len(uncached_src_ids), batch_size):
+            batch = uncached_src_ids[i:i + batch_size]
+            tasks = [check_single_embedding(src_id) for src_id in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(batch_results)
+            
+            # Small delay between batches to avoid throttling
+            if i + batch_size < len(uncached_src_ids):
+                await asyncio.sleep(0.1)
+        
+        print(f"Asynchronous embedding check complete - processed {len(uncached_src_ids)} documents in {(len(uncached_src_ids) + batch_size - 1) // batch_size} batches")
+    else:
+        results = []
+        print("All embedding statuses served from cache!")
     
-    # Combine results
+    # Combine cached results with fresh results
     all_pending_ids = []
     all_requires_embedding = []
-    all_failed_documents = []
+    all_failed_documents = cached_failed.copy()  # Start with cached failed documents
     
+    # Add results from database checks
     for result in results:
         if isinstance(result, Exception):
             logging.error(f"Error in concurrent embedding check: {result}")
@@ -807,6 +1140,10 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
         # Collect failed documents
         if "failed" in result:
             all_failed_documents.append(result["failed"])
+    
+    # Add cached completed documents to the "all_complete" calculation
+    logger.info(f"Embedding check completed: {len(src_ids)} documents processed")
+    logger.info(f"Cache efficiency: {cache_hits} cache hits, {len(uncached_src_ids)} DB queries, {len(cached_failed)} failed")
 
     return {
         "all_complete": len(all_pending_ids) == 0 and len(all_failed_documents) == 0,
@@ -820,6 +1157,12 @@ def manually_queue_embedding(src_id, account_data):
     if not "global/" in src_id:
         print(f"Skipping non-global document {src_id}")
         return {"success": False}
+    
+    # Check if already marked as failed in cache to avoid unnecessary work
+    is_failed, failure_reason, _ = performance_cache.is_document_failed(src_id)
+    if is_failed:
+        logging.info(f"[SKIP_FAILED] Document {src_id[:40]}... already marked as failed: {failure_reason}")
+        return {"success": False, "message": f"Document permanently failed: {failure_reason}"}
 
     # Implement retry logic for AWS rate limits
     max_retries = 3
@@ -868,7 +1211,9 @@ def manually_queue_embedding(src_id, account_data):
             
             # Check if it's an SQS permission error - no point retrying
             if 'AccessDenied' in error_str and 'sqs:sendmessage' in error_str.lower():
-                logging.error(f"[PERMISSION_ERROR] Lambda lacks SQS SendMessage permission for {src_id}: {error_str}")
+                logging.error(f"[PERMISSION_ERROR] Lambda lacks SQS SendMessage permission for {src_id[:40]}...: {error_str}")
+                # Mark this document as permanently failed in cache
+                performance_cache.mark_document_failed(src_id, "SQS Permission Error - Lambda lacks queue access", max_retries)
                 return {"success": False, "message": "Missing SQS permissions"}
             
             # Check if it's other rate limit errors

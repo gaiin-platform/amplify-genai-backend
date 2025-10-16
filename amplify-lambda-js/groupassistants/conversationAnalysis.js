@@ -1,18 +1,18 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { getLogger } from "../common/logging.js";
-import { getDefaultLLM } from "../common/llm.js";
 import { StreamResultCollector } from "../common/streams.js";
-import { transform as fnTransformer } from "../common/chat/events/openaifn.js";
 import { createHash } from 'crypto';
-import { getChatFn } from "../common/params.js";
+import { promptLiteLLMForData } from "../litellm/litellmClient.js";
 
 const logger = getLogger("conversationAnalysis");
 
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
 const s3Client = new S3Client({ region: "us-east-1" });
+const sqsClient = new SQSClient({ region: process.env.DEP_REGION || "us-east-1" });
 
 function calculateMD5(content) {
     return createHash('md5').update(content).digest('base64');
@@ -193,13 +193,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     if (performCategoryAnalysis) {
         logger.debug("Peforming AI Analysis on conversation");
 
-        const resultCollector = new StreamResultCollector();
-        resultCollector.addTransformer(fnTransformer);
-
         const model = advancedModel;
-
-        // set up llm 
-        let llm = await getDefaultLLM(model, resultCollector, account);
 
         const analysisPrompt = performCategoryAnalysis
             ? `Analyze the following conversation and determine its ${hasCategories ? "category and " : ""}system rating:
@@ -233,9 +227,9 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
         };
 
         try {
-            const analysis = await llm.promptForData(
-                updatedChatBody,
-                [],
+            const analysisResult = await promptLiteLLMForData(
+                updatedChatBody.messages,
+                model,
                 '', // prompt already in messages
                 performCategoryAnalysis ? {
                     "category": "String category from the predefined list",
@@ -243,44 +237,42 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                 } : {
                     "systemRating": "Integer rating from 1-5 based on AI response quality"
                 },
-                null,
-                (r) => {
-                    // Validate and parse the response
-                    if (!r.systemRating) {
-                        return null;
-                    }
-                    
-                    try {
-                        const systemRating = parseInt(r.systemRating);
-                        if (isNaN(systemRating) || systemRating < 1 || systemRating > 5) {
-                            logger.error("Invalid system rating:", r.systemRating);
-                            return null;
-                        }
-                        
-                        const result = { systemRating };
+                account, // 🚨 CRITICAL FIX: Add account for usage tracking
+                `analysis_${conversationId}_${Date.now()}`, // 🚨 CRITICAL FIX: Generate requestId for usage tracking
+                {
+                    maxTokens: 300,
+                    temperature: 0.1
+                }
+            );
+            
+            // Validate and parse the response
+            let analysis = null;
+            if (analysisResult && analysisResult.systemRating) {
+                try {
+                    const systemRating = parseInt(analysisResult.systemRating);
+                    if (!isNaN(systemRating) && systemRating >= 1 && systemRating <= 5) {
+                        analysis = { systemRating };
                         
                         // Only validate category if category analysis is enabled
                         if (performCategoryAnalysis) {
-                            if (!r.category) {
+                            if (analysisResult.category) {
+                                // Validate category against allowed values if we have them
+                                if (!hasCategories || categories.includes(analysisResult.category)) {
+                                    analysis.category = analysisResult.category;
+                                } else {
+                                    logger.error("Invalid category:", analysisResult.category);
+                                }
+                            } else {
                                 logger.error("Missing category in analysis result");
-                                return null;
                             }
-                            // Validate category against allowed values if we have them
-                            if (hasCategories && !categories.includes(r.category)) {
-                                logger.error("Invalid category:", r.category);
-                                return null;
-                            }
-                            result.category = r.category;
                         }
-                        
-                        return result;
-                    } catch (e) {
-                        logger.error("Error parsing analysis result:", e);
-                        return null;
+                    } else {
+                        logger.error("Invalid system rating:", analysisResult.systemRating);
                     }
-                },
-                2 // Fewer retries for faster response
-            );
+                } catch (e) {
+                    logger.error("Error parsing analysis result:", e);
+                }
+            }
 
             // Handle case where analysis failed
             if (!analysis) {
@@ -329,3 +321,159 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
         }
     }
 }
+
+// ✅ CRITICAL SPEED OPTIMIZATION: Async Queue Functions
+
+/**
+ * ✅ SPEED OPTIMIZATION: Queue conversation analysis instead of processing synchronously
+ */
+export async function queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    try {
+        const queueUrl = process.env.CONVERSATION_ANALYSIS_QUEUE_URL;
+        
+        if (!queueUrl) {
+            logger.error("CONVERSATION_ANALYSIS_QUEUE_URL environment variable not set");
+            return false;
+        }
+        
+        const messageBody = {
+            chatRequest,
+            llmResponse,
+            account,
+            performCategoryAnalysis,
+            queuedAt: new Date().toISOString()
+        };
+        
+        const command = new SendMessageCommand({
+            QueueUrl: queueUrl,
+            MessageBody: JSON.stringify(messageBody),
+            MessageAttributes: {
+                conversationId: {
+                    DataType: "String",
+                    StringValue: chatRequest?.options?.conversationId || "unknown"
+                },
+                assistantId: {
+                    DataType: "String", 
+                    StringValue: chatRequest?.options?.assistantId || "unknown"
+                },
+                user: {
+                    DataType: "String",
+                    StringValue: account?.user || "unknown"
+                }
+            }
+        });
+        
+        const result = await sqsClient.send(command);
+        
+        logger.debug('Successfully queued conversation analysis', {
+            messageId: result.MessageId,
+            conversationId: chatRequest?.options?.conversationId,
+            assistantId: chatRequest?.options?.assistantId,
+            user: account?.user
+        });
+        
+        return true;
+        
+    } catch (error) {
+        logger.error('Failed to queue conversation analysis', {
+            error: error.message,
+            conversationId: chatRequest?.options?.conversationId,
+            user: account?.user
+        });
+        return false;
+    }
+}
+
+/**
+ * ✅ BACKWARD COMPATIBILITY: Fallback to synchronous processing if queue fails
+ */
+export async function queueConversationAnalysisWithFallback(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    const queueSuccess = await queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis);
+    
+    if (!queueSuccess) {
+        logger.warn('Queue failed, falling back to synchronous analysis', {
+            conversationId: chatRequest?.options?.conversationId,
+            user: account?.user
+        });
+        
+        try {
+            await analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, account, performCategoryAnalysis);
+        } catch (fallbackError) {
+            logger.error('Fallback synchronous analysis also failed', {
+                error: fallbackError.message,
+                conversationId: chatRequest?.options?.conversationId,
+                user: account?.user
+            });
+        }
+    }
+}
+
+/**
+ * ✅ SQS PROCESSOR: Handler for async conversation analysis processing
+ */
+export const sqsProcessorHandler = async (event) => {
+    logger.debug('Processing conversation analysis from SQS', { recordCount: event.Records?.length });
+
+    const results = [];
+    
+    for (const record of event.Records || []) {
+        try {
+            const messageBody = JSON.parse(record.body);
+            
+            const {
+                chatRequest,
+                llmResponse, 
+                account,
+                performCategoryAnalysis = true
+            } = messageBody;
+            
+            logger.debug('Processing conversation analysis for request', {
+                conversationId: chatRequest?.options?.conversationId,
+                assistantId: chatRequest?.options?.assistantId,
+                user: account?.user
+            });
+            
+            await analyzeAndRecordGroupAssistantConversation(
+                chatRequest,
+                llmResponse,
+                account,
+                performCategoryAnalysis
+            );
+            
+            results.push({
+                messageId: record.messageId,
+                status: 'success'
+            });
+            
+            logger.debug('Successfully processed conversation analysis', {
+                messageId: record.messageId,
+                conversationId: chatRequest?.options?.conversationId
+            });
+            
+        } catch (error) {
+            logger.error('Failed to process conversation analysis', {
+                messageId: record.messageId,
+                error: error.message,
+                stack: error.stack
+            });
+            
+            results.push({
+                messageId: record.messageId,
+                status: 'error',
+                error: error.message
+            });
+            
+            throw error;
+        }
+    }
+    
+    return {
+        statusCode: 200,
+        body: JSON.stringify({
+            processed: results.length,
+            results
+        })
+    };
+};
+
+logger.info("Conversation analysis with async queue support initialized - major speed optimization active");

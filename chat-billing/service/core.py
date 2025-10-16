@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import os
 import boto3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from model_rates.update_table import load_model_rate_table, get_csv_model_ids
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
@@ -147,14 +148,24 @@ DEFAULT_MODELS = "defaultModels"
 })
 @validated(op="read")
 def get_user_available_models(event, context, current_user, name, data):
-    # Retrieve supported models
-    supported_models_result = get_supported_models()
-
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # Submit all independent operations simultaneously
+        supported_models_future = executor.submit(get_supported_models)
+        affiliated_groups_future = executor.submit(lambda: get_user_affiliated_groups(data["access_token"]))
+        default_models_future = executor.submit(get_admin_default_models)
+        
+        # Wait for all operations to complete
+        try:
+            supported_models_result = supported_models_future.result()
+            affiliated_groups, _ = affiliated_groups_future.result()  
+            default_results = default_models_future.result()
+        except Exception as e:
+            return {"success": False, "message": f"Error in parallel execution: {str(e)}"}
+    
     if not supported_models_result.get("success"):
         return supported_models_result
 
     supported_models = supported_models_result.get("data", {}).items()
-    affiliated_groups, _ = get_user_affiliated_groups(data["access_token"])
     print("User affiliated_groups: ", affiliated_groups)
 
     # Filter and format the available models directly using a list comprehension
@@ -173,7 +184,8 @@ def get_user_available_models(event, context, current_user, name, data):
     default_model = None
     advanced_model = None
     cheapest_model = None
-    # print("default_results: ", default_results)
+    document_caching_model = None
+    
     if not default_results or len(default_results.keys()) == 0:
         default_model, advanced_model, cheapest_model, _ = (
             extract_and_update_default_models()
@@ -229,10 +241,10 @@ def extract_and_update_default_models():
 
     results = {model_type: None for model_type in field_mappings.values()}
 
-    try:
-        # Query each default model type
-        for db_field, model_type in field_mappings.items():
-            # Scan with filter for each default type
+    def scan_for_default_model(db_field_and_type):
+        """Scan for a specific default model type - designed for parallel execution"""
+        db_field, model_type = db_field_and_type
+        try:
             response = model_rate_table.scan(
                 FilterExpression=f"attribute_exists({db_field}) AND {db_field} = :true_val",
                 ExpressionAttributeValues={":true_val": True},
@@ -246,8 +258,32 @@ def extract_and_update_default_models():
 
                 # Transform to our internal format and extract data
                 transformed_model = model_transform_db_to_internal(model_data)
-                results[model_type] = extract_data(model_id, transformed_model)
+                result_model = extract_data(model_id, transformed_model)
                 print(f"Found {model_type} model: {model_id}")
+                return model_type, result_model
+            return model_type, None
+        except Exception as e:
+            print(f"Error scanning for {model_type} default model: {str(e)}")
+            return model_type, None
+
+    try:
+        # ⚡ PERFORMANCE BOOST: Scan all default model types in parallel
+        max_workers = min(len(field_mappings), 6)  # Limit concurrent scans
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all scan operations simultaneously
+            future_to_field = {
+                executor.submit(scan_for_default_model, item): item 
+                for item in field_mappings.items()
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_field):
+                try:
+                    model_type, result_model = future.result()
+                    results[model_type] = result_model
+                except Exception as e:
+                    print(f"Error in parallel default model scan: {str(e)}")
 
         # Update the admin table with the found defaults
         if any(model is not None for model in results.values()):
@@ -373,23 +409,50 @@ def get_supported_models():
             models_data.extend(response.get("Items", []))
     except Exception as e:
         return {"success": False, "message": f"Error retrieving model data: {str(e)}"}
+    
+    # ⚡ PERFORMANCE BOOST: Process all models in parallel
+    def process_model(model):
+        """Process a single model - designed for parallel execution"""
+        try:
+            model_id = model.get("ModelID")
+            if not model_id:
+                return None, None
 
-    # Transform data into the desired structure
+            # Convert Decimal fields to floats before creating transformed model
+            for field in COST_FIELDS:
+                if field in model and isinstance(model[field], Decimal):
+                    model[field] = float(model[field])
+
+            transformed_model = model_transform_db_to_internal(model)
+            
+            # Filter out outdated models
+            if is_model_current(transformed_model):
+                return model_id, transformed_model
+            else:
+                print("Skipping outdated model: ", model_id)
+                return None, None
+        except Exception as e:
+            print(f"Error processing model {model.get('ModelID', 'unknown')}: {str(e)}")
+            return None, None
+
     supported_models_config = {}
-    for model in models_data:
-        model_id = model.get("ModelID")
-
-        # Convert Decimal fields to floats before creating your transformed model
-        for field in COST_FIELDS:
-            if field in model and isinstance(model[field], Decimal):
-                model[field] = float(model[field])
-
-        transformed_model = model_transform_db_to_internal(model)
-        # filter out outdated models
-        if is_model_current(transformed_model):
-            supported_models_config[model_id] = transformed_model
-        else:
-            print("Skipping outdated model: ", model_id)
+    
+    # Process models in parallel with optimal thread count
+    max_workers = min(32, len(models_data)) if models_data else 1
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all model processing tasks
+        future_to_model = {executor.submit(process_model, model): model for model in models_data}
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_model):
+            try:
+                model_id, transformed_model = future.result()
+                if model_id and transformed_model:
+                    supported_models_config[model_id] = transformed_model
+            except Exception as e:
+                print(f"Error in parallel model processing: {str(e)}")
+    
 
     return {"success": True, "data": supported_models_config}
 

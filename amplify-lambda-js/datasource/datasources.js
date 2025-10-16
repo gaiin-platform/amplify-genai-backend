@@ -8,8 +8,8 @@ import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
-import { getModelByType, ModelTypes, getChatFn, setModel} from "../common/params.js";
-import { LLM } from "../common/llm.js";
+import { getModelByType, ModelTypes} from "../common/params.js";
+import { promptLiteLLMForData } from "../litellm/litellmClient.js";
 
 const logger = getLogger("datasources");
 
@@ -78,7 +78,18 @@ export const doesNotSupportImagesInstructions = (modelName) => {
 
 export const getImageBase64Content = async (dataSource) => {
     const bucket = process.env.S3_IMAGE_INPUT_BUCKET_NAME;
-    const key = extractKey(dataSource.id)
+    const key = extractKey(dataSource.id);
+    
+    // Check cache first
+    const { CacheManager } = await import('../common/cache/cacheManager.js');
+    const cacheKey = `${bucket}:${key}`;
+    const cached = await CacheManager.getCachedImageContent(cacheKey);
+    
+    if (cached) {
+        logger.debug("Using cached image content", {bucket: bucket, key: key});
+        return cached;
+    }
+    
     logger.debug("Fetching file from S3", {bucket: bucket, key: key});
 
     const command = new GetObjectCommand({
@@ -97,7 +108,11 @@ export const getImageBase64Content = async (dataSource) => {
             });
         
         const data = await streamToString(response.Body);
-        logger.debug("Base64 encoded image retrieved")
+        logger.debug("Base64 encoded image retrieved");
+        
+        // Cache the image content
+        CacheManager.setCachedImageContent(cacheKey, data);
+        
         return data;
     } catch (error) {
         logger.error("Error retrieving base64 encoded image", error);
@@ -769,25 +784,7 @@ const getExtractedRelevantContext = async (resolutionEnv, context) => {
     const chatBody = resolutionEnv.chatRequest;
     const userMessage = chatBody.messages.slice(-1)[0].content;
     // Use a cheaper model for document analysis with built-in caching
-    
     const model = getModelByType(params, ModelTypes.DOCUMENT_CACHING);
-    
-    // Create parameters for the LLM with caching enabled
-    const llmParams = setModel ({
-        ...params,
-        options: {
-            skipRag: true,
-            ragOnly: false,
-            dataSourceOptions:{},
-        }
-    }, model);
-    
-    // Initialize LLM for document analysis
-    const chatFn = async (body, writable, context) => {
-        return await getChatFn(model, body, writable, context);
-    };
-    
-    const llm = new LLM(chatFn, llmParams, null);
 
     // Create a mapped version of the context content for easier lookups
     const contentByIndex = {};
@@ -842,40 +839,44 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         }
     };
 
-    // Use a simpler prompt for data
-    const extraction = await llm.promptForData(
-        updatedBody,
-        [],
+    // Use direct LiteLLM call for document analysis
+    const extraction = await promptLiteLLMForData(
+        updatedBody.messages,
+        model,
         '', // prompt already in messages
         {
             "relevantIndexes": "Array of integer indexes indicating relevant document fragments",
         },
-        null,
-        (r) => {
-            // Ensure we get a valid array of numbers
-            if (!r.relevantIndexes) {
-                return null;
-            }
-            try {
-                const indexes = JSON.parse(r.relevantIndexes);
-                return indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
-            } catch (e) {
-                logger.error("Error parsing relevant indexes:", e);
-                return null;
-            }
-        },
-        2 // Fewer retries for faster response
+        resolutionEnv.params.account, // 🚨 CRITICAL FIX: Add account for usage tracking
+        resolutionEnv.params.requestId, // 🚨 CRITICAL FIX: Add requestId for usage tracking
+        {
+            maxTokens: 300 // Lower token limit, we only need the array
+        }
     );
  
+    // Parse and validate the extraction result
+    let indexes = [];
+    try {
+        if (extraction.relevantIndexes) {
+            if (typeof extraction.relevantIndexes === 'string') {
+                indexes = JSON.parse(extraction.relevantIndexes);
+            } else if (Array.isArray(extraction.relevantIndexes)) {
+                indexes = extraction.relevantIndexes;
+            }
+            // Filter to ensure valid indexes
+            indexes = indexes.filter(idx => typeof idx === 'number' && idx >= 0 && idx < context.content.length);
+        }
+    } catch (e) {
+        logger.error("Error parsing relevant indexes:", e);
+        logger.debug("Dumping entire document context as a fallback...");
+        return context;
+    }
+    
     // Handle case where no relevant content was found
-    if (!extraction.relevantIndexes) {
-        logger.debug("Error extracting relevant content in llm call, dumping entire document context as a fallback...");
-        return context; // Return unchanged context if nothing relevant found
-    } else if  (extraction.relevantIndexes.length === 0) {
+    if (!indexes || indexes.length === 0) {
         logger.debug("No datasource content was relevant to the query");
         return null;
     }
-    const indexes = JSON.parse(extraction.relevantIndexes);
     // Filter the content to only include relevant items
     const filteredContent = indexes.map(idx => contentByIndex[idx]).filter(Boolean);
 

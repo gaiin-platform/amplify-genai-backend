@@ -4,16 +4,24 @@
 import tiktokenModel from '@dqbd/tiktoken/encoders/cl100k_base.json' with {type: 'json'};
 import { Tiktoken } from '@dqbd/tiktoken/lite';
 
+// Global encoder instance - reused across all requests
+let globalEncoder = null;
 
-export const createTokenCounter = (model) => {
+// Token count cache
+const tokenCountCache = new Map();
+const TOKEN_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-    // We only do OpenAI for now, so we ignore the model
 
-    const encoding = new Tiktoken(
-        tiktokenModel.bpe_ranks,
-        tiktokenModel.special_tokens,
-        tiktokenModel.pat_str,
-    );
+export const createTokenCounter = () => {
+    // Reuse global encoder instance
+    if (!globalEncoder) {
+        globalEncoder = new Tiktoken(
+            tiktokenModel.bpe_ranks,
+            tiktokenModel.special_tokens,
+            tiktokenModel.pat_str,
+        );
+    }
+    const encoding = globalEncoder;
 
     return {
         countTokens: (text) => {
@@ -21,9 +29,34 @@ export const createTokenCounter = (model) => {
                 return 0;
             }
 
+            // Check cache first
+            const cacheKey = `${text.substring(0, 100)}:${text.length}`;
+            const cached = tokenCountCache.get(cacheKey);
+            if (cached && (Date.now() - cached.timestamp) < TOKEN_CACHE_TTL) {
+                return cached.count;
+            }
+
             try {
                 const tokens = encoding.encode(text);
-                return tokens.length;
+                const count = tokens.length;
+                
+                // Cache the result
+                tokenCountCache.set(cacheKey, {
+                    count,
+                    timestamp: Date.now()
+                });
+                
+                // Clean up old cache entries if too many
+                if (tokenCountCache.size > 10000) {
+                    const now = Date.now();
+                    for (const [key, value] of tokenCountCache.entries()) {
+                        if (now - value.timestamp > TOKEN_CACHE_TTL) {
+                            tokenCountCache.delete(key);
+                        }
+                    }
+                }
+                
+                return count;
             } catch (e) {
                 console.error("Uncountable token text: ", text);
                 console.error("Error counting tokens: ", e);
@@ -36,7 +69,8 @@ export const createTokenCounter = (model) => {
             return count;
         },
         free: () => {
-            encoding.free();
+            // Don't free the global encoder - keep it alive for reuse
+            // encoding.free();
         }
     };
 }

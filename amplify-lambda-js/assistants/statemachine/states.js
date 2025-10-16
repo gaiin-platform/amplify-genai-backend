@@ -6,15 +6,17 @@ import {
     sendDeltaToStream,
     sendStateEventToStream,
     sendStatusEventToStream,
+    forceFlush,
     StatusOutputStream
 } from "../../common/streams.js";
-import {getChatFn, getModelByType, ModelTypes} from "../../common/params.js";
+import {getModelByType, ModelTypes} from "../../common/params.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
-import {getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
+import {getContextMessagesWithLLMDirect} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
 import {getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
+import {getInternalLLM} from "../../common/internalLLM.js";
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -191,8 +193,8 @@ export const outputToStatus = (status, action) => {
             }
 
             statusLLM.responseStream = context.responseStream;
-            statusLLM.sendStatus(status);
-            statusLLM.forceFlush();
+            sendStatusEventToStream(statusLLM.responseStream, status);
+            forceFlush(statusLLM.responseStream);
             
 
 
@@ -205,8 +207,8 @@ export const outputToStatus = (status, action) => {
             } finally {
                 status.inProgress = false;
                 statusLLM.responseStream = context.responseStream;
-                llm.sendStatus(status);
-                llm.forceFlush();
+                sendStatusEventToStream(context.responseStream, status);
+                forceFlush(context.responseStream);
             }
         }
     };
@@ -446,25 +448,12 @@ export const ragAction = (config = {
                 context.history;
             
             const model = getModelByType(llm.params, ModelTypes.CHEAPEST);
-            const chatFn = async (body, writable, context) => {
-                return await getChatFn(model, body, writable, context);
-            }
+            // ✅ ELIMINATED: Dead getChatFn and ragLLM code replaced by InternalLLM
 
-            const ragLLM = llm.clone(chatFn);
-            ragLLM.params = {
-                ...llm.params,
-                messages,
-                options: {
-                    ...llm.defaultBody,
-                    model:  model, 
-                    skipRag: true
-                }
-            };
-
-            const result = await getContextMessagesWithLLM(
-                ragLLM,
-                ragLLM.params,
-                {...ragLLM.defaultBody, messages: context.history},
+            const result = await getContextMessagesWithLLMDirect(
+                model,
+                {...llm.params, messages, options: {...llm.defaultBody, model: model, skipRag: true}},
+                {...llm.defaultBody, messages: context.history},
                 ragDataSources)
 
             if (getParam(config, "addQueryToHistory", true) && filledInQuery) {
@@ -929,8 +918,8 @@ export class AssistantState {
         if (this.stream.target === STATUS_STREAM) {
             status.inProgress = false;
             actionLLM.responseStream = context.responseStream;
-            actionLLM.sendStatus(status);
-            actionLLM.forceFlush();
+            sendStatusEventToStream(context.responseStream, status);
+            forceFlush(context.responseStream);
         }
     }
 
@@ -1101,7 +1090,7 @@ export class StateBasedAssistant {
             this.initialState);
     }
 
-    async handler(llm, params, body, dataSources, responseStream) {
+    async handler(originalLLM, params, body, dataSources, responseStream) {
 
         const user = getUser(params).split("@")[0];
         const niceUserName = user.split(".").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
@@ -1109,6 +1098,14 @@ export class StateBasedAssistant {
         const convoDataSources = await translateUserDataSourcesToHashDataSources(
             getDataSourcesInConversation(body, true)
         );
+
+        // 🚀 BREAKTHROUGH: Create InternalLLM for massive performance gains
+        // This bypasses the expensive chatWithDataStateless pipeline for internal operations
+        // Keep original LLM for any operations that might need the full RAG pipeline
+        const internalLLM = getInternalLLM(params.options.model, params.account, responseStream);
+        internalLLM.params = { ...params }; // Copy params for compatibility
+        
+        console.log(`🚀 StateBasedAssistant using InternalLLM for ${this.displayName}`);
 
         const context = {
             data: {
@@ -1129,13 +1126,15 @@ export class StateBasedAssistant {
             params,
             body,
             history: body.messages,
+            originalLLM // Keep reference to original LLM for fallback if needed
         };
 
         const stateMachine = this.createAssistantStateMachine();
 
-        llm.enablePassThrough();
+        // Use InternalLLM for internal operations
+        internalLLM.enablePassThrough();
 
-        await stateMachine.on(llm, context, dataSources);
+        await stateMachine.on(internalLLM, context, dataSources);
 
         responseStream.end();
     }

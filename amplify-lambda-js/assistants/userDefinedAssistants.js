@@ -11,6 +11,7 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus} from "../common/status.js";
+import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
 // import AWSXRay from "aws-xray-sdk";
 
@@ -219,15 +220,36 @@ const getLatestAssistant = async (assistantPublicId) => {
 }
 
 export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
+    // ⚡ CACHE OPTIMIZATION: Check cache first
+    const { CacheManager } = await import('../common/cache/cacheManager.js');
+    const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
+    if (cached) {
+        console.log(`Using cached assistant: ${assistantPublicId}`);
+        return fillInAssistant(cached, assistantBase);
+    }
+    
     const ast_owner = assistantPublicId.startsWith("astgp") ? await getAstgGroupId(assistantPublicId) : current_user;
     
     if (!ast_owner) return null;
 
-    // verify the user has access to the group since this is a group assistant
+    // ⚡ CACHE OPTIMIZATION: Check cached group membership
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
         console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
-        if (!isMemberOfGroup(current_user, ast_owner, token)) return null;
+        
+        // Check cache first
+        const cachedMembership = await CacheManager.getCachedGroupMembership(current_user, ast_owner, token);
+        let isMember = cachedMembership;
+        
+        if (cachedMembership === null) {
+            // Not in cache, check actual membership
+            isMember = await isMemberOfGroup(current_user, ast_owner, token);
+            // Cache the result
+            CacheManager.setCachedGroupMembership(current_user, ast_owner, token, isMember);
+        }
+        
+        if (!isMember) return null;
     }
+    
     let assistantData = null;
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
@@ -243,6 +265,9 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
     }
 
     if (assistantData) {
+        // ⚡ CACHE: Store assistant data for future requests
+        CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, assistantData);
+        
         const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase)
         console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
         return userDefinedAssistant;
@@ -266,7 +291,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
         disclaimer: assistant.disclaimer ?? '',
 
-        handler: async (llm, params, body, ds, responseStream) => {
+        handler: async (params, body, ds, responseStream) => {
+            // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
                 const references = {};
 
@@ -321,7 +347,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         };
                     });
 
-                    llm.sendStateEventToStream({
+                    sendStateEventToStream(responseStream, {
                        messageIdMapping
                     });
 
@@ -446,14 +472,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
                      builtInOperations, operations}
                 );
 
-                llm.sendStatus(statusInfo);
-                llm.forceFlush();
-                llm.forceFlush();
+                sendStatusEventToStream(responseStream, statusInfo);
+                forceFlush(responseStream);
 
-                llm.sendStateEventToStream({ agentRun: { startTime: new Date(), sessionId } });
-                llm.forceFlush();
-                llm.forceFlush();
-                llm.endStream();
+                sendStateEventToStream(responseStream, { agentRun: { startTime: new Date(), sessionId } });
+                forceFlush(responseStream);
+                responseStream.end();
 
                 return;
 
@@ -512,7 +536,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
             }
 
             const instructions = await fillInTemplate(
-                llm,
+                responseStream,
                 params,
                 body,
                 ds,
@@ -523,7 +547,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             );
 
-                llm.sendStateEventToStream({
+                sendStateEventToStream(responseStream, {
                     references: getReferences(references),
                     opsConfig: {
                         opFormat: {
@@ -567,8 +591,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
             // for now we will include the ds in the current message
             if (assistant.dataSources && !dataSourceOptions.disableDataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
+            // 🚀 FIXED: defaultAssistant no longer needs llm parameter
             await assistantBase.handler(
-                llm,
                 {...params, blockTerminator: blockTerminator || params.blockTerminator},
                 updatedBody,
                 ds,

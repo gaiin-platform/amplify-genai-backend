@@ -5,17 +5,36 @@ import axios from "axios";
 
 const logger = getLogger("rateLimiter");
 
-// Cache for lifetime cost calculations within a single request
-let lifetimeCostCache = new Map();
+// 💰 SMART CACHING: Multiple cache layers for performance
+let lifetimeCostCache = new Map(); // Single request cache
+let adminRateLimitCache = null; // Admin limits (rarely change)
+let adminRateLimitCacheTime = 0;
+let groupRateLimitsCache = new Map(); // Group limits by user
+let lifetimeCalculationCache = new Map(); // Expensive lifetime calculations
+
+// 🛡️ PROGRESSIVE RATE LIMITING: Track consecutive violations
+let rateLimitViolations = new Map(); // userId -> { count, lastViolation, timeoutUntil }
+const CONSECUTIVE_LIMIT_THRESHOLD = 5; // 5 consecutive hits = ban
+const VIOLATION_WINDOW_MS = 60 * 1000; // 1 minute window
+const SHORT_TIMEOUT_MS = 60 * 1000; // 1 minute timeout
+const LONG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minute timeout
 
 
 async function calculateTotalLifetimeCost(userEmail, accountInfo) {
     const cacheKey = `${userEmail}:${accountInfo || 'all'}`;
     
-    // Return cached result if available
+    // 💰 OPTIMIZATION: Check both request cache and longer-term cache
     if (lifetimeCostCache.has(cacheKey)) {
-        logger.debug(`Using cached lifetime cost for ${userEmail}`);
+        logger.debug(`Using request-scoped cached lifetime cost for ${userEmail}`);
         return lifetimeCostCache.get(cacheKey);
+    }
+    
+    // Check 30-second cache for expensive lifetime calculations
+    const lifetimeCached = lifetimeCalculationCache.get(cacheKey);
+    if (lifetimeCached && (Date.now() - lifetimeCached.timestamp) < 30 * 1000) {
+        logger.debug(`Using 30s cached lifetime cost for ${userEmail}`);
+        lifetimeCostCache.set(cacheKey, lifetimeCached.value); // Also set in request cache
+        return lifetimeCached.value;
     }
     
     const dynamodbClient = new DynamoDBClient();
@@ -111,8 +130,13 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
         
         logger.debug(`Total lifetime cost for ${userEmail}: ${totalLifetimeCost}`);
         
-        // Cache the result for this request
-        lifetimeCostCache.set(cacheKey, totalLifetimeCost);
+        // 💰 CACHE: Store in both caches
+        lifetimeCostCache.set(cacheKey, totalLifetimeCost); // Request cache
+        lifetimeCalculationCache.set(cacheKey, { // 30-second cache
+            value: totalLifetimeCost,
+            timestamp: Date.now()
+        });
+        
         return totalLifetimeCost;
         
     } catch (error) {
@@ -164,9 +188,17 @@ async function checkAndSetLimit(limit, rateData, params, limitType, isAdminSet =
 }
 
 /**
- * Get user's affiliated groups and their rate limits
+ * 💰 CACHED: Get user's affiliated groups and their rate limits
+ * Caches for 5 minutes since group memberships rarely change
  */
 async function getUserGroupRateLimits(accessToken) {
+    const cacheKey = `groups:${accessToken.slice(-8)}`; // Use token suffix for caching
+    const cached = groupRateLimitsCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp) < 5 * 60 * 1000) {
+        logger.debug('Using cached group rate limits');
+        return cached.data;
+    }
     try {
         const apiBaseUrl = process.env.API_BASE_URL;
         if (!apiBaseUrl) {
@@ -202,16 +234,116 @@ async function getUserGroupRateLimits(accessToken) {
             }
         }
         
+        // 💰 CACHE: Store group rate limits for 5 minutes
+        groupRateLimitsCache.set(cacheKey, {
+            data: groupRateLimits,
+            timestamp: Date.now()
+        });
+        
         return groupRateLimits;
         
     } catch (error) {
         logger.error('Error getting user group rate limits:', error);
+        // Return cached data if available, even if stale
+        if (cached) {
+            logger.debug('Using stale cached group rate limits due to error');
+            return cached.data;
+        }
         return []; // Return empty array on error to avoid blocking
     }
 }
 
 
+/**
+ * 🛡️ PROGRESSIVE PUNISHMENT: Check if user is in timeout
+ */
+function isUserInTimeout(userId) {
+    const violations = rateLimitViolations.get(userId);
+    if (!violations) return false;
+    
+    const now = Date.now();
+    if (violations.timeoutUntil && now < violations.timeoutUntil) {
+        const remainingMs = violations.timeoutUntil - now;
+        logger.debug(`User ${userId} is in timeout for ${Math.ceil(remainingMs / 1000)}s more`);
+        return { inTimeout: true, remainingMs };
+    }
+    
+    return false;
+}
+
+/**
+ * 🛡️ PROGRESSIVE PUNISHMENT: Record rate limit violation
+ */
+function recordRateLimitViolation(userId) {
+    const now = Date.now();
+    let violations = rateLimitViolations.get(userId) || { count: 0, lastViolation: 0, timeoutUntil: 0 };
+    
+    // Reset count if it's been more than violation window since last violation
+    if (now - violations.lastViolation > VIOLATION_WINDOW_MS) {
+        violations.count = 0;
+    }
+    
+    violations.count++;
+    violations.lastViolation = now;
+    
+    // Apply progressive punishment
+    if (violations.count >= CONSECUTIVE_LIMIT_THRESHOLD) {
+        // Check if this is a repeated pattern (multiple minutes of violations)
+        const isRepeatedOffender = violations.timeoutUntil > 0; // Had timeout before
+        
+        if (isRepeatedOffender) {
+            // Escalate to 15-minute timeout
+            violations.timeoutUntil = now + LONG_TIMEOUT_MS;
+            logger.warn(`🛡️ ESCALATED BAN: User ${userId} banned for 15min (repeated offender, ${violations.count} consecutive violations)`);
+        } else {
+            // First offense: 1-minute timeout
+            violations.timeoutUntil = now + SHORT_TIMEOUT_MS;
+            logger.warn(`🛡️ PROGRESSIVE BAN: User ${userId} banned for 1min (${violations.count} consecutive violations)`);
+        }
+        
+        // Reset violation count after applying timeout
+        violations.count = 0;
+    } else {
+        logger.debug(`🛡️ Rate limit violation ${violations.count}/${CONSECUTIVE_LIMIT_THRESHOLD} for user ${userId}`);
+    }
+    
+    rateLimitViolations.set(userId, violations);
+    
+    return violations;
+}
+
+/**
+ * 🧹 CLEANUP: Remove old violation records to prevent memory leaks
+ */
+function cleanupOldViolations() {
+    const now = Date.now();
+    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+    
+    for (const [userId, violations] of rateLimitViolations.entries()) {
+        if (now - violations.lastViolation > maxAge) {
+            rateLimitViolations.delete(userId);
+        }
+    }
+}
+
 export async function isRateLimited(params) {
+    // 🧹 CLEANUP: Periodically clean old records
+    if (Math.random() < 0.01) cleanupOldViolations(); // 1% chance
+    
+    // 🛡️ EARLY EXIT: Check if user is in progressive timeout
+    const timeoutStatus = isUserInTimeout(params.user);
+    if (timeoutStatus.inTimeout) {
+        params.body.options.rateLimit = {
+            period: 'Progressive',
+            rate: 0,
+            currentSpent: 0,
+            limitType: 'progressive_timeout',
+            adminSet: true,
+            timeoutRemaining: Math.ceil(timeoutStatus.remainingMs / 1000)
+        };
+        return true; // User is banned
+    }
+    
     // Clear cache for fresh request to avoid stale data
     lifetimeCostCache.clear();
     
@@ -265,6 +397,8 @@ export async function isRateLimited(params) {
         // 1. Check admin limit first
         if (!noLimit(adminRateLimit)) {
             if (await checkAndSetLimit(adminRateLimit, rateData, params, 'admin', true)) {
+                // 🛡️ PROGRESSIVE PUNISHMENT: Record violation for admin limits too
+                recordRateLimitViolation(params.user);
                 return true;
             }
         }
@@ -273,6 +407,8 @@ export async function isRateLimited(params) {
         for (const groupLimit of groupRateLimits) {
             if (!noLimit(groupLimit)) {
                 if (await checkAndSetLimit(groupLimit, rateData, params, 'group', false, groupLimit.groupName)) {
+                    // 🛡️ PROGRESSIVE PUNISHMENT: Record violation for group limits too
+                    recordRateLimitViolation(params.user);
                     return true;
                 }
             }
@@ -281,6 +417,8 @@ export async function isRateLimited(params) {
         // 3. Finally check user limit
         if (!noLimit(userRateLimit)) {
             if (await checkAndSetLimit(userRateLimit, rateData, params, 'user')) {
+                // 🛡️ PROGRESSIVE PUNISHMENT: Record violation and apply timeout if needed
+                recordRateLimitViolation(params.user);
                 return true;
             }
         }
@@ -296,7 +434,18 @@ export async function isRateLimited(params) {
 }
 
 
+/**
+ * 💰 CACHED: Get admin rate limit configuration 
+ * Caches for 10 minutes since admin settings rarely change
+ */
 async function getAdminRateLimit() {
+    // Check cache first
+    const cacheAge = Date.now() - adminRateLimitCacheTime;
+    if (adminRateLimitCache && cacheAge < 10 * 60 * 1000) {
+        logger.debug('Using cached admin rate limit');
+        return adminRateLimitCache;
+    }
+    
     const adminTable = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
 
     if (!adminTable) {
@@ -325,15 +474,22 @@ async function getAdminRateLimit() {
             return false;
         }
         const rateData = unmarshall(item);
+        
+        // 💰 CACHE: Store admin rate limit for 10 minutes
+        adminRateLimitCache = rateData.data;
+        adminRateLimitCacheTime = Date.now();
+        
         return rateData.data;
         
     } catch (error) {
         console.error("Error during rate limit DynamoDB operation:", error);
-        // let it slide for now
+        // Return cached data if available, even if stale
+        if (adminRateLimitCache) {
+            logger.debug('Using stale cached admin rate limit due to error');
+            return adminRateLimitCache;
+        }
         return false;
     }
-
-
 }
 
 export const formatRateLimit = (limit) =>  {
@@ -342,12 +498,19 @@ export const formatRateLimit = (limit) =>  {
 }
 
 export const formatCurrentSpent = (limit) =>  {
+    // 🛡️ PROGRESSIVE PUNISHMENT: Handle timeout messages
+    if (limit.limitType === 'progressive_timeout') {
+        const minutes = Math.ceil(limit.timeoutRemaining / 60);
+        return `You have been temporarily banned for ${minutes > 1 ? `${minutes} minutes` : `${limit.timeoutRemaining} seconds`} due to repeated rate limit violations. Please try again later.`;
+    }
+    
     if (limit.currentSpent === undefined || limit.currentSpent === null) return "";
     const periodDisplay = {
         "Daily": "today",
         "Hourly": "this hour",
         "Monthly": "this month",
-        "Total": "in total"
+        "Total": "in total",
+        "Progressive": "due to violations"
     };
     const periodText = periodDisplay[limit.period] || limit.period.toLowerCase();
     
@@ -359,6 +522,8 @@ export const formatCurrentSpent = (limit) =>  {
         limitSource = ` (Group: ${limit.groupName})`;
     } else if (limit.limitType === 'user') {
         limitSource = " (User limit)";
+    } else if (limit.limitType === 'progressive_timeout') {
+        limitSource = " (Progressive timeout)";
     }
     
     return `$${limit.currentSpent} spent ${periodText}${limitSource}.`;
