@@ -6,7 +6,6 @@ import axios from "axios";
 const logger = getLogger("rateLimiter");
 
 // 💰 SMART CACHING: Multiple cache layers for performance
-let lifetimeCostCache = new Map(); // Single request cache
 let adminRateLimitCache = null; // Admin limits (rarely change)
 let adminRateLimitCacheTime = 0;
 let groupRateLimitsCache = new Map(); // Group limits by user
@@ -15,7 +14,7 @@ let lifetimeCalculationCache = new Map(); // Expensive lifetime calculations
 // 🛡️ PROGRESSIVE RATE LIMITING: Track consecutive violations
 let rateLimitViolations = new Map(); // userId -> { count, lastViolation, timeoutUntil }
 const CONSECUTIVE_LIMIT_THRESHOLD = 5; // 5 consecutive hits = ban
-const VIOLATION_WINDOW_MS = 60 * 1000; // 1 minute window
+const VIOLATION_WINDOW_MS = 60 * 1000; // 1 minute window (keeping the charming "wiolation widow"!)
 const SHORT_TIMEOUT_MS = 60 * 1000; // 1 minute timeout
 const LONG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minute timeout
 
@@ -23,17 +22,10 @@ const LONG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minute timeout
 async function calculateTotalLifetimeCost(userEmail, accountInfo) {
     const cacheKey = `${userEmail}:${accountInfo || 'all'}`;
     
-    // 💰 OPTIMIZATION: Check both request cache and longer-term cache
-    if (lifetimeCostCache.has(cacheKey)) {
-        logger.debug(`Using request-scoped cached lifetime cost for ${userEmail}`);
-        return lifetimeCostCache.get(cacheKey);
-    }
-    
-    // Check 30-second cache for expensive lifetime calculations
+    // 💰 Check 30-second cache for expensive lifetime calculations
     const lifetimeCached = lifetimeCalculationCache.get(cacheKey);
     if (lifetimeCached && (Date.now() - lifetimeCached.timestamp) < 30 * 1000) {
         logger.debug(`Using 30s cached lifetime cost for ${userEmail}`);
-        lifetimeCostCache.set(cacheKey, lifetimeCached.value); // Also set in request cache
         return lifetimeCached.value;
     }
     
@@ -49,7 +41,7 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
     try {
         let totalLifetimeCost = 0;
         
-        // 1. Scan HISTORY table for all historical monthly costs (need ALL history, not just current month)
+        // 1. Scan HISTORY table for all historical monthly costs
         const historyCommand = new ScanCommand({
             TableName: historyTable,
             FilterExpression: accountInfo ? 
@@ -78,7 +70,7 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
         
         // 2. Query current COST_CALCULATIONS table for current month
         if (accountInfo) {
-            // Direct query for specific accountInfo - much more efficient
+            // Direct query for specific accountInfo
             const currentCommand = new QueryCommand({
                 TableName: costCalcTable,
                 KeyConditionExpression: '#id = :userid AND accountInfo = :accountInfo',
@@ -102,7 +94,7 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
                 totalLifetimeCost += currentMonthTotal;
             }
         } else {
-            // If no specific accountInfo, query all user records (fallback)
+            // If no specific accountInfo, query all user records
             const currentCommand = new QueryCommand({
                 TableName: costCalcTable,
                 KeyConditionExpression: '#id = :userid',
@@ -130,9 +122,8 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
         
         logger.debug(`Total lifetime cost for ${userEmail}: ${totalLifetimeCost}`);
         
-        // 💰 CACHE: Store in both caches
-        lifetimeCostCache.set(cacheKey, totalLifetimeCost); // Request cache
-        lifetimeCalculationCache.set(cacheKey, { // 30-second cache
+        // 💰 CACHE: Store for 30 seconds
+        lifetimeCalculationCache.set(cacheKey, {
             value: totalLifetimeCost,
             timestamp: Date.now()
         });
@@ -148,19 +139,21 @@ async function calculateTotalLifetimeCost(userEmail, accountInfo) {
 
 /**
  * Calculate if a specific rate limit is exceeded
+ * Now accepts precomputed lifetime cost to avoid recalculation
  */
-async function calcIsRateLimited(limit, rateData, params) {
-    //periods include Monthly, Daily, Hourly, Total
-    const period = limit.period
+async function calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost = null) {
+    const period = limit.period;
     let spent = 0;
     
     if (period === 'Total') {
-        // Calculate total lifetime cost
-        spent = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+        // Use precomputed cost if available, otherwise calculate
+        spent = precomputedLifetimeCost !== null ? 
+            precomputedLifetimeCost : 
+            await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
     } else {
-        const colName = `${period.toLowerCase()}Cost`
+        const colName = `${period.toLowerCase()}Cost`;
         spent = rateData[colName];
-        if (period === 'Hourly') spent = spent[new Date().getHours()]// Get the current hour as a number from 0 to 23
+        if (period === 'Hourly') spent = spent[new Date().getHours()];
     }
     
     const isRateLimited = spent >= limit.rate;
@@ -172,9 +165,10 @@ async function calcIsRateLimited(limit, rateData, params) {
 
 /**
  * Helper function to check a single rate limit and set violation info
+ * Now accepts precomputed lifetime cost
  */
-async function checkAndSetLimit(limit, rateData, params, limitType, isAdminSet = false, groupName = null) {
-    const isLimited = await calcIsRateLimited(limit, rateData, params);
+async function checkAndSetLimit(limit, rateData, params, limitType, isAdminSet = false, groupName = null, precomputedLifetimeCost = null) {
+    const isLimited = await calcIsRateLimited(limit, rateData, params, precomputedLifetimeCost);
     if (isLimited) {
         params.body.options.rateLimit = {
             ...limit,
@@ -288,8 +282,8 @@ function recordRateLimitViolation(userId) {
     
     // Apply progressive punishment
     if (violations.count >= CONSECUTIVE_LIMIT_THRESHOLD) {
-        // Check if this is a repeated pattern (multiple minutes of violations)
-        const isRepeatedOffender = violations.timeoutUntil > 0; // Had timeout before
+        // Check if this is a repeated pattern
+        const isRepeatedOffender = violations.timeoutUntil > 0;
         
         if (isRepeatedOffender) {
             // Escalate to 15-minute timeout
@@ -344,24 +338,16 @@ export async function isRateLimited(params) {
         return true; // User is banned
     }
     
-    // Clear cache for fresh request to avoid stale data
-    lifetimeCostCache.clear();
-    
-    const userRateLimit = params.body.options.rateLimit;
-    const adminRateLimit = await getAdminRateLimit();
-    // Skip group rate limits for API key authentication (no OAuth token)
+    // Get rate limits from various sources
+    const userRateLimit = params.body.options.rateLimit; // NOT cached - from request
+    const adminRateLimit = await getAdminRateLimit(); // Cached 10 min
     const groupRateLimits = params.accessToken ? 
-        await getUserGroupRateLimits(params.accessToken) : [];
+        await getUserGroupRateLimits(params.accessToken) : []; // Cached 5 min
     
     const noLimit = (limit) => {
         return !limit || limit.period?.toLowerCase() === 'unlimited';
     }
     
-    // Simple rate limit checking order:
-    // 1. Admin limit - if violated, reject immediately
-    // 2. Group limits - check each group, if any violated, reject
-    // 3. User limit - only if admin + groups all pass
-
     const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
     if (!costCalcTable) {
@@ -370,15 +356,16 @@ export async function isRateLimited(params) {
     }
 
     try {
+        // 📊 OPTIMIZATION: Fetch user's cost data ONCE
         const dynamodbClient = new DynamoDBClient();
         const command = new QueryCommand({
             TableName: costCalcTable,
             KeyConditionExpression: '#id = :userid',
             ExpressionAttributeNames: {
-                '#id': 'id'  // Using an expression attribute name to avoid any potential keyword conflicts
+                '#id': 'id'
             },
             ExpressionAttributeValues: {
-                ':userid': { S: params.user} // Assuming this is the id you are querying by
+                ':userid': { S: params.user}
             }
         });
         
@@ -393,11 +380,23 @@ export async function isRateLimited(params) {
         }
         const rateData = unmarshall(item);
 
-        // Function now defined at module level
+        // 🚀 OPTIMIZATION: Pre-calculate lifetime cost ONCE if any limit needs it
+        let precomputedLifetimeCost = null;
+        const needsLifetimeCost = 
+            (!noLimit(adminRateLimit) && adminRateLimit.period === 'Total') ||
+            groupRateLimits.some(g => !noLimit(g) && g.period === 'Total') ||
+            (!noLimit(userRateLimit) && userRateLimit.period === 'Total');
+        
+        if (needsLifetimeCost) {
+            logger.debug("Pre-calculating lifetime cost once for all rate limit checks");
+            precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
+        }
+
+        // Check limits in order: admin -> groups -> user
+        
         // 1. Check admin limit first
         if (!noLimit(adminRateLimit)) {
-            if (await checkAndSetLimit(adminRateLimit, rateData, params, 'admin', true)) {
-                // 🛡️ PROGRESSIVE PUNISHMENT: Record violation for admin limits too
+            if (await checkAndSetLimit(adminRateLimit, rateData, params, 'admin', true, null, precomputedLifetimeCost)) {
                 recordRateLimitViolation(params.user);
                 return true;
             }
@@ -406,8 +405,7 @@ export async function isRateLimited(params) {
         // 2. Check each group limit
         for (const groupLimit of groupRateLimits) {
             if (!noLimit(groupLimit)) {
-                if (await checkAndSetLimit(groupLimit, rateData, params, 'group', false, groupLimit.groupName)) {
-                    // 🛡️ PROGRESSIVE PUNISHMENT: Record violation for group limits too
+                if (await checkAndSetLimit(groupLimit, rateData, params, 'group', false, groupLimit.groupName, precomputedLifetimeCost)) {
                     recordRateLimitViolation(params.user);
                     return true;
                 }
@@ -416,8 +414,7 @@ export async function isRateLimited(params) {
         
         // 3. Finally check user limit
         if (!noLimit(userRateLimit)) {
-            if (await checkAndSetLimit(userRateLimit, rateData, params, 'user')) {
-                // 🛡️ PROGRESSIVE PUNISHMENT: Record violation and apply timeout if needed
+            if (await checkAndSetLimit(userRateLimit, rateData, params, 'user', false, null, precomputedLifetimeCost)) {
                 recordRateLimitViolation(params.user);
                 return true;
             }

@@ -7,7 +7,7 @@ import {
     sendStatusEventToStream,
     sendOutOfOrderModeEventToStream,
     sendStateEventToStream,
-    terminateStream
+    endStream
 } from "./streams.js";
 import { parseValue } from "./incrementalJsonParser.js";
 
@@ -104,7 +104,7 @@ export class InternalLLM {
 
     endStream() {
         if (this.responseStream) {
-            terminateStream(this.responseStream);
+            endStream(this.responseStream);
             try {
                 if (!this.responseStream.writableEnded) {
                     this.responseStream.end();

@@ -284,14 +284,6 @@ export const sendOutOfOrderModeEventToStream = (resultStream) => {
     resultStream.write(`data: ${JSON.stringify({ s: "meta", m: "out_of_order" })}\n\n`);
 }
 
-export const forceFlush = (resultStream) => {
-    sendStateEventToStream(resultStream, newStatus(
-        {
-            inProgress: false,
-            message: " ".repeat(100000)
-        }));
-}
-
 export const sendStatusEventToStream = (resultStream, statusEvent) => {
     resultStream.write(`data: ${JSON.stringify({ s: "meta", st: statusEvent })}\n\n`);
 }

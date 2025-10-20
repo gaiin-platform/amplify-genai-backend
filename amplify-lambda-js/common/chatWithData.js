@@ -103,7 +103,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             if (ragDataSources.length === 0) return {messages: [], sources: []};
             
             // ⚡ CACHE: Check for cached RAG results
-            const { CacheManager } = await import('./cache/cacheManager.js');
+            const { CacheManager } = await import('./cache.js');
             const crypto = await import('crypto');
             
             const messagesHash = crypto.createHash('sha256')
@@ -207,7 +207,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         forceFlush(responseStream);
 
         // ⚡ PARALLEL: Fetch all contexts simultaneously with caching
-        const { CacheManager } = await import('./cache/cacheManager.js');
+        const { CacheManager } = await import('./cache.js');
         const contextResults = await Promise.all([
             ...categorizedDataSources.map(async ds => {
                 // Check cache first

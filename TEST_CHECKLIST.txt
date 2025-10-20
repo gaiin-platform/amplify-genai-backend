@@ -1,0 +1,226 @@
+================================================================================================
+                    COMPREHENSIVE TEST CHECKLIST FOR AMPLIFY LAMBDA JS
+================================================================================================
+
+📝 BASIC CHAT OPERATIONS
+------------------------
+[ ] Chat with no data sources - Pure LLM response
+[ ] Chat with single data source - RAG enabled
+[ ] Chat with multiple data sources - Multiple RAG contexts
+[ ] Chat with conversation data sources - extractRelevantContext enabled
+[ ] Chat with very long context - Token limit handling
+[ ] Chat with system prompt override - Custom system messages
+
+🖼️ IMAGE HANDLING
+------------------
+[ ] Chat with single image - Base64 encoding
+[ ] Chat with multiple images - Multiple base64 images
+[ ] Chat with image + text - Mixed content
+[ ] Chat with image on non-vision model - Should show error message
+[ ] Chat with large image - Size handling
+[ ] Chat with different image formats - JPEG, PNG, etc.
+
+🤖 ASSISTANT TYPES
+------------------
+[ ] No assistant - Direct chat
+[ ] Client-selected assistant - From dropdown
+[ ] User-defined assistant - Custom assistant with handler
+[ ] Code Interpreter assistant - Code execution
+[ ] Artifact Mode assistant - Artifact generation
+[ ] Automation assistant - With tools/actions
+[ ] Map-Reduce assistant - Document summarization
+[ ] Group assistant - With conversation analysis ON
+[ ] Group assistant - With conversation analysis OFF
+[ ] Assistant with custom prompt - Prompt override
+[ ] Assistant with API integrations - External tools
+[ ] GAME loop agent assistant - Agent framework
+
+📊 RAG & DATA SOURCES
+---------------------
+[ ] RAG with single document - PDF/DOCX/TXT
+[ ] RAG with multiple documents - Mixed types
+[ ] RAG with spreadsheets - Excel/CSV
+[ ] RAG with images as context - Image analysis
+[ ] RAG with cached results - Cache hit
+[ ] RAG with uncached results - Cache miss
+[ ] RAG with document filtering - getExtractedRelevantContext
+[ ] RAG with hash translation - Duplicate file handling
+[ ] RAG with embeddings - Dual retrieval
+[ ] RAG with failed embeddings - Error handling
+
+🛠️ TOOL & FUNCTION CALLING
+---------------------------
+[ ] Chat with functions - Legacy format
+[ ] Chat with tools - Modern format
+[ ] Chat with tool_choice - Forced tool use
+[ ] Chat with function_call - Legacy forced function
+[ ] Chat with web search - URL detection → web_search_preview
+[ ] Chat with multiple tools - Tool selection
+[ ] Chat with parallel tool calls - Multiple tools at once
+[ ] Chat with tool errors - Error handling
+
+💰 RATE LIMITING
+----------------
+[ ] Below all limits - Should pass
+[ ] Exceed user limit - User rate limit message
+[ ] Exceed admin limit - Admin rate limit message
+[ ] Exceed group limit - Group rate limit message
+[ ] Exceed daily limit - Daily period
+[ ] Exceed hourly limit - Hourly period
+[ ] Exceed monthly limit - Monthly period
+[ ] Exceed total/lifetime limit - Total period
+[ ] Progressive timeout (5 violations) - 1-minute ban
+[ ] Repeated offender - 15-minute ban
+[ ] API key rate limit - Different from OAuth
+
+🚀 STREAMING & RESPONSE MODES
+------------------------------
+[ ] Streaming to user - Real-time streaming
+[ ] Non-streaming (internal) - streamToUser: false
+[ ] Status messages - Long-running request animation
+[ ] Reasoning model streaming - O1 models
+[ ] Thinking tokens display - Reasoning token count
+[ ] Usage tracking - Token counting
+[ ] Cached token tracking - Prompt caching
+
+🔄 CACHING SCENARIOS
+--------------------
+[ ] User models cache - Hit and miss
+[ ] Data sources cache - Hit and miss
+[ ] RAG results cache - Hit and miss
+[ ] Context cache - Hit and miss
+[ ] Image content cache - Hit and miss
+[ ] Token count cache - Hit and miss
+[ ] Group membership cache - Hit and miss
+[ ] User-defined assistant cache - Hit and miss
+[ ] Admin rate limit cache - Hit and miss
+[ ] Lifetime cost cache - 30-second TTL
+
+🌐 MODEL-SPECIFIC FEATURES
+--------------------------
+[ ] OpenAI GPT-4 - Standard
+[ ] OpenAI GPT-4V - Vision
+[ ] OpenAI O1 - Reasoning model
+[ ] Azure OpenAI - Azure endpoints
+[ ] Anthropic Claude - Via LiteLLM
+[ ] Google Gemini - Via LiteLLM
+[ ] AWS Bedrock - Via LiteLLM
+[ ] Model without system prompt support - Conversion
+[ ] Model with custom system prompt - Append
+[ ] Model with reasoning - Reasoning effort levels
+
+🔐 AUTHENTICATION & PERMISSIONS
+-------------------------------
+[ ] OAuth token auth - Bearer token
+[ ] API key auth - amp- prefix
+[ ] Invalid token - 401 error
+[ ] Expired token - 401 error
+[ ] Missing permissions - 403 error
+[ ] Group permissions - Access control
+[ ] Data source permissions - File access
+
+⚠️ ERROR SCENARIOS
+-------------------
+[ ] Python server crash - Recovery
+[ ] LiteLLM error - Error message
+[ ] DynamoDB unavailable - Fallback
+[ ] S3 unavailable - Image fetch failure
+[ ] Secrets Manager error - API key failure
+[ ] Invalid request format - 400 error
+[ ] Model not found - Error handling
+[ ] Context too long - Token limit exceeded
+[ ] Timeout - Request timeout
+[ ] Network error - Connection issues
+
+🔄 CONVERSATION FEATURES
+------------------------
+[ ] Conversation tracking ON - Analysis queued
+[ ] Conversation tracking OFF - No analysis
+[ ] Category analysis ON - Categories detected
+[ ] Category analysis OFF - Skip categories
+[ ] Conversation history - Context maintained
+[ ] New conversation - Fresh context
+[ ] Conversation sharing - Shared conversations
+
+🎯 SPECIAL MODES
+----------------
+[ ] Parallel chat - Multiple LLMs (if still exists)
+[ ] Sequential chat - Ordered responses (removed?)
+[ ] Map-reduce mode - Document processing
+[ ] Code interpreter mode - Code execution
+[ ] Artifact mode - Artifact generation
+[ ] Workflow mode - GAME loop agents
+[ ] Email-triggered workflow - Email events
+
+📈 PERFORMANCE TESTS
+--------------------
+[ ] First request - Cold start, Python server spawn
+[ ] Second request - Warm server
+[ ] Concurrent requests - Multiple users
+[ ] Large payload - Big context
+[ ] Rapid requests - Rate limit testing
+[ ] Cache warming - Pre-cached data
+[ ] Memory usage - Monitor RSS/heap
+
+🔍 EDGE CASES
+-------------
+[ ] Empty messages - No content
+[ ] Null/undefined handling - Missing fields
+[ ] Unicode/emoji - Special characters
+[ ] HTML/code injection - Security
+[ ] Extremely long input - Truncation
+[ ] Duplicate requests - Idempotency
+[ ] Malformed JSON - Parse errors
+[ ] Mixed authentication - Token + API key
+
+================================================================================================
+                                    TEST EXECUTION ORDER
+================================================================================================
+
+1. START WITH BASICS - Simple chat, no features
+2. ADD COMPLEXITY - Data sources, images
+3. TEST ASSISTANTS - Each type individually
+4. TEST LIMITS - Rate limiting scenarios
+5. TEST ERRORS - Force failures
+6. PERFORMANCE - Load testing
+7. EDGE CASES - Break things
+
+================================================================================================
+                                    SUCCESS CRITERIA
+================================================================================================
+
+Each test should verify:
+✅ Correct response format
+✅ Expected status codes
+✅ Proper error messages
+✅ Cache behavior
+✅ Logging output
+✅ Performance metrics
+✅ Token usage tracking
+
+================================================================================================
+                                    QUICK SMOKE TEST
+================================================================================================
+
+For a quick validation, test these critical paths:
+
+1. Simple chat without data sources
+2. Chat with an image
+3. Chat with a document (RAG)
+4. Rate limit check (set low limit)
+5. Assistant selection
+6. Error handling (bad token)
+
+================================================================================================
+                                    NOTES
+================================================================================================
+
+- First test should be simple chat to establish Python server is working
+- Run caching tests twice to verify cache hits
+- Have test accounts with low limits for rate limit testing
+- Test error scenarios for production stability
+- Monitor logs for cache HIT/MISS messages
+- Check memory usage after multiple requests
+- Verify token counting accuracy
+
+Total Test Cases: 100+

@@ -4,7 +4,7 @@
  */
 
 import {sendDeltaToStream, sendStatusEventToStream, sendErrorMessage, sendStateEventToStream} from '../common/streams.js';
-import {newStatus} from '../common/status.js';
+import {newStatus, getThinkingMessage} from '../common/status.js';
 import {recordUsage} from '../common/accounting.js';
 import {getSecret} from '../common/secrets.js';
 import {getLogger} from '../common/logging.js';
@@ -13,6 +13,14 @@ import {spawn} from 'child_process';
 import {fileURLToPath} from 'url';
 import {dirname, join} from 'path';
 import {PassThrough} from 'stream';
+import {
+    includeImageSources,
+    convertToolsAndFunctions,
+    convertSystemMessages,
+    addWebSearchIfNeeded,
+    getStatusInterval,
+    isReasoningModel
+} from './utils.js';
 
 const logger = getLogger("litellmClient");
 
@@ -61,9 +69,9 @@ function initPythonProcess() {
         const lines = outputBuffer.split('\n');
         outputBuffer = lines.pop(); // Keep incomplete line in buffer
         
-        lines.forEach(line => {
+        lines.forEach(async line => {
             if (line.trim()) {
-                routeMessage(line.trim());
+                await routeMessage(line.trim());
             }
         });
     });
@@ -103,7 +111,7 @@ function initPythonProcess() {
 /**
  * Route messages from Python subprocess to appropriate stream functions with request multiplexing
  */
-function routeMessage(message) {
+async function routeMessage(message) {
     try {
         const parsed = JSON.parse(message);
         const requestId = parsed.requestId;
@@ -161,6 +169,19 @@ function routeMessage(message) {
                         litellmTimeToFirstToken: timeToFirstToken,
                         totalTimeToFirstToken: request.firstTokenTime - request.startTime
                     });
+                    
+                    // Clear status timer on first real content
+                    if (request.statusTimer) {
+                        clearTimeout(request.statusTimer);
+                        request.statusTimer = null;
+                        // Clear any sticky status message
+                        sendStatusEventToStream(request.responseStream, newStatus({
+                            animated: false,
+                            inProgress: false,
+                            sticky: false,
+                            message: ""
+                        }));
+                    }
                 }
                 request.tokenCount++;
                 // Accumulate complete response for return value
@@ -229,10 +250,23 @@ function routeMessage(message) {
                 break;
                 
             case 'error':
+                // Clear status timer on error
+                if (request.statusTimer) {
+                    clearTimeout(request.statusTimer);
+                    request.statusTimer = null;
+                }
                 sendErrorMessage(responseStream, parsed.data.statusCode, parsed.data.message);
+                activeRequests.delete(requestId);
+                request.reject(new Error(parsed.data.message));
                 break;
                 
             case 'end':
+                // Clear status timer when request ends
+                if (request.statusTimer) {
+                    clearTimeout(request.statusTimer);
+                    request.statusTimer = null;
+                }
+                
                 // Only end if not already ended  
                 if (!responseStream.destroyed && !responseStream.writableEnded) {
                     responseStream.end();
@@ -443,14 +477,94 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
                 logger.debug("No Azure config available:", e);
             }
             
+            // Process chat request with restored functionality
+            let processedMessages = [...chatRequest.messages];
+            const options = chatRequest.options || {};
+            
+            // 1. Handle image sources
+            if (chatRequest.imageSources && !options.dataSourceOptions?.disableDataSources) {
+                processedMessages = await includeImageSources(
+                    chatRequest.imageSources,
+                    processedMessages,
+                    model,
+                    responseStream
+                );
+            }
+            
+            // 2. Convert system messages for models that don't support them
+            processedMessages = convertSystemMessages(processedMessages, model);
+            
+            // 3. Add system prompt if model has one
+            if (model.systemPrompt && processedMessages.length > 0) {
+                if (processedMessages[0].role === 'system') {
+                    processedMessages[0].content += `\n${model.systemPrompt}`;
+                } else {
+                    processedMessages.unshift({
+                        role: 'system',
+                        content: model.systemPrompt
+                    });
+                }
+            }
+            
+            // 4. Convert tools and functions to modern format
+            const toolConversions = convertToolsAndFunctions(options);
+            
+            // 5. Add web search tool if URL detected (OpenAI only)
+            const tools = addWebSearchIfNeeded(
+                processedMessages,
+                model,
+                toolConversions.tools || []
+            );
+            
+            // 6. Set up status message timer for long-running requests
+            let statusTimer = null;
+            const statusInterval = getStatusInterval(model);
+            
+            const sendStatusMessage = () => {
+                const statusInfo = newStatus({
+                    animated: true,
+                    inProgress: true,
+                    sticky: true,
+                    message: getThinkingMessage ? getThinkingMessage() : "Thinking..."
+                });
+                sendStatusEventToStream(responseStream, statusInfo);
+                
+                // Schedule next status message
+                statusTimer = setTimeout(sendStatusMessage, statusInterval);
+            };
+            
+            // Start status timer
+            statusTimer = setTimeout(sendStatusMessage, statusInterval);
+            
+            // Prepare enhanced chat request
+            const enhancedChatRequest = {
+                ...chatRequest,
+                messages: processedMessages,
+                tools: tools.length > 0 ? tools : undefined,
+                tool_choice: toolConversions.tool_choice,
+                // Handle o-models and reasoning models
+                ...(isReasoningModel(model.id) && {
+                    max_completion_tokens: model.outputTokenLimit,
+                    reasoning_effort: options.reasoningLevel || 'low'
+                })
+            };
+            
+            // Clean up undefined fields
+            Object.keys(enhancedChatRequest).forEach(key => {
+                if (enhancedChatRequest[key] === undefined) {
+                    delete enhancedChatRequest[key];
+                }
+            });
+            
             // Prepare input data for Python
             const inputData = {
                 requestId,
-                chatRequest,
+                chatRequest: enhancedChatRequest,
                 model, 
                 account,
                 secrets,
-                dataSources
+                dataSources,
+                statusTimer // Track timer for cleanup
             };
             
             // Register this request
@@ -466,11 +580,12 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
                 pythonProcessingEndTime: null,
                 completeResponse: '', // Track complete response for return value
                 streamToUser, // Control whether to stream to user or just accumulate
-                chatRequest, // Store full request for conversation tracking
+                chatRequest: enhancedChatRequest, // Store enhanced request for conversation tracking
                 // Store context for usage recording
                 account,
                 model,
-                requestId
+                requestId,
+                statusTimer // Track timer for cleanup
             });
             
             // Send request to persistent Python server or queue if not ready

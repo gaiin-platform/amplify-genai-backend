@@ -23,6 +23,20 @@
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env.local",
             "cwd": "${workspaceFolder}/amplify-lambda"
+        },
+        {
+            "name": "Debug ID Migration",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/id_migration.py",
+            "args": [
+                "--csv-file", "migration_users.csv",
+                "--log", "migration.log",
+                "--dry-run"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}/scripts"
         }
     ]
 }

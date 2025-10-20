@@ -81,7 +81,7 @@ export const getImageBase64Content = async (dataSource) => {
     const key = extractKey(dataSource.id);
     
     // Check cache first
-    const { CacheManager } = await import('../common/cache/cacheManager.js');
+    const { CacheManager } = await import('../common/cache.js');
     const cacheKey = `${bucket}:${key}`;
     const cached = await CacheManager.getCachedImageContent(cacheKey);
     
