@@ -24,6 +24,9 @@ add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value,
 })
 @validated("read")
 def get_emails(event, context, current_user, name, data):
+    """Get a mapping of user_ids to email addresses.
+    Returns dict with user_id as key and email as value (or user_id if no email exists).
+    """
     query_params = event.get("queryStringParameters", {})
     print("Query params: ", query_params)
     email_prefix = query_params.get("emailprefix", "")
@@ -44,12 +47,13 @@ def get_emails(event, context, current_user, name, data):
         last_evaluated_key = None
         
         while True:
-            # Prepare scan parameters
-            scan_params = {"ProjectionExpression": "user_id"}
+            # Prepare scan parameters - now projecting both user_id and email
+            scan_params = {"ProjectionExpression": "user_id, email"}
             
             if email_prefix != "*":  # Add filter if not getting all entries
+                # Now we need to filter by either user_id OR email prefix
                 scan_params.update({
-                    "FilterExpression": "begins_with(user_id, :email_prefix)",
+                    "FilterExpression": "begins_with(user_id, :email_prefix) OR begins_with(email, :email_prefix)",
                     "ExpressionAttributeValues": {":email_prefix": email_prefix.lower()},
                 })
             
@@ -75,15 +79,32 @@ def get_emails(event, context, current_user, name, data):
         print(f"Retrieved {len(all_items)} total items")
         
         if not all_items:
-            print("No matching emails found")
+            print("No matching users found")
             return {
                 "statusCode": 404,
-                "body": json.dumps({"error": "No matching emails found"}),
+                "body": json.dumps({"error": "No matching users found"}),
             }
 
-        email_matches = [item["user_id"] for item in all_items]
-        # print("Email matches:\n", email_matches)
-        return {"statusCode": 200, "body": json.dumps({"emails": email_matches})}
+        # Build dictionary mapping user_id to email (or user_id if no email)
+        user_email_map = {}
+        for item in all_items:
+            user_id = item.get("user_id")
+            email = item.get("email", user_id)  # Default to user_id if no email
+            if user_id:
+                user_email_map[user_id] = email
+        
+        print(f"Built user-email mapping for {len(user_email_map)} users")
+        
+        # Keep backward compatibility: also return the old "emails" list
+        email_matches = list(user_email_map.keys())  # List of user_ids for backward compat
+        
+        return {
+            "statusCode": 200, 
+            "body": json.dumps({
+                "emails": email_matches,  # Backward compatibility
+                "user_email_map": user_email_map  # New mapping
+            })
+        }
 
     except ClientError as e:
         print("Error: ", e.response["Error"]["Message"])

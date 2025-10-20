@@ -48,7 +48,7 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
 
   environment:
-    CHANGE_SET_BOOLEAN: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     
     AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/shared/AGENT_ENDPOINT}
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}

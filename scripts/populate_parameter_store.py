@@ -180,6 +180,11 @@ class ParameterStorePopulator:
         resolved = {}
         
         for var_name, var_value in variables.items():
+            # Handle boolean values properly
+            if var_value.lower() in ['true', 'false']:
+                resolved[var_name] = var_value.lower()
+                continue
+                
             # Replace common serverless variables
             resolved_value = var_value
             resolved_value = resolved_value.replace('${self:service}', service_name)
@@ -232,7 +237,12 @@ class ParameterStorePopulator:
                 # Add other variables from var file
                 for var_name in shared_var_names:
                     if var_name in var_data:
-                        shared_vars[var_name] = str(var_data[var_name])
+                        value = var_data[var_name]
+                        # Handle boolean values properly for serverless
+                        if isinstance(value, bool):
+                            shared_vars[var_name] = str(value).lower()  # Convert True/False to true/false
+                        else:
+                            shared_vars[var_name] = str(value)
                 
             except Exception as e:
                 print(f"Error loading shared variables from {var_file}: {e}")

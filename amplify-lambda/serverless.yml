@@ -66,7 +66,8 @@ provider:
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   environment:
-    CHANGE_SET_BOOLEAN: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
     APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/APP_ARN_NAME}
     DEP_REGION: ${ssm:/amplify/${sls:stage}/shared/DEP_REGION}

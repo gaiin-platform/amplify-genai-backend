@@ -9,12 +9,15 @@ import csv
 import argparse
 import boto3
 import json
+import re
+import time
+import uuid as uuid_lib
 from datetime import datetime
 from typing import Dict, Tuple
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.conditions import Attr
 
-from config import CONFIG as tables
+from config import get_config
 from s3_data_migration import (
     migrate_workflow_templates_bucket_for_user, 
     migrate_scheduled_tasks_logs_bucket_for_user,
@@ -31,11 +34,7 @@ from user_storage_backup import backup_user_storage_table
 
 dynamodb = boto3.resource("dynamodb")
 
-# Import USER_STORAGE_TABLE functions
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'amplify-lambda'))
-from data.user import CommonData
+# Note: CommonData import removed - using direct DynamoDB writes for self-contained migration
 
 
 def paginated_query(table_name: str, key_name: str, value: str, index_name: str = None):
@@ -95,8 +94,9 @@ def parse_args():
     )
     parser.add_argument(
         "--csv-file",
-        required=True,
-        help="Path to the CSV file containing migration data.",
+        required=False,  # Made optional since we can generate it
+        default="migration_users.csv",
+        help="Path to the CSV file containing migration data (default: migration_users.csv).",
     )
     parser.add_argument(
         "--log", required=True, help="Log output to the specified file."
@@ -111,6 +111,11 @@ def parse_args():
         default="amplify-v6-lambda-dev-user-data-storage",
         help="Target user storage table name (default: amplify-v6-lambda-dev-user-data-storage)"
     )
+    parser.add_argument(
+        "--no-id-change",
+        action="store_true",
+        help="Generate migration_users.csv with same old_id and new_id for S3 consolidation only (no username changes).",
+    )
     return parser.parse_args()
 
 
@@ -123,12 +128,12 @@ def get_tables_from_config_file() -> Dict[str, str]:
         Dict[str, str]: A dictionary containing table names from the configuration file,
         with 'needs_edit' removed.
     """
-    t = tables.copy()
+    t = get_config().copy()
     del t["needs_edit"]
     return t
 
 
-def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False) -> bool:
+def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False, skip_confirmation: bool = False) -> bool:
     """
     Checks if the required DynamoDB tables exist and prompts the user for confirmation to proceed.
 
@@ -136,6 +141,7 @@ def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False) -> boo
         table_names (Dict[str, str]): A dictionary mapping logical table names to DynamoDB table names.
         continue_anyway (bool, optional): If True, continues execution even if some tables do not exist,
             setting their values to None. Defaults to False.
+        skip_confirmation (bool, optional): If True, skips the confirmation prompt. Useful for debugging. Defaults to False.
 
     Returns:
         bool: True if all required tables exist (or continue_anyway is True) and the user confirms to proceed;
@@ -143,7 +149,7 @@ def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False) -> boo
 
     Side Effects:
         - Logs messages about missing tables and table mappings.
-        - Prompts the user for confirmation via input.
+        - Prompts the user for confirmation via input (unless skip_confirmation is True).
     """
     try:
         existing_tables = dynamodb.meta.client.list_tables()["TableNames"]
@@ -162,6 +168,17 @@ def tables_ok(table_names: Dict[str, str], continue_anyway: bool = False) -> boo
         log("The following tables will be used:")
         for k, v in table_names.items():
             log(f"\t{k}: {v}")
+        
+        # Skip confirmation if debugging or in dry-run mode
+        if skip_confirmation:
+            log("Skipping confirmation prompt (debug/dry-run mode)")
+            return True
+            
+        # Check if running in debug mode (sys.gettrace() returns a trace function when debugging)
+        if sys.gettrace() is not None:
+            log("Debug mode detected - automatically accepting terms")
+            return True
+            
         response = input("Have you accepted the terms and wish to proceed? (yes/no): ")
         if response.lower() != "yes":
             log("User did not accept the terms. Exiting.")
@@ -198,9 +215,7 @@ def get_users_from_csv(file_path: str) -> Dict[str, str]:
                 new_id = row.get("new_id")
                 if old_id and new_id:
                     if new_id in users.values():
-                        log(
-                            f"Warning: Duplicate new_id {new_id} found. Clean up CSV and try again."
-                        )
+                        log(f"Warning: Duplicate new_id {new_id} found. Clean up CSV and try again.")
                         sys.exit(1)
                     users[old_id] = new_id
                 else:
@@ -209,6 +224,95 @@ def get_users_from_csv(file_path: str) -> Dict[str, str]:
         log(f"Error reading CSV file {file_path}: {e}")
         sys.exit(1)
     return users
+
+
+def generate_no_change_csv(file_path: str, dry_run: bool) -> bool:
+    """
+    Generate migration_users.csv by pulling all users from COGNITO_USERS_DYNAMODB_TABLE.
+    Each user will have the same old_id and new_id (no username change, just data migration).
+    
+    Args:
+        file_path: Path to write the CSV file
+        dry_run: If True, only show what would be done
+        
+    Returns:
+        bool: Success status
+    """
+    msg = f"[generate_no_change_csv][dry-run: {dry_run}] %s"
+    
+    try:
+        table_name = table_names.get("COGNITO_USERS_DYNAMODB_TABLE")
+        if not table_name:
+            log(msg % "COGNITO_USERS_DYNAMODB_TABLE not found in config")
+            return False
+            
+        log(msg % f"Fetching all users from {table_name}...")
+        
+        cognito_table = dynamodb.Table(table_name)
+        
+        # Collect all users
+        all_users = []
+        last_evaluated_key = None
+        
+        while True:
+            # Prepare scan parameters - only need user_id
+            scan_params = {"ProjectionExpression": "user_id"}
+            
+            # Add pagination token if we have one
+            if last_evaluated_key:
+                scan_params["ExclusiveStartKey"] = last_evaluated_key
+            
+            # Execute scan
+            response = cognito_table.scan(**scan_params)
+            
+            # Check if we got items
+            if "Items" not in response:
+                break
+                
+            # Add items to our collection
+            for item in response.get("Items", []):
+                user_id = item.get("user_id")
+                if user_id:
+                    all_users.append(user_id)
+            
+            # Check if there are more pages
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break  # No more pages
+                
+        log(msg % f"Found {len(all_users)} users in Cognito table")
+        
+        if not all_users:
+            log(msg % "No users found in Cognito table")
+            return False
+        
+        # Sort users for consistency
+        all_users.sort()
+        
+        if dry_run:
+            log(msg % f"Would generate {file_path} with {len(all_users)} users (same old_id and new_id)")
+            log(msg % "Sample entries that would be created:")
+            for user in all_users[:5]:  # Show first 5 as sample
+                log(msg % f"  {user},{user}")
+            if len(all_users) > 5:
+                log(msg % f"  ... and {len(all_users) - 5} more users")
+            return True
+        else:
+            # Write CSV file
+            with open(file_path, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['old_id', 'new_id'])  # Header
+                
+                for user_id in all_users:
+                    writer.writerow([user_id, user_id])  # Same ID for both columns
+                    
+            log(msg % f"Generated {file_path} with {len(all_users)} users")
+            log(msg % "All users will keep their existing IDs (data migration only)")
+            return True
+            
+    except Exception as e:
+        log(msg % f"Error generating CSV file: {e}")
+        return False
 
 
 ## Starting Here is all the functions that actually update the data ###
@@ -271,18 +375,15 @@ def update_amplify_admin_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                 set([new_id if uid == old_id else uid for uid in admin_data])
             )
             if dry_run:
-                log(
-                    msg
+                log(msg
                     % f"Would update admin config data to:\n\tNew Data: {new_admin_data}"
-                )
+)
             else:
-                log(
-                    msg
+                log(msg
                     % f"Updating admin config data to:\n\tNew Data: {new_admin_data}"
-                )
-                amplify_admin_table.put_item(
-                    Item={"config_id": "admins", "data": new_admin_data}
-                )
+)
+                amplify_admin_table.put_item(Item={"config_id": "admins", "data": new_admin_data}
+)
 
     # A similar dilemma is presented here and I maintain that this table desperately needs a restructure.
     group_config = amplify_admin_table.get_item(Key={"config_id": "amplifyGroups"})
@@ -294,25 +395,21 @@ def update_amplify_admin_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         for group_name, group_info in group_data.items():
             members = list(set(group_info.get("members", [])))
             if old_id in members:
-                log(
-                    msg
+                log(msg
                     % f"Found amplifyGroups config with old ID {old_id} in group {group_name}.\n\tExisting Data: {members}"
-                )
-                new_members = list(
-                    set([new_id if uid == old_id else uid for uid in members])
-                )
+)
+                new_members = list(set([new_id if uid == old_id else uid for uid in members])
+)
                 group_info["members"] = new_members
                 updated = True
                 if dry_run:
-                    log(
-                        msg
+                    log(    msg
                         % f"Would update members of group {group_name} to:\n\tNew Data: {new_members}"
-                    )
+    )
                 else:
-                    log(
-                        msg
+                    log(    msg
                         % f"Updating members of group {group_name} to:\n\tNew Data: {new_members}"
-                    )
+    )
         if updated and not dry_run:
             amplify_admin_table.put_item(
                 Item={"config_id": "amplifyGroups", "data": group_data}
@@ -330,25 +427,21 @@ def update_amplify_admin_table(old_id: str, new_id: str, dry_run: bool) -> bool:
         for flag_name, flag_info in feature_flags_data.items():
             user_exceptions = list(set(flag_info.get("userExceptions", [])))
             if old_id in user_exceptions:
-                log(
-                    msg
+                log(msg
                     % f"Found featureFlags config with old ID {old_id} in flag {flag_name}.\n\tExisting Data: {user_exceptions}"
-                )
-                new_user_exceptions = list(
-                    set([new_id if uid == old_id else uid for uid in user_exceptions])
-                )
+)
+                new_user_exceptions = list(set([new_id if uid == old_id else uid for uid in user_exceptions])
+)
                 flag_info["userExceptions"] = new_user_exceptions
                 updated = True
                 if dry_run:
-                    log(
-                        msg
+                    log(    msg
                         % f"Would update userExceptions of flag {flag_name} to:\n\tNew Data: {new_user_exceptions}"
-                    )
+    )
                 else:
-                    log(
-                        msg
+                    log(    msg
                         % f"Updating userExceptions of flag {flag_name} to:\n\tNew Data: {new_user_exceptions}"
-                    )
+    )
         if updated and not dry_run:
             amplify_admin_table.put_item(
                 Item={"config_id": "featureFlags", "data": feature_flags_data}
@@ -409,19 +502,17 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
                 
                 # Check and update owner field
                 if "owner" in item and item["owner"] == old_id:
-                    log(
-                        msg
+                    log(    msg
                         % f"Found API keys record with owner {old_id}.\n\tExisting Data: {item}"
-                    )
+    )
                     item["owner"] = new_id
                     updated = True
                 
                 # Check and update delegate field
                 if "delegate" in item and item["delegate"] == old_id:
-                    log(
-                        msg
+                    log(    msg
                         % f"Found API keys record with delegate {old_id}.\n\tExisting Data: {item}"
-                    )
+    )
                     item["delegate"] = new_id
                     updated = True
                 
@@ -449,35 +540,66 @@ def update_api_keys(old_id: str, new_id: str, dry_run: bool) -> bool:
 # "S3_ARTIFACTS_BUCKET": "amplify-v6-artifacts-dev-bucket"
 # DONE
 def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
-    """Update all artifacts records associated with the old user ID to the new user ID."""
+    """Update all artifacts records associated with the old user ID to the new user ID.
+    ENHANCED: Handles partial migrations where artifacts may be in split states.
+    """
     msg = f"[update_artifacts_table][dry-run: {dry_run}] %s"
     table = table_names.get("ARTIFACTS_DYNAMODB_TABLE")
+    
+    if not table:
+        log(msg % f"ARTIFACTS_DYNAMODB_TABLE not found in config, skipping")
+        return True
+        
     artifacts_table = dynamodb.Table(table)
     ret = False
+    
     try:
-        for item in paginated_query(table, "user_id", old_id):
+        items = list(paginated_query(table, "user_id", old_id))
+        
+        if not items:
+            log(msg % f"No artifacts found for user {old_id}")
+            return True
+            
+        for item in items:
             log(
                 msg
                 % f"Found artifacts record for user ID {old_id}.\n\tExisting Data: {item}"
             )
             
-            # IMPLEMENTED: Artifacts S3 to USER_STORAGE_TABLE migration
-            # - "key": Transformed from "user@email.com/20250305/Game:v3" to "20250305/Game:v3" format
-            # - S3 content: Downloaded from S3_ARTIFACTS_BUCKET and migrated to USER_STORAGE_TABLE
-            # - "user_id": Updated from old_id to new_id (part of USER_STORAGE_TABLE PK)
-            # - "artifacts": Array updated with new clean key format for each artifact
-            # Migration detection: Key format detection (date pattern vs user prefix)
-            # 
-            # Processing flow:
-            # 1. Call migrate_artifacts_bucket_for_user() to migrate S3 content and transform keys
-            # 2. Update "user_id" attribute from old_id to new_id  
-            # 3. Update "artifacts" array with transformed clean keys (handled by migration function)
+            # ENHANCED: Handle split data states
+            # 1. Some artifacts may already be migrated (clean key format)
+            # 2. Some artifacts may still be in legacy format  
+            # 3. Some artifacts may exist in both S3 and USER_STORAGE_TABLE
+            #
+            # The migrate_artifacts_bucket_for_user function now handles:
+            # - Detection of already migrated artifacts
+            # - Skipping of duplicates in USER_STORAGE_TABLE
+            # - Transformation of all keys to new format
+            # - Preservation of already migrated artifacts
             success, updated_artifacts = migrate_artifacts_bucket_for_user(old_id, new_id, dry_run, item)
+            
+            if not success:
+                log(msg % f"Migration failed for user {old_id}, but continuing with ID update")
+                # Still update the user_id even if migration fails
+                # This ensures split state can be resolved later
             
             # Update user_id and artifacts array while preserving ALL other columns
             item["user_id"] = new_id
             if success and updated_artifacts:
                 item["artifacts"] = updated_artifacts
+            elif not success:
+                # If migration failed, at least transform the keys in metadata
+                # This allows the application to find artifacts even in split state
+                if "artifacts" in item and isinstance(item["artifacts"], list):
+                    transformed_artifacts = []
+                    for artifact in item["artifacts"]:
+                        updated_artifact = artifact.copy()
+                        old_key = artifact.get("key", "")
+                        # Transform key even if content migration failed
+                        if old_key.startswith(f"{old_id}/"):
+                            updated_artifact["key"] = old_key[len(f"{old_id}/"):]
+                        transformed_artifacts.append(updated_artifact)
+                    item["artifacts"] = transformed_artifacts
             
             if dry_run:
                 log(msg % f"Would update artifact item to:\n\tNew Data: {item}")
@@ -486,6 +608,7 @@ def update_artifacts_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                 artifacts_table.put_item(Item=item)
             
             ret = True
+            
         return ret
         
     except Exception as e:
@@ -527,81 +650,152 @@ def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 # "SHARES_DYNAMODB_TABLE" : "amplify-v6-lambda-dev",
 # "S3_SHARE_BUCKET_NAME": "amplify-v6-lambda-dev-share", #Marked for deletion
 def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
-    """Update all shares records associated with the old user ID to the new user ID."""
+    """
+    Migrate shares for a user from SHARES_DYNAMODB_TABLE to USER_STORAGE_TABLE.
+    
+    Processing flow:
+    1. Migrate S3 shares files to consolidation bucket
+    2. Transform and migrate DynamoDB records to USER_STORAGE_TABLE with new schema
+    3. Delete old records from SHARES_DYNAMODB_TABLE
+    
+    New schema in USER_STORAGE_TABLE:
+    - PK: "{new_user_id}#amplify-shares#received"  
+    - SK: "{new_sharer_id}#{date}#{uuid}"
+    - data: share metadata (sharedBy, note, sharedAt, key)
+    """
     msg = f"[update_shares_table][dry-run: {dry_run}] %s"
     table = table_names.get("SHARES_DYNAMODB_TABLE")
     
-    # IMPLEMENTED: Shares S3 to S3_CONSOLIDATION_BUCKET migration
-    # - Shares: Migrated from S3_SHARE_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME  
-    # - Old format: "recipient_user/sharer_user/date/file.json" 
-    # - New format: "shares/recipient_user/sharer_user/date/file.json"
-    # - User ID updates: old_id replaced with new_id in recipient/sharer positions
-    # - DynamoDB updates: "user", "id", and "sharedBy" fields in data array updated
-    #
-    # Processing flow:
-    # 1. Call migrate_shares_bucket_for_user() to migrate S3 shares files
-    # 2. Update "user" field from old_id to new_id in SHARES_DYNAMODB_TABLE
-    # 3. Update "id" prefix from old_id to new_id  
-    # 4. Update "sharedBy" fields in data array from old_id to new_id
-    success = migrate_shares_bucket_for_user(old_id, new_id, dry_run)
+    if not table:
+        log(msg % "SHARES_DYNAMODB_TABLE not found in config, skipping")
+        return True
     
+    # Step 1: Migrate S3 shares files
+    success = migrate_shares_bucket_for_user(old_id, new_id, dry_run)
     if not success:
-        log(msg % f"Failed to migrate shares for user {old_id}")
+        log(msg % f"Failed to migrate S3 shares for user {old_id}")
         return False
     
     shares_table = dynamodb.Table(table)
-
-    # Process shares records to update user IDs and sharedBy fields
-    # 1. "id" field: Update prefix from old_id to new_id
-    # 2. "user" field: Update from old_id to new_id  
-    # 3. "data" array -> "sharedBy" fields: Update from old_id to new_id
     
-    ret = False
+    # Get USER_STORAGE_TABLE for migration
+    user_storage_table_name = table_names.get("USER_STORAGE_TABLE")
+    if not user_storage_table_name:
+        log(msg % "USER_STORAGE_TABLE not found in config")
+        return False
+    user_storage_table = dynamodb.Table(user_storage_table_name)
+    
+    # Step 2: Process and migrate DynamoDB records
+    ret = True
     try:
         for item in paginated_query(table, "user", old_id):
-            log(
-                msg
-                % f"Found shares record for user ID {old_id}.\n\tExisting Data: {item}"
-            )
+            log(msg % f"Found shares record for user ID {old_id}")
             
             # Migrate user settings from SHARES_DYNAMODB_TABLE settings column to USER_STORAGE_TABLE
             migrate_user_settings_for_user(old_id, new_id, dry_run, item)
             
-            # Update user field from old_id to new_id
-            item["user"] = new_id
+            share_name = item.get('name', '/state/share')
+            share_data_array = item.get('data', [])
             
-            # Update id field: replace old_id with new_id in the ID
-            if "id" in item and old_id in item["id"]:
-                old_item_id = item["id"]
-                item["id"] = item["id"].replace(old_id, new_id)
-                log(msg % f"Updated id: {old_item_id} -> {item['id']}")
+            if not isinstance(share_data_array, list):
+                log(msg % f"Invalid share data format for user {old_id}, skipping")
+                continue
             
-            # Update sharedBy fields in data array
-            if "data" in item and isinstance(item["data"], list):
-                for data_entry in item["data"]:
-                    if isinstance(data_entry, dict) and "sharedBy" in data_entry:
-                        if data_entry["sharedBy"] == old_id:
-                            data_entry["sharedBy"] = new_id
-                            log(msg % f"Updated sharedBy: {old_id} -> {new_id}")
-                            
-                    # Update key paths in data entries if they reference old_id
-                    if isinstance(data_entry, dict) and "key" in data_entry:
-                        old_key = data_entry["key"]
-                        if old_id in old_key:
-                            # Update key path to use new_id where old_id appears
-                            key_parts = old_key.split('/')
-                            new_key_parts = []
-                            for part in key_parts:
-                                new_key_parts.append(new_id if part == old_id else part)
-                            data_entry["key"] = f"shares/{'/'.join(new_key_parts)}"
-                            log(msg % f"Updated key: {old_key} -> {data_entry['key']}")
+            log(msg % f"Processing {len(share_data_array)} shares for user {old_id} -> {new_id}")
+            
+            # Process each share in the data array and migrate to USER_STORAGE_TABLE
+            migrated_count = 0
+            for share_entry in share_data_array:
+                try:
+                    # Extract share metadata
+                    old_shared_by = share_entry.get('sharedBy', '')
+                    shared_at = share_entry.get('sharedAt', 0)
+                    note = share_entry.get('note', '')
+                    old_key = share_entry.get('key', '')
+                    
+                    if not old_shared_by or not old_key:
+                        log(msg % f"Skipping share entry missing required fields")
+                        continue
+                    
+                    # Translate sharer ID if it matches old_id
+                    new_shared_by = new_id if old_shared_by == old_id else old_shared_by
+                    
+                    # Update key paths to use new IDs
+                    new_key = old_key
+                    if old_id in new_key:
+                        new_key = new_key.replace(old_id, new_id)
+                    
+                    # Add shares/ prefix if not already present
+                    if not new_key.startswith("shares/"):
+                        new_key = f"shares/{new_key}"
+                    
+                    # Generate date from timestamp
+                    from datetime import datetime
+                    if shared_at:
+                        try:
+                            dt_obj = datetime.fromtimestamp(shared_at / 1000)  # Convert ms to seconds
+                            date_str = dt_obj.strftime("%Y-%m-%d")
+                        except:
+                            date_str = datetime.now().strftime("%Y-%m-%d")
+                    else:
+                        date_str = datetime.now().strftime("%Y-%m-%d")
+                    
+                    # Generate unique share ID
+                    share_id = f"{new_shared_by}#{date_str}#{str(uuid_lib.uuid4())}"
+                    
+                    # Prepare USER_STORAGE_TABLE data
+                    user_storage_data = {
+                        "sharedBy": new_shared_by,
+                        "note": note,
+                        "sharedAt": shared_at,
+                        "key": new_key
+                    }
+                    
+                    # Create hash key for USER_STORAGE_TABLE
+                    hash_key = f"{new_id}#amplify-shares"
+                    
+                    # Create the item for USER_STORAGE_TABLE
+                    new_item = {
+                        "PK": f"{hash_key}#received",
+                        "SK": share_id,
+                        "UUID": str(uuid_lib.uuid4()),
+                        "data": user_storage_data,
+                        "appId": hash_key,
+                        "entityType": "received",
+                        "createdAt": int(time.time())
+                    }
+                    
+                    if dry_run:
+                        log(msg % f"Would migrate share: user={old_id}->{new_id}, sharer={old_shared_by}->{new_shared_by}, key={old_key}->{new_key}")
+                    else:
+                        user_storage_table.put_item(Item=new_item)
+                        log(msg % f"Migrated share to USER_STORAGE_TABLE: user={new_id}, sharer={new_shared_by}")
+                        migrated_count += 1
+                        
+                except Exception as e:
+                    log(msg % f"Error processing share entry: {e}")
+                    continue
+            
+            # Step 3: Delete old record from SHARES_DYNAMODB_TABLE after successful migration
+            if not dry_run and migrated_count > 0:
+                try:
+                    shares_table.delete_item(    Key={
+                            'user': old_id,
+                            'name': share_name
+                        }
+    )
+                    log(msg % f"Deleted legacy shares record for user {old_id}")
+                except Exception as e:
+                    log(msg % f"Error deleting legacy shares record: {e}")
+                    # Don't fail the migration for delete errors
             
             if dry_run:
-                log(msg % f"Would update shares item to:\n\tNew Data: {item}")
+                log(msg % f"Would migrate {len(share_data_array)} shares for user {old_id}")
             else:
-                log(msg % f"Updating shares item to:\n\tNew Data: {item}")
-                shares_table.put_item(Item=item)
+                log(msg % f"Successfully migrated {migrated_count} shares for user {old_id}")
+            
             ret = True
+            
         return ret
     except Exception as e:
         log(msg % f"Error updating shares for user ID from {old_id} to {new_id}: {e}")
@@ -656,10 +850,9 @@ def update_assistants_aliases_table(old_id: str, new_id: str, dry_run: bool) -> 
             )
             item["user"] = new_id
             if dry_run:
-                log(
-                    msg
+                log(msg
                     % f"Would update assistants aliases item to:\n\tNew Data: {item}"
-                )
+)
             else:
                 log(msg % f"Updating assistants aliases item to:\n\tNew Data: {item}")
                 assistants_aliases_table.put_item(Item=item)
@@ -697,12 +890,11 @@ def update_assistants_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                 log(msg % f"Updating assistants item to:\n\tNew Data: {item}")
                 # update item instead of creating new because the PK must be unique
                 # in cases where there is no SK, like this one
-                assistants_table.update_item(
-                    Key={"id": old_id},
+                assistants_table.update_item(Key={"id": old_id},
                     UpdateExpression="SET #user = :new_id",
                     ExpressionAttributeNames={"#user": "user"},
                     ExpressionAttributeValues={":new_id": new_id},
-                )
+)
             ret = True
         return ret
     except Exception as e:
@@ -755,21 +947,18 @@ def update_assistant_code_interpreter_table(
             )
             item["user"] = new_id
             if dry_run:
-                log(
-                    msg
+                log(msg
                     % f"Would update assistant code interpreter item to:\n\tNew Data: {item}"
-                )
+)
             else:
-                log(
-                    msg
+                log(msg
                     % f"Updating assistant code interpreter item to:\n\tNew Data: {item}"
-                )
-                assistant_code_interpreter_table.update_item(
-                    Key={"id": item["id"]},
+)
+                assistant_code_interpreter_table.update_item(Key={"id": item["id"]},
                     UpdateExpression="SET #user = :new_id",
                     ExpressionAttributeNames={"#user": "user"},
                     ExpressionAttributeValues={":new_id": new_id},
-                )
+)
             ret = True
         return ret
     except Exception as e:
@@ -802,17 +991,15 @@ def update_assistant_threads_table(old_id: str, new_id: str, dry_run: bool) -> b
             )
             item["user"] = new_id
             if dry_run:
-                log(
-                    msg % f"Would update assistant threads item to:\n\tNew Data: {item}"
-                )
+                log(msg % f"Would update assistant threads item to:\n\tNew Data: {item}"
+)
             else:
                 log(msg % f"Updating assistant threads item to:\n\tNew Data: {item}")
-                assistant_threads_table.update_item(
-                    Key={"id": item["id"]},
+                assistant_threads_table.update_item(Key={"id": item["id"]},
                     UpdateExpression="SET #user = :new_id",
                     ExpressionAttributeNames={"#user": "user"},
                     ExpressionAttributeValues={":new_id": new_id},
-                )
+)
             ret = True
         return ret
     except Exception as e:
@@ -1266,10 +1453,9 @@ def update_agent_event_templates_table(old_id: str, new_id: str, dry_run: bool) 
             )
             item["user"] = new_id
             if dry_run:
-                log(
-                    msg
+                log(msg
                     % f"Would update agent event template item to:\n\tNew Data: {item}"
-                )
+)
             else:
                 log(msg % f"Updating agent event template item to:\n\tNew Data: {item}")
                 agent_event_templates_table.put_item(Item=item)
@@ -1316,9 +1502,8 @@ def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> 
             item["user"] = new_id
             
             if dry_run:
-                log(
-                    msg % f"Would update workflow template item to:\n\tNew Data: {item}"
-                )
+                log(msg % f"Would update workflow template item to:\n\tNew Data: {item}"
+)
             else:
                 log(msg % f"Updating workflow template item to:\n\tNew Data: {item}")
                 workflow_templates_table.put_item(Item=item)
@@ -1396,10 +1581,9 @@ def update_email_settings_table(old_id: str, new_id: str, dry_run: bool) -> bool
                             log(msg % f"Updated allowedSender: {sender_pattern} -> {updated_pattern}")
                     
                     if has_updates:
-                        log(
-                            msg
+                        log(        msg
                             % f"Found email settings record with old_id in allowedSenders.\\n\\tExisting Data: {item}"
-                        )
+        )
                         item["allowedSenders"] = updated_senders
                         
                         if dry_run:
@@ -1904,12 +2088,11 @@ def update_memory_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                 else:
                     # Update the user field for this memory
                     try:
-                        memory_table.update_item(
-                            Key={"id": memory_id},
+                        memory_table.update_item(        Key={"id": memory_id},
                             UpdateExpression="SET #user = :new_user",
                             ExpressionAttributeNames={"#user": "user"},
                             ExpressionAttributeValues={":new_user": new_id}
-                        )
+        )
                         log(msg % f"Updated memory {memory_id} from user '{old_id}' to '{new_id}'")
                         items_updated += 1
                     except Exception as e:
@@ -1922,6 +2105,257 @@ def update_memory_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     except Exception as e:
         log(msg % f"Error processing memory table {table}: {str(e)}")
         return False
+
+# "COMMON_DATA_DYNAMO_TABLE": Software Engineer service common data table
+def update_common_data_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all common data records associated with the old user ID to the new user ID."""
+    msg = f"[update_common_data_table][dry-run: {dry_run}] %s"
+    table = table_names.get("COMMON_DATA_DYNAMO_TABLE")
+    if not table:
+        log(msg % f"Table COMMON_DATA_DYNAMO_TABLE not found, skipping")
+        return True
+        
+    try:
+        common_data_table = dynamodb.Table(table)
+        ret = False
+        
+        # Scan for records where user field matches old_id
+        for item in paginated_scan(table, "user", old_id):
+            log(
+                msg
+                % f"Found common data record for user ID {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["user"] = new_id
+            if dry_run:
+                log(msg % f"Would update common data item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating common data item to:\\n\\tNew Data: {item}")
+                common_data_table.put_item(Item=item)
+            ret = True
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating common data for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
+
+
+# "DYNAMO_DYNAMIC_CODE_TABLE": Software Engineer service dynamic code table  
+def update_dynamic_code_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+    """Update all dynamic code records associated with the old user ID to the new user ID."""
+    msg = f"[update_dynamic_code_table][dry-run: {dry_run}] %s"
+    table = table_names.get("DYNAMO_DYNAMIC_CODE_TABLE")
+    if not table:
+        log(msg % f"Table DYNAMO_DYNAMIC_CODE_TABLE not found, skipping")
+        return True
+        
+    try:
+        dynamic_code_table = dynamodb.Table(table)
+        ret = False
+        
+        # Check for both "creator" and "user" fields as both are common in code tables
+        # First scan for creator field
+        for item in paginated_scan(table, "creator", old_id):
+            log(
+                msg
+                % f"Found dynamic code record with creator {old_id}.\\n\\tExisting Data: {item}"
+            )
+            item["creator"] = new_id
+            if dry_run:
+                log(msg % f"Would update dynamic code item to:\\n\\tNew Data: {item}")
+            else:
+                log(msg % f"Updating dynamic code item to:\\n\\tNew Data: {item}")
+                dynamic_code_table.put_item(Item=item)
+            ret = True
+            
+        # Also scan for user field if it exists
+        try:
+            for item in paginated_scan(table, "user", old_id):
+                log(msg
+                    % f"Found dynamic code record with user {old_id}.\\n\\tExisting Data: {item}"
+)
+                item["user"] = new_id
+                if dry_run:
+                    log(msg % f"Would update dynamic code item to:\\n\\tNew Data: {item}")
+                else:
+                    log(msg % f"Updating dynamic code item to:\\n\\tNew Data: {item}")
+                    dynamic_code_table.put_item(Item=item)
+                ret = True
+        except Exception:
+            # User field might not exist, continue with creator field only
+            pass
+            
+        return ret
+    except Exception as e:
+        log(
+            msg
+            % f"Error updating dynamic code for user ID from {old_id} to {new_id}: {e}"
+        )
+        return False
+
+
+def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
+    """
+    Step 1: Migrate ALL existing entries in USER_DATA_STORAGE table from old IDs to new IDs.
+    This is done FIRST while the table is at its smallest state, before we migrate more data into it.
+    
+    Args:
+        users_map: Dictionary mapping old_id -> new_id
+        dry_run: If True, only show what would be done
+    
+    Returns:
+        bool: Success status
+    """
+    msg = f"[migrate_all_user_data_storage_ids][dry-run: {dry_run}] %s"
+    
+    # Get the USER_DATA_STORAGE table (the new consolidated table)
+    table_name = table_names.get("USER_DATA_STORAGE_TABLE")
+    if not table_name:
+        log(msg % "USER_DATA_STORAGE_TABLE not found in config, skipping")
+        return True
+    
+    log(msg % f"Migrating all IDs in {table_name} from old to new...")
+    
+    try:
+        table = dynamodb.Table(table_name)
+        updated_count = 0
+        
+        # Scan entire table and update all records
+        paginator = table.scan()
+        while True:
+            for item in paginator.get('Items', []):
+                # Check if PK contains any old user IDs
+                pk = item.get('PK', '')
+                updated = False
+                
+                for old_id, new_id in users_map.items():
+                    if pk.startswith(f"{old_id}#"):
+                        # Update PK from old_id to new_id
+                        pk_suffix = pk[len(f"{old_id}#"):]
+                        new_pk = f"{new_id}#{pk_suffix}"
+                        
+                        if dry_run:
+                            log(msg % f"Would update PK: {pk} -> {new_pk}")
+                        else:
+                            # Delete old record
+                            table.delete_item(Key={'PK': item['PK'], 'SK': item['SK']})
+                            
+                            # Update item with new PK
+                            item['PK'] = new_pk
+                            
+                            # Also update appId if present
+                            if 'appId' in item and item['appId'].startswith(f"{old_id}#"):
+                                app_id_suffix = item['appId'][len(f"{old_id}#"):]
+                                item['appId'] = f"{new_id}#{app_id_suffix}"
+                            
+                            # Put new record
+                            table.put_item(Item=item)
+                            log(msg % f"Updated PK: {pk} -> {new_pk}")
+                        
+                        updated = True
+                        updated_count += 1
+                        break
+            
+            # Check for more pages
+            if 'LastEvaluatedKey' not in paginator:
+                break
+            
+            paginator = table.scan(ExclusiveStartKey=paginator['LastEvaluatedKey'])
+        
+        log(msg % f"Updated {updated_count} records in USER_DATA_STORAGE table")
+        return True
+        
+    except Exception as e:
+        log(msg % f"Error migrating USER_DATA_STORAGE table IDs: {e}")
+        return False
+
+
+def migrate_user_storage_to_user_data_storage(users_map: dict, dry_run: bool, old_table: str, new_table: str) -> bool:
+    """
+    Step 2: Migrate all data from USER_STORAGE_TABLE (basic-ops) to USER_DATA_STORAGE_TABLE,
+    translating IDs on the fly as we copy.
+    
+    Args:
+        users_map: Dictionary mapping old_id -> new_id
+        dry_run: If True, only show what would be done
+        old_table: Source table (USER_STORAGE_TABLE in basic-ops)
+        new_table: Target table (USER_DATA_STORAGE_TABLE)
+    
+    Returns:
+        bool: Success status
+    """
+    msg = f"[migrate_user_storage_to_user_data_storage][dry-run: {dry_run}] %s"
+    
+    log(msg % f"Migrating from {old_table} to {new_table} with ID translation...")
+    
+    try:
+        # First create backup if not exists
+        import os
+        backup_csv = "user_storage_backup.csv"
+        
+        if not os.path.exists(backup_csv):
+            log(msg % f"Creating backup of {old_table}...")
+            if not dry_run:
+                backup_file, item_count = backup_user_storage_table(old_table)
+                if not backup_file:
+                    log(msg % f"Failed to create backup of {old_table}")
+                    return False
+                os.rename(backup_file, backup_csv)
+                log(msg % f"Created backup: {backup_csv} with {item_count} items")
+        
+        # Now migrate with ID translation
+        source_table = dynamodb.Table(old_table)
+        target_table = dynamodb.Table(new_table)
+        
+        migrated_count = 0
+        paginator = source_table.scan()
+        
+        while True:
+            for item in paginator.get('Items', []):
+                # Translate IDs in PK
+                pk = item.get('PK', '')
+                updated = False
+                
+                for old_id, new_id in users_map.items():
+                    if pk.startswith(f"{old_id}#"):
+                        # Update PK from old_id to new_id
+                        pk_suffix = pk[len(f"{old_id}#"):]
+                        item['PK'] = f"{new_id}#{pk_suffix}"
+                        
+                        # Also update appId if present
+                        if 'appId' in item and item['appId'].startswith(f"{old_id}#"):
+                            app_id_suffix = item['appId'][len(f"{old_id}#"):]
+                            item['appId'] = f"{new_id}#{app_id_suffix}"
+                        
+                        updated = True
+                        break
+                
+                # Migrate to target table
+                if dry_run:
+                    if updated:
+                        log(msg % f"Would migrate with ID translation: {pk} -> {item['PK']}")
+                    else:
+                        log(msg % f"Would migrate unchanged: {pk}")
+                else:
+                    target_table.put_item(Item=item)
+                    if updated:
+                        log(msg % f"Migrated with ID translation: {pk} -> {item['PK']}")
+                    migrated_count += 1
+            
+            # Check for more pages
+            if 'LastEvaluatedKey' not in paginator:
+                break
+            
+            paginator = source_table.scan(ExclusiveStartKey=paginator['LastEvaluatedKey'])
+        
+        log(msg % f"Migrated {migrated_count} records from {old_table} to {new_table}")
+        return True
+        
+    except Exception as e:
+        log(msg % f"Error migrating user storage tables: {e}")
+        return False
+
 
 def ensure_user_storage_migration(dry_run: bool, old_table: str, new_table: str) -> bool:
     """
@@ -2068,137 +2502,6 @@ def convert_dict_to_dynamodb_map(obj):
         return {'S': str(obj)}
 
 
-def migrate_shares_to_user_storage_table(dry_run: bool) -> bool:
-    """
-    Migrate SHARES_DYNAMODB_TABLE data to USER_STORAGE_TABLE.
-    
-    Transform schema from legacy shares format to:
-    - PK: "{user_id}#amplify-shares#received"  
-    - SK: "{sharer_id}#{date}#{uuid}"
-    - data: share metadata (sharedBy, note, sharedAt, key)
-    """
-    msg = f"[migrate_shares_to_user_storage_table][dry-run: {dry_run}] %s"
-    shares_table_name = table_names.get("SHARES_DYNAMODB_TABLE")
-    
-    if not shares_table_name:
-        log(msg % "SHARES_DYNAMODB_TABLE not found in config, skipping migration")
-        return True
-    
-    try:
-        shares_table = dynamodb.Table(shares_table_name)
-        migrated_count = 0
-        
-        # Scan the entire SHARES_DYNAMODB_TABLE
-        log(msg % f"Starting migration from {shares_table_name}")
-        
-        paginator = shares_table.scan()
-        while True:
-            for item in paginator.get('Items', []):
-                user_id = item.get('user')
-                share_name = item.get('name')  # Usually '/state/share'
-                share_data_array = item.get('data', [])
-                
-                if not user_id or not isinstance(share_data_array, list):
-                    log(msg % f"Skipping invalid share record: {item}")
-                    continue
-                
-                log(msg % f"Processing shares for user {user_id}, found {len(share_data_array)} shares")
-                
-                # Process each share in the data array
-                for share_entry in share_data_array:
-                    try:
-                        # Extract share metadata
-                        shared_by = share_entry.get('sharedBy', '')
-                        shared_at = share_entry.get('sharedAt', 0)
-                        note = share_entry.get('note', '')
-                        key = share_entry.get('key', '')
-                        
-                        if not shared_by or not key:
-                            log(msg % f"Skipping share entry missing required fields: {share_entry}")
-                            continue
-                        
-                        # Generate new schema components
-                        # Extract date from timestamp or use current date
-                        if shared_at:
-                            try:
-                                from datetime import datetime
-                                dt_obj = datetime.fromtimestamp(shared_at / 1000)  # Convert ms to seconds
-                                date_str = dt_obj.strftime("%Y-%m-%d")
-                            except:
-                                date_str = datetime.now().strftime("%Y-%m-%d")
-                        else:
-                            date_str = datetime.now().strftime("%Y-%m-%d")
-                        
-                        # Generate unique share ID: "{sharer_id}#{date}#{uuid}"
-                        import uuid as uuid_lib
-                        share_id = f"{shared_by}#{date_str}#{str(uuid_lib.uuid4())}"
-                        
-                        # Prepare USER_STORAGE_TABLE data
-                        user_storage_data = {
-                            "sharedBy": shared_by,
-                            "note": note,
-                            "sharedAt": shared_at,
-                            "key": key
-                        }
-                        
-                        if dry_run:
-                            log(msg % f"Would migrate share: user={user_id}, sharer={shared_by}, key={key}")
-                        else:
-                            # Use CommonData to store in USER_STORAGE_TABLE
-                            try:
-                                common_data = CommonData()
-                                result = common_data.put_item(
-                                    user_id=user_id,
-                                    app_id="amplify-shares",
-                                    entity_type="received",
-                                    item_id=share_id,
-                                    data=user_storage_data
-                                )
-                                
-                                if result:
-                                    log(msg % f"Successfully migrated share: user={user_id}, sharer={shared_by}")
-                                    migrated_count += 1
-                                else:
-                                    log(msg % f"Failed to migrate share for user {user_id}, sharer {shared_by}")
-                                    return False
-                                    
-                            except Exception as e:
-                                log(msg % f"Error migrating share for user {user_id}: {e}")
-                                return False
-                        
-                    except Exception as e:
-                        log(msg % f"Error processing share entry {share_entry}: {e}")
-                        continue
-                
-                # After successful migration of all shares for this user, delete the legacy record
-                if not dry_run and share_data_array:
-                    try:
-                        shares_table.delete_item(
-                            Key={
-                                'user': user_id,
-                                'name': share_name
-                            }
-                        )
-                        log(msg % f"Deleted legacy share record for user {user_id}")
-                    except Exception as e:
-                        log(msg % f"Error deleting legacy share record for user {user_id}: {e}")
-                        # Don't fail the migration for delete errors
-            
-            # Check for more pages
-            if 'LastEvaluatedKey' not in paginator:
-                break
-            paginator = shares_table.scan(ExclusiveStartKey=paginator['LastEvaluatedKey'])
-        
-        if dry_run:
-            log(msg % f"Migration dry run completed. Would migrate shares data to USER_STORAGE_TABLE")
-        else:
-            log(msg % f"Migration completed successfully. Migrated {migrated_count} shares to USER_STORAGE_TABLE")
-        
-        return True
-        
-    except Exception as e:
-        log(msg % f"Error during shares migration: {e}")
-        return False
 
 
 
@@ -2219,7 +2522,9 @@ if __name__ == "__main__":
     global table_names
     table_names = get_tables_from_config_file()
 
-    if not tables_ok(table_names, continue_anyway=True):
+    # Skip confirmation in dry-run mode or when debugging
+    skip_confirm = args.dry_run or (sys.gettrace() is not None)
+    if not tables_ok(table_names, continue_anyway=True, skip_confirmation=skip_confirm):
         sys.exit(1)
 
     try:
@@ -2229,128 +2534,207 @@ if __name__ == "__main__":
         sys.stderr = logfile
         log(f"Starting user ID migration. Dry run: {args.dry_run}")
         
-        # Step 1: Ensure user storage table migration from basic-ops to amplify-lambda
-        log(f"\n=== USER STORAGE TABLE MIGRATION ===")
-        if not ensure_user_storage_migration(args.dry_run, args.old_table, args.new_table):
-            log(f"User storage migration check failed. Continuing with user ID migration...")
-        else:
-            log(f"User storage migration check completed successfully.")
+        # Generate CSV if --no-id-change flag is present
+        if args.no_id_change:
+            log(f"\n=== GENERATING MIGRATION CSV (No ID Changes) ===")
+            log(f"Pulling all users from Cognito table for S3 consolidation migration...")
+            
+            import os
+            if os.path.exists(args.csv_file) and not args.dry_run:
+                # Backup existing file if it exists
+                backup_name = f"{args.csv_file}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                os.rename(args.csv_file, backup_name)
+                log(f"Existing {args.csv_file} backed up to {backup_name}")
+            
+            if not generate_no_change_csv(args.csv_file, args.dry_run):
+                log(f"Failed to generate {args.csv_file}")
+                sys.exit(1)
+            log(f"Successfully generated {args.csv_file} with no ID changes (data migration only)")
         
-        # Step 1.5: Migrate SHARES_DYNAMODB_TABLE to USER_STORAGE_TABLE
-        log(f"\n=== SHARES TABLE CONSOLIDATION ===")
-        if not migrate_shares_to_user_storage_table(args.dry_run):
-            log(f"Shares table migration failed. Continuing with user ID migration...")
+        # Get user mappings for batch operations
+        users_map = get_users_from_csv(args.csv_file)
+        
+        # Step 1: Migrate all existing USER_DATA_STORAGE table IDs (while it's at its smallest)
+        log(f"\n=== STEP 1: USER_DATA_STORAGE ID MIGRATION ===")
+        log(f"Migrating all existing IDs in USER_DATA_STORAGE table...")
+        if not migrate_all_user_data_storage_ids(users_map, args.dry_run):
+            log(f"USER_DATA_STORAGE ID migration failed. Continuing...")
         else:
-            log(f"Shares table migration completed successfully.")
+            log(f"USER_DATA_STORAGE ID migration completed successfully.")
+        
+        # Step 2: Migrate USER_STORAGE_TABLE (basic-ops) to USER_DATA_STORAGE_TABLE with ID translation
+        log(f"\n=== STEP 2: USER_STORAGE TO USER_DATA_STORAGE MIGRATION ===")
+        log(f"Migrating from {args.old_table} to {args.new_table} with ID translation...")
+        if not migrate_user_storage_to_user_data_storage(users_map, args.dry_run, args.old_table, args.new_table):
+            log(f"User storage migration failed. Continuing...")
+        else:
+            log(f"User storage migration completed successfully.")
 
+        # Step 3: Process each user for remaining table updates
+        log(f"\n=== STEP 3: PER-USER TABLE UPDATES ===")
         # loop through our users
-        for u in get_users_from_csv(args.csv_file).items():
+        for u in users_map.items():
             log(f"\n\nProcessing user: old: {u[0]} new: {u[1]}")
             old_user_id = u[0]
             new_user_id = u[1]
+            
             # this is a sanity check to make user exists
             user = get_user(old_user_id)
 
-            # if not user:
-            #     log(f"\tUser with old ID {old_user_id} not found. Skipping.")
-            #     continue
+            if not user:
+                log(f"\tUser with old ID {old_user_id} not found. Skipping.")
+                continue
 
-            # if not update_user_id(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required."
-            #     )
-            #     continue
-
-            # if not update_accounts(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required."
-            #     )
-            #     # continue
-
-            # if not update_api_keys(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys."
-            #     )
-
-            # if not update_ops_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records."
-            #     )
-
-            # if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records."
-            #     )
-
-            # if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records."
-            #     )
-
-            # if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins."
-            #     )
-
-            # if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts."
-            #     )
-
-            # if not update_agent_event_templates_table(
-            #     old_user_id, new_user_id, args.dry_run
-            # ):
-            #     log(
-            #         f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates."
-            #     )
-
-            # if not update_workflow_templates_table(
-            #     old_user_id, new_user_id, args.dry_run
-            # ):
-            #     log(
-            #         f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates."
-            #     )
-
-            # if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records."
-            #     )
-
-            # if not update_assistants_aliases_table(
-            #     old_user_id, new_user_id, args.dry_run
-            # ):
-            #     log(
-            #         f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records."
-            #     )
-
-            # if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
-            #     log(
-            #         f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records."
-            #     )
-
-            if not update_assistant_code_interpreter_table(
-                old_user_id, new_user_id, args.dry_run
-            ):
-                log(
-                    f"Unable to update assistant code interpreter records for {old_user_id}. This is assumed reasonable as not all users have assistant code interpreter records."
-                )
-
-            if not update_assistant_threads_table(
-                old_user_id, new_user_id, args.dry_run
-            ):
-                log(
-                    f"Unable to update assistant threads records for {old_user_id}. This is assumed reasonable as not all users have assistant threads records."
-                )
-
-            if not update_memory_table(old_user_id, new_user_id, args.dry_run):
-                log(
-                    f"Unable to update memory records for {old_user_id}. This is assumed reasonable as not all users have memory records."
-                )
+            if not update_user_id(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
+                continue
         
-        # Step 2: Ask user if they want to run S3 bucket migration
-        log(f"\n=== S3 BUCKET MIGRATION ===")
+            
+            ### ONLY RUN IF USER ID MIGRATION IS REQUIRED ###
+            if old_user_id != new_user_id:
+
+                if not update_accounts(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required.")
+                    # continue
+
+                if not update_api_keys(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys.")
+
+                if not update_ops_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records.")
+
+                if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records.")
+
+                if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins.")
+
+                if not update_agent_event_templates_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates.")
+
+                if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records.")
+
+                if not update_assistants_aliases_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records.")
+
+                if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records.")
+
+                if not update_assistant_groups_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update assistant groups records for {old_user_id}. This is assumed reasonable as not all users have assistant groups records.")
+
+                if not update_assistant_lookup_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update assistant lookup records for {old_user_id}. This is assumed reasonable as not all users have assistant lookup records.")
+
+                if not update_assistant_threads_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update assistant threads records for {old_user_id}. This is assumed reasonable as not all users have assistant threads records.")
+
+                if not update_assistant_thread_runs_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update assistant thread runs records for {old_user_id}. This is assumed reasonable as not all users have assistant thread runs records.")
+
+                if not update_chat_usage_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update chat usage records for {old_user_id}. This is assumed reasonable as not all users have chat usage records.")
+
+                if not update_cost_calculations_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update cost calculations records for {old_user_id}. This is assumed reasonable as not all users have cost calculations records.")
+
+                if not update_data_disclosure_acceptance_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update data disclosure acceptance records for {old_user_id}. This is assumed reasonable as not all users have data disclosure acceptance records.")
+
+                if not update_db_connections_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update db connections records for {old_user_id}. This is assumed reasonable as not all users have db connections records.")
+
+                if not update_email_settings_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update email settings records for {old_user_id}. This is assumed reasonable as not all users have email settings records.")
+
+                if not update_files_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update files records for {old_user_id}. This is assumed reasonable as not all users have files records.")
+
+                if not update_hash_files_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update hash files records for {old_user_id}. This is assumed reasonable as not all users have hash files records.")
+
+                if not update_embedding_progress_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update embedding progress records for {old_user_id}. This is assumed reasonable as not all users have embedding progress records.")
+
+                if not update_history_cost_calculations_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update history cost calculations records for {old_user_id}. This is assumed reasonable as not all users have history cost calculations records.")
+
+                if not update_additional_charges_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update additional charges records for {old_user_id}. This is assumed reasonable as not all users have additional charges records.")
+
+                if not update_oauth_user_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update oauth user records for {old_user_id}. This is assumed reasonable as not all users have oauth user records.")
+
+                if not update_user_tags_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update user tags records for {old_user_id}. This is assumed reasonable as not all users have user tags records.")
+
+                if not update_memory_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update memory records for {old_user_id}. This is assumed reasonable as not all users have memory records.")
+
+                if not update_common_data_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update common data records for {old_user_id}. This is assumed reasonable as not all users have common data records.")
+
+                if not update_dynamic_code_table(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update dynamic code records for {old_user_id}. This is assumed reasonable as not all users have dynamic code records.")
+
+
+            ### ALWAYS REQUIRED TO BE RUN REGARDLESS OF ID CHANGE ###
+
+            if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records.")
+
+            if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts.")
+            
+            if not update_workflow_templates_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates.")
+
+            if not update_assistant_code_interpreter_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update assistant code interpreter records for {old_user_id}. This is assumed reasonable as not all users have assistant code interpreter records.")
+
+            if not update_conversation_metadata_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update conversation metadata records for {old_user_id}. This is assumed reasonable as not all users have conversation metadata records.")
+
+            if not update_group_assistant_conversations_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update group assistant conversations records for {old_user_id}. This is assumed reasonable as not all users have group assistant conversations records.")
+
+            if not update_scheduled_tasks_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update scheduled tasks records for {old_user_id}. This is assumed reasonable as not all users have scheduled tasks records.")
+
+            if not update_shares_table(old_user_id, new_user_id, args.dry_run):
+                log(f"Unable to update shares records for {old_user_id}. This is assumed reasonable as not all users have shares records.")
         
-        if not args.dry_run:
+        # Step 2: Run standalone S3 bucket migrations (data disclosure, API docs)
+        log(f"\n=== STANDALONE S3 BUCKET MIGRATION ===")
+        log(f"Note: User-specific S3 migrations were already handled in the update functions above.")
+        log(f"This step migrates standalone buckets (data disclosure, API documentation).")
+        
+        if args.dry_run:
+            # In dry run mode, automatically run S3 migration dry run
+            log(f"[DRY RUN] Running standalone S3 bucket migration in dry run mode...")
+            try:
+                import sys as sys_module
+                original_argv = sys_module.argv
+                
+                # Set up argv for s3_migration_main with dry-run
+                sys_module.argv = ['s3_data_migration.py', '--bucket', 'all', '--dry-run']
+                
+                # Call S3 migration main function
+                s3_success = s3_migration_main()
+                
+                # Restore original argv
+                sys_module.argv = original_argv
+                
+                if s3_success:
+                    log(f"[DRY RUN] S3 bucket migration dry run completed successfully!")
+                else:
+                    log(f"[DRY RUN] S3 bucket migration dry run encountered issues!")
+                    
+            except Exception as s3_error:
+                log(f"[DRY RUN] Error running S3 migration dry run: {s3_error}")
+        else:
+            # In real mode, ask user for confirmation
             # Restore stdout temporarily to ask user for input
             sys.stdout = sys.__stdout__
             sys.stderr = sys.__stderr__
@@ -2358,31 +2742,28 @@ if __name__ == "__main__":
             print("\n" + "="*60)
             print("USER ID MIGRATION COMPLETED")
             print("="*60)
-            print("\nNext step: S3 Bucket Migration")
+            print("\nNext step: Standalone S3 Bucket Migration")
             print("This will migrate data from legacy S3 buckets to consolidation bucket.")
             print("This includes:")
             print("- Data disclosure files")
             print("- API documentation")
-            print("- Group assistant conversations (not user-specific)")
-            print("\nWARNING: Ensure environment variables are set for S3 migration!")
+            print("\nNote: User-specific S3 data was already migrated during the table updates above.")
             
-            response = input("\nDo you want to run the S3 bucket migration now? (yes/no): ").lower().strip()
+            response = input("\nDo you want to run the standalone S3 bucket migration now? (yes/no): ").lower().strip()
             
             # Restore file logging
             sys.stdout = logfile
             sys.stderr = logfile
             
             if response in ['yes', 'y']:
-                log(f"User confirmed S3 bucket migration. Starting...")
+                log(f"User confirmed standalone S3 bucket migration. Starting...")
                 try:
-                    # Run S3 migration with same dry_run setting
+                    # Run S3 migration in real mode
                     import sys as sys_module
                     original_argv = sys_module.argv
                     
                     # Set up argv for s3_migration_main
                     sys_module.argv = ['s3_data_migration.py', '--bucket', 'all']
-                    if args.dry_run:
-                        sys_module.argv.append('--dry-run')
                     
                     # Call S3 migration main function
                     s3_success = s3_migration_main()
@@ -2391,17 +2772,15 @@ if __name__ == "__main__":
                     sys_module.argv = original_argv
                     
                     if s3_success:
-                        log(f"S3 bucket migration completed successfully!")
+                        log(f"Standalone S3 bucket migration completed successfully!")
                     else:
-                        log(f"S3 bucket migration failed!")
+                        log(f"Standalone S3 bucket migration failed!")
                         
                 except Exception as s3_error:
                     log(f"Error running S3 migration: {s3_error}")
                     
             else:
-                log(f"User declined S3 bucket migration. Run manually: python3 s3_data_migration.py --bucket all")
-        else:
-            log(f"[DRY RUN] S3 bucket migration would be offered to user after real migration")
+                log(f"User declined standalone S3 bucket migration. Run manually: python3 s3_data_migration.py --bucket all")
 
     except Exception as e:
         log(f"Error processing users: {e}")

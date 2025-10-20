@@ -56,7 +56,7 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   
   environment:
-    CHANGE_SET_BOOLEAN: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN} 
     COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/shared/COGNITO_USER_POOL_ID}
@@ -159,7 +159,7 @@ functions:
           method: post
           cors: true
 
-  sync_cognito_users: #TODO
+  sync_cognito_users: #TODO NO LONGER NEEDED
     runtime: python3.11
     handler: cognito_users_sync.sync_users_to_dynamo
     timeout: 900

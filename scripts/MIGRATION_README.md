@@ -2,6 +2,24 @@
 
 This guide outlines the migration process for eliminating the `amplify-lambda-basic-ops` service and transitioning all environment variables to AWS Parameter Store.
 
+## 📝 **STEP 0: Configure Deployment Variables**
+
+⚠️ **REQUIRED BEFORE RUNNING ANY MIGRATION SCRIPTS**
+
+1. **Edit `scripts/config.py`** and update the deployment variables at the top:
+   ```python
+   # Configuration variables - UPDATE THESE BEFORE RUNNING MIGRATION SCRIPTS
+   DEP_NAME = "v6"   # Change to your deployment name (e.g., "v6", "v7", "prod")  
+   STAGE = "dev"     # Change to your stage (e.g., "dev", "staging", "prod")
+   ```
+
+2. **Example configurations**:
+   - Production deployment: `DEP_NAME = "prod"`, `STAGE = "prod"`
+   - V7 development: `DEP_NAME = "v7"`, `STAGE = "dev"`
+   - Staging environment: `DEP_NAME = "v6"`, `STAGE = "staging"`
+
+These variables will be used to generate correct table and bucket names for your specific deployment during migration.
+
 ## 🚨 **CRITICAL: Parameter Store Dependency**
 
 ⚠️ **ALL Lambda services now depend on AWS Parameter Store for shared configuration variables.**
@@ -322,28 +340,48 @@ After Parameter Store population and service deployments, run the user ID migrat
 ### Prerequisites
 
 #### CSV File Setup
-Create or verify `migration_users.csv` with user mappings:
+
+**Option 1: Manual CSV Creation**
+Create `migration_users.csv` with user mappings for ID changes:
 ```csv
 old_id,new_id
 karely.rodriguez@vanderbilt.edu,rodrikm1
 allen.karns@vanderbilt.edu,karnsab
 ```
 
-#### Environment Variables
-Ensure these environment variables are set for S3 migrations:
+**Option 2: Automatic CSV Generation (No ID Changes)**
+If you only need S3 consolidation without changing user IDs, use the `--no-id-change` flag:
 ```bash
-# Required for S3 migrations
-export S3_CONVERSATIONS_BUCKET_NAME="amplify-v6-lambda-dev-user-conversations"
-export S3_SHARE_BUCKET_NAME="amplify-v6-lambda-dev-share"
-export S3_CONSOLIDATION_BUCKET_NAME="amplify-v6-lambda-dev-consolidation"
-export ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME="amplify-v6-assistants-dev-code-interpreter-files"
-export AGENT_STATE_BUCKET="amplify-v6-agent-loop-dev-agent-state"
-export S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME="amplify-v6-assistants-dev-group-conversations-content"
-export DATA_DISCLOSURE_STORAGE_BUCKET="amplify-v6-data-disclosure-dev-storage"
-export S3_API_DOCUMENTATION_BUCKET="amplify-v6-api-dev-documentation-bucket"
-export WORKFLOW_TEMPLATES_BUCKET="amplify-v6-agent-loop-dev-workflow-templates"
-export SCHEDULED_TASKS_LOGS_BUCKET="amplify-v6-agent-loop-dev-scheduled-tasks-logs"
-export S3_ARTIFACTS_BUCKET="amplify-v6-artifacts-dev-bucket"
+# Automatically generates migration_users.csv from all Cognito users
+python3 id_migration.py --no-id-change --dry-run --log migration_setup.log
+
+# This creates migration_users.csv with same old_id and new_id:
+# old_id,new_id
+# user1,user1
+# user2,user2
+# ...
+```
+
+This is useful when:
+- Your user IDs are already in the correct format (e.g., already using usernames)
+- You only need to migrate data to consolidation buckets
+- You want to ensure all users are included in the migration
+
+#### Automatic Configuration Loading
+**✅ NEW: No manual environment variables needed!**
+
+The migration scripts now automatically load all bucket and table names from `config.py`. 
+Make sure you've configured your `DEP_NAME` and `STAGE` in Step 0.
+
+```bash
+# All bucket names are loaded from config.py automatically
+# No need to set environment variables manually!
+```
+
+**Optional Override**: If you need to use different bucket names than those in config.py, 
+you can still set environment variables which will take precedence:
+```bash
+export S3_CONSOLIDATION_BUCKET_NAME="custom-consolidation-bucket"  # Optional override
 ```
 
 ### Running the Migration Scripts
@@ -355,10 +393,10 @@ export S3_ARTIFACTS_BUCKET="amplify-v6-artifacts-dev-bucket"
 # 1. Dry run ID migration (shows what tables/data would be migrated)
 python3 id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
 
-# 2. Dry run S3-only migration (standalone buckets)  
+# 3. Dry run S3-only migration (standalone buckets)  
 python3 s3_data_migration.py --dry-run --bucket all --log s3_dryrun.log
 
-# 3. Review logs to understand migration scope
+# 4. Review logs to understand migration scope
 tail -f migration_dryrun.log
 ```
 
@@ -453,6 +491,94 @@ If issues occur during migration:
 2. **S3 Rollback**: Objects remain in source buckets (migration copies, doesn't move)
 3. **Selective Re-run**: Scripts are idempotent - safe to re-run for specific users
 
+### Post-Migration Cleanup
+
+#### Understanding Old Record Retention
+
+The migration script **intentionally preserves old records** as a safety measure. For tables where user IDs are part of the primary key, the migration creates new records with the new user ID while keeping the old ones intact. This provides:
+
+- **Rollback Safety**: Old records available if rollback is needed
+- **Gradual Migration**: Services can read from both IDs during transition
+- **Audit Trail**: Historical record of the migration
+
+#### Tables That Retain Old Records
+
+The following tables will have duplicate records (old and new user IDs) after migration:
+
+1. **COGNITO_USERS_DYNAMODB_TABLE** - User identity records
+2. **ARTIFACTS_DYNAMODB_TABLE** - User artifacts
+3. **SHARES_DYNAMODB_TABLE** - Share records
+4. **CONVERSATION_METADATA_TABLE** - Chat conversations
+5. **USER_STORAGE_TABLE** - Consolidated user storage
+6. **USER_TAGS_DYNAMO_TABLE** - User tags
+7. **AGENT_STATE_DYNAMODB_TABLE** - Agent state
+8. **AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE** - Event templates
+9. **WORKFLOW_TEMPLATES_TABLE** - Workflow definitions
+10. **SCHEDULED_TASKS_TABLE** - Scheduled tasks
+11. **OAUTH_STATE_TABLE** - OAuth state
+12. **OAUTH_USER_TABLE** - OAuth integrations
+13. **DATA_DISCLOSURE_ACCEPTANCE_TABLE** - Data disclosure
+14. **HISTORY_COST_CALCULATIONS_DYNAMO_TABLE** - Cost history
+15. **GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE** - Group conversations
+16. **ASSISTANTS_ALIASES_DYNAMODB_TABLE** - Assistant aliases
+
+#### When to Run Cleanup
+
+Run the cleanup script **ONLY AFTER**:
+
+1. ✅ All services have been deployed with new configurations
+2. ✅ Verified all features work with new user IDs
+3. ✅ No errors in CloudWatch logs for 24-48 hours
+4. ✅ User acceptance testing completed
+5. ✅ Backups have been verified
+
+**⚠️ WARNING**: Cleanup is irreversible. Always maintain backups before cleanup.
+
+#### Running the Cleanup Script
+
+```bash
+# 1. First, do a dry run to see what would be deleted
+python3 scripts/id_migration_cleanup.py --csv-file migration_users.csv --log cleanup_dryrun.log --dry-run
+
+# 2. Review the dry run log carefully
+tail -f cleanup_dryrun.log
+
+# 3. If everything looks correct, run the actual cleanup
+python3 scripts/id_migration_cleanup.py --csv-file migration_users.csv --log cleanup.log
+
+# The script will ask for confirmation - type 'DELETE' to proceed
+
+# 4. To skip confirmation (for automation), use --force flag (USE WITH EXTREME CAUTION)
+python3 scripts/id_migration_cleanup.py --csv-file migration_users.csv --log cleanup.log --force
+```
+
+#### Cleanup Verification
+
+After cleanup, verify old records are removed:
+
+```bash
+# Check that old user ID returns no results
+aws dynamodb get-item --table-name amplify-v6-object-access-dev-cognito-users \
+  --key '{"user_id":{"S":"karely.rodriguez@vanderbilt.edu"}}'
+
+# Verify new user ID still works
+aws dynamodb get-item --table-name amplify-v6-object-access-dev-cognito-users \
+  --key '{"user_id":{"S":"rodrikm1"}}'
+```
+
+#### Alternative: Keep Old Records
+
+You may choose to **keep old records indefinitely** for:
+
+- **Compliance**: Audit requirements
+- **Analytics**: Historical analysis
+- **Safety**: Ultra-conservative approach
+
+If keeping old records, ensure your application ignores them by:
+- Using only new user IDs in queries
+- Adding a "deprecated" flag to old records
+- Implementing application-level filtering
+
 ### Key Migration Features
 
 #### Migration Detection
@@ -474,12 +600,13 @@ If issues occur during migration:
 
 ### Migration Script Issues
 
-#### Missing Environment Variables
+#### Configuration Loading Issues
 ```bash
-# Set required S3 bucket environment variables
-export S3_CONSOLIDATION_BUCKET_NAME="amplify-v6-lambda-dev-consolidation"
-export S3_CONVERSATIONS_BUCKET_NAME="amplify-v6-lambda-dev-user-conversations"
-# ... (set all required variables from list above)
+# Verify config.py is properly configured
+python3 -c "from config import get_config; import json; print(json.dumps(get_config(), indent=2))"
+
+# Check that DEP_NAME and STAGE are set correctly in config.py
+grep -E "^(DEP_NAME|STAGE)" scripts/config.py
 ```
 
 #### CSV File Validation Errors
