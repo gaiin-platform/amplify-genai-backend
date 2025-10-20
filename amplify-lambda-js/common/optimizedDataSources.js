@@ -10,7 +10,7 @@
  */
 
 import { getLogger } from './logging.js';
-import { dataSourceCache } from './cache/dataSourceCache.js';
+import { CacheManager } from './cache.js';
 import { 
     resolveDataSources as originalResolveDataSources,
     getDataSourcesByUse as originalGetDataSourcesByUse,
@@ -19,6 +19,71 @@ import {
 import { isOpenAIModel } from './params.js';
 
 const logger = getLogger("optimizedDataSources");
+
+// Create a dataSourceCache wrapper that maps to the new CacheManager
+const tokenCountCache = new Map(); // Simple local cache for token counts
+
+const dataSourceCache = {
+    async getCachedAuthorization(userId, requestedDataSources) {
+        // Map to getCachedDataSources
+        return await CacheManager.getCachedDataSources(userId, requestedDataSources);
+    },
+    
+    setCachedAuthorization(userId, requestedDataSources, authorizedDataSources) {
+        // Map to setCachedDataSources
+        CacheManager.setCachedDataSources(userId, requestedDataSources, authorizedDataSources);
+    },
+    
+    getCachedTokenCount(dataSourceId, modelId) {
+        // Use simple local cache for token counts
+        const key = `${dataSourceId}:${modelId}`;
+        const cached = tokenCountCache.get(key);
+        if (cached && (Date.now() - cached.timestamp) < 5 * 60 * 1000) { // 5 min TTL
+            return cached.value;
+        }
+        return null;
+    },
+    
+    setCachedTokenCount(dataSourceId, modelId, tokenCount) {
+        // Store in local cache
+        const key = `${dataSourceId}:${modelId}`;
+        tokenCountCache.set(key, {
+            value: tokenCount,
+            timestamp: Date.now()
+        });
+    },
+    
+    async getCachedContexts(userId, dataSource, maxTokens, options) {
+        // Map to getCachedContexts
+        return await CacheManager.getCachedContexts(userId, dataSource, maxTokens, options);
+    },
+    
+    setCachedContexts(userId, dataSource, maxTokens, options, contexts) {
+        // Map to setCachedContexts
+        CacheManager.setCachedContexts(userId, dataSource, maxTokens, options, contexts);
+    },
+    
+    getCacheStats() {
+        // Return basic stats
+        return {
+            tokenCountCacheSize: tokenCountCache.size
+        };
+    },
+    
+    invalidateUserAuthorization(userId) {
+        // Clear user cache
+        CacheManager.clearUserCache(userId);
+    },
+    
+    invalidateDataSource(dataSourceId) {
+        // Clear token count cache for this datasource
+        for (const [key] of tokenCountCache.entries()) {
+            if (key.startsWith(`${dataSourceId}:`)) {
+                tokenCountCache.delete(key);
+            }
+        }
+    }
+};
 
 /**
  * OPTIMIZED: Authorization with comprehensive caching

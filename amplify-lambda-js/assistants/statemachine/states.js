@@ -12,7 +12,7 @@ import {
 import {getModelByType, ModelTypes} from "../../common/params.js";
 import Handlebars from "handlebars";
 import yaml from 'js-yaml';
-import {getContextMessagesWithLLMDirect} from "../../common/chat/rag/rag.js";
+import {getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
 import {getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
@@ -450,7 +450,7 @@ export const ragAction = (config = {
             const model = getModelByType(llm.params, ModelTypes.CHEAPEST);
             // ✅ ELIMINATED: Dead getChatFn and ragLLM code replaced by InternalLLM
 
-            const result = await getContextMessagesWithLLMDirect(
+            const result = await getContextMessagesWithLLM(
                 model,
                 {...llm.params, messages, options: {...llm.defaultBody, model: model, skipRag: true}},
                 {...llm.defaultBody, messages: context.history},

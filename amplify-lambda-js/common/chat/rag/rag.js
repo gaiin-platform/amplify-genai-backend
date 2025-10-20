@@ -6,7 +6,7 @@ import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {getModelByType, ModelTypes} from "../../params.js";
-import { promptLiteLLMForData } from "../../litellm/litellmClient.js";
+import { promptLiteLLMForData } from "../../../litellm/litellmClient.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
 

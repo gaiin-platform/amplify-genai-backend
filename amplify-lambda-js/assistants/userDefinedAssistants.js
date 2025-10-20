@@ -221,7 +221,7 @@ const getLatestAssistant = async (assistantPublicId) => {
 
 export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
     // ⚡ CACHE OPTIMIZATION: Check cache first
-    const { CacheManager } = await import('../common/cache/cacheManager.js');
+    const { CacheManager } = await import('../common/cache.js');
     const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
     if (cached) {
         console.log(`Using cached assistant: ${assistantPublicId}`);
