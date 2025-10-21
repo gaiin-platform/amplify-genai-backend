@@ -4,8 +4,8 @@
 
 📝 BASIC CHAT OPERATIONS
 ------------------------
-[ ] Chat with no data sources - Pure LLM response
-[ ] Chat with single data source - RAG enabled
+[-] Chat with no data sources - Pure LLM response
+[-] Chat with single data source - RAG enabled
 [ ] Chat with multiple data sources - Multiple RAG contexts
 [ ] Chat with conversation data sources - extractRelevantContext enabled
 [ ] Chat with very long context - Token limit handling
@@ -13,7 +13,7 @@
 
 🖼️ IMAGE HANDLING
 ------------------
-[ ] Chat with single image - Base64 encoding
+[-] Chat with single image - Base64 encoding
 [ ] Chat with multiple images - Multiple base64 images
 [ ] Chat with image + text - Mixed content
 [ ] Chat with image on non-vision model - Should show error message
@@ -22,12 +22,12 @@
 
 🤖 ASSISTANT TYPES
 ------------------
-[ ] No assistant - Direct chat
+[-] No assistant - Direct chat
 [ ] Client-selected assistant - From dropdown
 [ ] User-defined assistant - Custom assistant with handler
-[ ] Code Interpreter assistant - Code execution
-[ ] Artifact Mode assistant - Artifact generation
-[ ] Automation assistant - With tools/actions
+[-] Code Interpreter assistant - Code execution
+[-] Artifact Mode assistant - Artifact generation
+[-] Automation assistant - With tools/actions
 [ ] Map-Reduce assistant - Document summarization
 [ ] Group assistant - With conversation analysis ON
 [ ] Group assistant - With conversation analysis OFF

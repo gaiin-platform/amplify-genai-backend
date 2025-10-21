@@ -132,7 +132,7 @@ export const codeInterpreterAssistant = async (assistantBase) => {
         disclaimer: '',
 
         handler: async (params, body, ds, responseStream) => {
-            // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
+            // Code interpreter handles external API calls then delegates to base assistant
 
             let codeInterpreterResponse = '';
         
@@ -234,7 +234,6 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             // if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
             await assistantBase.handler(
-                llm,
                 params,
                 updatedBody,
                 ds,

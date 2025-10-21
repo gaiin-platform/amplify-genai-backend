@@ -798,7 +798,8 @@ export class PromptAction {
             dataSources,
             null,
             (this.streamResults) ? llm.responseStream : null,
-            this.retries
+            this.retries,
+            this.streamResults // Enable streaming to user when streamResults is true
         );
 
         if (result) {

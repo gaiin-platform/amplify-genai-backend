@@ -6,18 +6,18 @@ import {ModelTypes, getModelByType} from "./common/params.js"
 import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {resolveDataSources} from "./datasource/datasources.js";
-import { resolveDataSourcesOptimized } from "./common/optimizedDataSources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
-import AWSXRay from "aws-xray-sdk";
+// Removed AWS X-Ray for performance optimization
 import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation} from "./common/envVarsTracking.js";
 import {CacheManager} from "./common/cache.js";
 // LiteLLM integration - use litellmClient for all LLM calls
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
+import {StateBasedAssistant} from "./assistants/statemachine/states.js";
+import {initPythonProcess} from "./litellm/litellmClient.js";
 // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION
-import {getDataSourcesByUse} from "./datasource/datasources.js";
 // ✅ ELIMINATED: No longer need getDefaultLLM - assistants create their own InternalLLM
 
 
@@ -30,9 +30,10 @@ function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
 }
 
-const routeRequestCore = async (params, returnResponse, responseStream) => {
-    const segment = AWSXRay.getSegment();
-    const subSegment = segment.addNewSubsegment('chat-js.router.routeRequest');
+const routeRequestCore = async (params, returnResponse, responseStream, pythonProcessPromise = null) => {
+    // 🚀 ULTIMATE OPTIMIZATION: Python process already started in index.js before authentication!
+    // If not provided, fallback to starting it here (shouldn't happen in normal flow)
+    const actualPythonProcessPromise = pythonProcessPromise || initPythonProcess();
 
     try {
 
@@ -116,7 +117,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     let cached = await CacheManager.getCachedDataSources(params.user, dataSourceIds, params.body.options);
                     if (!cached) {
                         logger.debug("Cache miss for data sources, resolving with optimization");
-                        cached = await resolveDataSourcesOptimized(params, dataSources);
+                        cached = await resolveDataSources(params, params.body, dataSources);
                         if (cached.length > 0) {
                             CacheManager.setCachedDataSources(params.user, dataSourceIds, cached, params.body.options);
                         }
@@ -130,10 +131,15 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 Promise.resolve(getRequestId(params)),
                 
                 // 5. Placeholder for future optimizations
-                Promise.resolve(null)
+                Promise.resolve(null),
+                
             ]);
             
             console.log(`⚡ Parallel setup completed in ${Date.now() - parallelStartTime}ms`);
+            
+            // 🚀 ULTIMATE PYTHON OPTIMIZATION: Ensure Python process is ready (started in index.js!)
+            await actualPythonProcessPromise;
+            console.log(`✅ Python LiteLLM server pre-spawned during parallel setup`);
             
             // Check rate limit result first (early exit if rate limited)
             if (rateLimitResult) {
@@ -204,27 +210,16 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
             delete body.dataSources;
 
-            // ⚡ PHASE 2: Now run getDataSourcesByUse on the resolved data sources in parallel
-            console.log("🚀 Starting data source categorization...");
-            const categoryStartTime = Date.now();
             
-            const [
-                categorizedDataSources,
-                requestStateResult
-            ] = await Promise.all([
-                // 5. Categorize data sources (includes translate hashes)
-                getDataSourcesByUse(params, body, dataSources),
-                
-                // 6. Create request state 
-                createRequestState(params.user, requestId)
-            ]);
+            // ⚡ Create request state 
+            const requestStateResult = await createRequestState(params.user, requestId);
             
-            console.log(`⚡ Data source categorization completed in ${Date.now() - categoryStartTime}ms`);
-
-            // Use categorized data sources for assistant logic
-            const {dataSources: finalDataSources, ragDataSources, conversationDataSources} = categorizedDataSources;
-
-            for (const ds of [...finalDataSources, ...(body.imageSources ?? [])]) {
+            console.log("🎯 Router: Passing raw datasources to assistant:", {
+                dataSources_length: dataSources.length,
+                dataSources_ids: dataSources.map(ds => ds.id?.substring(0, 50))
+            });
+            
+            for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
                 console.debug("Resolved data source: ", ds.id, "\n", ds);
             }
 
@@ -247,7 +242,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 preloadedSecrets  // Pass prefetched secrets to avoid duplicate fetching
             };
 
-            const initSegment = segment.addNewSubsegment('chat-js.router.init');
+            // Removed X-Ray tracing for performance
 
             // ✅ ALWAYS USE LITELLM: Feature flags removed, migration complete
             const requestStartTime = Date.now();
@@ -266,16 +261,22 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         parallel: true
                     }
                 });
-                initSegment.close();
-
-                const chatSegment = segment.addNewSubsegment('chat-js.router.litellm');
+                // Removed X-Ray tracing for performance
                 
                 // 🚀 BREAKTHROUGH: Direct assistant execution without LLM dependency
                 // Assistants now create their own InternalLLM internally for massive performance gains
-                const selectedAssistant = await chooseAssistantForRequest(assistantParams.account, model, body, finalDataSources, responseStream);
-                await selectedAssistant.handler(assistantParams, body, finalDataSources, responseStream);
+                const selectedAssistant = await chooseAssistantForRequest(assistantParams.account, model, body, dataSources, responseStream);
                 
-                chatSegment.close();
+                // Different assistant types have different handler signatures
+                if (selectedAssistant instanceof StateBasedAssistant) {
+                    // StateBasedAssistant expects: (originalLLM, params, body, dataSources, responseStream)
+                    await selectedAssistant.handler(model, assistantParams, body, dataSources, responseStream);
+                } else {
+                    // Regular assistant expects: (params, body, dataSources, responseStream)
+                    await selectedAssistant.handler(assistantParams, body, dataSources, responseStream);
+                }
+                
+                // Removed X-Ray tracing for performance
 
             } catch (error) {
                 processingError = true;
@@ -300,11 +301,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 await saveTrace(params.user, requestId);
             }
 
-            if (response) {
-                logger.debug("Returning a json response that wasn't streamed from chatWithDataStateless");
-                logger.debug("Response", response);
-                returnResponse(responseStream, response);
-            } 
+            // Response is streamed directly by the assistant handler
+            // No additional response handling needed 
 
         }
     } catch (e) {
@@ -316,12 +314,12 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             body: {error: e.message}
         });
     } finally {
-        subSegment.close();
+        // Removed X-Ray tracing for performance
     }
 }
 
 // Environment variables tracking wrapper for router
-export const routeRequest = requiredEnvVars({
+const routeRequestWrapper = requiredEnvVars({
     "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
     "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
@@ -343,7 +341,13 @@ export const routeRequest = requiredEnvVars({
     "LLM_ENDPOINTS_SECRETS_NAME_ARN": [SecretsManagerOperation.GET_SECRET_VALUE],
     "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE]
+    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+    "CONVERSATION_ANALYSIS_QUEUE_URL": [] 
 })(routeRequestCore);
+
+// Main export that accepts pythonProcessPromise from index.js
+export const routeRequest = (params, returnResponse, responseStream, pythonProcessPromise = null) => {
+    return routeRequestWrapper(params, returnResponse, responseStream, pythonProcessPromise);
+};
 
 

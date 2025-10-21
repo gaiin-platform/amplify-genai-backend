@@ -8,7 +8,8 @@ import { extractParams } from "./common/handlers.js";
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
 import { debug } from 'console';
-import AWSXRay from 'aws-xray-sdk';
+// Removed AWS X-Ray for performance optimization
+import {initPythonProcess} from "./litellm/litellmClient.js";
 
 const pipelineAsync = promisify(pipeline);
 const logger = getLogger("index");
@@ -88,15 +89,16 @@ const returnResponse = async (responseStream, response) => {
 
 export const handler = awslambda.streamifyResponse(async (event, responseStream, context) => {
 
-    const segment = AWSXRay.getSegment();
-    const subSegment = segment.addNewSubsegment('chat-js.index.handler');
+    // 🚀 ULTIMATE OPTIMIZATION: Start Python process IMMEDIATELY - before authentication!
+    // This saves 1-8 seconds since Python starts in parallel with auth
+    const pythonProcessPromise = initPythonProcess();
 
     const effectiveStream = streamEnabled ? responseStream : new AggregatorStream();
 
     try {
       logger.debug("Extracting params from event");
       const params = await extractParams(event);
-      await routeRequest(params, returnResponse, effectiveStream);
+      await routeRequest(params, returnResponse, effectiveStream, pythonProcessPromise);
   
       // If we are not streaming, send the final aggregated response now
       if (!streamEnabled) {
@@ -109,7 +111,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream,
             body: { error: e.message }
         });
     } finally {
-        subSegment.close();
+        // Removed X-Ray tracing for performance optimization
     }
   });
 

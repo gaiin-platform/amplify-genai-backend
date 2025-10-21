@@ -53,6 +53,7 @@ async function getRagResults(params, token, search, ragDataSourceKeys, ragGroupD
 
 export const getContextMessages = async (params, chatBody, dataSources) => {
     const model = getModelByType(params, ModelTypes.CHEAPEST);
+    console.log("🔍 RAG: Using CHEAPEST model:", model.id, "vs user model:", params.model?.id || "unknown");
 
     const updatedBody = {
         ...chatBody,
@@ -136,6 +137,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
             keyLookup[key] = ds;
         });
         
+        console.log("🔍 RAG: About to call promptLiteLLMForData with", dataSources.length, "dataSources");
+        
         const searches = await promptLiteLLMForData(
             chatBody.messages,
             model,
@@ -162,6 +165,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
                 temperature: 0.1
             }
         );
+        
+        console.log("✅ RAG: promptLiteLLMForData completed, result:", searches ? Object.keys(searches) : "null");
 
         const result = {
             ideas: [
@@ -223,6 +228,8 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
         }
 
         const sources = (await Promise.all(ragPromises)).flat();
+        
+        console.log("🔍 RAG: Raw results returned:", sources.length, "sources");
 
         // Sort the sources by score
         sources.sort((a, b) => -1 * (b.score - a.score));
@@ -269,6 +276,8 @@ ${content}
             })];
 
         trace(params.requestId, ["rag", "result"], {sources: uniqueSources});
+        
+        console.log("🔍 RAG: Final return - sources:", uniqueSources.length, "messages:", messages.length);
 
         return {messages, sources:uniqueSources};
     } catch (e) {

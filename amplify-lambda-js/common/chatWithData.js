@@ -63,6 +63,15 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const options = params.options || {};
     const srcPrefix = options.source || defaultSource;
     
+    // 🔍 DEBUG: Log incoming datasources
+    console.log("📥 chatWithDataStateless: Incoming datasources:", {
+        dataSources_length: dataSources?.length || 0,
+        dataSources_ids: dataSources?.map(ds => ds.id?.substring(0, 50)),
+        dataSources_types: dataSources?.map(ds => ds.type),
+        skipRag: params.options?.skipRag,
+        ragOnly: params.options?.ragOnly
+    });
+    
     // ⚡ PARALLEL PHASE 1: Initialize all independent operations
     const [
         tokenCounter,
@@ -76,12 +85,30 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     ]);
 
     logger.debug("All datasources for chatWithData: ", dataSourcesByUse);
+    
+    // 🔍 DEBUG: Log RAG decision factors
+    logger.info("RAG Decision Debug:", {
+        skipRag: params.options?.skipRag,
+        ragOnly: params.options?.ragOnly,
+        skipDocumentCache: params.options?.skipDocumentCache,
+        dataSourcesByUse_ragDataSources_length: dataSourcesByUse.ragDataSources?.length || 0,
+        dataSourcesByUse_dataSources_length: dataSourcesByUse.dataSources?.length || 0,
+        raw_dataSources_length: dataSources?.length || 0
+    });
 
     // Extract categorized data sources
     const categorizedDataSources = dataSourcesByUse.dataSources || [];
     const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
     const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
         (dataSourcesByUse.conversationDataSources || []) : [];
+    
+    // 🔍 DEBUG: Log extracted data sources
+    logger.info("Extracted DataSources:", {
+        categorizedDataSources_length: categorizedDataSources.length,
+        ragDataSources_length: ragDataSources.length,
+        ragDataSources_ids: ragDataSources.map(ds => ds.id),
+        conversationDataSources_length: conversationDataSources.length
+    });
 
     // Build lookup table for data source details
     const dataSourceDetailsLookup = {};
@@ -89,85 +116,103 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         dataSourceDetailsLookup[ds.id] = ds;
     });
 
-    // ⚡ PARALLEL PHASE 2: RAG processing and token calculations
+    // 🔥 SEQUENTIAL RAG PROCESSING: Follow original pattern for immediate source transmission
     const tokenLimitBuffer = chatRequestOrig.max_tokens || 1000;
     const minTokensForContext = (categorizedDataSources.length > 0) ? 1000 : 0;
     const maxTokensForMessages = model.inputContextWindow - tokenLimitBuffer - minTokensForContext;
 
-    const [
-        ragResults,
-        fittedMessages
-    ] = await Promise.all([
-        // RAG query processing with caching
-        (async () => {
-            if (ragDataSources.length === 0) return {messages: [], sources: []};
-            
-            // ⚡ CACHE: Check for cached RAG results
-            const { CacheManager } = await import('./cache.js');
-            const crypto = await import('crypto');
-            
-            const messagesHash = crypto.createHash('sha256')
-                .update(JSON.stringify(chatRequestOrig.messages))
-                .digest('hex').slice(0, 32);
-            const dataSourcesHash = crypto.createHash('sha256')
-                .update(JSON.stringify(ragDataSources.map(ds => ds.id).sort()))
-                .digest('hex').slice(0, 32);
-            
-            const cachedRAG = await CacheManager.getCachedRAGResults(account.user, messagesHash, dataSourcesHash);
-            if (cachedRAG) {
-                logger.debug(`Using cached RAG results for user ${account.user}`);
-                
-                // Send cached sources if found
-                if (cachedRAG.sources.length > 0) {
-                    sendStateEventToStream(responseStream, {
-                        sources: { rag: { sources: cachedRAG.sources } }
-                    });
-                }
-                return cachedRAG;
-            }
-            
-            // Send RAG status
-            const ragStatus = newStatus({
-                inProgress: true,
-                sticky: false,
-                message: "I am searching for relevant information...",
-                icon: "aperture",
-            });
+    // ✅ STEP 1: Process RAG first (sequential, not parallel)
+    let ragResults = { messages: [], sources: [] };
+    
+    if (ragDataSources.length > 0) {
+        logger.info(`🔍 RAG Query: Starting with ${ragDataSources.length} data sources`);
+        
+        // Send RAG status
+        const ragStatus = newStatus({
+            inProgress: true,
+            sticky: false,
+            message: "I am searching for relevant information...",
+            icon: "aperture",
+        });
+        if (responseStream && !responseStream.destroyed && responseStream.writable) {
             sendStatusEventToStream(responseStream, ragStatus);
             forceFlush(responseStream);
-            
-            // Perform RAG query
-            const result = await getContextMessages(params, chatRequestOrig, ragDataSources);
-            
-            // Cache the RAG results
-            CacheManager.setCachedRAGResults(account.user, messagesHash, dataSourcesHash, result);
-            
-            // Update status
+        }
+        
+        // Perform RAG query with error handling
+        logger.info(`🔍 RAG Query: Calling getContextMessages with ${ragDataSources.length} sources`);
+        console.log("📋 RAG DataSources being searched:", ragDataSources.map(ds => ({
+            id: ds.id?.substring(0, 50),
+            type: ds.type,
+            name: ds.name
+        })));
+        
+        try {
+            ragResults = await getContextMessages(params, chatRequestOrig, ragDataSources);
+            console.log(`✅ RAG Query completed:`, {
+                sources_found: ragResults.sources?.length || 0,
+                messages_added: ragResults.messages?.length || 0,
+                sources_sample: ragResults.sources?.[0]
+            });
+            logger.info(`✅ RAG Query: Completed with ${ragResults.sources?.length || 0} sources found`);
+        } catch (error) {
+            console.error("❌ RAG Query Failed:", error);
+            logger.error("❌ RAG Query Failed:", error.message);
+            ragStatus.message = "RAG search failed, continuing without additional context";
             ragStatus.inProgress = false;
-            ragStatus.message = result.sources.length > 0 ? 
+            if (responseStream && !responseStream.destroyed && responseStream.writable) {
+                sendStatusEventToStream(responseStream, ragStatus);
+                forceFlush(responseStream);
+            }
+            ragResults = { messages: [], sources: [] }; // Empty result on failure
+        }
+        
+        // ✅ IMMEDIATELY send RAG sources following original pattern
+        console.log("🔍 RAG: About to send sources - Debug info:", {
+            ragResults_sources_length: ragResults.sources?.length || 0,
+            responseStream_exists: !!responseStream,
+            responseStream_destroyed: responseStream?.destroyed,
+            responseStream_writable: responseStream?.writable
+        });
+        
+        if (responseStream && !responseStream.destroyed) {
+            ragStatus.inProgress = false;
+            ragStatus.message = ragResults.sources.length > 0 ? 
                 "Found relevant information" : "No relevant information found";
             sendStatusEventToStream(responseStream, ragStatus);
             
-            // Send sources if found
-            if (result.sources.length > 0) {
+            console.log("🔍 RAG: Stream is valid, checking sources length:", ragResults.sources.length);
+            if (ragResults.sources.length > 0) {
+                console.log("📡 RAG: Sending sources to frontend (original pattern):", ragResults.sources.length, "sources");
                 sendStateEventToStream(responseStream, {
-                    sources: { rag: { sources: result.sources } }
+                    sources: {
+                        rag: {
+                            sources: ragResults.sources
+                        }
+                    }
                 });
+                console.log("✅ RAG: Sources sent to stream using original pattern");
+            } else {
+                console.log("❌ RAG: No sources to send to frontend");
             }
             
             forceFlush(responseStream);
-            return result;
-        })(),
-        
-        // Fit messages in token limit
-        (async () => {
-            const msgTokens = tokenCounter.countMessageTokens(chatRequestOrig.messages);
-            if (msgTokens > maxTokensForMessages) {
-                return fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
-            }
-            return chatRequestOrig.messages;
-        })()
-    ]);
+        } else {
+            console.log("❌ RAG: Cannot send sources - stream invalid:", {
+                responseStream_exists: !!responseStream,
+                responseStream_destroyed: responseStream?.destroyed,
+                responseStream_writable: responseStream?.writable
+            });
+        }
+    } else {
+        logger.warn("⚠️ RAG Query: No RAG data sources found, skipping RAG search");
+    }
+
+    // ✅ STEP 2: Process messages for token fitting
+    const msgTokens = tokenCounter.countMessageTokens(chatRequestOrig.messages);
+    const fittedMessages = msgTokens > maxTokensForMessages ? 
+        fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages) : 
+        chatRequestOrig.messages;
 
     // Build safe messages and insert RAG context
     const safeMessages = fittedMessages.map(m => ({role: m.role, content: m.content}));
@@ -181,8 +226,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     };
 
     // Calculate max tokens for contexts
-    const msgTokens = tokenCounter.countMessageTokens(chatRequest.messages);
-    const maxTokens = model.inputContextWindow - (msgTokens + tokenLimitBuffer);
+    const chatRequestTokens = tokenCounter.countMessageTokens(chatRequest.messages);
+    const maxTokens = model.inputContextWindow - (chatRequestTokens + tokenLimitBuffer);
     logger.debug(`Using a max of ${maxTokens} tokens per request for ${model.id}`);
 
     // ⚡ PARALLEL PHASE 3: Context fetching for all data sources
@@ -203,8 +248,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             icon: "aperture",
         }));
         
-        statuses.forEach(status => sendStatusEventToStream(responseStream, status));
-        forceFlush(responseStream);
+        if (responseStream && !responseStream.destroyed && responseStream.writable) {
+            statuses.forEach(status => sendStatusEventToStream(responseStream, status));
+            forceFlush(responseStream);
+        }
 
         // ⚡ PARALLEL: Fetch all contexts simultaneously with caching
         const { CacheManager } = await import('./cache.js');
@@ -244,11 +291,13 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             .map(context => ({...context, id: srcPrefix + "#" + context.id}));
 
         // Clear all statuses
-        statuses.forEach(status => {
-            status.inProgress = false;
-            sendStatusEventToStream(responseStream, status);
-        });
-        forceFlush(responseStream);
+        if (responseStream && !responseStream.destroyed && responseStream.writable) {
+            statuses.forEach(status => {
+                status.inProgress = false;
+                sendStatusEventToStream(responseStream, status);
+            });
+            forceFlush(responseStream);
+        }
 
         // Process and send sources
         if (contexts.length > 0) {
@@ -291,7 +340,11 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 return acc;
             }, {});
 
-            sendStateEventToStream(responseStream, { sources: byType });
+            if (responseStream && !responseStream.destroyed && responseStream.writable) {
+                console.log("📡 Document: Sending regular document sources:", Object.keys(byType), "types");
+                sendStateEventToStream(responseStream, { sources: byType });
+                console.log("✅ Document: Regular sources sent to stream");
+            }
         }
     }
 
@@ -307,11 +360,11 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         Promise.resolve(getSourceMetadata({contexts})),
         
         // Check if contexts can be merged
-        Promise.resolve(() => {
+        Promise.resolve((() => {
             if (contexts.length <= 1) return false;
             const totalTokens = contexts.reduce((acc, ctx) => acc + (ctx.tokens || 1000), 0);
             return totalTokens <= maxTokens;
-        })()
+        })())
     ]);
 
     let updatedContexts = aliasContexts(metaData, contexts);

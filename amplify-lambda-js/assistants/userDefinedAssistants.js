@@ -3,7 +3,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
+import {getDataSourcesByUse, isImage, generateImageDescriptions} from "../datasource/datasources.js";
 import { DynamoDBClient, GetItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {fillInTemplate} from "./instructions/templating.js";
@@ -13,7 +13,10 @@ import {opsLanguages} from "./opsLanguages.js";
 import {newStatus} from "../common/status.js";
 import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
+import {getLogger} from "../common/logging.js";
 // import AWSXRay from "aws-xray-sdk";
+
+const logger = getLogger("user-defined-assistants");
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -462,6 +465,57 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 const { builtInOperations, operations } = constructTools(tools);
 
                 const sessionId = params.options.conversationId;
+
+                // 🚀 AUTOMATION + IMAGES: Convert images to descriptions for agent compatibility
+                
+                // Check if model supports images (with fallback for known vision models)
+                const modelSupportsVision = params.model.supportsImages;
+                
+                logger.debug('🔍 Image processing check:', {
+                    hasImageSources: !!(body.imageSources && body.imageSources.length > 0),
+                    imageSourcesCount: body.imageSources?.length || 0,
+                    modelSupportsImages: !!params.model.supportsImages,
+                    modelSupportsVision: modelSupportsVision,
+                    modelId: params.model.id,
+                    willProcess: !!(body.imageSources && body.imageSources.length > 0 && modelSupportsVision)
+                });
+                
+                if (body.imageSources && body.imageSources.length > 0 && modelSupportsVision) {
+                    try {
+                        logger.debug(`Generating descriptions for ${body.imageSources.length} images for automation assistant`);
+                        
+                        const imageDescriptions = await generateImageDescriptions(
+                            body.imageSources, 
+                            params.model, 
+                            params
+                        );
+
+                        if (imageDescriptions.length > 0) {
+                            // Create a consolidated message with all image descriptions
+                            const imageDescriptionText = imageDescriptions.map(desc => 
+                                `**${desc.imageName}** (${desc.imageType}): ${desc.description}`
+                            ).join('\n\n');
+
+                            // Add image descriptions as a system message before invoking agent
+                            const imageContextMessage = {
+                                role: 'user',
+                                content: `📎 **Attached Images Analysis:**\n\n${imageDescriptionText}\n\n` +
+                                        `Note: The above descriptions represent ${imageDescriptions.length} image(s) that were attached to this conversation. ` +
+                                        `Use this visual information to better understand the context and answer the user's request.`
+                            };
+
+                            body.messages.push(imageContextMessage);
+                            
+                            // Clear image sources to prevent conflicts with agent processing
+                            body.imageSources = [];
+                            
+                            logger.debug(`Added descriptions for ${imageDescriptions.length} images to automation assistant context`);
+                        }
+                    } catch (error) {
+                        logger.error('Error generating image descriptions for automation assistant:', error);
+                        // Continue with agent invocation even if image description fails
+                    }
+                }
 
                 invokeAgent(
                     params.account.accessToken,
