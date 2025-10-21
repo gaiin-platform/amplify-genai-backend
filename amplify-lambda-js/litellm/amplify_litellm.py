@@ -51,13 +51,17 @@ def translate_model_name(model_id: str) -> str:
     return translations.get(model_id, model_id)
 
 
-def configure_litellm(model: Dict[str, Any], secrets: Dict[str, Any]) -> str:
-    """Configure LiteLLM for different providers and return model string"""
+def configure_litellm(model: Dict[str, Any], secrets: Dict[str, Any]) -> tuple:
+    """Configure LiteLLM for different providers and return (model_string, config_dict)
+    
+    Returns per-request configuration to support concurrent requests with different models
+    """
     model_id = translate_model_name(model["id"])
+    config = {}
     
     if is_openai_model(model_id):
         if "azure_config" in secrets and secrets["azure_config"]:
-            # Azure OpenAI configuration
+            # Azure OpenAI configuration - use per-request config
             azure_config = secrets["azure_config"]
             base_url = azure_config["url"].split("/openai")[0] if "/openai" in azure_config["url"] else azure_config["url"]
             
@@ -70,29 +74,37 @@ def configure_litellm(model: Dict[str, Any], secrets: Dict[str, Any]) -> str:
                         version = param.split("=")[1]
                         break
             
-            os.environ["AZURE_API_KEY"] = azure_config["key"]
-            os.environ["AZURE_API_BASE"] = base_url
-            os.environ["AZURE_API_VERSION"] = version
+            # Use per-request configuration instead of global env vars
+            config = {
+                "api_key": azure_config["key"],
+                "api_base": base_url,
+                "api_version": version
+            }
             
-            return f"azure/{model_id}"
+            return f"azure/{model_id}", config
         else:
-            # Direct OpenAI
+            # Direct OpenAI - use per-request config
             if secrets.get("openai_key"):
-                os.environ["OPENAI_API_KEY"] = secrets["openai_key"]
-            return model_id
+                config = {"api_key": secrets["openai_key"]}
+            return model_id, config
             
     elif is_bedrock_model(model_id):
-        # Bedrock configuration
+        # Bedrock configuration - already thread-safe via client
         region = os.environ.get("AWS_REGION", "us-east-1")
         bedrock_client = boto3.client("bedrock-runtime", region_name=region)
-        litellm.bedrock_config = {"client": bedrock_client}
-        return f"bedrock/{model_id}"
+        config = {"aws_bedrock_client": bedrock_client}
+        
+        # Use converse route for newer Claude models that require it
+        if model_id.startswith("us.anthropic.claude"):
+            return f"bedrock/converse/{model_id}", config
+        else:
+            return f"bedrock/{model_id}", config
         
     elif is_gemini_model(model_id):
-        # Gemini configuration
+        # Gemini configuration - use per-request config
         if secrets.get("gemini_key"):
-            os.environ["GEMINI_API_KEY"] = secrets["gemini_key"]
-        return f"gemini/{model_id}"
+            config = {"api_key": secrets["gemini_key"]}
+        return f"gemini/{model_id}", config
         
     else:
         raise ValueError(f"Unsupported model: {model_id}")
@@ -393,8 +405,11 @@ def get_memory_usage():
 
 
 def process_single_request(input_data: Dict[str, Any]) -> None:
-    """Process a single LiteLLM request"""
+    """Process a single LiteLLM request with dynamic model switching"""
     request_id = input_data.get("requestId", "unknown")
+    
+    # Log concurrent model usage for debugging
+    print(f"[CONCURRENT] Processing request {request_id} with model: {input_data.get('model', {}).get('id', 'unknown')}", file=sys.stderr)
     
     try:
         chat_request = input_data["chatRequest"]
@@ -404,13 +419,14 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
         data_sources = input_data.get("dataSources", [])
         
         # Send initial status  
-        send_periodic_status("Initializing LiteLLM...", request_id)
+        # send_periodic_status("Initializing LiteLLM...", request_id)
         
-        # Configure LiteLLM for the provider
-        model_str = configure_litellm(model, secrets)
+        # Configure LiteLLM for the provider (now returns tuple with per-request config)
+        model_str, provider_config = configure_litellm(model, secrets)
         
         config_memory = get_memory_usage()
         print(f"[MEMORY] After LiteLLM config - RSS: {config_memory['rss']}MB (+{config_memory['rss'] - initial_memory['rss']}MB)", file=sys.stderr)
+        print(f"[DEBUG] Using model: {model_str} with per-request config", file=sys.stderr)
         
         # Setup reasoning configuration
         reasoning_config = setup_reasoning_config(model, chat_request, model_str)
@@ -456,6 +472,9 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
             "temperature": chat_request.get("temperature", 1.0)
         }
         
+        # Add provider-specific configuration (per-request to support concurrent models)
+        completion_params.update(provider_config)
+        
         # Add reasoning configuration
         completion_params.update(reasoning_config)
         
@@ -463,19 +482,33 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
         if "tools" in chat_request.get("options", {}):
             completion_params["tools"] = chat_request["options"]["tools"]
             
-        # Add function calling if present
-        if "function_call" in chat_request.get("options", {}):
-            completion_params["function_call"] = chat_request["options"]["function_call"]
+        # Add function calling ONLY if functions are also present
+        if "functions" in chat_request:
+            completion_params["functions"] = chat_request["functions"]
+            # Only add function_call if functions exist
+            if "function_call" in chat_request.get("options", {}):
+                completion_params["function_call"] = chat_request["options"]["function_call"]
             
-        # Add tool choice if present
-        if "tool_choice" in chat_request.get("options", {}):
+        # Add tool choice if present (only with tools)
+        if "tool_choice" in chat_request.get("options", {}) and "tools" in completion_params:
             completion_params["tool_choice"] = chat_request["options"]["tool_choice"]
         
-        send_periodic_status("Calling LLM...", request_id)
+        # Debug: Check for problematic parameters
+        if "function_call" in completion_params and "functions" not in completion_params:
+            print(f"[WARNING] Removing function_call without functions", file=sys.stderr)
+            del completion_params["function_call"]
+        
+        if "tool_choice" in completion_params and "tools" not in completion_params:
+            print(f"[WARNING] Removing tool_choice without tools", file=sys.stderr)
+            del completion_params["tool_choice"]
+        
+        # Status removed - LLM call happens immediately
         
         # Make the completion call
         pre_completion_memory = get_memory_usage()
         print(f"[MEMORY] Before LiteLLM completion - RSS: {pre_completion_memory['rss']}MB", file=sys.stderr)
+        print(f"[DEBUG] Completion params: model={model_str}, has_api_key={'api_key' in provider_config}, has_api_base={'api_base' in provider_config}", file=sys.stderr)
+        print(f"[DEBUG] Function calling: has_functions={'functions' in completion_params}, has_function_call={'function_call' in completion_params}, has_tools={'tools' in completion_params}", file=sys.stderr)
         
         response = completion(**completion_params)
         

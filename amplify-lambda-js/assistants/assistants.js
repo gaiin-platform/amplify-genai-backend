@@ -6,7 +6,7 @@ import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../co
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
 import { callLiteLLM } from "../litellm/litellmClient.js";
-import { getTokenCountOptimized } from "../common/optimizedDataSources.js";
+import { getTokenCount } from "../datasource/datasources.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
 import {fillInAssistant, getUserDefinedAssistant} from "./userDefinedAssistants.js";
@@ -30,6 +30,10 @@ const defaultAssistant = {
     description: "Default assistant that can handle arbitrary requests with any data type but may " +
         "not be as good as a specialized assistant.",
     handler: async (params, body, dataSources, responseStream) => {
+        console.log("🎯 Assistant: Received datasources:", {
+            dataSources_length: dataSources?.length || 0,
+            dataSources_ids: dataSources?.map(ds => ds.id?.substring(0, 50))
+        });
 
                         // already ensures model has been mapped to our backend version in router
         const model = (body.options && body.options.model) ? body.options.model : params.model;
@@ -37,8 +41,8 @@ const defaultAssistant = {
         logger.debug("Using model: ", model);
 
         const limit = 0.9 * (model.inputContextWindow - (body.max_tokens || 1000));
-        // ✅ PERFORMANCE OPTIMIZATION: Use cached token counting
-        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCountOptimized(ds, model), 0);
+        // ✅ Use token counting
+        const requiredTokens = [...dataSources, ...(body.imageSources || [])].reduce((acc, ds) => acc + getTokenCount(ds, model), 0);
         const aboveLimit = requiredTokens >= limit;
 
         logger.debug(`Model: ${model.id}, tokenLimit: ${model.inputContextWindow}`)
@@ -49,14 +53,25 @@ const defaultAssistant = {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
         }
 
+        console.log("🎯 Assistant decision logic:", {
+            ragOnly: body.options.ragOnly,
+            aboveLimit,
+            dataSources_length: dataSources.length,
+            route: !body.options.ragOnly && aboveLimit ? "mapReduce" : 
+                   !body.options.ragOnly ? "chatWithData" : "directLLM"
+        });
+        
         if (!body.options.ragOnly && aboveLimit){
+            console.log("→ Using mapReduceAssistant (token limit exceeded)");
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
-        } else if (dataSources.length > 0 && !body.options.ragOnly) {
-            // ✅ Use chatWithData for RAG processing with data sources
+        } else if (!body.options.ragOnly) {
+            // ✅ Always use chatWithData for potential conversation document discovery
+            console.log("→ Using chatWithDataStateless (discover conversation documents)");
             const {chatWithDataStateless} = await import("../common/chatWithData.js");
             return chatWithDataStateless(params, model, body, dataSources, responseStream);
         } else {
-            // ✅ Direct LiteLLM call when no RAG needed (ragOnly mode or no data sources)
+            // ✅ Direct LiteLLM call only when ragOnly mode
+            console.log("→ Using direct callLiteLLM (ragOnly mode)");
             return await callLiteLLM(body, model, params.account, responseStream, [], true);
         }
     }

@@ -127,7 +127,7 @@ export class InternalLLM {
      * 🚀 BREAKTHROUGH: Direct LiteLLM prompting bypassing chatWithDataStateless
      * This is where the massive performance gains come from!
      */
-    async promptForString(body, dataSources = [], prompt, targetStream = null, retries = 3) {
+    async promptForString(body, dataSources = [], prompt, targetStream = null, retries = 3, streamToUser = false) {
         // If we have data sources, we might need RAG - could fall back to original LLM
         // For now, let's bypass for all internal calls
         
@@ -142,25 +142,50 @@ export class InternalLLM {
         const requestId = this.params?.options?.requestId || `litellm-${Date.now()}`;
         
         try {
-            const result = await promptLiteLLMForData(
-                messages,
-                this.model,
-                prompt || "Continue the conversation",
-                null, // No structured output for string prompts
-                this.account,
-                requestId,
-                { 
-                    maxTokens: this.defaultBody.max_tokens,
+            if (streamToUser && this.responseStream) {
+                // Stream to user - use callLiteLLM directly for real-time streaming
+                const { callLiteLLM } = await import("../litellm/litellmClient.js");
+                
+                const chatRequest = {
+                    messages,
+                    max_tokens: this.defaultBody.max_tokens,
                     temperature: this.defaultBody.temperature,
-                    streamToUser: false // Internal calls don't stream to user
-                }
-            );
+                    options: {
+                        model: this.model
+                    }
+                };
+                
+                const result = await callLiteLLM(
+                    chatRequest,
+                    this.model,
+                    this.account,
+                    this.responseStream,
+                    dataSources,
+                    true // streamToUser=true for real-time streaming
+                );
+                
+                return result || "";
+            } else {
+                // Behind-the-scenes call - use promptLiteLLMForData
+                const result = await promptLiteLLMForData(
+                    messages,
+                    this.model,
+                    prompt || "Continue the conversation",
+                    null, // No structured output for string prompts
+                    this.account,
+                    requestId,
+                    { 
+                        maxTokens: this.defaultBody.max_tokens,
+                        temperature: this.defaultBody.temperature
+                    }
+                );
 
-            return result || "";
+                return result || "";
+            }
         } catch (error) {
             console.error("InternalLLM promptForString error:", error);
             if (retries > 0) {
-                return await this.promptForString(body, dataSources, prompt, targetStream, retries - 1);
+                return await this.promptForString(body, dataSources, prompt, targetStream, retries - 1, streamToUser);
             }
             return "";
         }

@@ -8,7 +8,7 @@ import {getLogger} from "../common/logging.js";
 import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
-import { getModelByType, ModelTypes} from "../common/params.js";
+import { getModelByType, ModelTypes, isOpenAIModel} from "../common/params.js";
 import { promptLiteLLMForData } from "../litellm/litellmClient.js";
 
 const logger = getLogger("datasources");
@@ -151,8 +151,14 @@ export const isImage = ds => ds && ds.type && ds.type.startsWith("image/")
 export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) => {
 
     logger.debug("Getting data sources by use", dataSources);
+    logger.info("🔍 getDataSourcesByUse Input:", {
+        dataSources_length: dataSources?.length || 0,
+        skipRag: chatRequestOrig.options?.skipRag,
+        ragOnly: chatRequestOrig.options?.ragOnly,
+        noDataSources: chatRequestOrig.options?.noDataSources
+    });
 
-    if ((params.options.skipRag && params.options.ragOnly) || params.options.noDataSources){
+    if ((chatRequestOrig.options?.skipRag && chatRequestOrig.options?.ragOnly) || chatRequestOrig.options?.noDataSources){
         return {
             ragDataSources: [],
             dataSources: []
@@ -171,6 +177,16 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             return m.data && m.data.dataSources
         }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
 
+    console.log("🔍 Conversation datasources search:", {
+        total_messages: chatRequestOrig.messages.length,
+        messages_with_data: chatRequestOrig.messages.slice(0,-1).filter(m => m.data && m.data.dataSources).length,
+        referencedDataSourcesInMessages_length: referencedDataSourcesInMessages.length,
+        referencedDataSources_sample: referencedDataSourcesInMessages[0] ? {
+            id: referencedDataSourcesInMessages[0].id,
+            type: referencedDataSourcesInMessages[0].type
+        } : null
+    });
+
     const convoDataSources = await translateUserDataSourcesToHashDataSources(
         params,
         chatRequestOrig,
@@ -180,10 +196,10 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);
 
     const getRagOnly = sources => sources.filter(ds =>
-        params.options.ragOnly || (ds.metadata && ds.metadata.ragOnly));
+        chatRequestOrig.options?.ragOnly || (ds.metadata && ds.metadata.ragOnly));
 
     const getInsertOnly = sources => sources.filter(ds =>
-        !params.options.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
+        !chatRequestOrig.options?.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
 
     const getDocumentDataSources = sources => sources.filter(isDocument);
 
@@ -196,6 +212,17 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     const attachedDataSources = [
         ...dataSources,
         ...msgDataSources];
+
+    console.log("🔍 RAG datasource calculation:", {
+        getRagOnly_dataSources: getRagOnly(dataSources).length,
+        getRagOnly_msgDataSources: getRagOnly(msgDataSources).length,
+        getDocumentDataSources_convoDataSources: getDocumentDataSources(convoDataSources).length,
+        convoDataSources_sample: convoDataSources[0] ? {
+            id: convoDataSources[0].id,
+            type: convoDataSources[0].type,
+            isDocument: isDocument(convoDataSources[0])
+        } : null
+    });
 
     const nonUniqueRagDataSources = [
         ...(getRagOnly(dataSources)),
@@ -217,18 +244,23 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
-    if(params.options.skipRag) {
+    if(params.options?.skipRag) {
         ragDataSources = [];
     }
+
+    console.log("🔍 Final RAG decision:", {
+        ragDataSources_length: ragDataSources.length,
+        skipRag: params.options?.skipRag,
+        ragDataSources_ids: ragDataSources.map(ds => ds.id?.substring(0, 50))
+    });
 
     const uniqueAttachedDataSources = uniqueDataSources(attachedDataSources);
     const uniqueConvoDataSources = uniqueDataSources(convoDataSources);
 
-    if(params.options.dataSourceOptions || chatRequestOrig.options.dataSourceOptions) {
+    if(params.options?.dataSourceOptions || chatRequestOrig.options?.dataSourceOptions) {
 
         const dataSourceOptions = {
-        ...(chatRequestOrig.options.dataSourceOptions || {}),
-        ...(params.options.dataSourceOptions || {})};
+        ...(chatRequestOrig.options.dataSourceOptions || {})};
 
         logger.debug("Applying data source options", dataSourceOptions);
 
@@ -388,13 +420,18 @@ export const resolveDataSourceAliases = async (params, body, dataSources) => {
 export const resolveDataSources = async (params, body, dataSources) => {
     logger.info("Resolving data sources", {dataSources: dataSources});
 
+    // Ensure dataSources is always an array
+    if (!dataSources) {
+        dataSources = [];
+    }
+
     // seperate the image ds
     if (body && body.messages && body.messages.length > 0) {
         const lastMsg = body.messages[body.messages.length - 1];
         const ds = lastMsg.data && lastMsg.data.dataSources;
         if (ds) {
             body.imageSources = ds.filter(d => isImage(d));
-        } else if (body.options?.api_accessed){ // support images coming from the /chat endpoint
+        } else if (body.options?.api_accessed && dataSources.length > 0){ // support images coming from the /chat endpoint
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
         }
@@ -1056,3 +1093,143 @@ export const combineNeighboringLocations = (contentArray) => {
 
     return combined;
 };
+
+// Token count cache for performance optimization
+const tokenCountCache = new Map();
+
+/**
+ * Get token count for a datasource with caching optimization
+ * Eliminates redundant token calculations for the same datasource + model combinations
+ */
+export function getTokenCount(dataSource, model) {
+    // Try cache first
+    const key = `${dataSource.id}:${model.id}`;
+    const cached = tokenCountCache.get(key);
+    if (cached && (Date.now() - cached.timestamp) < 5 * 60 * 1000) { // 5 min TTL
+        return cached.value;
+    }
+    
+    // Cache miss - calculate tokens
+    let tokenCount;
+    
+    if (dataSource.metadata && dataSource.metadata.totalTokens) {
+        const totalTokens = dataSource.metadata.totalTokens;
+        if (isImage(dataSource)) {
+            tokenCount = isOpenAIModel(model.id) ? totalTokens.gpt : 
+                 model.id.includes("anthropic") ? totalTokens.claude : 1000;
+        } else if (!dataSource.metadata.ragOnly) {
+            tokenCount = totalTokens;
+        } else {
+            tokenCount = 0; // RAG-only datasources don't count toward context window
+        }
+    } else if (dataSource.metadata && dataSource.metadata.ragOnly) {
+        tokenCount = 0;
+    } else {
+        tokenCount = 1000; // Default fallback
+    }
+    
+    // Cache the result
+    tokenCountCache.set(key, {
+        value: tokenCount,
+        timestamp: Date.now()
+    });
+    
+    return tokenCount;
+}
+
+/**
+ * Generates detailed descriptions for images using LLM for automation assistant compatibility
+ * @param {Array} imageSources - Array of image data sources
+ * @param {Object} model - The model to use for description generation
+ * @param {Object} params - Request parameters including account info
+ * @returns {Promise<Array>} Array of image descriptions
+ */
+export const generateImageDescriptions = async (imageSources, model, params) => {
+    if (!imageSources || imageSources.length === 0) {
+        return [];
+    }
+
+    // Only generate descriptions if the model supports images
+    if (!model.supportsImages) {
+        logger.debug("Model doesn't support images, skipping description generation");
+        return [];
+    }
+
+    const descriptions = [];
+    
+    for (const imageSource of imageSources) {
+        try {
+            logger.debug(`Generating description for image: ${imageSource.id}`);
+            
+            // Get the base64 image content
+            const imageBase64 = await getImageBase64Content(imageSource);
+            if (!imageBase64) {
+                logger.warn(`Could not retrieve image content for: ${imageSource.id}`);
+                continue;
+            }
+
+            // Create vision message for the LLM
+            const visionMessages = [{
+                role: 'user',
+                content: [
+                    {
+                        type: 'text',
+                        text: `Analyze this image in detail. Provide a comprehensive description that captures:
+- All visible subjects, objects, and elements
+- Colors, textures, lighting, and visual composition  
+- Any text, numbers, charts, or data visible in the image
+- Spatial relationships and layout
+- Any relevant context or setting
+- Technical details if it's a diagram, screenshot, or document
+
+Be thorough and precise so someone could understand the image content without seeing it.`
+                    },
+                    {
+                        type: 'image_url',
+                        image_url: {
+                            url: `data:${imageSource.type};base64,${imageBase64}`
+                        }
+                    }
+                ]
+            }];
+
+            // Generate description using LiteLLM
+            const descriptionResult = await promptLiteLLMForData(
+                visionMessages,
+                model,
+                '', // prompt already in messages
+                {
+                    "description": "Detailed description of the image content"
+                },
+                params.account,
+                params.requestId,
+                {
+                    maxTokens: 500 // Sufficient for detailed description
+                }
+            );
+
+            const description = descriptionResult.description || 'Unable to generate image description.';
+            
+            descriptions.push({
+                imageId: imageSource.id,
+                imageType: imageSource.type,
+                imageName: imageSource.name || `Image ${descriptions.length + 1}`,
+                description: description
+            });
+
+            logger.debug(`Generated description for ${imageSource.id}: ${description.substring(0, 100)}...`);
+
+        } catch (error) {
+            logger.error(`Error generating description for image ${imageSource.id}:`, error);
+            descriptions.push({
+                imageId: imageSource.id,
+                imageType: imageSource.type,
+                imageName: imageSource.name || `Image ${descriptions.length + 1}`,
+                description: 'Error: Could not analyze this image.'
+            });
+        }
+    }
+
+    return descriptions;
+}
+

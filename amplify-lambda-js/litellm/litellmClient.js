@@ -3,7 +3,7 @@
  * Manages persistent Python LiteLLM subprocess and request multiplexing
  */
 
-import {sendDeltaToStream, sendStatusEventToStream, sendErrorMessage, sendStateEventToStream} from '../common/streams.js';
+import {sendDeltaToStream, sendStatusEventToStream, sendErrorMessage, sendStateEventToStream, sendToStream} from '../common/streams.js';
 import {newStatus, getThinkingMessage} from '../common/status.js';
 import {recordUsage} from '../common/accounting.js';
 import {getSecret} from '../common/secrets.js';
@@ -39,7 +39,7 @@ let requestCounter = 0;
 /**
  * Initialize persistent Python process
  */
-function initPythonProcess() {
+export function initPythonProcess() {
     if (globalPythonProcess && !globalPythonProcess.killed) {
         return globalPythonProcess;
     }
@@ -76,9 +76,16 @@ function initPythonProcess() {
         });
     });
     
-    // Handle stderr
+    // Handle stderr - output to console for debugging
     globalPythonProcess.stderr.on('data', (data) => {
-        logger.error("Python stderr:", data.toString());
+        const message = data.toString();
+        // Output Python debug messages to console
+        console.log("[PYTHON]", message.trim());
+        
+        // Still log errors
+        if (message.includes("ERROR") || message.includes("Exception")) {
+            logger.error("Python stderr:", message);
+        }
     });
     
     // Handle process exit
@@ -188,7 +195,7 @@ async function routeMessage(message) {
                 request.completeResponse += parsed.data;
                 // Only stream to user if requested (for behind-the-scenes calls, don't stream)
                 if (request.streamToUser) {
-                    sendDeltaToStream(responseStream, "answer", {delta: {text: parsed.data}});
+                    sendDeltaToStream(responseStream, 0, parsed.data);
                 }
                 break;
                 
@@ -265,6 +272,11 @@ async function routeMessage(message) {
                 if (request.statusTimer) {
                     clearTimeout(request.statusTimer);
                     request.statusTimer = null;
+                }
+                
+                // Send end signal to frontend before closing stream
+                if (request.streamToUser && !responseStream.destroyed && !responseStream.writableEnded) {
+                    sendToStream(responseStream, 0, {type: 'end'});
                 }
                 
                 // Only end if not already ended  
@@ -527,7 +539,17 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
                     sticky: true,
                     message: getThinkingMessage ? getThinkingMessage() : "Thinking..."
                 });
-                sendStatusEventToStream(responseStream, statusInfo);
+                // Only send status if stream is still writable
+                if (responseStream && !responseStream.destroyed && responseStream.writable) {
+                    sendStatusEventToStream(responseStream, statusInfo);
+                } else {
+                    // Stream is closed, clear the timer
+                    if (statusTimer) {
+                        clearTimeout(statusTimer);
+                        statusTimer = null;
+                    }
+                    return;
+                }
                 
                 // Schedule next status message
                 statusTimer = setTimeout(sendStatusMessage, statusInterval);
@@ -563,8 +585,8 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
                 model, 
                 account,
                 secrets,
-                dataSources,
-                statusTimer // Track timer for cleanup
+                dataSources
+                // statusTimer removed - only tracked locally, not sent to Python
             };
             
             // Register this request
@@ -680,25 +702,29 @@ export async function promptLiteLLMForData(messages, model, prompt, schema, acco
             }
         ];
         
-        // Create chat request with function calling for structured output
+        // Create chat request with optional function calling for structured output
         const chatRequest = {
             messages: fullMessages,
             max_tokens: options.maxTokens || 1000,
             temperature: options.temperature || 0.1,
             options: {
-                model,
-                functions: [{
-                    name: 'structured_response',
-                    description: 'Provide a structured response based on the schema',
-                    parameters: {
-                        type: 'object',
-                        properties: schema,
-                        required: Object.keys(schema)
-                    }
-                }],
-                function_call: { name: 'structured_response' }
+                model
             }
         };
+
+        // Only add function calling if schema is provided
+        if (schema) {
+            chatRequest.options.functions = [{
+                name: 'structured_response',
+                description: 'Provide a structured response based on the schema',
+                parameters: {
+                    type: 'object',
+                    properties: schema,
+                    required: Object.keys(schema)
+                }
+            }];
+            chatRequest.options.function_call = { name: 'structured_response' };
+        }
         
         // Call LiteLLM with streamToUser=false for behind-the-scenes processing
         const completeResponse = await callLiteLLM(
@@ -710,26 +736,37 @@ export async function promptLiteLLMForData(messages, model, prompt, schema, acco
             false // streamToUser=false (behind the scenes)
         );
         
-        // Parse the function call response to extract structured data
+        // Handle response based on whether schema was provided
+        
         try {
-            // The response should contain function call data
-            // Parse it to extract the structured response
-            const functionCallMatch = completeResponse.match(/```json\n(.*?)\n```/s) || 
-                                    completeResponse.match(/"arguments":\s*"([^"]*)"/) ||
-                                    completeResponse.match(/\{.*\}/s);
-            
-            if (functionCallMatch) {
-                let jsonStr = functionCallMatch[1] || functionCallMatch[0];
-                // Handle escaped JSON strings
-                if (typeof jsonStr === 'string' && jsonStr.includes('\\"')) {
-                    jsonStr = jsonStr.replace(/\\"/g, '"');
+            if (schema) {
+                // Parse the function call response to extract structured data
+                const functionCallMatch = completeResponse.match(/```json\n(.*?)\n```/s) || 
+                                        completeResponse.match(/"arguments":\s*"([^"]*)"/) ||
+                                        completeResponse.match(/\{.*\}/s);
+                
+                if (functionCallMatch) {
+                    let jsonStr = functionCallMatch[1] || functionCallMatch[0];
+                    // Handle escaped JSON strings
+                    if (typeof jsonStr === 'string' && jsonStr.includes('\\"')) {
+                        jsonStr = jsonStr.replace(/\\"/g, '"');
+                    }
+                    const parsedData = JSON.parse(jsonStr);
+                    return parsedData;
+                } else {
+                    // Fallback: try to parse the entire response as JSON
+                    const parsedData = JSON.parse(completeResponse);
+                    return parsedData;
                 }
-                const parsedData = JSON.parse(jsonStr);
-                return parsedData;
             } else {
-                // Fallback: try to parse the entire response as JSON
-                const parsedData = JSON.parse(completeResponse);
-                return parsedData;
+                // No schema provided - return response as string or try to parse as JSON
+                try {
+                    // Try to parse as JSON first in case it's structured anyway
+                    return JSON.parse(completeResponse);
+                } catch {
+                    // Return as plain string if not valid JSON
+                    return completeResponse;
+                }
             }
         } catch (parseError) {
             logger.warn("Failed to parse structured response, returning raw text", { 
