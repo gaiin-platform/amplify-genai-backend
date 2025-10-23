@@ -181,7 +181,7 @@ karnsab,karnsab
 
 - **ALL deployments must run this migration** - even if user IDs don't change
 - **S3 consolidation is mandatory** for eliminating extra bucket resources
-- **The migration is safe** - it copies data, doesn't delete original sources
+- **Automatic cleanup included** - migration deletes old data after successful copying (backup before running!)
 - **Scripts are idempotent** - safe to re-run if needed
 
 ---
@@ -502,6 +502,14 @@ SOLUTION: Deploy amplify-lambda service first:
 
 #### Backup Strategy
 
+**🚨 CRITICAL**: Backups are **ESSENTIAL** because the migration performs automatic cleanup during the process - old records are **permanently deleted** after successful migration.
+
+**Why backups are mandatory**:
+- Migration **deletes old S3 files** after copying to consolidation bucket
+- Migration **removes old DynamoDB records** after creating new ones  
+- Migration **cleans up legacy data** automatically during execution
+- **No separate cleanup step needed** - all cleanup happens during migration
+
 The migration script includes built-in backup verification to ensure data safety:
 
 **Option 1: Automatic Backup Verification (Default)**
@@ -742,8 +750,10 @@ If issues occur:
 
 #### Performance & Safety
 - **Idempotent Operations**: Safe to re-run migrations multiple times
-- **Backup Integration**: Built-in backup verification before dangerous operations
+- **Automatic Cleanup**: Deletes old records/files immediately after successful migration (no manual cleanup needed)
+- **Backup Integration**: Built-in backup verification before destructive operations
 - **Size Monitoring**: Warns about DynamoDB 400KB item limit approaches
+- **Data Safety**: Verifies successful copy/creation before deleting original data
 
 ## Troubleshooting
 
