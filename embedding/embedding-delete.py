@@ -1,6 +1,5 @@
 import os
 import psycopg2
-import logging
 import boto3
 from boto3.dynamodb.conditions import Key
 from pycommon.decorators import required_env_vars
@@ -14,11 +13,8 @@ from pycommon.const import APIAccessType
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("embedding_delete")
+from pycommon.logger import getLogger
+logger = getLogger("embedding_delete")
 
 # Get environment variables
 pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
@@ -75,7 +71,7 @@ def delete_embeddings_from_db(src_id, child_chunks=None):
     ) as conn:
         with conn.cursor() as cur:
             try:
-                print(f"Connecting to database at {pg_host}")
+                logger.info(f"Connecting to database at {pg_host}")
                 
                 if child_chunks is None:
                     # Delete all embeddings for the source (original behavior)

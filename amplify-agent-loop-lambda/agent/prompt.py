@@ -12,7 +12,8 @@ from agent.accounting import record_usage
 import boto3
 from pycommon.api.secrets import get_secret_value
 from pycommon.authz import is_rate_limited
-
+from pycommon.logger import getLogger
+logger = getLogger("litellm")
 @dataclass
 class Prompt:
     messages: List[dict]
@@ -29,7 +30,7 @@ def generate_response(
     if rate_limit and os.environ.get("COST_CALCULATIONS_DYNAMO_TABLE"):
         rate_limited, message = is_rate_limited(account_details["user"], rate_limit)
         if rate_limited:
-            print(f"Rate limit exceeded: {message}")
+            logger.warning("Rate limit exceeded: %s", message)
             raise Exception(message)
 
     messages = prompt.messages
@@ -40,7 +41,7 @@ def generate_response(
     try:
         response = None
         if not tools:
-            print("Prompting without tools.")
+            logger.debug("Prompting without tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -48,7 +49,7 @@ def generate_response(
             )
             result = response.choices[0].message.content
         else:
-            print("Prompting with tools.")
+            logger.debug("Prompting with tools.")
             response = completion(
                 model=model,
                 messages=messages,
@@ -62,8 +63,8 @@ def generate_response(
                 try:
                     tool_args = json.loads(tool.function.arguments)
                 except:
-                    print(
-                        f"Error parsing tool arguments coming from litellm: {tool.function.arguments}"
+                    logger.error(
+                        "Error parsing tool arguments coming from litellm: %s", tool.function.arguments
                     )
 
                 result = {
@@ -74,8 +75,7 @@ def generate_response(
             else:
                 result = response.choices[0].message.content
 
-        # print(f"--litellm Response: {response}")
-        print("Recording usage for litellm response id: ", response.id)
+        logger.debug("Recording usage for litellm response id: %s", response.id)
         model_id = model.split("/")[1]
 
         usage = response.get("usage", {})
@@ -99,8 +99,8 @@ def generate_response(
                     ),
                 }
             except:
-                print(
-                    f"Error converting completion_tokens_details to dictionary: {completion_tokens_details}"
+                logger.error(
+                    "Error converting completion_tokens_details to dictionary: %s", completion_tokens_details
                 )
 
         cached_tokens = 0
@@ -116,8 +116,8 @@ def generate_response(
                 }
                 cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0)
             except:
-                print(
-                    f"Error converting prompt_tokens_details to dictionary: {prompt_tokens_details}"
+                logger.error(
+                    "Error converting prompt_tokens_details to dictionary: %s", prompt_tokens_details
                 )
 
         try:
@@ -132,19 +132,18 @@ def generate_response(
             )
 
         except Exception as e:
-            print(f"Warning: Failed to record usage: {e}")
+            logger.warning("Warning: Failed to record usage: %s", e)
 
     except Exception as e:
-        traceback.print_exc()
-        print(f"Error generating response: {e}")
-        print(f"Prompt: ")
+        logger.error("Error generating response: %s", e, exc_info=True)
+        logger.error("Prompt: ")
         for message in messages:
-            print(f"Message: {message}")
+            logger.error("Message: %s", message)
         if tools:
-            print(f"Tools:")
+            logger.error("Tools:")
             for tool in tools:
-                print(f"Tool: {tool}")
-        print(f"Model: {model}")
+                logger.error("Tool: %s", tool)
+        logger.error("Model: %s", model)
 
         raise e
 
@@ -249,8 +248,8 @@ def create_llm(
         if advanced_model:
             advanced_model_str = litellm_model_str(advanced_model)
     except Exception as e:
-        print(
-            f"Error creating advanced model: {e}, using agent model as advanced model..."
+        logger.warning(
+            "Error creating advanced model: %s, using agent model as advanced model...", e
         )
 
     account_details = {"user": current_user, "accessToken": access_token, **account}
@@ -263,7 +262,7 @@ def create_llm(
         if isinstance(prompt.metadata, dict) and prompt.metadata.get(
             "advanced_reasoning", False
         ):
-            print("Prompting using advanced model: ", advanced_model_str)
+            logger.info("Prompting using advanced model: %s", advanced_model_str)
             model_str = advanced_model_str
 
         result, token_cost = generate_response(

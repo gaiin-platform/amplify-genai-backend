@@ -180,6 +180,11 @@ class ParameterStorePopulator:
         resolved = {}
         
         for var_name, var_value in variables.items():
+            # Handle boolean values properly
+            if var_value.lower() in ['true', 'false']:
+                resolved[var_name] = var_value.lower()
+                continue
+                
             # Replace common serverless variables
             resolved_value = var_value
             resolved_value = resolved_value.replace('${self:service}', service_name)
@@ -210,7 +215,7 @@ class ParameterStorePopulator:
                 # Define the shared variables to migrate
                 shared_var_names = [
                     'ADMINS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
-                    'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
+                    'LOG_LEVEL', 'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
                     'ASSISTANTS_OPENAI_PROVIDER', 'LLM_ENDPOINTS_SECRETS_NAME_ARN',
                     'AGENT_ENDPOINT', 'BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION',
                     'COGNITO_CLIENT_ID', 'COGNITO_USER_POOL_ID', 'ORGANIZATION_EMAIL_DOMAIN',
@@ -232,7 +237,12 @@ class ParameterStorePopulator:
                 # Add other variables from var file
                 for var_name in shared_var_names:
                     if var_name in var_data:
-                        shared_vars[var_name] = str(var_data[var_name])
+                        value = var_data[var_name]
+                        # Handle boolean values properly for serverless
+                        if isinstance(value, bool):
+                            shared_vars[var_name] = str(value).lower()  # Convert True/False to true/false
+                        else:
+                            shared_vars[var_name] = str(value)
                 
             except Exception as e:
                 print(f"Error loading shared variables from {var_file}: {e}")
@@ -251,7 +261,7 @@ class ParameterStorePopulator:
 
     def create_shared_parameter(self, var_name: str, var_value: str) -> bool:
         """Create a shared parameter in AWS Parameter Store."""
-        parameter_name = f"/amplify/{self.stage}/shared/{var_name}"
+        parameter_name = f"/amplify/{self.stage}/{var_name}"
         
         if self.dry_run:
             print(f"[DRY RUN] Would create shared parameter: {parameter_name} = {var_value}")

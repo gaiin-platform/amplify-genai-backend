@@ -4,6 +4,8 @@ import boto3
 
 dynamodb = boto3.resource("dynamodb")
 
+from pycommon.logger import getLogger
+logger = getLogger("embedding_models")
 
 def get_embedding_models():
     admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
@@ -17,19 +19,19 @@ def get_embedding_models():
     embedding_model_id = None
     qa_model_id = None
     try:
-        print("Getting default model ids from admin table")
+        logger.debug("Getting default model ids from admin table")
         response = admin_table.get_item(Key={"config_id": "defaultModels"})
         if "Item" in response:
             default_models = response["Item"]["data"]
             embedding_model_id = default_models["embeddings"]
             qa_model_id = default_models["cheapest"]
-            print("embedding_model_id:", embedding_model_id)
-            print("qa_model_id:", qa_model_id)
+            logger.debug("embedding_model_id: %s", embedding_model_id)
+            logger.debug("qa_model_id: %s", qa_model_id)
         else:
-            print(f"No Default Models Data Found")
+            logger.error(f"No Default Models Data Found")
             return {"success": False, "message": "No Default Models Data Found"}
     except Exception as e:
-        print(f"Error retrieving default models: {str(e)}")
+        logger.error(f"Error retrieving default models: {str(e)}")
         return {
             "success": False,
             "message": "Error retrieving default models: {str(e)}",
@@ -54,7 +56,7 @@ def get_embedding_models():
         get_provider(qa_model_id, "qa")
 
     except Exception as e:
-        print(f"Error retrieving default models: {str(e)}")
+        logger.error(f"Error retrieving default models: {str(e)}")
         return {
             "success": False,
             "message": f"Error retrieving default models: {str(e)}",
@@ -62,7 +64,7 @@ def get_embedding_models():
 
     # Check if both default models were found
     if not defaults["embedding"] or not defaults["qa"]:
-        print("Could not find all default models")
+        logger.error("Could not find all default models")
         return {"success": False, "message": "Could not find all default models"}
 
     return {"success": True, "data": defaults}

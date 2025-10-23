@@ -5,9 +5,11 @@ import uuid
 from boto3.dynamodb.types import TypeSerializer, TypeDeserializer
 import json
 from pycommon.api.user_data import load_user_data, save_user_data, delete_user_data
+from pycommon.logger import getLogger
+logger = getLogger("workflow_template_registry")
 
-def get_app_id(current_user: str) -> str:
-    return f"{current_user}#amplify-workflows"
+def get_app_id() -> str:
+    return "amplify-workflows"
 
 def register_workflow_template(
     current_user,
@@ -33,10 +35,10 @@ def register_workflow_template(
 
     # Generate a unique UUID for the new workflow template
     template_id = str(uuid.uuid4())  # Changed from template_uuid to template_id
-    print("registering workflow template: ", template_id)
+    logger.info("Registering workflow template: %s", template_id)
     try:
         # Save the template to USER_STORAGE_TABLE (new approach - no more S3)
-        app_id = get_app_id(current_user)
+        app_id = get_app_id()
         result = save_user_data(access_token, app_id, "workflow-templates", template_id, template)
         
         if result is None:
@@ -63,7 +65,7 @@ def register_workflow_template(
 
         return template_id  # Changed from template_uuid to template_id
     except Exception as e:
-        print(f"Error registering workflow template: {e}")
+        logger.error("Error registering workflow template: %s", e)
         raise RuntimeError(f"Failed to register workflow template: {e}")
 
 
@@ -107,7 +109,7 @@ def get_workflow_template(
             if "Items" in is_public_response and is_public_response["Items"]:
                 response = {"Item": is_public_response["Items"][0]}
             else:
-                print(f"No public template found for template_id: {template_id}")
+                logger.warning("No public template found for template_id: %s", template_id)
                 return None
 
         # Deserialize the response item
@@ -120,7 +122,7 @@ def get_workflow_template(
         # BACKWARDS COMPATIBILITY: Check if this is a migrated workflow or legacy S3 workflow
         if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
             # Legacy workflow: Fetch template from S3
-            print(f"Retrieving legacy workflow template from S3: {template_id}")
+            logger.info("Retrieving legacy workflow template from S3: %s", template_id)
             
             if not bucket_name:
                 raise ValueError(
@@ -133,9 +135,9 @@ def get_workflow_template(
             template = json.loads(s3_response["Body"].read().decode("utf-8"))
         else:
             # New workflow: Fetch template from USER_STORAGE_TABLE
-            print(f"Retrieving migrated workflow template from USER_STORAGE_TABLE: {template_id}")
+            logger.info("Retrieving migrated workflow template from USER_STORAGE_TABLE: %s", template_id)
             
-            app_id = get_app_id(current_user)
+            app_id = get_app_id()
             template = load_user_data(access_token, app_id, "workflow-templates", template_id)
             
             if template is None:
@@ -233,7 +235,7 @@ def list_workflow_templates(current_user, include_public_templates=False):
         return templates
 
     except Exception as e:
-        print(f"Error listing workflow templates: {e}")
+        logger.error("Error listing workflow templates: %s", e)
         raise RuntimeError(f"Failed to list workflow templates: {e}")
 
 
@@ -274,7 +276,7 @@ def delete_workflow_template(current_user, template_id, access_token):
         # BACKWARDS COMPATIBILITY: Delete template content from either S3 or USER_STORAGE_TABLE
         if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
             # Legacy workflow: Delete from S3
-            print(f"Deleting legacy workflow template from S3: {template_id}")
+            logger.info("Deleting legacy workflow template from S3: %s", template_id)
             
             if not bucket_name:
                 raise ValueError(
@@ -286,9 +288,9 @@ def delete_workflow_template(current_user, template_id, access_token):
             s3.delete_object(Bucket=bucket_name, Key=s3_key)
         else:
             # New workflow: Delete from USER_STORAGE_TABLE
-            print(f"Deleting migrated workflow template from USER_STORAGE_TABLE: {template_id}")
+            logger.info("Deleting migrated workflow template from USER_STORAGE_TABLE: %s", template_id)
             
-            app_id = get_app_id(current_user)
+            app_id = get_app_id()
             result = delete_user_data(access_token, app_id, "workflow-templates", template_id)
             
             if result is None:
@@ -309,7 +311,7 @@ def delete_workflow_template(current_user, template_id, access_token):
         }
 
     except Exception as e:
-        print(f"Error deleting workflow template: {e}")
+        logger.error("Error deleting workflow template: %s", e)
         raise RuntimeError(f"Failed to delete workflow template: {e}")
 
 
@@ -361,7 +363,7 @@ def update_workflow_template(
         # BACKWARDS COMPATIBILITY: Update template content in either S3 or USER_STORAGE_TABLE
         if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
             # Legacy workflow: Update S3
-            print(f"Updating legacy workflow template in S3: {template_id}")
+            logger.info("Updating legacy workflow template in S3: %s", template_id)
             
             if not bucket_name:
                 raise ValueError(
@@ -378,9 +380,9 @@ def update_workflow_template(
             )
         else:
             # New workflow: Update USER_STORAGE_TABLE
-            print(f"Updating migrated workflow template in USER_STORAGE_TABLE: {template_id}")
+            logger.info("Updating migrated workflow template in USER_STORAGE_TABLE: %s", template_id)
             
-            app_id = get_app_id(current_user)
+            app_id = get_app_id()
             result = save_user_data(access_token, app_id, "workflow-templates", template_id, template)
             
             if result is None:
@@ -423,5 +425,5 @@ def update_workflow_template(
         }
 
     except Exception as e:
-        print(f"Error updating workflow template: {e}")
+        logger.error("Error updating workflow template: %s", e)
         raise RuntimeError(f"Failed to update workflow template: {e}")

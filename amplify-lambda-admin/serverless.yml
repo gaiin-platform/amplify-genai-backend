@@ -26,7 +26,7 @@ custom:
   ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
     
 provider:
   name: aws
@@ -42,14 +42,14 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"   
   environment:
   
-    ADMINS: ${ssm:/amplify/${sls:stage}/shared/ADMINS}
-    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
-    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/APP_ARN_NAME}
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
-    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME}
-    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/shared/OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/shared/OAUTH_ISSUER_BASE_URL}
-    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/SECRETS_ARN_NAME}
+    ADMINS: ${ssm:/amplify/${sls:stage}/ADMINS}
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 

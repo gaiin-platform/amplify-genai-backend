@@ -3,7 +3,6 @@ from psycopg2.extras import Json
 import json
 import os
 import boto3
-import logging
 import re
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -29,14 +28,13 @@ from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation
 )
+from pycommon.logger import getLogger
+
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.EMBEDDING.value])
 
 sqs = boto3.client("sqs")
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logger = getLogger("embeddings")
 
 pg_host = os.environ["RAG_POSTGRES_DB_WRITE_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
@@ -46,7 +44,7 @@ rag_pg_password = os.environ["RAG_POSTGRES_DB_SECRET"]
 embedding_model_name = None
 qa_model_name = None
 model_result = get_embedding_models()
-print("Model_result", model_result)
+logger.debug("Model_result: %s", model_result)
 
 if model_result["success"]:
     data = model_result["data"]
@@ -552,7 +550,7 @@ def lambda_handler(event, context):
 
             bucket_name = s3_info["bucket"]["name"]
             url_encoded_key = s3_info["object"]["key"]
-            print("s3 Info", s3_info)
+            logger.debug("s3 Info: %s", s3_info)
             object_key = urllib.parse.unquote(url_encoded_key)
             
             # Extract these early so we can mark parent as failed if needed
@@ -568,10 +566,10 @@ def lambda_handler(event, context):
                 ds_key = s3_metadata.get('object_key')
                 ds_key = urllib.parse.unquote(ds_key)
                 is_force_reprocess = s3_metadata.get('force_reprocess', '').lower() == 'true'
-                print(f"ds_key from S3 metadata: {ds_key}, force_reprocess: {is_force_reprocess}")
+                logger.debug(f"ds_key from S3 metadata: {ds_key}, force_reprocess: {is_force_reprocess}")
             except Exception as e:
                 ds_key = trimmed_src # most likely coming from embeddings manual process
-                print(f"Could not get S3 metadata: {e}")
+                logger.warning(f"Could not get S3 metadata: {e}")
 
             if account_data is None:
                 if not ds_key:
@@ -1365,15 +1363,15 @@ def terminate_embedding(event, context, current_user, name, data):
         )
 
         if response.get("Attributes", {}).get("terminated") is True:
-            print(f"Successfully terminated object with ID: {object_id}")
+            logger.info(f"Successfully terminated object with ID: {object_id}")
             return True
         else:
-            print(
+            logger.error(
                 f"Failed to update termination status for object with ID: {object_id}"
             )
             return False
     except Exception as e:
-        print(f"Error terminating embedding for object_id {object_id}: {e}")
+        logger.error(f"Error terminating embedding for object_id {object_id}: {e}")
         return False
 
 

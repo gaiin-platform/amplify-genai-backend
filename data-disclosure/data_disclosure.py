@@ -23,6 +23,8 @@ add_api_access_types([APIAccessType.DATA_DISCLOSURE.value])
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 
+from pycommon.logger import getLogger
+logger = getLogger("data_disclosure")
 
 def generate_error_response(status_code, message):
     return {
@@ -65,7 +67,7 @@ def get_presigned_data_disclosure(event, context, current_user, name, data):
  
     try:
         # Generate a presigned URL for put_object
-        print("Presigned url generated")
+        logger.info("Presigned url generated")
         presigned_url = s3_client.generate_presigned_url(
             "put_object",
             Params={
@@ -77,11 +79,11 @@ def get_presigned_data_disclosure(event, context, current_user, name, data):
             ExpiresIn=3600,  # URL expires in 1 hour
         )
 
-        print("\n", presigned_url)
+        logger.debug("Presigned url: %s", presigned_url)
 
         return {"success": True, "presigned_url": presigned_url}
     except ClientError as e:
-        print(f"Error generating presigned URL: {str(e)}")
+        logger.error(f"Error generating presigned URL: {str(e)}")
         return {
             "success": False,
             "message": f"Error generating presigned URL: {str(e)}",
@@ -168,7 +170,7 @@ div.WordSection1 {{
         return html_template
 
     except Exception as e:
-        print(f"Error converting PDF to HTML: {e}")
+        logger.error(f"Error converting PDF to HTML: {e}")
         return generate_error_response(500, "Error converting PDF to HTML")
 
 
@@ -183,7 +185,7 @@ def convert_uploaded_data_disclosure(event, context):
         record = event["Records"][0]
         pdf_key = record["s3"]["object"]["key"]
     except (IndexError, KeyError) as e:
-        print(f"Error parsing event: {e}")
+        logger.error(f"Error parsing event: {e}")
         return generate_error_response(400, "Invalid event format, cannot find PDF key")
 
     # extract time stamp from dd name - handle dataDisclosure/ prefix
@@ -196,18 +198,18 @@ def convert_uploaded_data_disclosure(event, context):
     else:
         raise ValueError("latest_dd_name is not in the expected format.")
 
-    print(f"PDF Key: {pdf_key}")
+    logger.debug(f"PDF Key: {pdf_key}")
     pdf_local_path = "/tmp/input.pdf"
 
     try:
         s3.download_file(consolidation_bucket_name, pdf_key, pdf_local_path)
-        print(f"File downloaded successfully to {pdf_local_path}")
+        logger.info(f"File downloaded successfully to {pdf_local_path}")
     except Exception as e:
-        print(f"Error downloading PDF from S3: {e}")
+        logger.error(f"Error downloading PDF from S3: {e}")
         return generate_error_response(500, "Error downloading PDF from S3")
 
     if not os.path.exists(pdf_local_path):
-        print(f"File not found at {pdf_local_path} after download")
+        logger.error(f"File not found at {pdf_local_path} after download")
         return generate_error_response(500, "File download failed")
 
     html_content = convert_pdf(pdf_local_path)
@@ -215,13 +217,13 @@ def convert_uploaded_data_disclosure(event, context):
         return html_content
 
     # Update DynamoDB with new version info, including references to both HTML and PDF
-    print("Update DynamoDB with new version info")
+    logger.debug("Update DynamoDB with new version info")
     versions_table = dynamodb.Table(versions_table_name)
     latest_version_details = get_latest_version_details(versions_table)
     new_version = (
         0 if not latest_version_details else int(latest_version_details["version"]) + 1
     )
-    print("version number: ", new_version)
+    logger.debug("version number: %s", new_version)
 
     # Save the new version information in the DataDisclosureVersionsTable
     try:
@@ -241,7 +243,7 @@ def convert_uploaded_data_disclosure(event, context):
             "body": json.dumps({"message": "Data disclosure uploaded successfully"}),
         }
     except Exception as e:
-        print(e)
+        logger.error(str(e))
         return generate_error_response(500, "Error uploading data disclosure")
 
 
@@ -265,7 +267,7 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
         # Get the latest version number
         latest_version = get_latest_version_number()
         if latest_version is None:
-            print("Error retrieving latest data disclosure version")
+            logger.error("Error retrieving latest data disclosure version")
             return generate_error_response(
                 500, "Error retrieving latest data disclosure version"
             )
@@ -286,7 +288,7 @@ def check_data_disclosure_decision(event, context, current_user, name, data):
             "body": json.dumps({"acceptedDataDisclosure": acceptedDataDisclosure}),
         }
     except Exception as e:
-        print(e)
+        logger.error(str(e))
         return generate_error_response(
             500, "Error checking data disclosure acceptance status"
         )
@@ -330,7 +332,7 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
         )
         return {"statusCode": 200, "body": json.dumps({"message": "Record saved"})}
     except Exception as e:
-        print(e)
+        logger.error(str(e))
         return generate_error_response(500, "Error saving data disclosure acceptance")
 
 
@@ -363,7 +365,7 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
                 ExpiresIn=360,  # URL expires in 6 mins
             )
         except ClientError as e:
-            print(e)
+            logger.error(str(e))
             return generate_error_response(500, "Error generating PDF pre-signed URL")
 
         return {
@@ -379,5 +381,5 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
             "headers": {"Content-Type": "application/json"},
         }
     except Exception as e:
-        print(e)
+        logger.error(str(e))
         return generate_error_response(500, "Error collecting latest data disclosure")

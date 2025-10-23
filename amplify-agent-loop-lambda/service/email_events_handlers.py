@@ -20,7 +20,8 @@ from events.event_templates import (
 )
 from events.mock import generate_ses_event
 from service.agent_queue import route_queue_event
-
+from pycommon.logger import getLogger
+logger = getLogger("email_event_handlers")
 
 @required_env_vars({
     "EVENT_TEMPLATES_TABLE": [DynamoDBOperation.PUT_ITEM],
@@ -82,7 +83,7 @@ def handle_add_event_template(
             current_user, access_token, tag, prompt, account, description, assistant_id
         )
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "message": "Server error: Unable to add event template. Please try again later.",
@@ -118,7 +119,7 @@ def handle_remove_event_template(current_user, access_token, tag):
     try:
         return remove_event_template(current_user, tag, access_token)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error removing event template", exc_info=True)
         return {
             "success": False,
             "message": "Server error: Unable to remove event template. Please try again later.",
@@ -199,7 +200,7 @@ def handle_get_event_template(current_user, access_token, tag):
 
         return response
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "data": None,
@@ -269,7 +270,7 @@ def handle_list_event_templates_for_user(current_user, access_token):
     try:
         return list_event_templates_for_user(current_user)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "data": None,
@@ -307,7 +308,7 @@ def handle_list_event_template_tags(current_user, access_token):
     try:
         return list_event_templates_tags_for_user(current_user)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "data": None,
@@ -350,7 +351,7 @@ def handle_add_allowed_sender(current_user, access_token, tag, sender):
     try:
         return add_allowed_sender(current_user, tag, sender)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "message": "Server error: Unable to add allowed sender. Please try again later.",
@@ -392,7 +393,7 @@ def handle_remove_allowed_sender(current_user, access_token, tag, sender):
     try:
         return remove_allowed_sender(current_user, tag, sender)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "message": "Server error: Unable to remove allowed sender. Please try again later.",
@@ -464,7 +465,7 @@ def test_send_email_notification(
         }
 
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "data": None,
@@ -505,7 +506,7 @@ def handle_list_allowed_senders(current_user, access_token, tag):
     try:
         return list_allowed_senders(current_user, tag)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "data": [],
@@ -560,7 +561,7 @@ def handle_is_event_template_tag_available(
     try:
         return is_event_template_tag_available(current_user, tag, assistant_id)
     except Exception:
-        traceback.print_exc()
+        logger.error("Error adding event template", exc_info=True)
         return {
             "success": False,
             "data": None,

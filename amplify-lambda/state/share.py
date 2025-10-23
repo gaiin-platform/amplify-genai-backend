@@ -27,6 +27,9 @@ from pycommon.const import APIAccessType
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.SHARE.value])
 
+from pycommon.logger import getLogger
+logger = getLogger("shares")
+
 # Import user_data functions for USER_STORAGE_TABLE
 from state.user_data import handle_put_item, handle_query_by_type
 
@@ -37,25 +40,34 @@ def get_s3_data(s3_key):
     consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     shares_bucket = os.environ.get("S3_SHARE_BUCKET_NAME")  # Legacy bucket
     
+    # Handle new format (key already includes shares/ prefix) and old format (key without prefix)
+    if s3_key.startswith("shares/"):
+        # New format: key already includes shares/ prefix
+        consolidation_key = s3_key
+        legacy_key = s3_key[7:]  # Remove shares/ prefix for legacy bucket
+    else:
+        # Old format: key without shares/ prefix (backward compatibility)
+        consolidation_key = f"shares/{s3_key}"
+        legacy_key = s3_key
+    
     # Try consolidation bucket first (new format)  
-    consolidation_key = f"shares/{s3_key}"
     try:
-        print("Fetching data from consolidation bucket: {}/{}".format(consolidation_bucket, consolidation_key))
+        logger.debug("Fetching data from consolidation bucket: %s/%s", consolidation_bucket, consolidation_key)
         obj = s3.Object(consolidation_bucket, consolidation_key)
         data = obj.get()["Body"].read().decode("utf-8")
         return data
     except Exception as e:
-        print(f"Not found in consolidation bucket: {str(e)}")
+        logger.debug("Not found in consolidation bucket: %s", str(e))
     
     # Fallback to legacy bucket if available
     if shares_bucket:
         try:
-            print("Fetching data from legacy bucket: {}/{}".format(shares_bucket, s3_key))
-            obj = s3.Object(shares_bucket, s3_key) 
+            logger.debug("Fetching data from legacy bucket: %s/%s", shares_bucket, legacy_key)
+            obj = s3.Object(shares_bucket, legacy_key) 
             data = obj.get()["Body"].read().decode("utf-8")
             return data
         except Exception as e:
-            print(f"Not found in legacy bucket either: {str(e)}")
+            logger.debug("Not found in legacy bucket either: %s", str(e))
             
     raise Exception(f"Data not found in either bucket for key: {s3_key}")
 
@@ -64,7 +76,7 @@ def get_data_from_dynamodb(user, name):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["SHARES_DYNAMODB_TABLE"])
 
-    print("Querying DynamoDB for user: {} and name: {}".format(user, name))
+    logger.debug("Querying DynamoDB for user: %s and name: %s", user, name)
 
     response = table.query(
         IndexName="UserNameIndex",
@@ -127,14 +139,14 @@ def get_data_from_dynamodb(user, name):
 def load_data_from_s3(event, context, current_user, name, data):
     access = data["allowed_access"]
     if APIAccessType.SHARE.value not in access and APIAccessType.FULL_ACCESS.value not in access:
-        print("User does not have access to the share functionality")
+        logger.warning("User does not have access to the share functionality")
         return {
             "success": False,
             "message": "User does not have access to the share functionality",
         }
 
     s3_key = data["data"]["key"]
-    print("Loading data from S3: {}".format(s3_key))
+    logger.info("Loading data from S3: %s", s3_key)
 
     # Use backward compatibility - check both USER_STORAGE_TABLE and legacy table
     key_found = False
@@ -153,11 +165,11 @@ def load_data_from_s3(event, context, current_user, name, data):
                 share_data = share.get("data", {})
                 if share_data.get("key") == s3_key:
                     key_found = True
-                    print("Found key in USER_STORAGE_TABLE")
+                    logger.debug("Found key in USER_STORAGE_TABLE")
                     break
                     
         except Exception as e:
-            print(f"Error querying USER_STORAGE_TABLE: {e}")
+            logger.error("Error querying USER_STORAGE_TABLE: %s", e)
             # Continue to check legacy table
             
         # OLD: Check shares in SHARES_DYNAMODB_TABLE (backward compatibility)
@@ -172,14 +184,14 @@ def load_data_from_s3(event, context, current_user, name, data):
                     for data_dict in item.get("data", [])
                 ):
                     key_found = True
-                    print("Found key in SHARES_DYNAMODB_TABLE")
+                    logger.debug("Found key in SHARES_DYNAMODB_TABLE")
                     
             except Exception as e:
-                print(f"Error querying SHARES_DYNAMODB_TABLE: {e}")
+                logger.error("Error querying SHARES_DYNAMODB_TABLE: %s", e)
 
         if key_found:
             # If s3_key found in either table, fetch data from S3 and return
-            print("Loading data from S3: {}".format(s3_key))
+            logger.info("Loading data from S3: %s", s3_key)
             return {
                 "success": True,
                 "item": get_s3_data(s3_key),
@@ -188,7 +200,7 @@ def load_data_from_s3(event, context, current_user, name, data):
             return {"success": False, "message": "Data not found"}
             
     except Exception as e:
-        print(f"Error in load_data_from_s3: {e}")
+        logger.error("Error in load_data_from_s3: %s", e)
         return {"success": False, "message": "Error loading shared data"}
 
 
@@ -213,14 +225,14 @@ def put_s3_data(filename, data):
         Body=json.dumps(data).encode(), Bucket=consolidation_bucket, Key=consolidation_key
     )
     
-    print(f"Successfully uploaded share to consolidation bucket: {consolidation_key}")
-    return filename  # Return original filename without shares/ prefix for DynamoDB storage
+    logger.info("Successfully uploaded share to consolidation bucket: %s", consolidation_key)
+    return consolidation_key  # Return full S3 key WITH shares/ prefix for DynamoDB storage
 
 
 def handle_conversation_datasource_permissions(
     access_token, recipient_users, conversations
 ):
-    print("Enter handle shared datasources in conversations")
+    logger.debug("Enter handle shared datasources in conversations")
     total_data_sources_keys = []
     for conversation in conversations:
         for message in conversation["messages"]:
@@ -233,7 +245,7 @@ def handle_conversation_datasource_permissions(
                 data_sources_keys = get_data_source_keys(message["data"]["dataSources"])
                 total_data_sources_keys.extend(data_sources_keys)
 
-    print("All Datasource Keys: ", total_data_sources_keys)
+    logger.debug("All Datasource Keys: %s", total_data_sources_keys)
 
     if len(total_data_sources_keys) != 0 and not update_object_permissions(
         access_token=access_token,
@@ -244,10 +256,10 @@ def handle_conversation_datasource_permissions(
         permission_level="read",
         policy="",
     ):
-        print(f"Error adding permissions for shared files in conversations")
+        logger.error("Error adding permissions for shared files in conversations")
         return {"success": False, "error": "Error updating datasource permissions"}
 
-    print("object permissions for datasources success")
+    logger.debug("object permissions for datasources success")
     return {"success": True, "message": "Updated object access permissions"}
 
 
@@ -267,19 +279,19 @@ def handle_share_assistant(access_token, prompts, recipient_users):
                 }
 
                 if not share_assistant(access_token, data):
-                    print(
-                        "Error making share assistant calls for assistant: ",
-                        prompt["id"],
+                    logger.error(
+                        "Error making share assistant calls for assistant: %s",
+                        prompt["id"]
                     )
                     return {
                         "success": False,
                         "error": "Could not successfully make the call to share assistants",
                     }
         except Exception as e:
-            print("Error sharing assistant: ", e)
+            logger.error("Error sharing assistant: %s", e)
             return {"success": False, "error": "Error sharing assistant"}
 
-    print("Share assistant call was a success")
+    logger.debug("Share assistant call was a success")
     return {
         "success": True,
         "message": "Successfully made the calls to share assistants",
@@ -380,9 +392,9 @@ def share_with_users(event, context, current_user, name, data):
             shared_assistants = handle_share_assistant(access_token, prompts, valid_users)
             if not shared_assistants["success"]:
                 # We need to continue because workspaces still need to be saved
-                print("Error sharing assistants: ", shared_assistants["error"])
+                logger.warning("Error sharing assistants: %s", shared_assistants["error"])
         except Exception as e:
-            print("Error sharing assistants: ", e)
+            logger.error("Error sharing assistants: %s", e)
 
     succesful_shares = []
 
@@ -475,10 +487,10 @@ def get_share_data_for_user(event, context, current_user, name, data):
                 }
                 all_shares.append(formatted_share)
                 
-            print(f"Found {len(new_shares)} shares in USER_STORAGE_TABLE")
+            logger.info("Found %d shares in USER_STORAGE_TABLE", len(new_shares))
             
         except Exception as e:
-            print(f"Error querying USER_STORAGE_TABLE: {e}")
+            logger.error("Error querying USER_STORAGE_TABLE: %s", e)
             # Continue to check legacy table even if new table fails
             
         # OLD: Get shares from SHARES_DYNAMODB_TABLE (backward compatibility)
@@ -500,10 +512,10 @@ def get_share_data_for_user(event, context, current_user, name, data):
                 if "data" in item and isinstance(item["data"], list):
                     all_shares.extend(item["data"])
                     
-            print(f"Found {len(items)} legacy share records in SHARES_DYNAMODB_TABLE")
+            logger.info("Found %d legacy share records in SHARES_DYNAMODB_TABLE", len(items))
             
         except Exception as e:
-            print(f"Error querying SHARES_DYNAMODB_TABLE: {e}")
+            logger.error("Error querying SHARES_DYNAMODB_TABLE: %s", e)
             # Continue even if legacy table fails
 
         if not all_shares:
@@ -520,7 +532,7 @@ def get_share_data_for_user(event, context, current_user, name, data):
             except:
                 pass  # If sorting fails, return unsorted
                 
-            print(f"Total shares found: {len(all_shares)}")
+            logger.info("Total shares found: %d", len(all_shares))
             return {"success": True, "items": all_shares}
 
     except Exception as e:

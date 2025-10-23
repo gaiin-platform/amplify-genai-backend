@@ -1,6 +1,5 @@
 from datetime import datetime
 import os
-from zoneinfo import ZoneInfo
 import boto3
 import json
 import uuid
@@ -10,6 +9,8 @@ from pycommon.api.user_data import load_user_data, delete_user_data
 from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
 from delegation.api_keys import create_agent_event_api_key
 from scheduled_tasks_events.scheduled_tasks import send_tasks_to_queue
+from pycommon.logger import getLogger
+logger = getLogger("scheduled_task_registry")
 
 
 def create_scheduled_task(
@@ -118,7 +119,7 @@ def create_scheduled_task(
         dynamodb.put_item(TableName=table_name, Item=item)
         return task_id
     except Exception as e:
-        print(f"Error creating scheduled task: {e}")
+        logger.error("Error creating scheduled task: %s", e)
         raise RuntimeError(f"Failed to create scheduled task: {e}")
 
 
@@ -192,7 +193,7 @@ def get_scheduled_task(current_user, task_id, access_token=None):
         return result
 
     except Exception as e:
-        print(f"Error getting scheduled task: {e}")
+        logger.error("Error getting scheduled task: %s", e)
         raise RuntimeError(f"Failed to get scheduled task: {e}")
 
 
@@ -269,7 +270,7 @@ def list_scheduled_tasks(current_user):
         return tasks
 
     except Exception as e:
-        print(f"Error listing scheduled tasks: {e}")
+        logger.error("Error listing scheduled tasks: %s", e)
         raise RuntimeError(f"Failed to list scheduled tasks: {e}")
 
 
@@ -376,17 +377,18 @@ def update_scheduled_task(
         return {"success": True, "message": f"Task {task_id} updated successfully"}
 
     except Exception as e:
-        print(f"Error updating scheduled task: {e}")
+        logger.error("Error updating scheduled task: %s", e)
         raise RuntimeError(f"Failed to update scheduled task: {e}")
 
 
 def delete_scheduled_task(current_user, task_id, access_token):
     """
-    Delete a scheduled task.
+    Delete a scheduled task and archive its logs to consolidation bucket.
 
     Args:
         current_user (str): User ID owning the task
         task_id (str): ID of the task to delete
+        access_token (str): Access token for authentication
 
     Returns:
         dict: Result of the delete operation
@@ -394,6 +396,7 @@ def delete_scheduled_task(current_user, task_id, access_token):
     # Get environment variables
     table_name = os.environ.get("SCHEDULED_TASKS_TABLE")
     logs_bucket = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET")  #Marked for future deletion
+    consolidation_bucket = os.environ.get("S3_CONSOLIDATION_BUCKET_NAME")
 
     if not table_name:
         raise ValueError("Environment variable 'SCHEDULED_TASKS_TABLE' must be set.")
@@ -425,43 +428,108 @@ def delete_scheduled_task(current_user, task_id, access_token):
         api_key_id = task_data["apiKeyId"]
         logs = task_data.get("logs", [])
         
-        print(f"Deleting task {task_id} with api key id {api_key_id}")
+        logger.info("Deleting task %s with api key id %s", task_id, api_key_id)
         
-        # Clean up logs before deleting the task
+        # Archive logs instead of deleting them
         if logs:
-            legacy_logs_count = 0
-            migrated_logs_count = 0
+            legacy_logs_archived = 0
+            migrated_logs_archived = 0
             
-            # Check if we have legacy logs (with detailsKey)
+            # Archive legacy logs (with detailsKey) to consolidation bucket
             for log_entry in logs:
                 if "detailsKey" in log_entry:
-                    legacy_logs_count += 1
+                    execution_id = log_entry.get("executionId", f"unknown-{legacy_logs_archived}")
                     
-                    # Delete legacy S3 log files
-                    if logs_bucket:
+                    # Archive legacy S3 log files to consolidation bucket
+                    if logs_bucket and consolidation_bucket:
                         try:
-                            s3.delete_object(
+                            # Download from legacy bucket
+                            s3_response = s3.get_object(
                                 Bucket=logs_bucket,
                                 Key=log_entry["detailsKey"]
                             )
-                            print(f"Deleted S3 log file: {log_entry['detailsKey']}")
+                            log_content = s3_response["Body"].read()
+                            
+                            # Archive to consolidation bucket
+                            archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
+                            s3.put_object(
+                                Bucket=consolidation_bucket,
+                                Key=archive_key,
+                                Body=log_content,
+                                ContentType="application/json"
+                            )
+                            
+                            # Delete original file after successful archival
+                            try:
+                                s3.delete_object(
+                                    Bucket=logs_bucket,
+                                    Key=log_entry["detailsKey"]
+                                )
+                                legacy_logs_archived += 1
+                                logger.debug("Archived and deleted legacy log file: %s -> %s", log_entry['detailsKey'], archive_key)
+                            except Exception as delete_e:
+                                legacy_logs_archived += 1  # Still count as archived
+                                logger.warning("Archived legacy log file but failed to delete original %s: %s", log_entry['detailsKey'], delete_e)
+                            
                         except Exception as e:
-                            print(f"Warning: Could not delete S3 log file {log_entry['detailsKey']}: {e}")
-                else:
-                    migrated_logs_count += 1
+                            logger.warning("Could not archive legacy S3 log file %s: %s", log_entry['detailsKey'], e)
             
-            # Delete migrated logs from USER_STORAGE_TABLE if present
-            if migrated_logs_count > 0:
+            # Archive migrated logs from USER_STORAGE_TABLE to consolidation bucket
+            if any(log_entry for log_entry in logs if "detailsKey" not in log_entry):
                 try:
                     app_id = f"{current_user}#amplify-agent-logs"
-                    delete_user_data(access_token, app_id, "scheduled-task-logs", task_id)
-                    print(f"Deleted migrated logs for task {task_id} from USER_STORAGE_TABLE")
+                    existing_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
+                    
+                    if existing_logs_data and "logs" in existing_logs_data:
+                        logs_dict = existing_logs_data["logs"]
+                        
+                        # Archive each log to consolidation bucket
+                        for execution_id, compressed_data in logs_dict.items():
+                            try:
+                                archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
+                                
+                                # Decompress data for storage in consolidation bucket
+                                if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
+                                    # Already decompressed data
+                                    log_data = compressed_data
+                                else:
+                                    # Decompress LZW data
+                                    if is_lzw_compressed_format(compressed_data):
+                                        log_data = lzw_uncompress(compressed_data)
+                                    else:
+                                        log_data = compressed_data
+                                
+                                # Store in consolidation bucket
+                                s3.put_object(
+                                    Bucket=consolidation_bucket,
+                                    Key=archive_key,
+                                    Body=json.dumps(log_data),
+                                    ContentType="application/json"
+                                )
+                                
+                                migrated_logs_archived += 1
+                                logger.debug("Archived migrated log: %s", archive_key)
+                                
+                            except Exception as e:
+                                logger.warning("Failed to archive migrated log execution %s: %s", execution_id, e)
+                    
+                    # Delete from USER_STORAGE_TABLE after archival
+                    try:
+                        delete_user_data(access_token, app_id, "scheduled-task-logs", task_id)
+                        logger.debug("Deleted migrated logs for task %s from USER_STORAGE_TABLE after archival", task_id)
+                    except Exception as e:
+                        logger.warning("Could not delete migrated logs from USER_STORAGE_TABLE for task %s: %s", task_id, e)
+                        
                 except Exception as e:
-                    print(f"Warning: Could not delete migrated logs for task {task_id}: {e}")
+                    logger.warning("Could not archive migrated logs for task %s: %s", task_id, e)
             
-            print(f"Log cleanup completed: {legacy_logs_count} legacy logs, {migrated_logs_count} migrated logs")
+            logger.info("Log archival completed: %s legacy logs archived, %s migrated logs archived", 
+                       legacy_logs_archived, migrated_logs_archived)
+            
+            if consolidation_bucket and (legacy_logs_archived > 0 or migrated_logs_archived > 0):
+                logger.info("Logs archived to consolidation bucket at path: scheduledTaskLogs/%s/%s/", current_user, task_id)
         else:
-            print(f"No logs to clean up for task {task_id}")
+            logger.debug("No logs to archive for task %s", task_id)
         
         # Deactivate the API key
         deactivate_key(access_token, api_key_id)
@@ -472,10 +540,10 @@ def delete_scheduled_task(current_user, task_id, access_token):
             Key={"user": {"S": current_user}, "taskId": {"S": task_id}},
         )
 
-        return {"success": True, "message": f"Task {task_id} deleted successfully"}
+        return {"success": True, "message": f"Task {task_id} deleted successfully and logs archived"}
 
     except Exception as e:
-        print(f"Error deleting scheduled task: {e}")
+        logger.error("Error deleting scheduled task: %s", e)
         raise RuntimeError(f"Failed to delete scheduled task: {e}")
 
 
@@ -541,10 +609,12 @@ def get_task_execution_details(current_user, task_id, execution_id, access_token
                 details = json.loads(s3_response["Body"].read().decode("utf-8"))
                 execution_record["details"] = details
             except Exception as e:
-                print(f"Error fetching execution details from S3: {e}")
+                logger.error("Error fetching execution details from S3: %s", e)
                 execution_record["detailsError"] = str(e)
         else:
-            # Migrated execution: Direct dictionary lookup from USER_STORAGE_TABLE
+            # Migrated execution: Check USER_STORAGE_TABLE first, then consolidation bucket archive
+            details_found = False
+            
             if access_token:
                 try:
                     app_id = f"{current_user}#amplify-agent-logs"
@@ -553,7 +623,7 @@ def get_task_execution_details(current_user, task_id, execution_id, access_token
                     if consolidated_logs_data and "logs" in consolidated_logs_data:
                         logs_dict = consolidated_logs_data["logs"]
                         
-                        # Direct lookup by execution_id
+                        # Direct lookup by execution_id in USER_STORAGE_TABLE
                         if execution_id in logs_dict:
                             compressed_data = logs_dict[execution_id]
                             
@@ -561,30 +631,62 @@ def get_task_execution_details(current_user, task_id, execution_id, access_token
                             if is_lzw_compressed_format(compressed_data):
                                 try:
                                     execution_record["details"] = lzw_uncompress(compressed_data)
+                                    details_found = True
                                 except Exception as e:
-                                    print(f"Failed to decompress log data for {execution_id}: {e}")
+                                    logger.error("Failed to decompress log data for %s: %s", execution_id, e)
                                     execution_record["detailsError"] = f"Failed to decompress: {e}"
                             else:
                                 execution_record["details"] = compressed_data
-                        else:
-                            execution_record["detailsError"] = f"Execution {execution_id} not found in migrated logs"
-                    else:
-                        execution_record["detailsError"] = "No migrated logs found for this task"
+                                details_found = True
+                                
                 except Exception as e:
-                    print(f"Error fetching migrated execution details: {e}")
-                    execution_record["detailsError"] = str(e)
+                    logger.error("Error fetching migrated execution details from USER_STORAGE_TABLE: %s", e)
+            
+            # If not found in USER_STORAGE_TABLE, check consolidation bucket archive
+            if not details_found:
+                try:
+                    consolidation_bucket = os.environ.get("S3_CONSOLIDATION_BUCKET_NAME")
+                    if consolidation_bucket:
+                        archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
+                        
+                        try:
+                            s3_response = s3.get_object(
+                                Bucket=consolidation_bucket,
+                                Key=archive_key
+                            )
+                            archived_details = json.loads(s3_response["Body"].read().decode("utf-8"))
+                            execution_record["details"] = archived_details
+                            execution_record["source"] = "archived"  # Indicate this came from archive
+                            details_found = True
+                            logger.debug("Retrieved execution details from consolidation bucket archive: %s", archive_key)
+                            
+                        except s3.exceptions.NoSuchKey:
+                            logger.debug("Execution %s not found in consolidation bucket archive", execution_id)
+                        except Exception as archive_e:
+                            logger.warning("Error fetching execution details from consolidation bucket: %s", archive_e)
+                    
+                    if not details_found:
+                        if access_token:
+                            execution_record["detailsError"] = f"Execution {execution_id} not found in USER_STORAGE_TABLE or consolidation bucket archive"
+                        else:
+                            execution_record["detailsError"] = "Access token required for migrated logs and execution not found in consolidation bucket archive"
+                        
+                except Exception as e:
+                    logger.error("Error checking consolidation bucket for archived logs: %s", e)
+                    if not details_found:
+                        execution_record["detailsError"] = f"Error accessing logs: {str(e)}"
             else:
-                execution_record["detailsError"] = "Access token required for migrated logs"
+                execution_record["source"] = "active"  # Indicate this came from active storage
 
         return execution_record
 
     except Exception as e:
-        print(f"Error getting execution details: {e}")
+        logger.error("Error getting execution details: %s", e)
         raise RuntimeError(f"Failed to get execution details: {e}")
 
 
 def execute_specific_task(current_user, task_id):
-    print(f"Executing task {task_id} for user {current_user}")
+    logger.info("Executing task %s for user %s", task_id, current_user)
     """
     Prepare a specific task for immediate execution.
     
@@ -605,7 +707,7 @@ def execute_specific_task(current_user, task_id):
     dynamodb = boto3.client("dynamodb")
 
     try:
-        print(f"Retrieving task {task_id} from DynamoDB")
+        logger.debug("Retrieving task %s from DynamoDB", task_id)
         # First, retrieve the task
         response = dynamodb.get_item(
             TableName=table_name,
@@ -635,5 +737,5 @@ def execute_specific_task(current_user, task_id):
         }
 
     except Exception as e:
-        print(f"Error executing task: {e}")
+        logger.error("Error executing task: %s", e)
         return {"success": False, "message": f"Failed to execute task: {str(e)}"}

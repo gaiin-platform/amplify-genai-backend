@@ -30,7 +30,10 @@ setup_validated(rules, get_permission_checker)
 
 import asyncio
 import aiohttp
+import concurrent.futures
 
+from pycommon.logger import getLogger
+logger = getLogger("object_access_ast_groups")
 
 # Setup AWS DynamoDB access
 dynamodb = boto3.resource("dynamodb")
@@ -44,7 +47,7 @@ groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
 })
 @validated(op="create")
 def create_group(event, context, current_user, name, data):
-    print("Initiating group creation process")
+    logger.info("Initiating group creation process")
     access_token = data["access_token"]
     data = data["data"]
     group_name = data["group_name"]
@@ -69,7 +72,7 @@ def group_creation(
     if not api_key_result["success"]:
         return {"success": False, "message": f"Failed to create group '{group_name}'"}
     group_id = api_key_result["group_id"]
-    print("Group Id: ", group_id)
+    logger.debug("Group Id: %s", group_id)
     # Prepare the item dictionary for DynamoDB
     item = {
         "group_id": group_id,
@@ -87,7 +90,7 @@ def group_creation(
         response = groups_table.put_item(Item=item)
         # Check if the response was successful
         if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
-            print(f"Group '{group_name}' created successfully")
+            logger.info(f"Group '{group_name}' created successfully")
 
             # log
             log_item(
@@ -111,14 +114,14 @@ def group_creation(
                 },
             }
         else:
-            print(f"Failed to create group '{group_name}'")
+            logger.error(f"Failed to create group '{group_name}'")
             return {
                 "success": False,
                 "message": f"Failed to create group '{group_name}'",
             }
     except Exception as e:
         # Handle potential errors during the DynamoDB operation
-        print(f"An error occurred while creating group '{group_name}': {e}")
+        logger.error(f"An error occurred while creating group '{group_name}': {e}")
         return {
             "success": False,
             "message": f"An error occurred while creating group: {str(e)}",
@@ -144,7 +147,7 @@ def create_api_key_for_group(group_name):
     name = pascalCase(group_name)
     group_id = name + "_" + id
 
-    print("create api key for group")
+    logger.info("create api key for group")
     api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
     api_table = dynamodb.Table(api_keys_table_name)
 
@@ -152,7 +155,7 @@ def create_api_key_for_group(group_name):
     timestamp = datetime.now(timezone.utc).isoformat()
     apiKey = 'amp-' + str(uuid.uuid4())
     try:
-        print("Put entry in api keys table")
+        logger.debug("Put entry in api keys table")
         # Put (or update) the item for the specified user in the DynamoDB table
         response = api_table.put_item(
             Item={
@@ -170,13 +173,13 @@ def create_api_key_for_group(group_name):
         )
 
         if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
-            print(f"API key for created successfully")
+            logger.info(f"API key for created successfully")
             return {"success": True, "group_id": group_id}
         else:
-            print(f"Failed to create API key")
+            logger.error(f"Failed to create API key")
             return {"success": False, "message": "Failed to create API key"}
     except Exception as e:
-        print(f"An error occurred while saving API key: {e}")
+        logger.error(f"An error occurred while saving API key: {e}")
         return {
             "success": False,
             "message": f"An error occurred while saving API key: {str(e)}",
@@ -196,7 +199,7 @@ def separate_members_by_access(members_dict):
 
 # not in use currently, going with group level permissions instead
 def update_ast_perms_for_members(members_dict, assistants, access_token):
-    print("Enter update permissions for members")
+    logger.debug("Enter update permissions for members")
     read_members, write_members = separate_members_by_access(members_dict)
     # give access to all the group ast
     for ast in assistants:
@@ -211,9 +214,9 @@ def update_ast_perms_for_members(members_dict, assistants, access_token):
                 "policy": "",
                 "shareToS3": False,
             }
-            print(f"updating permissions {access_type} for members {recipients}")
+            logger.debug(f"updating permissions {access_type} for members {recipients}")
             if len(recipients) > 0 and not share_assistant(access_token, data):
-                print("Error making share assistant calls for assistant: ", ast["id"])
+                logger.error("Error making share assistant calls for assistant: %s", ast["id"])
                 return {
                     "success": False,
                     "error": "Could not successfully make the call to share assistants with members",
@@ -263,7 +266,7 @@ def update_members(event, context, current_user, name, data):
         existingMembers = [
             member for member in members if member not in updated_members
         ]
-        print("Existing members to remove: ", existingMembers)
+        logger.debug("Existing members to remove: %s", existingMembers)
 
     else:
         return {"message": "Invalid update type", "success": False}
@@ -294,7 +297,7 @@ def update_members_db(group_id, updated_members):
         )
         return {"success": True}
     except Exception as e:
-        print(f"Failed to update DynamoDB: {str(e)}")
+        logger.error(f"Failed to update DynamoDB: {str(e)}")
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
@@ -322,9 +325,9 @@ def update_members_permission(event, context, current_user, name, data):
     for affected_user, new_permission in affected_user_dict.items():
         memberPerms = current_members.get(affected_user, None)
         if not memberPerms:
-            print(f"Member {affected_user} not found in group")
+            logger.warning(f"Member {affected_user} not found in group")
         if memberPerms == new_permission:
-            print("Member already has the desired new permissions")
+            logger.debug("Member already has the desired new permissions")
         else:
             current_members[affected_user] = new_permission
 
@@ -356,8 +359,8 @@ def is_ds_owner(ds, group_id):
 def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
     table_name = os.environ['OBJECT_ACCESS_DYNAMODB_TABLE']
     table = dynamodb.Table(table_name)
-    print("ast ds: ", ast_ds)
-    print("groupType data: ", group_type_data)
+    logger.debug("ast ds: %s", ast_ds)
+    logger.debug("groupType data: %s", group_type_data)
 
     # compile ds into one list
     # uploaded ones have the correct permissions, data selected from the user files do not, so we need to share it with the group
@@ -377,17 +380,17 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
     invalid_count = len(ds_selector_ds) - len(valid_ds)
     
     if invalid_count > 0:
-        print(f"Filtered out {invalid_count} data sources without required 'id' field")
+        logger.warning(f"Filtered out {invalid_count} data sources without required 'id' field")
         ds_selector_ds = valid_ds
     
     # Skip if no data sources to process
     if not ds_selector_ds:
-        print("No data sources to process for group permissions")
+        logger.info("No data sources to process for group permissions")
         return {'success': True}
 
     try:
         translated_ds = translate_user_data_sources_to_hash_data_sources(ds_selector_ds)
-        print("Updating permissions for the following ds: ", translated_ds)
+        logger.debug("Updating permissions for the following ds: %s", translated_ds)
 
         for ds in translated_ds:
             table.put_item(Item={
@@ -404,7 +407,7 @@ def update_group_ds_perms(ast_ds, group_type_data, group_id, access_token):
                 
         return {'success': True}
     except Exception as e:
-        print(f"An error occurred when updating group data source permissions: {str(e)}")
+        logger.error(f"An error occurred when updating group data source permissions: {str(e)}")
         return {"success": False, "error": str(e)}
 
 
@@ -449,16 +452,16 @@ def update_assistants(current_user, group_id, update_type, ast_list):
 
             update_perms_result = update_group_ds_perms(ast.get('dataSources', []), groupDSData, group_id, access_token)
             if (not update_perms_result['success']):
-                print("could not update ds perms for all group type data")
+                logger.error("could not update ds perms for all group type data")
                 return update_perms_result
             
             create_result = create_assistant(access_token, ast)
             if not create_result["success"]:
-                print("create ast call failed")
+                logger.error("create ast call failed")
                 return create_result
 
             data = create_result["data"]
-            print("AST Data: ", data)
+            logger.debug("AST Data: %s", data)
 
             new_ast_data = {
                 "id": data["id"],
@@ -472,7 +475,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
                     current_assistants, data["assistantId"]
                 )
 
-        print("All ast updated/added")
+        logger.info("All ast updated/added")
 
         current_assistants += new_assistants
 
@@ -491,7 +494,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
                 access_token,
                 {"assistantId": astp, "removePermsForUsers": []}, 
             ):
-                print("failed to delete assistant: ", astp)
+                logger.error("failed to delete assistant: %s", astp)
             current_assistants = remove_old_ast_versions(current_assistants, astp)
 
         log_item(group_id, "remove assistants", current_user, f"Assistants {ast_list}")
@@ -499,7 +502,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
         return {"message": "Invalid update type", "success": False}
 
     try:
-        print("Update assistants in groups table")
+        logger.debug("Update assistants in groups table")
         response = groups_table.update_item(
             Key={"group_id": group_id},
             UpdateExpression="set assistants = :o",
@@ -519,7 +522,7 @@ def update_assistants(current_user, group_id, update_type, ast_list):
             ],
         }
     except Exception as e:
-        print(f"Failed to update DynamoDB: {str(e)}")
+        logger.error(f"Failed to update DynamoDB: {str(e)}")
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
@@ -550,7 +553,7 @@ def add_path_to_assistant(event, context, current_user, name, data):
     )
     if not assistant:
         return {"message": "Assistant not found", "success": False}
-    print("Adding path to group_id: ", group_id, " with data: ", path_data)
+    logger.debug("Adding path to group_id: %s with data: %s", group_id, path_data)
     log_item(
         group_id,
         "Add Path to Assistant",
@@ -615,7 +618,7 @@ def update_group_types(event, context, current_user, name, data):
 
     except Exception as e:
         # Log the exception and return an error message
-        print(group_id, "Update Group Types", current_user, str(e))
+        logger.error("Update Group Types error for group %s by user %s: %s", group_id, current_user, str(e))
         return {
             "message": "Failed to update group types due to an error.",
             "success": False,
@@ -656,7 +659,7 @@ def update_amplify_groups(event, context, current_user, name, data):
 
         return {"message": "Amplify groups updated successfully", "success": True}
     except Exception as e:
-        print(f"Failed to update group amplify groups in DynamoDB: {str(e)}")
+        logger.error(f"Failed to update group amplify groups in DynamoDB: {str(e)}")
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
@@ -694,7 +697,7 @@ def update_system_users(event, context, current_user, name, data):
 
         return {"message": "System users updated successfully", "success": True}
     except Exception as e:
-        print(f"Failed to update group system users in DynamoDB: {str(e)}")
+        logger.error(f"Failed to update group system users in DynamoDB: {str(e)}")
         return {"success": False, "message": f"Failed to update DynamoDB: {str(e)}"}
 
 
@@ -712,10 +715,10 @@ def is_valid_group_id(group_id):
 @validated(op="delete")
 def delete_group(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     group_id = query_params.get("group_id", "")
     if not group_id or not is_valid_group_id(group_id):
-        print("Invalid or missing group id parameter")
+        logger.warning("Invalid or missing group id parameter")
         return {"message": "Invalid or missing group id parameter", "success": False}
 
     auth_check = authorized_user(group_id, current_user, True)
@@ -736,7 +739,7 @@ def delete_group(event, context, current_user, name, data):
                 "removePermsForUsers": [],  # list(item['members'].keys())
             },
         ):
-            print("failed to delete assistant: ", ast_data)
+            logger.error("failed to delete assistant: %s", ast_data)
     
     # Delete all files in the group
     file_deletion_result = delete_group_files(group_id, access_token)
@@ -790,19 +793,67 @@ def list_groups(event, context, current_user, name, data):
         return groups_result
     groups = groups_result["data"]
 
-    group_info = []
-    failed_to_list = []
-    for group in groups:
-        group_name = group["groupName"]
-        api_key_result = retrieve_api_key(group["group_id"])
+    # Run the async processing
+    return asyncio.run(process_groups_async(groups, current_user))
 
+
+async def process_groups_async(groups, current_user):
+    """
+    Process groups concurrently by making all list_assistants calls in parallel
+    """
+    if not groups:
+        return {"success": True, "data": [], "incompleteGroupData": []}
+
+    # First, collect all API keys for all groups
+    group_api_data = []
+    for group in groups:
+        api_key_result = retrieve_api_key(group["group_id"])
         if not api_key_result["success"]:
             return api_key_result
+        group_api_data.append({
+            "group": group,
+            "api_key": api_key_result["apiKey"]
+        })
 
-        # use api key to call list ast
-        ast_result = list_assistants(api_key_result["apiKey"])
+    # Since list_assistants is synchronous, we'll use concurrent.futures for parallel execution
+    
+    # Execute all list_assistants calls in parallel using ThreadPoolExecutor
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Create future tasks for each group
+        future_to_group = {
+            executor.submit(list_assistants, group_data["api_key"]): group_data["group"]
+            for group_data in group_api_data
+        }
+        
+        # Collect results as they complete
+        group_results = []
+        for future in concurrent.futures.as_completed(future_to_group):
+            group = future_to_group[future]
+            try:
+                ast_result = future.result()
+                group_results.append({
+                    "group": group,
+                    "ast_result": ast_result,
+                    "success": True
+                })
+            except Exception as e:
+                logger.error(f"Error fetching assistants for group {group['groupName']}: {str(e)}")
+                group_results.append({
+                    "group": group,
+                    "ast_result": None,
+                    "success": False,
+                    "error": str(e)
+                })
 
-        if not ast_result["success"]:
+    # Process results and build response
+    group_info = []
+    failed_to_list = []
+    
+    for result in group_results:
+        group = result["group"]
+        group_name = group["groupName"]
+        
+        if not result["success"] or not result["ast_result"]["success"]:
             failed_to_list.append(group_name)
             continue
 
@@ -811,8 +862,8 @@ def list_groups(event, context, current_user, name, data):
         hasAdminInterfaceAccess = ast_access in ["write", "admin"]
 
         # filter old versions
-        assistants = get_latest_assistants(ast_result["data"])
-        print(f"{group_name} - {len(assistants)} Assistant Count")
+        assistants = get_latest_assistants(result["ast_result"]["data"])
+        logger.debug(f"{group_name} - {len(assistants)} Assistant Count")
         published_assistants = []
         # append groupId and correct permissions if published
         for ast in assistants:
@@ -852,7 +903,7 @@ def get_my_groups(current_user, token):
 
         for group in response.get("Items", []):
             if is_group_member(current_user, group, token):
-                print(f"Adding {group['groupName']} to group_rows")
+                logger.debug(f"Adding {group['groupName']} to group_rows")
                 group_rows.append(group)
 
         # Handle pagination if there are more records
@@ -865,7 +916,7 @@ def get_my_groups(current_user, token):
         return {"success": True, "data": group_rows}
     except Exception as e:
         # Handle potential errors during the DynamoDB operation
-        print(f"An error occurred while retrieving groups and members: {e}")
+        logger.error(f"An error occurred while retrieving groups and members: {e}")
         return {
             "success": False,
             "message": f"An error occurred while retrieving groups and members: {str(e)}",
@@ -873,29 +924,29 @@ def get_my_groups(current_user, token):
 
 
 def is_group_member(current_user, group, token):
-    print(f"\n\nChecking if {current_user} is a member of {group['groupName']}")
+    logger.debug(f"Checking if {current_user} is a member of {group['groupName']}")
     # check if member
     if group.get("isPublic", False):
-        print(f"Group is public")
+        logger.debug(f"Group is public")
         return True
     elif current_user in group.get(
         "members", {}
     ):  # Check if current_user is a key in the members dictionary
-        print(f"User is a direct member of {group['group_id']}")
+        logger.debug(f"User is a direct member of {group['group_id']}")
         return True
     elif current_user in group.get("systemUsers", []):
-        print(f"User is a system user of {group['group_id']}")
+        logger.debug(f"User is a system user of {group['group_id']}")
         return True
     else:
-        print(
+        logger.debug(
             f"User is not a member of {group['group_id']}... checking if the user and group share a common amplify group"
         )
         # check if amplify group
         groups_amplify_groups = group.get("amplifyGroups", [])
-        print("Groups amplify groups: ", groups_amplify_groups)
+        logger.debug("Groups amplify groups: %s", groups_amplify_groups)
         # Check for intersection if there is at least one common group then they are a member
         is_in_amplify_group = verify_user_in_amp_group(token, groups_amplify_groups)
-        print("Is user in any of the amplify groups: ", is_in_amplify_group)
+        logger.debug("Is user in any of the amplify groups: %s", is_in_amplify_group)
         return is_in_amplify_group
 
 
@@ -921,7 +972,7 @@ def verify_is_member_ast_group(event, context, current_user, name, data):
         is_member = is_group_member(current_user, group_item, token)
         return {"isMember": is_member, "success": True}
     except Exception as e:
-        print(
+        logger.error(
             f"An error occurred while verifying if user is a member of the group: {str(e)}"
         )
 
@@ -952,11 +1003,11 @@ def authorized_user(group_id, user, requires_admin_access=False):
         return {"message": "User does not have admin access", "success": False}
 
     if item.get("access"):
-        print("Found 'access' attribute in group item. Initiating cleanup...")
+        logger.debug("Found 'access' attribute in group item. Initiating cleanup...")
         cleanup_result = clean_old_keys()
         if not cleanup_result["success"]:
             # Log or handle the error appropriately if cleanup fails
-            print(f"Warning: clean_old_keys failed: {cleanup_result['message']}")
+            logger.warning(f"Warning: clean_old_keys failed: {cleanup_result['message']}")
 
     api_key_result = retrieve_api_key(group_id)
 
@@ -1004,7 +1055,7 @@ def log_item(group_id, action, username, details):
             "details": details,
         }
     )
-    print("item logged for group: ", group_id)
+    logger.debug("item logged for group: %s", group_id)
 
 
 @required_env_vars({
@@ -1040,7 +1091,7 @@ def list_all_groups_for_admins(event, context, current_user, name, data):
         ]
         return {"success": True, "data": filtered_groups}
     except Exception as e:
-        print(f"An error occurred while retrieving groupss: {e}")
+        logger.error(f"An error occurred while retrieving groupss: {e}")
         return {
             "success": False,
             "message": f"An error occurred while retrieving groups: {str(e)}",
@@ -1068,12 +1119,12 @@ def replace_group_key(event, context, current_user, name, data):
     try:  # verify group exists
         group_response = groups_table.get_item(Key={"group_id": group_id})
         if "Item" not in group_response:
-            print(f"Group '{group_id}' not found.")
+            logger.error(f"Group '{group_id}' not found.")
             return {"success": False, "message": f"Group '{group_id}' not found"}
 
         group_item = group_response["Item"]
     except Exception as e:
-        print(f"Error retrieving group '{group_id}': {e}")
+        logger.error(f"Error retrieving group '{group_id}': {e}")
         return {
             "success": False,
             "message": f"Error retrieving group '{group_id}': {str(e)}",
@@ -1086,7 +1137,7 @@ def replace_group_key(event, context, current_user, name, data):
     old_access = api_key_result["apiKey"]
 
     if not old_access:
-        print(f"No existing API key found for group '{group_id}'.")
+        logger.error(f"No existing API key found for group '{group_id}'.")
         return {
             "success": False,
             "message": f"No existing API key found for group '{group_id}'",
@@ -1096,7 +1147,7 @@ def replace_group_key(event, context, current_user, name, data):
     api_record = api_key_result["item"]
 
     if not api_record:
-        print(f"Old API key record not found for '{old_access}'.")
+        logger.error(f"Old API key record not found for '{old_access}'.")
         return {
             "success": False,
             "message": f"Old API key record not found for '{old_access}'",
@@ -1117,7 +1168,7 @@ def replace_group_key(event, context, current_user, name, data):
             ExpressionAttributeValues={":oldAccList": inactive_keys},
         )
     except Exception as e:
-        print(f"Error updating group '{group_id}' with new API key: {e}")
+        logger.error(f"Error updating group '{group_id}' with new API key: {e}")
         return {
             "success": False,
             "message": f"Error updating group with new API key: {str(e)}",
@@ -1131,7 +1182,7 @@ def replace_group_key(event, context, current_user, name, data):
             ExpressionAttributeValues={":trueVal": True, ":newKeyVal": new_api_key},
         )
     except Exception as e:
-        print(f"Error replacing old API key '{old_access}' with new key: {e}")
+        logger.error(f"Error replacing old API key '{old_access}' with new key: {e}")
         return {
             "success": False,
             "message": f"Error updating old API key with new key: {str(e)}",
@@ -1178,7 +1229,7 @@ def update_ast_admin_groups(event, context, current_user, name, data):
                 )
                 continue
         except Exception as e:
-            print(f"An error occurred while fetching group '{group_id}': {e}")
+            logger.error(f"An error occurred while fetching group '{group_id}': {e}")
             failed_updates.append(
                 {
                     "group_id": group_id,
@@ -1223,7 +1274,7 @@ def update_ast_admin_groups(event, context, current_user, name, data):
 
             if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
                 updated_item = response.get("Attributes", {})
-                print(f"Group '{group_id}' updated successfully")
+                logger.info(f"Group '{group_id}' updated successfully")
 
                 # Log the update
                 log_item(
@@ -1235,7 +1286,7 @@ def update_ast_admin_groups(event, context, current_user, name, data):
 
                 updated_groups.append(group_id)
             else:
-                print(f"Failed to update group '{group_id}'")
+                logger.error(f"Failed to update group '{group_id}'")
                 failed_updates.append(
                     {
                         "group_id": group_id,
@@ -1244,7 +1295,7 @@ def update_ast_admin_groups(event, context, current_user, name, data):
                 )
 
         except Exception as e:
-            print(f"An error occurred while updating group '{group_id}': {e}")
+            logger.error(f"An error occurred while updating group '{group_id}': {e}")
             failed_updates.append(
                 {"group_id": group_id, "message": f"An error occurred: {str(e)}"}
             )
@@ -1257,7 +1308,7 @@ def update_ast_admin_groups(event, context, current_user, name, data):
             "data": updated_groups,
         }
     else:
-        print("Failed groups: \nfailed:", failed_updates, "\nupdated:", updated_groups)
+        logger.error("Failed groups - failed: %s updated: %s", failed_updates, updated_groups)
         return {
             "success": False,
             "message": "Some group updates failed",
@@ -1273,7 +1324,7 @@ def update_ast_admin_groups(event, context, current_user, name, data):
 })
 @validated(op="create")
 def create_amplify_assistants(event, context, current_user, name, data):
-    print("Creating group")
+    logger.info("Creating group")
     token = data["access_token"]
     # verify is admin
     if not verify_user_as_admin(token, "Create Amplify Assistants Admin Group"):
@@ -1286,7 +1337,7 @@ def create_amplify_assistants(event, context, current_user, name, data):
     assistants = data.get("assistants", [])
     create_result = group_creation(current_user, "Amplify Assistants", members_access_map)
     if not create_result["success"]:
-        print("Failed to create group")
+        logger.error("Failed to create group")
         return create_result
     group_id = create_result["data"]["id"]
 
@@ -1304,11 +1355,11 @@ def create_amplify_assistants(event, context, current_user, name, data):
     if not result.get("success", False):
         return {"success": False, "message": "Failed to register ops"}
 
-    print("Adding assistants")
+    logger.info("Adding assistants")
     if len(assistants) > 0:
         ast_result = update_assistants(current_user, group_id, "ADD", assistants)
         if not ast_result["success"]:
-            print("Failed to add assistants")
+            logger.error("Failed to add assistants")
             return ast_result
 
     return {"success": True, "data": {"id": group_id}}
@@ -1318,7 +1369,7 @@ def clean_old_keys():
     Scans the groups_table and removes the 'access' attribute from each item
     if it exists. This is intended as a one-time cleanup operation.
     """
-    print("Starting clean_old_keys process...")
+    logger.debug("Starting clean_old_keys process...")
     try:
         scan_kwargs = {}
         updated_count = 0
@@ -1334,11 +1385,11 @@ def clean_old_keys():
                             ExpressionAttributeNames={"#acc": "access"},
                         )
                         updated_count += 1
-                        print(
+                        logger.debug(
                             f"Removed 'access' attribute from group_id: {item['group_id']}"
                         )
                     except Exception as e:
-                        print(f"Error updating item {item['group_id']}: {e}")
+                        logger.error(f"Error updating item {item['group_id']}: {e}")
 
             # Handle pagination
             if "LastEvaluatedKey" in response:
@@ -1346,14 +1397,14 @@ def clean_old_keys():
             else:
                 break  # Exit loop if no more items to scan
 
-        print(f"Finished clean_old_keys process. Updated {updated_count} items.")
+        logger.info(f"Finished clean_old_keys process. Updated {updated_count} items.")
         return {
             "success": True,
             "message": f"Successfully cleaned old keys. {updated_count} items updated.",
         }
 
     except Exception as e:
-        print(f"An error occurred during clean_old_keys: {e}")
+        logger.error(f"An error occurred during clean_old_keys: {e}")
         return {
             "success": False,
             "message": f"An error occurred during clean_old_keys: {str(e)}",
@@ -1364,7 +1415,7 @@ def delete_group_files(group_id, access_token):
     """
     Delete all files belonging to a group by querying files where createdBy = group_id
     """
-    print(f"Deleting all files for group: {group_id}")
+    logger.info(f"Deleting all files for group: {group_id}")
     
     try:
         # Query all files created by this group
@@ -1391,7 +1442,7 @@ def delete_group_files(group_id, access_token):
             )
             files_to_delete.extend(response.get("Items", []))
         
-        print(f"Found {len(files_to_delete)} files to delete for group {group_id}")
+        logger.info(f"Found {len(files_to_delete)} files to delete for group {group_id}")
         
         # Delete each file with try-catch
         deleted_count = 0
@@ -1401,19 +1452,19 @@ def delete_group_files(group_id, access_token):
             file_id = file_item.get("id")
             if file_id:
                 try:
-                    print(f"Attempting to delete file: {file_id}")
+                    logger.debug(f"Attempting to delete file: {file_id}")
                     result = delete_file(access_token, file_id)
                     if result.get("success", False):
                         deleted_count += 1
-                        print(f"Successfully deleted file: {file_id}")
+                        logger.debug(f"Successfully deleted file: {file_id}")
                     else:
                         failed_count += 1
-                        print(f"Failed to delete file {file_id}: {result.get('message', 'Unknown error')}")
+                        logger.error(f"Failed to delete file {file_id}: {result.get('message', 'Unknown error')}")
                 except Exception as e:
                     failed_count += 1
-                    print(f"Exception while deleting file {file_id}: {str(e)}")
+                    logger.error(f"Exception while deleting file {file_id}: {str(e)}")
         
-        print(f"File deletion summary - Deleted: {deleted_count}, Failed: {failed_count}")
+        logger.info(f"File deletion summary - Deleted: {deleted_count}, Failed: {failed_count}")
         return {
             "success": True, 
             "deleted_count": deleted_count, 
@@ -1422,7 +1473,7 @@ def delete_group_files(group_id, access_token):
         }
         
     except Exception as e:
-        print(f"Error querying/deleting group files: {str(e)}")
+        logger.error(f"Error querying/deleting group files: {str(e)}")
         return {
             "success": False, 
             "error": str(e),
@@ -1438,7 +1489,7 @@ async def register_ops(token):
     
     base_url = os.environ.get("API_BASE_URL")
     if not base_url:
-        print("API_BASE_URL environment variable not set")
+        logger.error("API_BASE_URL environment variable not set")
         return {"success": False, "error": "API_BASE_URL not configured"}
     
     headers = {
@@ -1451,10 +1502,10 @@ async def register_ops(token):
         try:
             async with session.post(url, json=data, headers=headers) as response:
                 result = await response.json()
-                print(f"Register ops call to {path}: {response.status}")
+                logger.debug(f"Register ops call to {path}: {response.status}")
                 # Check for success in the response body, not just HTTP status
                 is_successful = result.get("success", False) if result else False
-                print(f"Register ops call to {path}: {result}")
+                logger.debug(f"Register ops call to {path}: {result}")
                 return {
                     "path": path,
                     "status": response.status,
@@ -1462,7 +1513,7 @@ async def register_ops(token):
                     "result": result
                 }
         except Exception as e:
-            print(f"Failed to register ops for {path}: {str(e)}")
+            logger.error(f"Failed to register ops for {path}: {str(e)}")
             return {
                 "path": path,
                 "status": None,
@@ -1487,9 +1538,9 @@ async def register_ops(token):
         else:
             failed_ops.append(result)
     
-    print(f"Successfully registered ops for: {successful_ops}")
+    logger.info(f"Successfully registered ops for: {successful_ops}")
     if failed_ops:
-        print(f"Failed to register ops for: {failed_ops}")
+        logger.error(f"Failed to register ops for: {failed_ops}")
     
     return {
         "success": len(failed_ops) == 0,

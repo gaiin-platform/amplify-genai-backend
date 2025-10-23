@@ -10,6 +10,8 @@ from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation
 )
+from pycommon.logger import getLogger
+logger = getLogger("workflow_handlers")
 
 
 @required_env_vars({
@@ -117,10 +119,10 @@ def register_workflow_template_handler(
                 access_token=access_token,
             )
         )
-        print(f"Registered workflow template: {template_id}")
+        logger.info("Registered workflow template: %s", template_id)
         return {"templateId": template_id}  # Use camel case in response
     except Exception as e:
-        print(f"Error registering workflow template: {e}")
+        logger.error("Error registering workflow template: %s", e)
         raise RuntimeError(f"Failed to register workflow template: {str(e)}")
 
 
@@ -159,7 +161,7 @@ def delete_workflow_template_handler(current_user, access_token, template_id):
         return delete_workflow_template(current_user, template_id, access_token)
 
     except Exception as e:
-        print(f"Error deleting workflow template: {e}")
+        logger.error("Error deleting workflow template: %s", e)
         raise RuntimeError(f"Failed to delete workflow template: {str(e)}")
 
 
@@ -465,5 +467,5 @@ def update_workflow_template_handler(
         )
 
     except Exception as e:
-        print(f"Error updating workflow template: {e}")
+        logger.error("Error updating workflow template: %s", e)
         raise RuntimeError(f"Failed to update workflow template: {str(e)}")

@@ -15,12 +15,15 @@ from state.user_data import handle_get_item, handle_put_item
 
 setup_validated(rules, get_permission_checker)
 
+from pycommon.logger import getLogger
+logger = getLogger("user-settings")
+
 tableName = os.environ["SHARES_DYNAMODB_TABLE"] #Marked for future deletion
 dynamodb = boto3.resource("dynamodb")
 users_table = dynamodb.Table(tableName)
 
-def get_app_id(current_user: str) -> str:
-    return f"{current_user}#amplify-user-settings"
+def get_app_id() -> str:
+    return "amplify-user-settings"
 
 
 @required_env_vars({
@@ -31,14 +34,14 @@ def get_settings(event, context, current_user, name, data):
     try:
         # Check USER_STORAGE_TABLE first (migrated settings)
         try:
-            app_id = get_app_id(current_user)
+            app_id = get_app_id()
             user_storage_data = handle_get_item(current_user, app_id, "user-settings", "user-settings")
             
             if user_storage_data and "data" in user_storage_data and "settings" in user_storage_data["data"]:
-                print(f"Settings found for user {current_user} in USER_STORAGE_TABLE")
+                logger.info("Settings found for user %s in USER_STORAGE_TABLE", current_user)
                 return {"success": True, "data": user_storage_data["data"]["settings"]}
         except Exception as e:
-            print(f"No migrated settings found for user {current_user}: {e}")
+            logger.debug("No migrated settings found for user %s: %s", current_user, e)
         
         # Fallback to SHARES_DYNAMODB_TABLE (legacy settings)
         response = users_table.scan(FilterExpression=Attr("user").eq(current_user))
@@ -47,16 +50,17 @@ def get_settings(event, context, current_user, name, data):
         if items:
             # Assuming the first match is the correct one
             settings_item = items[0]
-            print(f"Settings found for user {current_user} in SHARES_DYNAMODB_TABLE")
+            logger.info("Settings found for user %s in SHARES_DYNAMODB_TABLE", current_user)
             return {"success": True, "data": settings_item.get("settings", None)}
         else:
             # No settings found for the user
-            print(f"No settings found for user {current_user}")
+            logger.debug("No settings found for user %s", current_user)
             return {"success": True, "data": None}
     except Exception as e:
         # Handle potential errors
-        print(
-            f"An error occurred while retrieving settings for user {current_user}: {e}"
+        logger.error(
+            "An error occurred while retrieving settings for user %s: %s",
+            current_user, e
         )
         return {"success": False, "error": f"Error occurred: {e}"}
 
@@ -77,16 +81,16 @@ def save_settings_for_user(current_user, settings, access_token=None):
         if not access_token:
             return {"success": False, "error": "Access token required"}
         
-        app_id = get_app_id(current_user)
+        app_id = get_app_id()
         settings_data = {"settings": settings}
         
         result = handle_put_item(current_user, app_id, "user-settings", "user-settings", settings_data)
         if result and "uuid" in result:
-            print(f"Settings for user {current_user} saved successfully")
+            logger.info("Settings for user %s saved successfully", current_user)
             return {"success": True, "message": "Settings saved successfully"}
         else:
-            print(f"Failed to save settings for user {current_user}")
+            logger.error("Failed to save settings for user %s", current_user)
             return {"success": False, "message": "Failed to save settings"}
     except Exception as e:
-        print(f"An error occurred while saving settings for user {current_user}: {e}")
+        logger.error("An error occurred while saving settings for user %s: %s", current_user, e)
         return {"success": False, "error": f"Error occurred while saving settings: {e}"}

@@ -7,7 +7,6 @@ import json
 import os
 import time
 import asyncio
-import logging
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from pycommon.decorators import required_env_vars
@@ -19,7 +18,6 @@ from pycommon.dal.providers.aws.resource_perms import (
 )
 from pycommon.api.credentials import get_credentials
 from shared_functions import generate_embeddings
-import logging
 import boto3
 import asyncio
 from boto3.dynamodb.conditions import Key
@@ -31,15 +29,11 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 from pycommon.const import APIAccessType
+from pycommon.logger import getLogger
+
 add_api_access_types([APIAccessType.CHAT.value, APIAccessType.DUAL_EMBEDDING.value])
-
 setup_validated(rules, get_permission_checker)
-
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("embedding_dual_retrieval")
+logger = getLogger("embedding_dual_retrieval")
 
 pg_host = os.environ["RAG_POSTGRES_DB_READ_ENDPOINT"]
 pg_user = os.environ["RAG_POSTGRES_DB_USERNAME"]
@@ -398,7 +392,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
     # 3. is member of listed amplify groups - call
     # Iterate over each groupId and associated dataSourceIds
     for groupId, dataSourceIds in raw_group_src_ids.items():
-        print("Checking perms for GroupId: ", groupId, "\nDS Ids: ", dataSourceIds)
+        logger.debug("Checking perms for GroupId: %s DS Ids: %s", groupId, dataSourceIds)
         try:
             # ensure the groupId has perms to the ds
             accessible_to_group_ds_ids = []
@@ -407,14 +401,14 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
                     KeyConditionExpression=Key("object_id").eq(src_id)
                     & Key("principal_id").eq(groupId)
                 )
-                print(response.get("Items", []))
+                logger.debug("Response items: %s", response.get("Items", []))
                 # Check if the response has any items with the required permission levels
                 items_with_access = [
                     item
                     for item in response.get("Items", [])
                     if item["permission_level"] in permission_levels
                 ]
-                print("i with access ", items_with_access)
+                logger.debug("Items with access: %s", items_with_access)
 
                 if items_with_access:
                     accessible_to_group_ds_ids.append(src_id)
@@ -424,7 +418,7 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
             denied_ids = set(dataSourceIds) - set(accessible_to_group_ds_ids)
             access_denied_src_ids.extend(denied_ids)
 
-            print(
+            logger.info(
                 f"group has access to the following ids: {accessible_to_group_ds_ids}\n Group was denied access to the following ids: {denied_ids}"
             )
             # ensure user is a part of the group
@@ -447,11 +441,11 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
                 access_denied_src_ids.extend(accessible_to_group_ds_ids)
 
         except Exception as e:
-            logging.error(f"An error occurred while processing groupId {groupId}: {e}")
+            logger.error(f"An error occurred while processing groupId {groupId}: {e}")
             # In case of an error, consider the current groupId's src_ids as denied
             access_denied_src_ids.extend(dataSourceIds)
 
-    print(f"Group Accessible src_ids: {accessible_src_ids}, Group Access denied src_ids: {access_denied_src_ids}")
+    logger.debug(f"Group Accessible src_ids: {accessible_src_ids}, Group Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
 
 def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
@@ -876,7 +870,7 @@ async def _async_queue_missing_embeddings(event, context, current_user, name, da
 
     failed_ids = []
     if embed_ids:
-        print(f"Queueing {len(embed_ids)} documents for embedding")
+        logger.info(f"Queueing {len(embed_ids)} documents for embedding")
         for src_id in embed_ids:
             queue_result = manually_queue_embedding(src_id, account_data)
             if not queue_result["success"]:
@@ -884,7 +878,7 @@ async def _async_queue_missing_embeddings(event, context, current_user, name, da
 
     result = {"success": len(failed_ids) == 0}
     if failed_ids:
-        print(f"Failed to queue {len(failed_ids)} documents for embedding: ", failed_ids)
+        logger.error(f"Failed to queue {len(failed_ids)} documents for embedding: %s", failed_ids)
         result["failed_ids"] = failed_ids
 
     return result
@@ -896,7 +890,7 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
         return {"all_complete": True, "pending_ids": [], "requires_embedding": [], "failed_documents": []}
     
     embedding_progress_table = os.environ["EMBEDDING_PROGRESS_TABLE"]
-    print(f"Checking embedding completion for {src_ids}")
+    logger.debug(f"Checking embedding completion for {src_ids}")
 
     # Initialize requeue_failures if not provided
     if requeue_failures is None:
@@ -949,7 +943,9 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
 
                 # No record means document hasn't been submitted for embedding yet
                 if "Item" not in response:
-                    logging.info(f"[NO EMBEDDING RECORD] No embedding process record found for {src_id}")
+                    logger.info(
+                        f"[NO EMBEDDING RECORD] No embedding process record found for {src_id}"
+                    )
                     requires_embedding.append(src_id)
                     performance_cache.cache_embedding_status(src_id, "requires_embedding")
                     return {"pending": [], "requires_embedding": requires_embedding}
@@ -961,7 +957,7 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
 
                 # Handle completed status immediately
                 if parent_status == "completed":
-                    logging.info(f"[COMPLETED] Document {src_id} embedding is complete")
+                    logger.info(f"[COMPLETED] Document {src_id} embedding is complete")
                     performance_cache.cache_embedding_status(src_id, "completed")
                     return {"pending": [], "requires_embedding": []}
 
@@ -989,12 +985,12 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                             if requeue_failures is not None:
                                 failures = requeue_failures.get(src_id, 0)
                                 if failures >= max_requeue_failures:
-                                    failure_msg = f"Stalled document exceeded {max_requeue_failures} requeue attempts"
-                                    performance_cache.mark_document_failed(src_id, failure_msg, failures)
-                                    logging.error(f"[MAX_FAILURES] {failure_msg} for {src_id}")
+                                    logger.error(
+                                        f"[MAX_FAILURES] Stalled document {src_id} exceeded max requeue attempts ({max_requeue_failures})"
+                                    )
                                     return {"pending": [], "requires_embedding": [], "failed": src_id}
                             
-                            logging.warning(
+                            logger.warning(
                                 f"[STALLED JOB] Document {src_id} appears stalled in state {parent_status}. Last updated: {last_updated}. Attempting requeue (attempt {requeue_failures.get(src_id, 0) + 1} of {max_requeue_failures})."
                             )
                             
@@ -1003,44 +999,31 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                             if not requeue_result.get("success", False):
                                 if requeue_failures is not None:
                                     requeue_failures[src_id] = requeue_failures.get(src_id, 0) + 1
-                                    logging.error(f"[REQUEUE_FAILED] Failed to requeue stalled {src_id}. Failure count: {requeue_failures[src_id]}")
-                                
-                                # Check if this is a permanent failure (like SQS permissions)
-                                error_msg = requeue_result.get("message", "")
-                                if "Missing SQS permissions" in error_msg or "AccessDenied" in error_msg:
-                                    # Mark with special SQS permission failure for longer caching
-                                    performance_cache.mark_document_failed(src_id, "SQS Permission Error - Lambda lacks queue access", requeue_failures.get(src_id, 1))
-                                    logging.error(f"[PERMANENT_FAILURE] Marking {src_id[:40]}... as permanently failed due to SQS permissions")
-                                    return {"pending": [], "requires_embedding": [], "failed": src_id}
-                                elif "Failed to store RAG secrets" in error_msg:
-                                    # Mark Parameter Store failures separately
-                                    performance_cache.mark_document_failed(src_id, "Parameter Store Error - Rate limit or permissions", requeue_failures.get(src_id, 1))
-                                    logging.error(f"[PERMANENT_FAILURE] Marking {src_id[:40]}... as permanently failed due to Parameter Store issues")
-                                    return {"pending": [], "requires_embedding": [], "failed": src_id}
+                                    logger.error(f"[REQUEUE_FAILED] Failed to requeue stalled {src_id}. Failure count: {requeue_failures[src_id]}")
                             
                             pending_ids.append(src_id)
                             performance_cache.cache_embedding_status(src_id, parent_status)  # Cache current status
                             return {"pending": pending_ids, "requires_embedding": []}
                     except (ValueError, TypeError):
-                        logging.warning(
+                        logger.warning(
                             f"[DATETIME ERROR] Could not parse timestamp for {src_id}: {last_updated}. Skipping stall check."
                         )
                         pass
 
                 if parent_status == "completed":
-                    logging.info(f"[COMPLETED] Document {src_id} embedding is complete")
+                    logger.info(f"[COMPLETED] Document {src_id} embedding is complete")
                     return {"pending": [], "requires_embedding": []}
                 elif parent_status == "failed":
                     # Track requeue failures
                     if requeue_failures is not None:
                         failures = requeue_failures.get(src_id, 0)
                         if failures >= max_requeue_failures:
-                            logging.error(
+                            logger.error(
                                 f"[MAX_FAILURES] Document {src_id} exceeded max requeue attempts ({max_requeue_failures})"
                             )
                             return {"pending": [], "requires_embedding": [], "failed": src_id}
                     
-                    logging.warning(
+                    logger.warning(
                         f"[FAILED] Document {src_id} embedding failed. Attempting requeue (attempt {requeue_failures.get(src_id, 0) + 1} of {max_requeue_failures})."
                     )
                     
@@ -1048,12 +1031,12 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                     if not requeue_result.get("success", False):
                         if requeue_failures is not None:
                             requeue_failures[src_id] = requeue_failures.get(src_id, 0) + 1
-                            logging.error(f"[REQUEUE_FAILED] Failed to requeue {src_id}. Failure count: {requeue_failures[src_id]}")
+                            logger.error(f"[REQUEUE_FAILED] Failed to requeue {src_id}. Failure count: {requeue_failures[src_id]}")
                     
                     pending_ids.append(src_id)
                     return {"pending": pending_ids, "requires_embedding": []}
                 elif parent_status in ["starting", "processing"]:
-                    logging.info(
+                    logger.info(
                         f"[PROCESSING] Document {src_id} is still being embedded. Current status: {parent_status}"
                     )
                     pending_ids.append(src_id)
@@ -1065,12 +1048,12 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                     if requeue_failures is not None:
                         failures = requeue_failures.get(src_id, 0)
                         if failures >= max_requeue_failures:
-                            logging.error(
+                            logger.error(
                                 f"[MAX_FAILURES] Terminated document {src_id} exceeded max requeue attempts ({max_requeue_failures})"
                             )
                             return {"pending": [], "requires_embedding": [], "failed": src_id}
                     
-                    logging.warning(
+                    logger.warning(
                         f"[TERMINATED] Document {src_id} embedding was terminated. Attempting requeue (attempt {requeue_failures.get(src_id, 0) + 1} of {max_requeue_failures})."
                     )
                     
@@ -1078,19 +1061,19 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                     if not requeue_result.get("success", False):
                         if requeue_failures is not None:
                             requeue_failures[src_id] = requeue_failures.get(src_id, 0) + 1
-                            logging.error(f"[REQUEUE_FAILED] Failed to requeue terminated {src_id}. Failure count: {requeue_failures[src_id]}")
+                            logger.error(f"[REQUEUE_FAILED] Failed to requeue terminated {src_id}. Failure count: {requeue_failures[src_id]}")
                     
                     pending_ids.append(src_id)
                     return {"pending": pending_ids, "requires_embedding": []}
 
                 # If we reach here, there's an unexpected status value
-                logging.warning(
+                logger.warning(
                     f"[UNEXPECTED STATUS] Document {src_id} has unexpected status: {parent_status}. Treating as pending."
                 )
                 return {"pending": [], "requires_embedding": []}
 
             except Exception as e:
-                logging.error(
+                logger.error(
                     f"Error checking embedding progress for {src_id}: {str(e)}",
                     exc_info=True,
                 )
@@ -1130,7 +1113,7 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
     # Add results from database checks
     for result in results:
         if isinstance(result, Exception):
-            logging.error(f"Error in concurrent embedding check: {result}")
+            logger.error(f"Error in concurrent embedding check: {result}")
             # Treat exceptions as pending
             continue
         
@@ -1155,13 +1138,13 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
 
 def manually_queue_embedding(src_id, account_data):
     if not "global/" in src_id:
-        print(f"Skipping non-global document {src_id}")
+        logger.debug(f"Skipping non-global document {src_id}")
         return {"success": False}
     
     # Check if already marked as failed in cache to avoid unnecessary work
     is_failed, failure_reason, _ = performance_cache.is_document_failed(src_id)
     if is_failed:
-        logging.info(f"[SKIP_FAILED] Document {src_id[:40]}... already marked as failed: {failure_reason}")
+        logger.info(f"[SKIP_FAILED] Document {src_id[:40]}... already marked as failed: {failure_reason}")
         return {"success": False, "message": f"Document permanently failed: {failure_reason}"}
 
     # Implement retry logic for AWS rate limits
@@ -1182,18 +1165,18 @@ def manually_queue_embedding(src_id, account_data):
                 # If not last attempt, wait and retry
                 if secret_retry < max_retries - 1:
                     wait_time = retry_delay * (2 ** secret_retry)  # Exponential backoff: 2, 4, 8 seconds
-                    logging.warning(f"[RATE_LIMIT_RETRY] Failed to store RAG secrets for {src_id}. Retrying in {wait_time} seconds (attempt {secret_retry + 1}/{max_retries})")
+                    logger.warning(f"[RATE_LIMIT_RETRY] Failed to store RAG secrets for {src_id}. Retrying in {wait_time} seconds (attempt {secret_retry + 1}/{max_retries})")
                     time.sleep(wait_time)
             
             if not secrets_stored:
-                logging.error(f"Failed to store RAG secrets for {src_id} after {max_retries} attempts")
+                logger.error(f"Failed to store RAG secrets for {src_id} after {max_retries} attempts")
                 return {
                     "success": False,
                     "message": "Failed to store RAG secrets after multiple attempts",
                 }
             
             # Reset embedding status to "starting" to allow reprocessing
-            logging.info(f"[MANUAL_QUEUE] Resetting embedding status to 'starting' for {src_id}")
+            logger.info(f"[MANUAL_QUEUE] Resetting embedding status to 'starting' for {src_id}")
             reset_embedding_status_to_starting(src_id)
             
             # Create a record for manual processing
@@ -1201,7 +1184,7 @@ def manually_queue_embedding(src_id, account_data):
 
             # Queue the document for processing
             message_body = json.dumps(record)
-            logging.info(f"Queueing document for embedding: {message_body}")
+            logger.info(f"Queueing document for embedding: {message_body}")
             sqs.send_message(QueueUrl=queue_url, MessageBody=message_body)
             return {"success": True}
 
@@ -1211,23 +1194,21 @@ def manually_queue_embedding(src_id, account_data):
             
             # Check if it's an SQS permission error - no point retrying
             if 'AccessDenied' in error_str and 'sqs:sendmessage' in error_str.lower():
-                logging.error(f"[PERMISSION_ERROR] Lambda lacks SQS SendMessage permission for {src_id[:40]}...: {error_str}")
-                # Mark this document as permanently failed in cache
-                performance_cache.mark_document_failed(src_id, "SQS Permission Error - Lambda lacks queue access", max_retries)
+                logger.error(f"[PERMISSION_ERROR] Lambda lacks SQS SendMessage permission for {src_id}: {error_str}")
                 return {"success": False, "message": "Missing SQS permissions"}
             
             # Check if it's other rate limit errors
             if 'TooManyUpdates' in error_str or 'Throttling' in error_str or 'Rate exceeded' in error_str:
                 if retry_attempt < max_retries - 1:
                     wait_time = retry_delay * (2 ** retry_attempt)
-                    logging.warning(f"[RATE_LIMIT] AWS rate limit error for {src_id}: {error_str}. Retrying in {wait_time} seconds (attempt {retry_attempt + 1}/{max_retries})")
+                    logger.warning(f"[RATE_LIMIT] AWS rate limit error for {src_id}: {error_str}. Retrying in {wait_time} seconds (attempt {retry_attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                     continue
                     
-            logging.error(f"Failed to queue {src_id} for embedding: {error_str}")
+            logger.error(f"Failed to queue {src_id} for embedding: {error_str}")
             return {"success": False}
     
-    logging.error(f"Failed to queue {src_id} after {max_retries} attempts. Last error: {last_error}")
+    logger.error(f"Failed to queue {src_id} after {max_retries} attempts. Last error: {last_error}")
     return {"success": False}
 
 
@@ -1242,7 +1223,7 @@ def reset_embedding_status_to_starting(src_id):
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(embedding_progress_table)
         
-        logging.info(f"[RESET_STATUS] Updating embedding status to 'starting' for {src_id}")
+        logger.info(f"[RESET_STATUS] Updating embedding status to 'starting' for {src_id}")
         
         # First, get the current item to see how many child chunks exist
         response = table.get_item(Key={"object_id": src_id})
@@ -1289,10 +1270,10 @@ def reset_embedding_status_to_starting(src_id):
                 ExpressionAttributeValues=expression_attribute_values
             )
             
-            logging.info(f"[RESET_STATUS] ✅ Successfully reset parent and {len(updated_child_chunks)} child chunks to 'starting' status for {src_id}")
+            logger.info(f"[RESET_STATUS] ✅ Successfully reset parent and {len(updated_child_chunks)} child chunks to 'starting' status for {src_id}")
         else:
-            logging.warning(f"[RESET_STATUS] No existing embedding progress found for {src_id} - will be created during processing")
+            logger.warning(f"[RESET_STATUS] No existing embedding progress found for {src_id} - will be created during processing")
             
     except Exception as e:
-        logging.error(f"[RESET_STATUS] ❌ Failed to reset embedding status for {src_id}: {str(e)}")
+        logger.error(f"[RESET_STATUS] ❌ Failed to reset embedding status for {src_id}: {str(e)}")
         raise e
