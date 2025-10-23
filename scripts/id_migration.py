@@ -8,13 +8,11 @@ import sys
 import csv
 import argparse
 import boto3
-import json
-import re
 import os
 import time
 import uuid as uuid_lib
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Dict
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.conditions import Attr
 
@@ -813,23 +811,48 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     # Step 2: Process and migrate DynamoDB records
     ret = True
     try:
-        for item in paginated_query(table, "user", old_id):
+        for item in paginated_scan(table, "user", old_id):
+            
             log(msg % f"Found shares record for user ID {old_id}")
+            log(msg % f"    Existing Data: {item}")
             
             # Migrate user settings from SHARES_DYNAMODB_TABLE settings column to USER_DATA_STORAGE_TABLE
+            # Only migrate if settings don't already exist in USER_DATA_STORAGE_TABLE
             migrate_user_settings_for_user(old_id, new_id, dry_run, item, AWS_REGION)
             
             share_name = item.get('name', '/state/share')
             share_data_array = item.get('data', [])
+            shares_record_id = item.get('id')  # Get the actual primary key
             
             if not isinstance(share_data_array, list):
                 log(msg % f"Invalid share data format for user {old_id}, skipping")
                 continue
             
+            # Check if shares already exist in USER_DATA_STORAGE_TABLE to avoid duplicates
+            hash_key = f"{new_id}#amplify-shares"
+            existing_shares = set()
+            if not dry_run:
+                try:
+                    # Query existing shares to avoid duplicates
+                    response = user_storage_table.query(
+                        KeyConditionExpression=Key('PK').eq(f"{hash_key}#received")
+                    )
+                    for existing_item in response.get('Items', []):
+                        existing_data = existing_item.get('data', {})
+                        existing_key = existing_data.get('key', '')
+                        existing_shares.add(existing_key)
+                    
+                    if existing_shares:
+                        log(msg % f"Found {len(existing_shares)} shares already migrated for user {new_id}")
+                        
+                except Exception as e:
+                    log(msg % f"Warning: Could not check existing shares for user {new_id}: {e}")
+            
             log(msg % f"Processing {len(share_data_array)} shares for user {old_id} -> {new_id}")
             
             # Process each share in the data array and migrate to USER_DATA_STORAGE_TABLE
             migrated_count = 0
+            skipped_count = 0
             for share_entry in share_data_array:
                 try:
                     # Extract share metadata
@@ -845,14 +868,30 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                     # Translate sharer ID if it matches old_id
                     new_shared_by = new_id if old_shared_by == old_id else old_shared_by
                     
-                    # Update key paths to use new IDs
-                    new_key = old_key
-                    if old_id in new_key:
-                        new_key = new_key.replace(old_id, new_id)
+                    # Update key to match actual S3 location (WITH shares/ prefix for consistency)
+                    # Both DB key and S3 path will be: shares/recipient/sharer/date/file.json
+                    key_parts = old_key.split('/')
+                    if len(key_parts) >= 2:
+                        # Transform the key to match the new user IDs
+                        new_key_parts = []
+                        for part in key_parts:
+                            # Replace any user ID that matches old_id with new_id
+                            new_key_parts.append(new_id if part == old_id else part)
+                        # Construct new key WITH shares/ prefix to match S3 structure
+                        new_key = f"shares/{'/'.join(new_key_parts)}"
+                    else:
+                        # Fallback: ensure shares/ prefix and update user ID
+                        new_key = old_key
+                        if old_id in new_key:
+                            new_key = new_key.replace(old_id, new_id)
+                        if not new_key.startswith("shares/"):
+                            new_key = f"shares/{new_key}"
                     
-                    # Add shares/ prefix if not already present
-                    if not new_key.startswith("shares/"):
-                        new_key = f"shares/{new_key}"
+                    # Check if this share already exists in USER_DATA_STORAGE_TABLE
+                    if new_key in existing_shares:
+                        log(msg % f"Skipping already migrated share: {new_key}")
+                        skipped_count += 1
+                        continue
                     
                     # Generate date from timestamp
                     from datetime import datetime
@@ -902,14 +941,14 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                     continue
             
             # Step 3: Delete old record from SHARES_DYNAMODB_TABLE after successful migration
-            if not dry_run and migrated_count > 0:
+            if not dry_run and migrated_count > 0 and shares_record_id:
                 try:
-                    shares_table.delete_item(    Key={
-                            'user': old_id,
-                            'name': share_name
+                    shares_table.delete_item(
+                        Key={
+                            'id': shares_record_id  # Use correct primary key 'id'
                         }
-    )
-                    log(msg % f"Deleted legacy shares record for user {old_id}")
+                    )
+                    log(msg % f"Deleted legacy shares record with id: {shares_record_id}")
                 except Exception as e:
                     log(msg % f"Error deleting legacy shares record: {e}")
                     # Don't fail the migration for delete errors
@@ -917,7 +956,7 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
             if dry_run:
                 log(msg % f"Would migrate {len(share_data_array)} shares for user {old_id}")
             else:
-                log(msg % f"Successfully migrated {migrated_count} shares for user {old_id}")
+                log(msg % f"Successfully migrated {migrated_count} shares, skipped {skipped_count} existing shares for user {old_id}")
             
             ret = True
             
@@ -1104,20 +1143,31 @@ def update_assistant_code_interpreter_table(
                 msg
                 % f"Found assistant code interpreter record for user ID {old_id}.\n\tExisting Data: {item}"
             )
-            item["user"] = new_id
+            
+            # CRITICAL: Must use delete-old + create-new pattern since "id" is primary key containing old user ID
+            old_id_field = item["id"]
+            
+            # Transform id field: replace old user ID with new user ID  
+            # Pattern: "old_user_id/ast/uuid" -> "new_user_id/ast/uuid"
+            new_id_field = old_id_field.replace(old_id, new_id, 1)  # Replace only first occurrence
+            
+            # Create updated item with new id and user fields
+            updated_item = item.copy()
+            updated_item["id"] = new_id_field
+            updated_item["user"] = new_id
+            
             if dry_run:
-                log(msg
-                    % f"Would update assistant code interpreter item to:\n\tNew Data: {item}"
-)
+                log(msg % f"Would delete old record with id: {old_id_field}")
+                log(msg % f"Would create new record with id: {new_id_field}")
+                log(msg % f"New Data: {updated_item}")
             else:
-                log(msg
-                    % f"Updating assistant code interpreter item to:\n\tNew Data: {item}"
-)
-                assistant_code_interpreter_table.update_item(Key={"id": item["id"]},
-                    UpdateExpression="SET #user = :new_id",
-                    ExpressionAttributeNames={"#user": "user"},
-                    ExpressionAttributeValues={":new_id": new_id},
-)
+                log(msg % f"Creating new assistant code interpreter record with id: {new_id_field}")
+                assistant_code_interpreter_table.put_item(Item=updated_item)
+                
+                log(msg % f"Deleting old assistant code interpreter record with id: {old_id_field}")
+                assistant_code_interpreter_table.delete_item(Key={"id": old_id_field})
+                
+                log(msg % f"Successfully recreated assistant code interpreter record: {old_id_field} -> {new_id_field}")
             ret = True
         return ret
     except Exception as e:
@@ -1391,13 +1441,13 @@ def update_group_assistant_conversations_table(
     # - Files: Migrated from S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME  
     # - Old format: "astgp/{assistant-id}/{conversation-id}.txt"
     # - New format: "agentConversations/astgp/{assistant-id}/{conversation-id}.txt"
-    # - DynamoDB updates: "user" field updated from old_id to new_id
-    # - s3Location field: Remove s3:// prefix to indicate migration (use consolidation bucket)
     #
-    # Processing flow:
-    # 1. Call migrate_group_assistant_conversations_bucket_for_user() to migrate S3 files
-    # 2. Update "user" field from old_id to new_id in GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE
-    # 3. Update "s3Location" field to remove s3:// prefix (backward compatibility detection)
+    # FIXED Processing flow:
+    # 1. ALWAYS: Call migrate_group_assistant_conversations_bucket_for_user() to migrate S3 files (idempotent)
+    # 2. CONDITIONAL: Update ALL s3Location fields system-wide (only if legacy s3:// entries still exist)
+    # 3. ALWAYS: Update "user" field from old_id to new_id for current user's records
+    
+    # Step 1: Always migrate S3 files (idempotent - will skip if already done)
     success = migrate_group_assistant_conversations_bucket_for_user(old_id, new_id, dry_run)
     
     if not success:
@@ -1411,43 +1461,41 @@ def update_group_assistant_conversations_table(
     try:
         group_assistant_conversations_table = dynamodb.Table(table)
 
+        # Step 2: CONDITIONAL system-wide s3Location updates
+        # Check if any records still have legacy s3:// format
+        log(msg % f"Checking if system-wide s3Location updates are needed...")
+        needs_s3_updates = _check_for_legacy_s3_locations(table, dry_run, AWS_REGION)
+        
+        if needs_s3_updates:
+            log(msg % f"Legacy s3:// locations detected. Performing system-wide s3Location updates...")
+            s3_update_success = _update_all_s3_locations_system_wide(table, dry_run, AWS_REGION)
+            if not s3_update_success:
+                log(msg % f"Warning: Failed to update some s3Location fields")
+        else:
+            log(msg % f"All s3Location fields already migrated, skipping system-wide updates")
+
+        # Step 3: ALWAYS update user field for current user
+        log(msg % f"Updating user field for {old_id} -> {new_id}")
         ret = False
-        for item in paginated_query(table, "user", old_id):
+        
+        # Use paginated_scan since UserIndex GSI doesn't exist on this table
+        for item in paginated_scan(table, "user", old_id):
             log(
                 msg
                 % f"Found group assistant conversation record for user ID {old_id}.\n\tExisting Data: {item}"
             )
             
-            # Update user field from old_id to new_id
-            item["user"] = new_id
-            
-            # Update s3Location field if present - remove s3:// prefix to indicate migration
-            if "s3Location" in item and isinstance(item["s3Location"], str):
-                s3_location = item["s3Location"]
-                
-                # Check if it's still in legacy format with s3:// prefix
-                if s3_location.startswith("s3://"):
-                    # Extract key from s3Location (remove s3://bucket-name/ prefix)
-                    # Example: "s3://amplify-v6-assistants-dev-group-conversations-content/astgp/..." -> "agentConversations/astgp/..."
-                    import re
-                    # Find the part after the bucket name (should start with "astgp/")
-                    match = re.search(r's3://[^/]+/(.+)', s3_location)
-                    if match:
-                        key_path = match.group(1)  # Extract "astgp/..." 
-                        if key_path.startswith("astgp/"):
-                            # Transform to consolidated format
-                            item["s3Location"] = f"agentConversations/{key_path}"
-                        else:
-                            log(msg % f"Unexpected s3Location format, keeping as-is: {s3_location}")
-                    else:
-                        log(msg % f"Could not parse s3Location format: {s3_location}")
-                # If it doesn't start with s3://, it's already migrated - leave as-is
-            
             if dry_run:
-                log(msg % f"Would update group assistant conversation item to:\n\tNew Data: {item}")
+                log(msg % f"Would update group assistant conversation user field: {old_id} -> {new_id}")
             else:
-                log(msg % f"Updating group assistant conversation item to:\n\tNew Data: {item}")
-                group_assistant_conversations_table.put_item(Item=item)
+                # Update the user field using update_item (more efficient than put_item)
+                group_assistant_conversations_table.update_item(
+                    Key={'conversationId': item['conversationId']},
+                    UpdateExpression="SET #user = :new_id",
+                    ExpressionAttributeNames={'#user': 'user'},
+                    ExpressionAttributeValues={':new_id': new_id}
+                )
+                log(msg % f"Updated group assistant conversation user field: {old_id} -> {new_id}")
             ret = True
         return ret
     except Exception as e:
@@ -1455,6 +1503,108 @@ def update_group_assistant_conversations_table(
             msg
             % f"Error updating group assistant conversation records for user ID from {old_id} to {new_id}: {e}"
         )
+        return False
+
+
+def _check_for_legacy_s3_locations(table_name: str, dry_run: bool, region: str) -> bool:
+    """Check if any records in the table still have legacy s3:// locations."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        table = dynamodb.Table(table_name)
+        
+        # Scan for records with s3Location containing s3://
+        response = table.scan(
+            FilterExpression="contains(s3Location, :s3_prefix)",
+            ExpressionAttributeValues={":s3_prefix": "s3://"},
+            Select='COUNT'  # Only count, don't return items
+        )
+        
+        count = response.get('Count', 0)
+        if dry_run:
+            print(f"[DRY RUN] Found {count} records with legacy s3:// locations")
+        else:
+            print(f"Found {count} records with legacy s3:// locations")
+        
+        return count > 0
+        
+    except Exception as e:
+        print(f"Warning: Could not check for legacy s3Location entries: {e}")
+        # If we can't check, assume we need updates to be safe
+        return True
+
+
+def _update_all_s3_locations_system_wide(table_name: str, dry_run: bool, region: str) -> bool:
+    """Update ALL s3Location fields that reference the old bucket format."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        table = dynamodb.Table(table_name)
+        
+        # Scan for records with s3Location containing s3://
+        scan_kwargs = {
+            'FilterExpression': "contains(s3Location, :s3_prefix)",
+            'ExpressionAttributeValues': {":s3_prefix": "s3://"}
+        }
+        
+        updated_count = 0
+        failed_count = 0
+        
+        while True:
+            response = table.scan(**scan_kwargs)
+            
+            for item in response.get('Items', []):
+                try:
+                    s3_location = item.get("s3Location", "")
+                    if not s3_location.startswith("s3://"):
+                        continue
+                    
+                    # Extract key from s3Location (remove s3://bucket-name/ prefix)
+                    import re
+                    match = re.search(r's3://[^/]+/(.+)', s3_location)
+                    if match:
+                        key_path = match.group(1)  # Extract "astgp/..." 
+                        if key_path.startswith("astgp/"):
+                            new_s3_location = f"agentConversations/{key_path}"
+                            
+                            if dry_run:
+                                print(f"[DRY RUN] Would update s3Location: {s3_location} -> {new_s3_location}")
+                                updated_count += 1
+                            else:
+                                # Update the record (conversationId is the only primary key)
+                                table.update_item(
+                                    Key={
+                                        'conversationId': item['conversationId']
+                                    },
+                                    UpdateExpression="SET s3Location = :new_location",
+                                    ExpressionAttributeValues={":new_location": new_s3_location}
+                                )
+                                print(f"Updated s3Location: {s3_location} -> {new_s3_location}")
+                                updated_count += 1
+                        else:
+                            print(f"Warning: Unexpected s3Location format: {s3_location}")
+                    else:
+                        print(f"Warning: Could not parse s3Location: {s3_location}")
+                        
+                except Exception as item_error:
+                    print(f"Warning: Failed to update record: {item_error}")
+                    failed_count += 1
+            
+            # Handle pagination
+            if 'LastEvaluatedKey' not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        if dry_run:
+            print(f"[DRY RUN] Would update {updated_count} s3Location fields system-wide")
+        else:
+            print(f"Updated {updated_count} s3Location fields system-wide")
+        
+        if failed_count > 0:
+            print(f"Warning: Failed to update {failed_count} records")
+        
+        return failed_count == 0
+        
+    except Exception as e:
+        print(f"Error during system-wide s3Location updates: {e}")
         return False
 
 
@@ -1844,6 +1994,9 @@ def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> 
             # 3. Remove "s3_key" from record (handled by migration function)
             success, updated_item = migrate_workflow_templates_bucket_for_user(old_id, new_id, dry_run, item, AWS_REGION)
             
+            if not success:
+                log(msg % f"Failed to migrate workflow template S3 content for user {old_id}, template: {item.get('templateId', 'unknown')}")
+            
             # Store old key for cleanup (primary key: user + templateId)
             old_key = {
                 "user": old_id,
@@ -1853,7 +2006,15 @@ def update_workflow_templates_table(old_id: str, new_id: str, dry_run: bool) -> 
             # Update user_id and remove s3_key while preserving ALL other columns
             if updated_item:
                 item = updated_item  # Use the updated item from migration
+            # Remove s3Key after successful migration (should not exist in migrated records)
+            if "s3Key" in item:
+                del item["s3Key"]
+                
             item["user"] = new_id
+            
+            # Fix isPublic type for GSI TemplateIdPublicIndex - expects Number not Boolean
+            if "isPublic" in item and isinstance(item["isPublic"], bool):
+                item["isPublic"] = 1 if item["isPublic"] else 0
             
             if dry_run:
                 log(msg % f"Would update workflow template item to:\n\tNew Data: {item}"
@@ -1978,18 +2139,23 @@ def update_scheduled_tasks_table(old_id: str, new_id: str, dry_run: bool) -> boo
             )
             
             # IMPLEMENTED: Scheduled tasks logs S3 to USER_DATA_STORAGE_TABLE migration
-            # - "logs": Array consolidated from multiple S3 detailsKey files to single USER_DATA_STORAGE_TABLE entry
-            # - "taskId": Used directly as USER_DATA_STORAGE_TABLE SK (no transformation needed)
-            # - "user": Updated from old_id to new_id (part of USER_DATA_STORAGE_TABLE PK)  
-            # - "detailsKey": Removed from logs array entries after migration (this is how we detect migrated logs)
+            # - S3 logs: Consolidated from SCHEDULED_TASKS_LOGS_BUCKET/{old_id}/{task_id}/logs/*.json
+            # - Target: USER_DATA_STORAGE_TABLE with PK: "{user_id}#amplify-agent-logs#scheduled-task-logs", SK: "{task_id}"
+            # - appId: "{user_id}#amplify-agent-logs", entityType: "scheduled-task-logs"
+            # - "detailsKey": Removed from SCHEDULED_TASKS_TABLE logs array entries after migration
             # Migration detection: Logs without detailsKey entries are considered migrated
-            # Size monitoring: 350KB threshold warning for DynamoDB 400KB limit
             # 
             # Processing flow:
-            # 1. Call migrate_scheduled_tasks_logs_bucket_for_user() to consolidate S3 logs
-            # 2. Update "user" attribute from old_id to new_id
+            # 1. Call migrate_scheduled_tasks_logs_bucket_for_user() to consolidate S3 logs → USER_DATA_STORAGE_TABLE
+            # 2. Update "user" attribute from old_id to new_id in SCHEDULED_TASKS_TABLE
             # 3. Remove "detailsKey" from logs array entries (handled by migration function)
             success, updated_item = migrate_scheduled_tasks_logs_bucket_for_user(old_id, new_id, dry_run, item, AWS_REGION)
+            
+            if not success:
+                log(msg % f"S3 migration failed for user {old_id}, task: {item.get('taskId', 'unknown')} - continuing with table update")
+                # Continue with table update even if S3 migration fails (partial migration recovery)
+            else:
+                log(msg % f"S3 logs successfully consolidated to USER_DATA_STORAGE_TABLE for task: {item.get('taskId', 'unknown')}")
             
             # Store old key for cleanup (primary key: user + taskId)
             old_key = {
@@ -1999,7 +2165,9 @@ def update_scheduled_tasks_table(old_id: str, new_id: str, dry_run: bool) -> boo
             
             # Update user_id and logs array while preserving ALL other columns
             if updated_item:
-                item = updated_item  # Use the updated item from migration
+                item = updated_item  # Use the updated item from migration (with cleaned logs array)
+                log(msg % f"Using updated item from migration - logs array cleaned of detailsKey entries")
+            
             item["user"] = new_id
             
             if dry_run:
@@ -2014,6 +2182,16 @@ def update_scheduled_tasks_table(old_id: str, new_id: str, dry_run: bool) -> boo
                 except Exception as delete_e:
                     log(msg % f"Warning: Failed to delete old scheduled task record {old_key}: {delete_e}")
             ret = True
+            
+        # After successful migration, clean up any orphaned logs in the tasks logs bucket
+        log(msg % f"Checking for orphaned scheduled task logs for user {old_id}")
+        try:
+            from s3_data_migration import cleanup_orphaned_scheduled_task_logs
+            cleanup_orphaned_scheduled_task_logs(old_id, dry_run, AWS_REGION)
+        except Exception as cleanup_e:
+            log(msg % f"Warning: Failed to clean up orphaned logs for user {old_id}: {cleanup_e}")
+            # Don't fail the migration for cleanup errors
+            
         return ret
     except Exception as e:
         log(
@@ -2839,14 +3017,33 @@ def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
                                         log(msg % f"REPAIRED MALFORMED appId: {malformed_app} -> {correct_app}")
                                         break
                         
-                        # Update data.sharedBy field in shares
+                        # Update data fields in shares and other records
                         if 'data' in item and isinstance(item['data'], dict):
+                            # Update sharedBy field
                             if 'sharedBy' in item['data']:
                                 shared_by = item['data']['sharedBy']
                                 for old_id, new_id in users_map.items():
                                     if shared_by == old_id:
                                         item['data']['sharedBy'] = new_id
                                         break
+                            
+                            # Update key field for shares (S3 paths containing user IDs)
+                            if 'key' in item['data'] and "#amplify-shares#" in pk:
+                                old_key = item['data']['key']
+                                new_key = old_key
+                                
+                                # Replace old user IDs with new user IDs
+                                for old_id, new_id in users_map.items():
+                                    if old_id in new_key:
+                                        new_key = new_key.replace(old_id, new_id)
+                                
+                                # Ensure key has shares/ prefix for consistency with S3 structure
+                                if not new_key.startswith("shares/"):
+                                    new_key = f"shares/{new_key}"
+                                
+                                if new_key != old_key:
+                                    item['data']['key'] = new_key
+                                    log(msg % f"Updated share key: {old_key} -> {new_key}")
                         
                         # Put new record
                         table.put_item(Item=item)
@@ -3361,15 +3558,15 @@ if __name__ == "__main__":
                 new_user_id = u[1]
                 
                 # this is a sanity check to make user exists
-                # user = get_user(old_user_id)
+                user = get_user(old_user_id)
 
-                # if not user:
-                #     log(f"\tUser with old ID {old_user_id} not found. Skipping.")
-                #     continue
+                if not user:
+                    log(f"\tUser with old ID {old_user_id} not found. Skipping.")
+                    continue
 
-                # if not update_user_id(old_user_id, new_user_id, args.dry_run):
-                #     log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
-                #     continue
+                if not update_user_id(old_user_id, new_user_id, args.dry_run):
+                    log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
+                    continue
                 
                 ### ONLY RUN IF USER ID MIGRATION IS REQUIRED ###
                 if old_user_id != new_user_id:
@@ -3417,25 +3614,25 @@ if __name__ == "__main__":
                         log(f"[{old_user_id}] Skipping agent event templates table - does not exist")
 
                     # Update object access table
-                    # if validation_results["tables"].get("OBJECT_ACCESS_DYNAMODB_TABLE", False):
-                    #     if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
-                    #         log(f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records.")
-                    # else:
-                    #     log(f"[{old_user_id}] Skipping object access table - does not exist")
+                    if validation_results["tables"].get("OBJECT_ACCESS_DYNAMODB_TABLE", False):
+                        if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
+                            log(f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records.")
+                    else:
+                        log(f"[{old_user_id}] Skipping object access table - does not exist")
 
                     # Update assistants aliases table
-                    # if validation_results["tables"].get("ASSISTANTS_ALIASES_DYNAMODB_TABLE", False):
-                    #     if not update_assistants_aliases_table(old_user_id, new_user_id, args.dry_run):
-                    #         log(f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records.")
-                    # else:
-                    #     log(f"[{old_user_id}] Skipping assistants aliases table - does not exist")
+                    if validation_results["tables"].get("ASSISTANTS_ALIASES_DYNAMODB_TABLE", False):
+                        if not update_assistants_aliases_table(old_user_id, new_user_id, args.dry_run):
+                            log(f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records.")
+                    else:
+                        log(f"[{old_user_id}] Skipping assistants aliases table - does not exist")
 
                     # Update assistants table
-                    # if validation_results["tables"].get("ASSISTANTS_DYNAMODB_TABLE", False):
-                    #     if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
-                    #         log(f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records.")
-                    # else:
-                    #     log(f"[{old_user_id}] Skipping assistants table - does not exist")
+                    if validation_results["tables"].get("ASSISTANTS_DYNAMODB_TABLE", False):
+                        if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
+                            log(f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records.")
+                    else:
+                        log(f"[{old_user_id}] Skipping assistants table - does not exist")
 
                     # Update assistant groups table
                     if validation_results["tables"].get("ASSISTANT_GROUPS_DYNAMO_TABLE", False):

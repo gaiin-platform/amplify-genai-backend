@@ -20,6 +20,10 @@ from croniter import croniter
 from pycommon.logger import getLogger
 logger = getLogger("agent_scheduled_tasks")
 
+# Constants for log archival
+MAX_LOGS_SIZE_BYTES = 350 * 1024  # 350KB threshold for archival
+TARGET_SIZE_AFTER_ARCHIVAL = 200 * 1024  # Keep 200KB in USER_DATA_STORAGE_TABLE
+
 class DecimalEncoder(json.JSONEncoder):
     """
     Custom JSON encoder that handles Decimal objects.
@@ -475,6 +479,128 @@ def email_task_details(api_key, email_subject, email_body, email_addresses):
             logger.warning("Failed to send task notification to %s", address)
 
 
+def archive_logs_to_consolidation_bucket(current_user, task_id, logs_to_archive, access_token):
+    """
+    Archive logs from USER_DATA_STORAGE_TABLE to consolidation bucket.
+    
+    Args:
+        current_user (str): User ID owning the task
+        task_id (str): Task ID
+        logs_to_archive (dict): Dictionary of {execution_id: compressed_data} to archive
+        access_token (str): Access token for authentication
+    
+    Returns:
+        dict: Result with success status and archived count
+    """
+    try:
+        # Get consolidation bucket from environment
+        consolidation_bucket = os.environ.get("S3_CONSOLIDATION_BUCKET_NAME")
+        if not consolidation_bucket:
+            logger.error("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
+            return {"success": False, "archived_count": 0, "error": "Consolidation bucket not configured"}
+        
+        s3 = boto3.client("s3")
+        archived_count = 0
+        
+        for execution_id, compressed_data in logs_to_archive.items():
+            try:
+                # Archive path: scheduledTaskLogs/{user_id}/{task_id}/{execution_id}.json
+                archive_key = f"scheduledTaskLogs/{current_user}/{task_id}/{execution_id}.json"
+                
+                # Decompress data before archiving to S3 (S3 stores uncompressed)
+                if hasattr(compressed_data, '__iter__') and not isinstance(compressed_data, (str, bytes)):
+                    # Already decompressed data
+                    log_data = compressed_data
+                else:
+                    # Decompress LZW data
+                    from pycommon.lzw import is_lzw_compressed_format, lzw_uncompress
+                    if is_lzw_compressed_format(compressed_data):
+                        log_data = lzw_uncompress(compressed_data)
+                    else:
+                        log_data = compressed_data
+                
+                # Store in consolidation bucket
+                s3.put_object(
+                    Bucket=consolidation_bucket,
+                    Key=archive_key,
+                    Body=safe_json_dumps(log_data),
+                    ContentType="application/json"
+                )
+                
+                archived_count += 1
+                logger.debug("Archived execution %s to consolidation bucket: %s", execution_id, archive_key)
+                
+            except Exception as e:
+                logger.error("Failed to archive execution %s: %s", execution_id, e)
+                continue
+        
+        logger.info("Archived %s logs for task %s to consolidation bucket", archived_count, task_id)
+        return {"success": True, "archived_count": archived_count}
+        
+    except Exception as e:
+        logger.error("Error archiving logs to consolidation bucket: %s", e)
+        return {"success": False, "archived_count": 0, "error": str(e)}
+
+
+def calculate_logs_size(logs_dict):
+    """
+    Calculate approximate size of logs dictionary in bytes.
+    
+    Args:
+        logs_dict (dict): Dictionary of logs
+        
+    Returns:
+        int: Approximate size in bytes
+    """
+    try:
+        # Approximate size calculation using JSON serialization
+        return len(safe_json_dumps(logs_dict).encode('utf-8'))
+    except Exception as e:
+        logger.warning("Failed to calculate logs size: %s", e)
+        return 0
+
+
+def select_logs_for_archival(logs_dict, target_size):
+    """
+    Select oldest logs for archival to reach target size.
+    
+    Args:
+        logs_dict (dict): Dictionary of {execution_id: compressed_data}
+        target_size (int): Target size to keep in bytes
+        
+    Returns:
+        tuple: (logs_to_keep, logs_to_archive) as dictionaries
+    """
+    try:
+        # Sort by execution_id (which contains timestamp) to get chronological order
+        # execution_id format: "execution-{uuid}" or "scheduled-task-{task_id}-{timestamp}"
+        sorted_executions = sorted(logs_dict.items(), key=lambda x: x[0], reverse=True)  # Newest first
+        
+        logs_to_keep = {}
+        logs_to_archive = {}
+        current_size = 0
+        
+        # Keep newest logs until we reach target size
+        for execution_id, log_data in sorted_executions:
+            log_size = len(safe_json_dumps(log_data).encode('utf-8'))
+            
+            if current_size + log_size <= target_size:
+                logs_to_keep[execution_id] = log_data
+                current_size += log_size
+            else:
+                logs_to_archive[execution_id] = log_data
+        
+        logger.debug("Selected %s logs to keep (%s bytes), %s logs to archive", 
+                    len(logs_to_keep), current_size, len(logs_to_archive))
+        
+        return logs_to_keep, logs_to_archive
+        
+    except Exception as e:
+        logger.error("Failed to select logs for archival: %s", e)
+        # Return all logs to keep as fallback
+        return logs_dict, {}
+
+
 def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None, access_token=None):
     """
     Add execution record to a task's logs.
@@ -553,7 +679,7 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
                 )
                 execution_record["detailsKey"] = s3_key
             else:
-                # Migrated mode: Store in USER_STORAGE_TABLE dictionary with compression
+                # Migrated mode: Store in USER_STORAGE_TABLE dictionary with compression and archival
                 if access_token:
                     try:
                         # Get existing logs dictionary or create new
@@ -573,7 +699,33 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
                         compressed_details = safe_compress(details)
                         logs_dict[execution_id] = compressed_details
                         
-                        # Save logs dictionary
+                        # Check if we need to archive old logs (350KB threshold)
+                        current_size = calculate_logs_size(logs_dict)
+                        logger.debug("Current logs size for task %s: %s bytes", task_id, current_size)
+                        
+                        if current_size > MAX_LOGS_SIZE_BYTES:
+                            logger.info("Logs size (%s bytes) exceeds threshold (%s bytes), archiving old logs for task %s", 
+                                       current_size, MAX_LOGS_SIZE_BYTES, task_id)
+                            
+                            # Select logs to keep (200KB) and archive the rest
+                            logs_to_keep, logs_to_archive = select_logs_for_archival(logs_dict, TARGET_SIZE_AFTER_ARCHIVAL)
+                            
+                            if logs_to_archive:
+                                # Archive old logs to consolidation bucket
+                                archive_result = archive_logs_to_consolidation_bucket(
+                                    current_user, task_id, logs_to_archive, access_token
+                                )
+                                
+                                if archive_result["success"]:
+                                    # Use the reduced logs dictionary
+                                    logs_dict = logs_to_keep
+                                    logger.info("Archived %s logs, keeping %s recent logs for task %s", 
+                                              archive_result["archived_count"], len(logs_dict), task_id)
+                                else:
+                                    logger.warning("Failed to archive logs, keeping all logs in USER_DATA_STORAGE_TABLE: %s", 
+                                                  archive_result.get("error", "Unknown error"))
+                        
+                        # Save logs dictionary (either original or reduced after archival)
                         consolidated_data = {
                             "taskId": task_id,
                             "user": current_user,
