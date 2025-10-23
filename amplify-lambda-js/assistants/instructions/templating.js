@@ -2,6 +2,9 @@ import Handlebars from "handlebars";
 import yaml from "js-yaml";
 import {formatOps, getOps} from "../ops/ops.js";
 import {sendStateEventToStream} from "../../common/streams.js";
+import {getLogger} from "../../common/logging.js";
+
+const logger = getLogger("assistants.instructions.templating");
 
 
 function parseAllOpsOccurrences(templateStr) {
@@ -65,7 +68,6 @@ export const fillInTemplate = async (responseStream, params, body, ds, templateS
         })
         Handlebars.registerHelper("ops", function (opKey) {
             if (!opKey || !opsFormatMap[opKey]) return "";
-            // console.log("opsFormatMap[opKey]: ", opsFormatMap[opKey]);
             return opsFormatMap[opKey];
           });
    
@@ -119,7 +121,7 @@ export const fillInTemplate = async (responseStream, params, body, ds, templateS
         result = template(contextData);
 
     } catch (e) {
-        console.error(e);
+        logger.error("Error in templating:", e);
     }
 
     return result;

@@ -47,14 +47,14 @@ export function initPythonProcess() {
     const pythonScriptPath = join(__dirname, 'amplify_litellm.py');
     processStartTime = Date.now();
     
-    console.log("[TIMING] Starting persistent Python LiteLLM server");
+    logger.info("[TIMING] Starting persistent Python LiteLLM server");
     
     globalPythonProcess = spawn('python3', [pythonScriptPath], {
         stdio: ['pipe', 'pipe', 'pipe']
     });
     
     const spawnDuration = Date.now() - processStartTime;
-    console.log("[TIMING] Python LiteLLM server spawned", {
+    logger.info("[TIMING] Python LiteLLM server spawned", {
         spawnDuration,
         pid: globalPythonProcess.pid
     });
@@ -80,7 +80,7 @@ export function initPythonProcess() {
     globalPythonProcess.stderr.on('data', (data) => {
         const message = data.toString();
         // Output Python debug messages to console
-        console.log("[PYTHON]", message.trim());
+        logger.debug("[PYTHON]", message.trim());
         
         // Still log errors
         if (message.includes("ERROR") || message.includes("Exception")) {
@@ -90,7 +90,7 @@ export function initPythonProcess() {
     
     // Handle process exit
     globalPythonProcess.on('close', (code) => {
-        console.log("[TIMING] Python LiteLLM server exited", { code });
+        logger.info("[TIMING] Python LiteLLM server exited", { code });
         
         // Reject all active requests
         activeRequests.forEach((request, requestId) => {
@@ -129,7 +129,7 @@ async function routeMessage(message) {
             const startupDuration = readyTime - processStartTime;
             serverReady = true;
             
-            console.log("[TIMING] Python LiteLLM server ready", {
+            logger.info("[TIMING] Python LiteLLM server ready", {
                 startupDuration,
                 memoryUsage: parsed.data?.memoryUsage,
                 queuedRequests: pendingRequests.length
@@ -140,7 +140,7 @@ async function routeMessage(message) {
             pendingRequests = [];
             
             queuedRequests.forEach(queuedRequest => {
-                console.log("[TIMING] Processing queued request", { 
+                logger.info("[TIMING] Processing queued request", { 
                     requestId: queuedRequest.requestId,
                     queueTime: readyTime - queuedRequest.queueTime 
                 });
@@ -171,7 +171,7 @@ async function routeMessage(message) {
                 if (!request.firstTokenTime) {
                     request.firstTokenTime = Date.now();
                     const timeToFirstToken = request.firstTokenTime - (request.pythonProcessingStartTime || request.startTime);
-                    console.log("[TIMING] First content token from LiteLLM", {
+                    logger.info("[TIMING] First content token from LiteLLM", {
                         requestId,
                         litellmTimeToFirstToken: timeToFirstToken,
                         totalTimeToFirstToken: request.firstTokenTime - request.startTime
@@ -203,7 +203,7 @@ async function routeMessage(message) {
                 // Track when actual LiteLLM processing starts
                 if (parsed.data?.summary === 'Calling LLM...' && !request.pythonProcessingStartTime) {
                     request.pythonProcessingStartTime = Date.now();
-                    console.log("[TIMING] Python LiteLLM processing started", {
+                    logger.info("[TIMING] Python LiteLLM processing started", {
                         requestId,
                         pythonOverheadTime: request.pythonProcessingStartTime - request.startTime
                     });
@@ -244,7 +244,7 @@ async function routeMessage(message) {
                         logger.error("Failed to record usage data:", error);
                     });
                     
-                    console.log("[USAGE] Recorded usage data", {
+                    logger.debug("[USAGE] Recorded usage data", {
                         requestId,
                         promptTokens: usageData.prompt_tokens,
                         completionTokens: usageData.completion_tokens,
@@ -323,18 +323,18 @@ async function routeMessage(message) {
                     serverSpawnOverheadEliminated: true
                 };
                 
-                console.log("[TIMING] === LITELLM REQUEST COMPLETED ===", {
+                logger.info("[TIMING] === LITELLM REQUEST COMPLETED ===", {
                     requestId,
                     ...timingBreakdown
                 });
                 
-                console.log("[TIMING] LiteLLM processing completed", {
+                logger.info("[TIMING] LiteLLM processing completed", {
                     requestId,
                     pureLitellmProcessingTime: timingBreakdown.pureLitellmTime,
                     totalTokens: request.tokenCount
                 });
                 
-                console.log("[MEMORY] Memory usage summary", {
+                logger.debug("[MEMORY] Memory usage summary", {
                     requestId,
                     initialRss: `${Math.round(request.initialMemory.rss / 1024 / 1024)}MB`,
                     finalRss: `${Math.round(finalMemory.rss / 1024 / 1024)}MB`,
@@ -392,7 +392,7 @@ function sendRequestToPython(requestData) {
     const inputLine = JSON.stringify(requestData) + '\n';
     globalPythonProcess.stdin.write(inputLine);
     
-    console.log("[TIMING] Request sent to Python server", {
+    logger.debug("[TIMING] Request sent to Python server", {
         requestId: requestData.requestId,
         inputDataSize: inputLine.length,
         serverReady,
@@ -418,7 +418,7 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
         // Generate unique request ID
         const requestId = `req_${++requestCounter}_${Date.now()}`;
         
-        console.log("=== LITELLM REQUEST STARTED ===", {
+        logger.info("=== LITELLM REQUEST STARTED ===", {
             requestId,
             model: model.id,
             provider: model.provider || 'unknown',
@@ -427,7 +427,7 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
             persistentServer: !!globalPythonProcess
         });
         
-        console.log("[MEMORY] Node.js memory at request start", {
+        logger.debug("[MEMORY] Node.js memory at request start", {
             requestId,
             rss: `${Math.round(initialMemory.rss / 1024 / 1024)}MB`,
             heapUsed: `${Math.round(initialMemory.heapUsed / 1024 / 1024)}MB`,
@@ -614,7 +614,7 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
             if (serverReady) {
                 sendRequestToPython(inputData);
             } else {
-                console.log("[TIMING] Server not ready, queuing request", {
+                logger.info("[TIMING] Server not ready, queuing request", {
                     requestId,
                     serverAge: Date.now() - processStartTime,
                     queuedRequests: pendingRequests.length
@@ -628,7 +628,7 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
 
         } catch (error) {
             const errorDuration = Date.now() - startTime;
-            console.log("=== LITELLM REQUEST SETUP FAILED ===", {
+            logger.error("=== LITELLM REQUEST SETUP FAILED ===", {
                 requestId,
                 model: model.id,
                 setupDuration: errorDuration,
@@ -662,14 +662,14 @@ export function getLiteLLMServerStatus() {
  */
 export function shutdownLiteLLMServer() {
     if (globalPythonProcess && !globalPythonProcess.killed) {
-        console.log("[TIMING] Shutting down LiteLLM server gracefully");
+        logger.info("[TIMING] Shutting down LiteLLM server gracefully");
         globalPythonProcess.stdin.end();
         globalPythonProcess.kill('SIGTERM');
         
         // Force kill after timeout
         setTimeout(() => {
             if (globalPythonProcess && !globalPythonProcess.killed) {
-                console.log("[TIMING] Force killing LiteLLM server");
+                logger.warn("[TIMING] Force killing LiteLLM server");
                 globalPythonProcess.kill('SIGKILL');
             }
         }, 5000);
@@ -756,6 +756,20 @@ export async function promptLiteLLMForData(messages, model, prompt, schema, acco
                 } else {
                     // Fallback: try to parse the entire response as JSON
                     const parsedData = JSON.parse(completeResponse);
+                    
+                    // If parsedData is not an object or doesn't have expected schema keys,
+                    // wrap it in the expected schema structure
+                    const schemaKeys = Object.keys(schema);
+                    const hasExpectedKeys = schemaKeys.some(key => parsedData && typeof parsedData === 'object' && key in parsedData);
+                    
+                    if (!hasExpectedKeys && schemaKeys.length > 0) {
+                        // Create object with expected structure
+                        const wrappedResponse = {};
+                        wrappedResponse[schemaKeys[0]] = parsedData;
+                        logger.debug(`Wrapped raw LLM response in schema structure: ${schemaKeys[0]}`);
+                        return wrappedResponse;
+                    }
+                    
                     return parsedData;
                 }
             } else {

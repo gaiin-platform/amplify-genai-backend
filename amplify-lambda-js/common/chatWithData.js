@@ -64,7 +64,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const srcPrefix = options.source || defaultSource;
     
     // 🔍 DEBUG: Log incoming datasources
-    console.log("📥 chatWithDataStateless: Incoming datasources:", {
+    logger.debug("📥 chatWithDataStateless: Incoming datasources:", {
         dataSources_length: dataSources?.length || 0,
         dataSources_ids: dataSources?.map(ds => ds.id?.substring(0, 50)),
         dataSources_types: dataSources?.map(ds => ds.type),
@@ -109,6 +109,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         ragDataSources_ids: ragDataSources.map(ds => ds.id),
         conversationDataSources_length: conversationDataSources.length
     });
+    
 
     // Build lookup table for data source details
     const dataSourceDetailsLookup = {};
@@ -141,7 +142,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         
         // Perform RAG query with error handling
         logger.info(`🔍 RAG Query: Calling getContextMessages with ${ragDataSources.length} sources`);
-        console.log("📋 RAG DataSources being searched:", ragDataSources.map(ds => ({
+        logger.debug("📋 RAG DataSources being searched:", ragDataSources.map(ds => ({
             id: ds.id?.substring(0, 50),
             type: ds.type,
             name: ds.name
@@ -149,14 +150,14 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         
         try {
             ragResults = await getContextMessages(params, chatRequestOrig, ragDataSources);
-            console.log(`✅ RAG Query completed:`, {
+            logger.debug(`✅ RAG Query completed:`, {
                 sources_found: ragResults.sources?.length || 0,
                 messages_added: ragResults.messages?.length || 0,
                 sources_sample: ragResults.sources?.[0]
             });
             logger.info(`✅ RAG Query: Completed with ${ragResults.sources?.length || 0} sources found`);
         } catch (error) {
-            console.error("❌ RAG Query Failed:", error);
+            logger.error("❌ RAG Query Failed:", error);
             logger.error("❌ RAG Query Failed:", error.message);
             ragStatus.message = "RAG search failed, continuing without additional context";
             ragStatus.inProgress = false;
@@ -168,7 +169,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
         
         // ✅ IMMEDIATELY send RAG sources following original pattern
-        console.log("🔍 RAG: About to send sources - Debug info:", {
+        logger.debug("🔍 RAG: About to send sources - Debug info:", {
             ragResults_sources_length: ragResults.sources?.length || 0,
             responseStream_exists: !!responseStream,
             responseStream_destroyed: responseStream?.destroyed,
@@ -181,9 +182,9 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 "Found relevant information" : "No relevant information found";
             sendStatusEventToStream(responseStream, ragStatus);
             
-            console.log("🔍 RAG: Stream is valid, checking sources length:", ragResults.sources.length);
+            logger.debug("🔍 RAG: Stream is valid, checking sources length:", ragResults.sources.length);
             if (ragResults.sources.length > 0) {
-                console.log("📡 RAG: Sending sources to frontend (original pattern):", ragResults.sources.length, "sources");
+                logger.debug("📡 RAG: Sending sources to frontend (original pattern):", ragResults.sources.length, "sources");
                 sendStateEventToStream(responseStream, {
                     sources: {
                         rag: {
@@ -191,14 +192,14 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                         }
                     }
                 });
-                console.log("✅ RAG: Sources sent to stream using original pattern");
+                logger.debug("✅ RAG: Sources sent to stream using original pattern");
             } else {
-                console.log("❌ RAG: No sources to send to frontend");
+                logger.debug("❌ RAG: No sources to send to frontend");
             }
             
             forceFlush(responseStream);
         } else {
-            console.log("❌ RAG: Cannot send sources - stream invalid:", {
+            logger.debug("❌ RAG: Cannot send sources - stream invalid:", {
                 responseStream_exists: !!responseStream,
                 responseStream_destroyed: responseStream?.destroyed,
                 responseStream_writable: responseStream?.writable
@@ -249,8 +250,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }));
         
         if (responseStream && !responseStream.destroyed && responseStream.writable) {
-            statuses.forEach(status => sendStatusEventToStream(responseStream, status));
-            forceFlush(responseStream);
+            statuses.forEach(status => {
+                sendStatusEventToStream(responseStream, status);
+                forceFlush(responseStream); // Force flush each status
+            });
         }
 
         // ⚡ PARALLEL: Fetch all contexts simultaneously with caching
@@ -259,29 +262,35 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             ...categorizedDataSources.map(async ds => {
                 // Check cache first
                 const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, options);
-                if (cached) {
+                if (cached && Array.isArray(cached) && cached.length > 0) {
                     logger.debug(`Using cached contexts for datasource ${ds.id}`);
                     return cached.map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
                 }
                 
                 // Not cached, fetch and cache
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options);
-                CacheManager.setCachedContexts(account.user, ds, maxTokens, options, results);
-                return results.map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
+                // Only cache successful results, not null/empty
+                if (results && Array.isArray(results) && results.length > 0) {
+                    CacheManager.setCachedContexts(account.user, ds, maxTokens, options, results);
+                }
+                return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
             }),
             ...conversationDataSources.map(async ds => {
                 // Check cache first
                 const cacheOptions = {...options, isConversation: true};
                 const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, cacheOptions);
-                if (cached) {
+                if (cached && Array.isArray(cached) && cached.length > 0) {
                     logger.debug(`Using cached conversation contexts for datasource ${ds.id}`);
                     return cached.map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
                 }
                 
                 // Not cached, fetch and cache
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
-                CacheManager.setCachedContexts(account.user, ds, maxTokens, cacheOptions, results);
-                return results.map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
+                // Only cache successful results, not null/empty
+                if (results && Array.isArray(results) && results.length > 0) {
+                    CacheManager.setCachedContexts(account.user, ds, maxTokens, cacheOptions, results);
+                }
+                return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
             })
         ]);
 
@@ -341,9 +350,9 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             }, {});
 
             if (responseStream && !responseStream.destroyed && responseStream.writable) {
-                console.log("📡 Document: Sending regular document sources:", Object.keys(byType), "types");
+                logger.debug("📡 Document: Sending regular document sources:", Object.keys(byType), "types");
                 sendStateEventToStream(responseStream, { sources: byType });
-                console.log("✅ Document: Regular sources sent to stream");
+                logger.debug("✅ Document: Regular sources sent to stream");
             }
         }
     }

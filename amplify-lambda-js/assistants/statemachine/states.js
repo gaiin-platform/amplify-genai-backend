@@ -17,6 +17,9 @@ import {isKilled} from "../../requests/requestState.js";
 import {getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
 import {getInternalLLM} from "../../common/internalLLM.js";
+import {getLogger} from "../../common/logging.js";
+
+const logger = getLogger("assistants.statemachine.states");
 
 const formatStateNamesAsEnum = (transitions) => {
     return transitions.map(t => t.to).join("|");
@@ -78,8 +81,7 @@ const formatContextInformationItem = (source) => {
 
         return `${source[0]}: ${source ? value.replaceAll(/(\r\n|\n|\r|\u2028|\u2029)/g, '\\n') : ""}`;
     } catch (e) {
-        console.error("Error formatting context information item", source);
-        console.error(e);
+        logger.error("Error formatting context information item:", source, e);
         return "";
     }
 }
@@ -561,7 +563,7 @@ function matchKeys(context, keyRegex) {
         });
         return matches;
     } catch (e) {
-        console.error(e);
+        logger.error("Error in getContextMessages:", e);
         return [];
     }
 }
@@ -636,7 +638,7 @@ function fillInTemplate(templateStr, contextData) {
         result = template(contextData);
 
     } catch (e) {
-        console.error(e);
+        logger.error("Error in processAction:", e);
     }
 
     return result;
@@ -907,8 +909,7 @@ export class AssistantState {
                 }
                 
             } catch (e) {
-                console.error("Error invoking entry action in state: " + this.name);
-                console.error(e);
+                logger.error("Error invoking entry action in state:", this.name, e);
 
                 if (this.failOnError) {
                     throw e;
@@ -1106,7 +1107,7 @@ export class StateBasedAssistant {
         const internalLLM = getInternalLLM(params.options.model, params.account, responseStream);
         internalLLM.params = { ...params }; // Copy params for compatibility
         
-        console.log(`🚀 StateBasedAssistant using InternalLLM for ${this.displayName}`);
+        logger.info(`🚀 StateBasedAssistant using InternalLLM for ${this.displayName}`);
 
         const context = {
             data: {

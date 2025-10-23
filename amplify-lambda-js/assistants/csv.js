@@ -68,7 +68,7 @@ export const csvAssistant = {
         const llm = getInternalLLM(params.options.model, params.account, responseStream);
         llm.params = { ...params }; // Copy params for compatibility
         
-        console.log("🚀 CSV Assistant using InternalLLM for batch processing");
+        logger.info("🚀 CSV Assistant using InternalLLM for batch processing");
 
         const limiter = new Bottleneck({
             maxConcurrent: 5,

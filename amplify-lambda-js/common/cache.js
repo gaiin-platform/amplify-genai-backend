@@ -278,7 +278,7 @@ export class CacheManager {
         try {
             const contextKey = `${dataSource.id}:${maxTokens}:${JSON.stringify(options)}`;
             dataSourceCache.set(userId, 'contexts', contextKey, contexts);
-            logger.debug(`Cached contexts for ${userId} datasource: ${dataSource.id} (${contexts.length} contexts)`);
+            logger.debug(`Cached contexts for ${userId} datasource: ${dataSource.id} (${contexts?.length || 'null'} contexts)`);
         } catch (error) {
             logger.error(`Error caching contexts for ${userId}:`, error);
         }

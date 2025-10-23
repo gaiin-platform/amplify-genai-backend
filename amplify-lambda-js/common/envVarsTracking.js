@@ -3,6 +3,9 @@
 
 import { DynamoDBClient, GetItemCommand, PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { getLogger } from "./logging.js";
+
+const logger = getLogger("envVarsTracking");
 
 const dynamodbClient = new DynamoDBClient();
 
@@ -168,7 +171,7 @@ class EnvVarTracker {
 
                         const updateResult = await dynamodbClient.send(updateCommand);
                         const versionInfo = version ? `, version: ${version}` : "";
-                        console.log(
+                        logger.info(
                             `ENV_VAR_TRACKING: MERGED ${serviceVarKey} - ` +
                             `added ${JSON.stringify(operationsToAdd)} → ` +
                             `now: ${JSON.stringify(unmarshall(updateResult.Attributes).operations)}` +
@@ -205,14 +208,14 @@ class EnvVarTracker {
             await dynamodbClient.send(putCommand);
 
             const versionInfo = version ? `, version: ${version}` : "";
-            console.log(
+            logger.info(
                 `ENV_VAR_TRACKING: PUT NEW item for ${serviceVarKey} - ` +
                 `operations: ${JSON.stringify(operationStrings)}${versionInfo}`
             );
 
         } catch (error) {
             // Never fail the function for tracking issues (match PyCommon behavior)
-            console.warn(`ENV_VAR_TRACKING: Failed to track environment variable ${varName}: ${error.message}`);
+            logger.warn(`ENV_VAR_TRACKING: Failed to track environment variable ${varName}: ${error.message}`);
         }
     }
 }
@@ -274,13 +277,13 @@ export const requiredEnvVars = (envVarsDict) => {
                     // Track usage in DynamoDB (non-blocking, only once per container)
                     if (!trackedConfigs.has(configKey)) {
                         tracker.trackEnvVar(varName, operations, resolvedValue).catch(error => {
-                            console.warn(`ENV_VAR_TRACKING: Background tracking failed for ${varName}: ${error.message}`);
+                            logger.warn(`ENV_VAR_TRACKING: Background tracking failed for ${varName}: ${error.message}`);
                         });
                     }
 
                 } catch (error) {
                     // Re-raise env variable errors - these should fail the function (match PyCommon)
-                    console.error(`Required environment variable '${varName}' not available`);
+                    logger.error(`Required environment variable '${varName}' not available`);
                     throw error;
                 }
             }

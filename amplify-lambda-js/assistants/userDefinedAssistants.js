@@ -35,11 +35,11 @@ async function getAssistantByAlias(user, assistantId) {
         if (response.Item) {
             return unmarshall(response.Item);
         } else {
-            console.log("No item retrieved in getAssistantByAlias")
+            logger.debug("No item retrieved in getAssistantByAlias")
             return null;
         }
     } catch (error) {
-        console.error('Error getting assistant alias:', error);
+        logger.error('Error getting assistant alias:', error);
         return null;
     }
 }
@@ -58,11 +58,11 @@ async function getAssistantByAssistantDatabaseId(id) {
         if (response.Item) {
             return unmarshall(response.Item);
         } else {
-            console.log("No item retrieved in getAssistantByAssistantDatabaseId")
+            logger.debug("No item retrieved in getAssistantByAssistantDatabaseId")
             return null;
         }
     } catch (error) {
-        console.error('Error getting assistant alias:', error);
+        logger.error('Error getting assistant by database id:', error);
         return null;
     }
 }
@@ -87,23 +87,23 @@ const isMemberOfGroup = async (current_user, ast_owner, token) => {
                 userInAmplifyGroup(item.amplifyGroups ?? [], token)) {
                 return true;
             } 
-            console.error( `User is not a member of groupId: ${ast_owner}`);
+            logger.error(`User is not a member of groupId: ${ast_owner}`);
         } else {
-            console.error(`No group entry found for groupId: ${ast_owner}`);
+            logger.error(`No group entry found for groupId: ${ast_owner}`);
         }
     
     } catch (error) {
-        console.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
+        logger.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
     }
 }
 
 const userInAmplifyGroup = async (amplifyGroups, token) => {
     if (amplifyGroups.length === 0) return false;
-    console.log("Checking if user is in amplify groups: ", amplifyGroups)
+    logger.debug("Checking if user is in amplify groups:", amplifyGroups)
 
     const apiBaseUrl = process.env.API_BASE_URL;
     if (!apiBaseUrl) {
-        console.error("API_BASE_URL environment variable is not set");
+        logger.error("API_BASE_URL environment variable is not set");
         return false;
     }
 
@@ -120,13 +120,13 @@ const userInAmplifyGroup = async (amplifyGroups, token) => {
         const responseContent = await response.json();
 
         if (response.status !== 200 || !responseContent.success) {
-            console.error(`Error verifying amp group membership: ${responseContent}`);
+            logger.error(`Error verifying amp group membership: ${responseContent}`);
             return false;
         } else if (response.status === 200 && responseContent.success) {
             return responseContent.isMember || false;
         }
     } catch (e) {
-        console.error(`Error verifying amp group membership: ${e}`);
+        logger.error(`Error verifying amp group membership: ${e}`);
         
     }
     return false;
@@ -166,7 +166,7 @@ const getStandaloneAst = async (assistantPublicId, current_user, token) => {
         return ast;
         
     } catch (error) {
-        console.error('Error looking up standalone assistant:', error);
+        logger.error('Error looking up standalone assistant:', error);
         return null;
     }
 }
@@ -213,7 +213,7 @@ const getLatestAssistant = async (assistantPublicId) => {
                 return astRecord;
             }
         } catch (error) {
-            console.error('Error querying assistant:', error);
+            logger.error('Error querying assistant:', error);
             return null;
         }
     }
@@ -227,7 +227,7 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
     const { CacheManager } = await import('../common/cache.js');
     const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
     if (cached) {
-        console.log(`Using cached assistant: ${assistantPublicId}`);
+        logger.debug(`Using cached assistant: ${assistantPublicId}`);
         return fillInAssistant(cached, assistantBase);
     }
     
@@ -237,7 +237,7 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
 
     // ⚡ CACHE OPTIMIZATION: Check cached group membership
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
-        console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
+        logger.debug(`Checking if ${current_user} is a member of group: ${ast_owner}`);
         
         // Check cache first
         const cachedMembership = await CacheManager.getCachedGroupMembership(current_user, ast_owner, token);
@@ -260,11 +260,11 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
         assistantData = await getAssistantByAssistantDatabaseId(
             assistantAlias.data.id
         );
-        console.log("Assistant found by alias: ", assistantData);
+        logger.debug("Assistant found by alias:", assistantData);
     } else {
         //check if ast is standalone
         assistantData = await getStandaloneAst(assistantPublicId, current_user, token);
-        console.log("Assistant found by standalone ast: ", assistantData);
+        logger.debug("Assistant found by standalone ast:", assistantData);
     }
 
     if (assistantData) {
@@ -272,7 +272,7 @@ export const getUserDefinedAssistant = async (current_user, assistantBase, assis
         CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, assistantData);
         
         const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase)
-        console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
+        logger.info(`Client Selected Assistant: ${userDefinedAssistant.displayName}`);
         return userDefinedAssistant;
     }
 
@@ -680,7 +680,7 @@ function extractAssistantDatasources(assistant) {
 
     if (assistant.data?.integrationDriveData) {
         const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
-        // console.log("Drive datasources: ", driveDatasources);
+        // logger.debug("Drive datasources:", driveDatasources);
         assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
     }
 

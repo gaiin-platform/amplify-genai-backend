@@ -9,6 +9,9 @@ import {getSecret} from "../common/secrets.js";
 import * as fs from "fs";
 import {getInternalLLM} from "../common/internalLLM.js";
 import {workflowSchema} from "../workflow/workflow.js";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("local");
 
 
 async function main() {
@@ -59,7 +62,7 @@ async function main() {
                 modelId = process.argv[++i];
                 model = {id: modelId}; // most likely missing data attributes since eliminating Models 
                 if(!model){
-                    console.log("Invalid model: "+modelId);
+                    logger.error("Invalid model: "+modelId);
                     return;
                 }
                 break;
@@ -144,7 +147,7 @@ async function main() {
     }
 
     if(response){
-        console.log(response);
+        logger.info(response);
     }
 }
 

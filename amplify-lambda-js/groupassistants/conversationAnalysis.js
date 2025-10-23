@@ -77,7 +77,7 @@ async function uploadToS3(assistantId, conversationId, content) {
         // Return just the key path (without s3:// prefix) to indicate migrated record
         return consolidationKey;
     } catch (error) {
-        console.error(`Error uploading to S3: ${error}`);
+        logger.error(`Error uploading to S3: ${error}`);
         throw error;
     }
 }
@@ -148,7 +148,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const modelUsed = data.model.id;
     const advancedModel = data.advancedModel;
     const numberPrompts = data.numberPrompts || 0; // Use the numberPrompts from options, default to 0 if not set
-    console.log(`Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
+    logger.debug(`Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
     const employeeType = data.groupType;
     const entryPoint = data.source || "Amplify";
 

@@ -6,6 +6,9 @@ import cors from 'cors';
 import AWSXRay from 'aws-xray-sdk';
 import { routeRequest } from "../router.js";
 import { extractParams } from "../common/handlers.js";
+import { getLogger } from "../common/logging.js";
+
+const logger = getLogger("localServer");
 
 const app = express();
 const port = 8000; // Local dev port
@@ -84,7 +87,7 @@ app.post('/', async (req, res) => {
 
             await routeRequest(params, returnResponse, sse);
         } catch (e) {
-            console.error("Unhandled error in request:", e);
+            logger.error("Unhandled error in request:", e);
             sse.returnResponse({
                 statusCode: 500,
                 body: { error: "Internal server error" }
@@ -96,7 +99,7 @@ app.post('/', async (req, res) => {
 });
 
 // Start the server inside a context
-console.log(`Starting server...`);
+logger.info(`Starting server...`);
 app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    logger.info(`Server is running on http://localhost:${port}`);
 });

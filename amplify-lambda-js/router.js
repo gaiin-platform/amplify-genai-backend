@@ -8,7 +8,7 @@ import {sendStateEventToStream, TraceStream} from "./common/streams.js";
 import {resolveDataSources} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
-import {isRateLimited, formatRateLimit, formatCurrentSpent} from "./rateLimit/rateLimiter.js";
+import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation} from "./common/envVarsTracking.js";
@@ -38,6 +38,8 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
     try {
 
         logger.debug("Extracting params from event");
+        
+        
         if (params && params.statusCode) {
             returnResponse(responseStream, params);
         } else if (!params || !params.body || (!params.body.messages && !params.body.killSwitch && !params.body.datasourceRequest)) {
@@ -82,7 +84,7 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
             returnResponse(responseStream, response);
         } else {
             // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION - All router operations in parallel!
-            console.log("🚀 Starting comprehensive parallel router setup...");
+            logger.info("🚀 Starting comprehensive parallel router setup...");
             const parallelStartTime = Date.now();
             
             const [
@@ -111,6 +113,16 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 // 3. Resolve data sources (with caching and translate hashes)
                 (async () => {
                     const dataSources = [...(params.body.dataSources || [])];
+                    
+                    // 🔍 DEBUG: Log initial dataSources from request
+                    logger.debug("🔍 ROUTER DEBUG - Initial dataSources from params.body:", {
+                        dataSources_raw: params.body.dataSources,
+                        dataSources_length: dataSources.length,
+                        body_keys: Object.keys(params.body),
+                        hasMessages: !!params.body.messages,
+                        messagesLength: params.body.messages?.length || 0
+                    });
+                    
                     if (dataSources.length === 0) return [];
                     
                     const dataSourceIds = dataSources.map(ds => ds.id || ds);
@@ -135,11 +147,11 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 
             ]);
             
-            console.log(`⚡ Parallel setup completed in ${Date.now() - parallelStartTime}ms`);
+            logger.info(`⚡ Parallel setup completed in ${Date.now() - parallelStartTime}ms`);
             
             // 🚀 ULTIMATE PYTHON OPTIMIZATION: Ensure Python process is ready (started in index.js!)
             await actualPythonProcessPromise;
-            console.log(`✅ Python LiteLLM server pre-spawned during parallel setup`);
+            logger.info(`✅ Python LiteLLM server pre-spawned during parallel setup`);
             
             // Check rate limit result first (early exit if rate limited)
             if (rateLimitResult) {
@@ -159,6 +171,17 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
             
             const user_model_data = userModelData;
             let dataSources = resolvedDataSources;
+            
+            // 🔍 DEBUG: Log final resolved dataSources
+            logger.debug("🔍 ROUTER DEBUG - Final resolved dataSources:", {
+                resolvedDataSources_length: resolvedDataSources.length,
+                dataSources_length: dataSources.length,
+                dataSources_preview: dataSources.slice(0, 2).map(ds => ({
+                    id: ds?.id || "NO_ID",
+                    type: ds?.type || "NO_TYPE",
+                    hasContent: !!ds?.content
+                }))
+            });
             
             const models = user_model_data.models;
             if (!models) {
@@ -214,13 +237,13 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
             // ⚡ Create request state 
             const requestStateResult = await createRequestState(params.user, requestId);
             
-            console.log("🎯 Router: Passing raw datasources to assistant:", {
+            logger.debug("🎯 Router: Passing raw datasources to assistant:", {
                 dataSources_length: dataSources.length,
                 dataSources_ids: dataSources.map(ds => ds.id?.substring(0, 50))
             });
             
             for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
-                console.debug("Resolved data source: ", ds.id, "\n", ds);
+                logger.debug("Resolved data source: ", ds.id, "\n", ds);
             }
 
             if (doTrace) {
@@ -306,16 +329,20 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
 
         }
     } catch (e) {
-        console.error("Error processing request: " + e);
-        console.error(e);
+        logger.error("Error processing request:", e.message);
+        logger.error("Full error:", e);
+
+        // 🚨 Record error violation for user (if we have user info)
+        if (params && params.user) {
+            const errorViolation = recordErrorViolation(params.user);
+            logger.debug(`Recorded error violation for ${params.user}: ${errorViolation.count} errors`);
+        }
 
         returnResponse(responseStream, {
             statusCode: 400,
             body: {error: e.message}
         });
-    } finally {
-        // Removed X-Ray tracing for performance
-    }
+    } 
 }
 
 // Environment variables tracking wrapper for router
