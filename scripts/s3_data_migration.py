@@ -32,6 +32,7 @@ S3_ZIP_FILE_BUCKET_NAME = CONFIG.get("S3_ZIP_FILE_BUCKET_NAME")
 # Buckets that migrate to USER_STORAGE_TABLE
 WORKFLOW_TEMPLATES_BUCKET = CONFIG.get("WORKFLOW_TEMPLATES_BUCKET")
 SCHEDULED_TASKS_LOGS_BUCKET = CONFIG.get("SCHEDULED_TASKS_LOGS_BUCKET")
+SCHEDULED_TASKS_TABLE = CONFIG.get("SCHEDULED_TASKS_TABLE")
 S3_ARTIFACTS_BUCKET = CONFIG.get("S3_ARTIFACTS_BUCKET")
 
 class DecimalEncoder(json.JSONEncoder):
@@ -308,6 +309,7 @@ def migrate_conversations_bucket_for_user(old_id: str, new_id: str, dry_run: boo
 def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False) -> bool:
     """
     Migrate share files from S3_SHARE_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME.
+    Also handles split state: updates existing files in consolidation bucket that contain old user IDs.
     
     Args:
         old_id: Old user identifier (used as S3 prefix)
@@ -343,8 +345,8 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
         log(f"Scanning for share files involving user: {old_id}")
         
         try:
-            # First check if share files already exist in consolidation bucket  
-            log(f"Checking for existing share files in consolidation bucket")
+            # STEP 1: Handle existing files in consolidation bucket with old IDs (split state cleanup)
+            log(f"Checking for existing share files in consolidation bucket with old ID: {old_id}")
             try:
                 existing_paginator = s3_client.get_paginator('list_objects_v2')
                 existing_iterator = existing_paginator.paginate(
@@ -352,24 +354,76 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
                     Prefix="shares/"
                 )
                 
+                consolidation_files_to_update = []
                 existing_shares = set()
+                
                 for page in existing_iterator:
                     if 'Contents' in page:
                         for obj in page['Contents']:
-                            # Extract original share path from consolidation bucket key
                             if obj['Key'].startswith('shares/'):
-                                original_path = obj['Key'][7:]  # Remove 'shares/' prefix
-                                existing_shares.add(original_path)
+                                # Extract the path after 'shares/' prefix
+                                share_path = obj['Key'][7:]  # Remove 'shares/' prefix
+                                key_parts = share_path.split('/')
+                                
+                                # Check if old_id appears in the path (as recipient or sharer)
+                                if len(key_parts) >= 2 and (key_parts[0] == old_id or key_parts[1] == old_id):
+                                    # This file needs to be updated in consolidation bucket
+                                    consolidation_files_to_update.append(obj)
+                                else:
+                                    # File already has correct IDs
+                                    existing_shares.add(share_path)
+                
+                if consolidation_files_to_update:
+                    log(f"Found {len(consolidation_files_to_update)} files in consolidation bucket that need ID updates")
+                    
+                    # Update files in consolidation bucket with new IDs
+                    for obj in consolidation_files_to_update:
+                        old_key = obj['Key']
+                        share_path = old_key[7:]  # Remove 'shares/' prefix
+                        
+                        # Update path to use new IDs
+                        key_parts = share_path.split('/')
+                        new_key_parts = []
+                        for part in key_parts:
+                            new_key_parts.append(new_id if part == old_id else part)
+                        new_key = f"shares/{'/'.join(new_key_parts)}"
+                        
+                        if dry_run:
+                            log(f"Would update consolidation bucket file: {old_key} -> {new_key}")
+                        else:
+                            try:
+                                # Copy to new location
+                                copy_source = {'Bucket': consolidation_bucket, 'Key': old_key}
+                                s3_client.copy_object(
+                                    CopySource=copy_source,
+                                    Bucket=consolidation_bucket,
+                                    Key=new_key,
+                                    MetadataDirective='COPY'
+                                )
+                                
+                                # Verify copy and delete old
+                                s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                                s3_client.delete_object(Bucket=consolidation_bucket, Key=old_key)
+                                log(f"Updated consolidation bucket file: {old_key} -> {new_key}")
+                                
+                                # Add to existing_shares to avoid duplicate migration from shares bucket
+                                updated_share_path = '/'.join(new_key_parts)
+                                existing_shares.add(updated_share_path)
+                                
+                            except Exception as e:
+                                log(f"Failed to update consolidation bucket file {old_key}: {str(e)}")
+                                return False
                 
                 if existing_shares:
-                    log(f"Found {len(existing_shares)} share files already migrated in consolidation bucket")
+                    log(f"Found {len(existing_shares)} share files with correct IDs in consolidation bucket")
                 
             except ClientError as e:
                 if e.response['Error']['Code'] != 'NoSuchBucket':
                     log(f"Warning: Could not check consolidation bucket for shares: {str(e)}")
                 existing_shares = set()
             
-            # Get list of objects in shares bucket - we'll filter by old_id patterns
+            # STEP 2: Migrate remaining files from shares bucket to consolidation bucket
+            log(f"Checking shares bucket for files to migrate")
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(Bucket=shares_bucket)
             
@@ -401,6 +455,25 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
             if not share_files:
                 if skipped_files:
                     log(f"All share files already migrated for user {old_id}")
+                    # Clean up original files that were skipped because they're already migrated
+                    if not dry_run:
+                        cleanup_count = 0
+                        cleanup_errors = 0
+                        for obj in skipped_files:
+                            old_key = obj['Key']
+                            try:
+                                s3_client.delete_object(Bucket=shares_bucket, Key=old_key)
+                                log(f"Cleaned up already-migrated share: {old_key}")
+                                cleanup_count += 1
+                            except ClientError as delete_e:
+                                log(f"Warning: Failed to delete already-migrated share file {old_key}: {str(delete_e)}")
+                                cleanup_errors += 1
+                        
+                        log(f"Cleanup completed: {cleanup_count} files deleted, {cleanup_errors} errors")
+                        return cleanup_errors == 0  # Return True only if no cleanup errors
+                    else:
+                        log(f"Would clean up {len(skipped_files)} already-migrated share files")
+                        return True
                 else:
                     log(f"No share files found for user {old_id}")
                 return True
@@ -519,8 +592,8 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
             log(f"No workflow template row provided for user {old_id}.")
             return (True, None)
             
-        s3_key = workflow_table_row.get("s3_key")
-        template_uuid = workflow_table_row.get("template_uuid")
+        s3_key = workflow_table_row.get("s3Key")
+        template_uuid = workflow_table_row.get("templateId")
         
         if not s3_key:
             log(f"Workflow template already migrated (no s3_key found) for user {old_id}.")
@@ -550,8 +623,8 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
                 if 'Item' in response:
                     log(f"Workflow template already migrated to USER_STORAGE_TABLE for user {old_id}, template: {template_uuid}")
                     updated_workflow_item = workflow_table_row.copy()
-                    if "s3_key" in updated_workflow_item:
-                        del updated_workflow_item["s3_key"]
+                    if "s3Key" in updated_workflow_item:
+                        del updated_workflow_item["s3Key"]
                     return (True, updated_workflow_item)
                 
                 # REPAIR LOGIC: Check for malformed entries (old user ID in app_id portion)
@@ -594,8 +667,8 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
                     
                     # Return as already migrated
                     updated_workflow_item = workflow_table_row.copy()
-                    if "s3_key" in updated_workflow_item:
-                        del updated_workflow_item["s3_key"]
+                    if "s3Key" in updated_workflow_item:
+                        del updated_workflow_item["s3Key"]
                     return (True, updated_workflow_item)
                     
             except Exception as e:
@@ -631,7 +704,7 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
         
         # Store in USER_STORAGE_TABLE using template_uuid directly
         # CONSISTENT WITH workflow_template_registry.py: use same app_id pattern  
-        app_id = f"{new_id}#amplify-workflows"
+        app_id = _create_hash_key(new_id, "amplify-workflows")
         
         storage_item = {
             "PK": f"{app_id}#workflow-templates",
@@ -640,11 +713,7 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
             "data": _float_to_decimal(workflow_content),
             "appId": app_id,
             "entityType": "workflow-templates",
-            "createdAt": int(time.time()),
-            "migrated_from_s3": True,
-            "original_bucket": WORKFLOW_TEMPLATES_BUCKET,
-            "original_path": s3_key,
-            "migration_timestamp": str(int(time.time()))
+            "createdAt": int(time.time())
         }
         
         user_storage_table.put_item(Item=storage_item)
@@ -660,10 +729,7 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
         
         # Return updated workflow item with s3_key removed
         updated_workflow_item = workflow_table_row.copy()
-        if "s3_key" in updated_workflow_item:
-            del updated_workflow_item["s3_key"]
-            
-        log(f"Removed s3_key from workflow record.")
+
         return (True, updated_workflow_item)
         
     except Exception as e:
@@ -675,13 +741,19 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
 
 def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, scheduled_tasks_table_row: dict = None, region: str = "us-east-1") -> tuple:
     """
-    Migrate scheduled task logs from S3 to USER_STORAGE_TABLE and remove detailsKey from logs array.
+    Comprehensive scheduled task logs migration with split state handling:
+    
+    1. Consolidation bucket split state: Updates existing logs with old user ID paths 
+       (scheduledTaskLogs/{old_id}/... -> scheduledTaskLogs/{new_id}/...)
+    2. S3 to USER_STORAGE_TABLE migration: Consolidates task logs bucket files to USER_STORAGE_TABLE
+    3. detailsKey cleanup: Removes detailsKey references from SCHEDULED_TASKS_TABLE logs array
     
     Args:
         old_id: Old user identifier
         new_id: New user identifier (for USER_STORAGE_TABLE)
         dry_run: If True, analyze and show what would be migrated
         scheduled_tasks_table_row: Pre-fetched scheduled task table row to avoid duplicate queries
+        region: AWS region for DynamoDB operations
         
     Returns:
         Tuple of (success: bool, updated_scheduled_task_item: dict or None)
@@ -695,6 +767,68 @@ def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_r
             print(f"[{datetime.now()}] {msg % message}")
     
     try:
+        # STEP 1: Handle existing files in consolidation bucket with old IDs (split state cleanup)
+        log(f"Checking consolidation bucket for existing scheduled task logs with old ID: {old_id}")
+        try:
+            s3_client = boto3.client('s3')
+            consolidation_bucket = S3_CONSOLIDATION_BUCKET_NAME
+            
+            # Check for existing scheduled task logs in consolidation bucket with old user ID
+            consolidation_paginator = s3_client.get_paginator('list_objects_v2')
+            consolidation_iterator = consolidation_paginator.paginate(
+                Bucket=consolidation_bucket,
+                Prefix=f"scheduledTaskLogs/{old_id}/"
+            )
+            
+            consolidation_files_to_update = []
+            for page in consolidation_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        old_key = obj['Key']
+                        # Verify this is a scheduled task log file
+                        if old_key.startswith(f"scheduledTaskLogs/{old_id}/"):
+                            consolidation_files_to_update.append(obj)
+            
+            if consolidation_files_to_update:
+                log(f"Found {len(consolidation_files_to_update)} scheduled task log files in consolidation bucket that need ID updates")
+                
+                # Update files in consolidation bucket with new user ID
+                for obj in consolidation_files_to_update:
+                    old_key = obj['Key']
+                    # Transform: scheduledTaskLogs/{old_id}/task/execution.json -> scheduledTaskLogs/{new_id}/task/execution.json
+                    new_key = old_key.replace(f"scheduledTaskLogs/{old_id}/", f"scheduledTaskLogs/{new_id}/")
+                    
+                    if dry_run:
+                        log(f"Would update consolidation bucket scheduled task log: {old_key} -> {new_key}")
+                    else:
+                        try:
+                            # Copy to new location
+                            copy_source = {'Bucket': consolidation_bucket, 'Key': old_key}
+                            s3_client.copy_object(
+                                CopySource=copy_source,
+                                Bucket=consolidation_bucket,
+                                Key=new_key,
+                                MetadataDirective='COPY'
+                            )
+                            
+                            # Verify copy and delete old
+                            s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                            s3_client.delete_object(Bucket=consolidation_bucket, Key=old_key)
+                            log(f"Updated consolidation bucket scheduled task log: {old_key} -> {new_key}")
+                            
+                        except Exception as e:
+                            log(f"Failed to update consolidation bucket scheduled task log {old_key}: {str(e)}")
+                            return (False, None)
+            else:
+                log(f"No existing scheduled task logs found in consolidation bucket for user {old_id}")
+                
+        except ClientError as e:
+            if e.response['Error']['Code'] != 'NoSuchBucket':
+                log(f"Warning: Could not check consolidation bucket for scheduled task logs: {str(e)}")
+        except Exception as e:
+            log(f"Error during consolidation bucket split state check: {str(e)}")
+        
+        # STEP 2: Continue with normal scheduled tasks table processing
         if not scheduled_tasks_table_row:
             log(f"No scheduled task row provided for user {old_id}.")
             return (True, None)
@@ -808,6 +942,145 @@ def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_r
     except Exception as e:
         log(f"Error migrating scheduled task logs for user ID from {old_id} to {new_id}: {e}")
         return (False, None)
+
+
+def cleanup_orphaned_scheduled_task_logs(old_id: str, dry_run: bool = False, region: str = "us-east-1") -> bool:
+    """
+    Clean up orphaned scheduled task logs that exist in S3 but have no corresponding SCHEDULED_TASKS_TABLE entries.
+    
+    Args:
+        old_id: User ID to clean up orphaned logs for
+        dry_run: If True, only show what would be deleted
+        region: AWS region for DynamoDB operations
+        
+    Returns:
+        bool: True if cleanup successful or no orphaned logs found, False if error
+    """
+    from datetime import datetime
+    
+    msg = f"[cleanup_orphaned_scheduled_task_logs][dry-run: {dry_run}] %s"
+    
+    def log(*messages):
+        for message in messages:
+            print(f"[{datetime.now()}] {msg % message}")
+    
+    try:
+        tasks_logs_bucket = SCHEDULED_TASKS_LOGS_BUCKET
+        if not tasks_logs_bucket:
+            log("SCHEDULED_TASKS_LOGS_BUCKET not configured, skipping orphaned cleanup")
+            return True
+            
+        s3_client = boto3.client('s3')
+        
+        # Get all scheduled task log files for the user
+        log(f"Scanning for orphaned scheduled task logs for user: {old_id}")
+        try:
+            paginator = s3_client.get_paginator('list_objects_v2')
+            iterator = paginator.paginate(
+                Bucket=tasks_logs_bucket,
+                Prefix=f"{old_id}/"
+            )
+            
+            all_log_files = []
+            for page in iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        all_log_files.append(obj['Key'])
+            
+            if not all_log_files:
+                log(f"No log files found for user {old_id} in tasks logs bucket")
+                return True
+                
+            log(f"Found {len(all_log_files)} log files for user {old_id}")
+            
+            # Get all valid detailsKey references from SCHEDULED_TASKS_TABLE
+            # This requires scanning all scheduled tasks for this user to build valid keys list
+            dynamodb = boto3.resource('dynamodb', region_name=region)
+            if not SCHEDULED_TASKS_TABLE:
+                log("SCHEDULED_TASKS_TABLE not configured, cannot determine valid log references")
+                return False
+                
+            scheduled_tasks_table = dynamodb.Table(SCHEDULED_TASKS_TABLE)
+            valid_log_keys = set()
+            
+            # Query all scheduled tasks for this user to collect valid detailsKey references
+            try:
+                response = scheduled_tasks_table.query(
+                    KeyConditionExpression=Key('user').eq(old_id)
+                )
+                
+                for task in response.get('Items', []):
+                    logs_array = task.get('logs', [])
+                    for log_entry in logs_array:
+                        details_key = log_entry.get('detailsKey')
+                        if details_key:
+                            valid_log_keys.add(details_key)
+                
+                # Handle pagination
+                while 'LastEvaluatedKey' in response:
+                    response = scheduled_tasks_table.query(
+                        KeyConditionExpression=Key('user').eq(old_id),
+                        ExclusiveStartKey=response['LastEvaluatedKey']
+                    )
+                    for task in response.get('Items', []):
+                        logs_array = task.get('logs', [])
+                        for log_entry in logs_array:
+                            details_key = log_entry.get('detailsKey')
+                            if details_key:
+                                valid_log_keys.add(details_key)
+                                
+            except Exception as e:
+                log(f"Warning: Could not query SCHEDULED_TASKS_TABLE for valid keys: {str(e)}")
+                # If we can't determine valid keys, don't delete anything to be safe
+                return True
+            
+            # Identify orphaned logs (files that exist but aren't referenced)
+            orphaned_logs = []
+            for log_file_key in all_log_files:
+                if log_file_key not in valid_log_keys:
+                    orphaned_logs.append(log_file_key)
+            
+            if not orphaned_logs:
+                log(f"No orphaned logs found for user {old_id}")
+                return True
+                
+            log(f"Found {len(orphaned_logs)} orphaned log files for user {old_id}")
+            
+            if dry_run:
+                log(f"Would delete {len(orphaned_logs)} orphaned log files:")
+                for orphaned_key in orphaned_logs[:10]:  # Show first 10 as examples
+                    log(f"  Would delete: {orphaned_key}")
+                if len(orphaned_logs) > 10:
+                    log(f"  ... and {len(orphaned_logs) - 10} more files")
+                return True
+            
+            # Delete orphaned logs
+            deleted_count = 0
+            failed_count = 0
+            
+            for orphaned_key in orphaned_logs:
+                try:
+                    s3_client.delete_object(Bucket=tasks_logs_bucket, Key=orphaned_key)
+                    deleted_count += 1
+                    log(f"Deleted orphaned log: {orphaned_key}")
+                except Exception as e:
+                    failed_count += 1
+                    log(f"Failed to delete orphaned log {orphaned_key}: {str(e)}")
+            
+            log(f"Orphaned logs cleanup completed: {deleted_count} deleted, {failed_count} failed")
+            return failed_count == 0
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchBucket':
+                log(f"Tasks logs bucket {tasks_logs_bucket} does not exist")
+                return True
+            else:
+                log(f"Error accessing tasks logs bucket: {str(e)}")
+                return False
+                
+    except Exception as e:
+        log(f"Error during orphaned logs cleanup for user {old_id}: {str(e)}")
+        return False
 
 
 def _get_artifacts_data(old_id: str, artifacts_table_row: dict = None, region: str = "us-east-1") -> tuple:
@@ -1145,11 +1418,7 @@ def migrate_single_task_logs(task_id: str, task_user: str, logs_array: list, dry
             "data": _float_to_decimal(consolidated_data),
             "appId": hash_key,
             "entityType": "scheduled-task-logs",
-            "createdAt": int(time.time()),
-            "migrated_from_s3": True,
-            "original_bucket": SCHEDULED_TASKS_LOGS_BUCKET,
-            "original_path": f"consolidated-logs-for-task-{task_id}",
-            "migration_timestamp": str(int(time.time()))
+            "createdAt": int(time.time())
         }
         
         table.put_item(Item=item)
@@ -1281,10 +1550,7 @@ def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = Fal
             "data": _float_to_decimal({"settings": settings_data}),
             "appId": app_id,
             "entityType": "user-settings",
-            "createdAt": int(time.time()),
-            "migrated_from_shares_table": True,
-            "original_user_id": old_id,
-            "migration_timestamp": str(int(time.time()))
+            "createdAt": int(time.time())
         }
         
         table.put_item(Item=item)
@@ -1331,6 +1597,7 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
         # Files are stored with format: {user_id}/{message_id}-{file_id}-FN-{filename}
         old_prefix = f"{old_id}/"
         new_prefix = f"codeInterpreter/{new_id}/"
+        old_consolidation_prefix = f"codeInterpreter/{old_id}/"  # Split state: files already in consolidation with old ID
         
         log(f"Scanning for code interpreter files with prefix: {old_prefix}")
         
@@ -1360,7 +1627,36 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
                     log(f"Warning: Could not check consolidation bucket for code interpreter files: {str(e)}")
                 existing_files = set()
             
-            # Get list of objects with old user prefix
+            # CRITICAL: Check for split state - files in consolidation bucket with OLD ID
+            split_state_files = []
+            log(f"Checking for split state: code interpreter files in consolidation bucket with old ID prefix: {old_consolidation_prefix}")
+            try:
+                split_paginator = s3_client.get_paginator('list_objects_v2')
+                split_iterator = split_paginator.paginate(
+                    Bucket=consolidation_bucket,
+                    Prefix=old_consolidation_prefix
+                )
+                
+                for page in split_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            file_path = obj['Key'][len(old_consolidation_prefix):]
+                            if file_path not in existing_files:  # Only migrate if not already at new location
+                                split_state_files.append({
+                                    'Key': obj['Key'],
+                                    'Size': obj['Size'],
+                                    'Source': 'consolidation_split'
+                                })
+                                log(f"Found split state code interpreter file to migrate: {obj['Key']} -> {new_prefix}{file_path}")
+                
+                if split_state_files:
+                    log(f"SPLIT STATE DETECTED: Found {len(split_state_files)} code interpreter files in consolidation bucket with old ID")
+                    
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'NoSuchBucket':
+                    log(f"Warning: Could not check for split state code interpreter files: {str(e)}")
+            
+            # Get list of objects with old user prefix from source bucket
             paginator = s3_client.get_paginator('list_objects_v2')
             page_iterator = paginator.paginate(
                 Bucket=code_interpreter_bucket,
@@ -1377,32 +1673,47 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
                             skipped_files.append(obj)
                             log(f"Skipping already migrated code interpreter file: {file_path}")
                         else:
+                            obj['Source'] = 'code_interpreter_bucket'
                             code_interpreter_files.append(obj)
             
             if skipped_files:
                 log(f"Skipped {len(skipped_files)} already migrated code interpreter files")
             
-            if not code_interpreter_files:
-                if skipped_files:
+            # Combine files from both sources (source bucket and split state)
+            all_files_to_migrate = code_interpreter_files + split_state_files
+            
+            if not all_files_to_migrate:
+                if skipped_files or existing_files:
                     log(f"All code interpreter files already migrated for user {old_id}")
                 else:
                     log(f"No code interpreter files found for user {old_id}")
                 return True
                 
-            log(f"Found {len(code_interpreter_files)} code interpreter files to migrate")
+            log(f"Found {len(all_files_to_migrate)} code interpreter files to migrate")
+            if split_state_files:
+                log(f"  - {len(code_interpreter_files)} from source bucket")
+                log(f"  - {len(split_state_files)} from consolidation bucket (split state)")
             
             if dry_run:
-                total_size = sum(obj['Size'] for obj in code_interpreter_files)
-                log(f"Would migrate {len(code_interpreter_files)} files ({total_size:,} bytes)")
-                log(f"Source: s3://{code_interpreter_bucket}/{old_prefix}")
+                total_size = sum(obj['Size'] for obj in all_files_to_migrate)
+                log(f"Would migrate {len(all_files_to_migrate)} files ({total_size:,} bytes)")
+                
+                if code_interpreter_files:
+                    log(f"From source: s3://{code_interpreter_bucket}/{old_prefix}")
+                if split_state_files:
+                    log(f"From split state: s3://{consolidation_bucket}/{old_consolidation_prefix}")
                 log(f"Target: s3://{consolidation_bucket}/{new_prefix}")
                 
-                for obj in code_interpreter_files[:5]:  # Show first 5 files as examples
-                    file_path = obj['Key'][len(old_prefix):]
-                    log(f"  Would migrate: {file_path} ({obj['Size']} bytes)")
+                for obj in all_files_to_migrate[:5]:  # Show first 5 files as examples
+                    if obj.get('Source') == 'consolidation_split':
+                        file_path = obj['Key'][len(old_consolidation_prefix):]
+                        log(f"  Would migrate (split state): {file_path} ({obj['Size']} bytes)")
+                    else:
+                        file_path = obj['Key'][len(old_prefix):]
+                        log(f"  Would migrate: {file_path} ({obj['Size']} bytes)")
                 
-                if len(code_interpreter_files) > 5:
-                    log(f"  ... and {len(code_interpreter_files) - 5} more files")
+                if len(all_files_to_migrate) > 5:
+                    log(f"  ... and {len(all_files_to_migrate) - 5} more files")
                 
                 return True
             
@@ -1410,15 +1721,26 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
             successful_migrations = 0
             failed_migrations = 0
             
-            for obj in code_interpreter_files:
-                old_key = obj['Key']
-                file_path = old_key[len(old_prefix):]  # Extract file path after user prefix
-                new_key = f"{new_prefix}{file_path}"
+            for obj in all_files_to_migrate:
+                if obj.get('Source') == 'consolidation_split':
+                    # Handle split state files (already in consolidation bucket with old ID)
+                    old_key = obj['Key']
+                    file_path = old_key[len(old_consolidation_prefix):]
+                    new_key = f"{new_prefix}{file_path}"
+                    source_bucket = consolidation_bucket
+                    log_prefix = "[SPLIT STATE] "
+                else:
+                    # Handle files from source bucket
+                    old_key = obj['Key']
+                    file_path = old_key[len(old_prefix):]
+                    new_key = f"{new_prefix}{file_path}"
+                    source_bucket = code_interpreter_bucket
+                    log_prefix = ""
                 
                 try:
-                    # Copy object to consolidation bucket
+                    # Copy object to new location
                     copy_source = {
-                        'Bucket': code_interpreter_bucket,
+                        'Bucket': source_bucket,
                         'Key': old_key
                     }
                     
@@ -1435,19 +1757,19 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
                         
                         # After successful copy, delete the original file to complete migration
                         try:
-                            s3_client.delete_object(Bucket=code_interpreter_bucket, Key=old_key)
-                            log(f"Successfully migrated and cleaned up code interpreter file: {file_path}")
+                            s3_client.delete_object(Bucket=source_bucket, Key=old_key)
+                            log(f"{log_prefix}Successfully migrated and cleaned up code interpreter file: {file_path}")
                         except ClientError as delete_e:
-                            log(f"Warning: Failed to delete original code interpreter file {old_key} from {code_interpreter_bucket}: {str(delete_e)}")
+                            log(f"{log_prefix}Warning: Failed to delete original file {old_key} from {source_bucket}: {str(delete_e)}")
                             # Don't fail the migration for cleanup errors, but log it
                         
                         successful_migrations += 1
                     except ClientError:
-                        log(f"Failed to verify migrated code interpreter file: {file_path}")
+                        log(f"{log_prefix}Failed to verify migrated code interpreter file: {file_path}")
                         failed_migrations += 1
                         
                 except ClientError as e:
-                    log(f"Failed to migrate code interpreter file {file_path}: {str(e)}")
+                    log(f"{log_prefix}Failed to migrate code interpreter file {file_path}: {str(e)}")
                     failed_migrations += 1
             
             log(f"Migration completed: {successful_migrations} successful, {failed_migrations} failed")

@@ -9,9 +9,12 @@ This guide outlines the migration process for eliminating the `amplify-lambda-ba
 1. **Edit `scripts/config.py`** and update the deployment variables at the top:
    ```python
    # Configuration variables - UPDATE THESE BEFORE RUNNING MIGRATION SCRIPTS
-   DEP_NAME = "v6"   # Change to your deployment name (e.g., "v6", "v7", "prod")  
-   STAGE = "dev"     # Change to your stage (e.g., "dev", "staging", "prod")
+   DEP_NAME = "v6"  # Change this to match your deployment name (e.g., "v6", "v7", etc.)
+   STAGE = "dev"    # Change this to match your deployment stage (e.g., "dev", "staging", "prod")
+   LOG_LEVEL = "INFO" # Valid Values Include: DEBUG | INFO | WARNING | ERROR | CRITICAL
    ```
+   
+   **⚠️ CRITICAL**: These values **MUST** match your actual AWS deployment. All table and bucket names are generated from these variables.
 
 2. **Example configurations**:
    - Production deployment: `DEP_NAME = "prod"`, `STAGE = "prod"`
@@ -19,6 +22,20 @@ This guide outlines the migration process for eliminating the `amplify-lambda-ba
    - Staging environment: `DEP_NAME = "v6"`, `STAGE = "staging"`
 
 These variables will be used to generate correct table and bucket names for your specific deployment during migration.
+
+3. **Validate your configuration** (recommended):
+   ```bash
+   # Verify config.py generates correct resource names for your deployment
+   python3 -c "from scripts.config import get_config; config = get_config(); print('✓ S3 Consolidation Bucket:', config['S3_CONSOLIDATION_BUCKET_NAME']); print('✓ User Data Storage Table:', config['USER_DATA_STORAGE_TABLE'])"
+   ```
+   
+   **Expected output format**:
+   ```
+   ✓ S3 Consolidation Bucket: amplify-v6-lambda-dev-consolidation
+   ✓ User Data Storage Table: amplify-v6-lambda-dev-user-data-storage
+   ```
+   
+   If the resource names don't match your actual AWS deployment, **update `DEP_NAME` and `STAGE` in config.py**.
 
 ## 🚨 **CRITICAL: Parameter Store Dependency**
 
@@ -48,10 +65,20 @@ These variables will be used to generate correct table and bucket names for your
 ### **Shared Variables in Parameter Store**
 
 The following variables are now loaded from Parameter Store instead of var files:
-- `DEP_NAME`, `CUSTOM_API_DOMAIN`, `OAUTH_AUDIENCE`, `OAUTH_ISSUER_BASE_URL` 
-- `IDP_PREFIX`, `LOG_LEVEL`, `LLM_ENDPOINTS_SECRETS_NAME_ARN`, `COGNITO_USER_POOL_ID`
-- `CHANGE_SET_BOOLEAN`, `DEP_REGION`, `PANDOC_LAMBDA_LAYER_ARN`
-- And 12 additional shared configuration variables
+
+```python
+shared_var_names = [
+    'ADMINS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
+    'LOG_LEVEL', 'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
+    'ASSISTANTS_OPENAI_PROVIDER', 'LLM_ENDPOINTS_SECRETS_NAME_ARN',
+    'AGENT_ENDPOINT', 'BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION',
+    'COGNITO_CLIENT_ID', 'COGNITO_USER_POOL_ID', 'ORGANIZATION_EMAIL_DOMAIN',
+    'API_VERSION', 'MAX_ACU', 'MIN_ACU', 'PRIVATE_SUBNET_ONE',
+    'PRIVATE_SUBNET_TWO', 'VPC_CIDR', 'VPC_ID'
+]
+```
+
+**Total**: 24 shared configuration variables loaded from Parameter Store
 
 ### **Migration Order**
 
@@ -60,6 +87,58 @@ The following variables are now loaded from Parameter Store instead of var files
 3. **AFTER**: Successful deployment, var files can eventually be deprecated
 
 **⚠️ Services WILL FAIL to deploy if Parameter Store is not populated first!**
+
+### **🔧 Environment Variable Tracking System**
+
+**NEW**: All Lambda functions now use the `@required_env_vars` decorator to specify their environment variable requirements and AWS operation usage.
+
+#### **How the @required_env_vars Decorator Works**
+
+**Purpose**: The decorator serves three critical functions:
+1. **Environment Variable Resolution**: Automatically resolves variables from Lambda environment → Parameter Store → Error
+2. **Usage Tracking**: Records which functions use which environment variables and AWS operations in DynamoDB
+3. **IAM Documentation**: Provides precise AWS operation requirements for security auditing and IAM policy creation
+
+#### **Decorator Syntax**
+
+```python
+@required_env_vars({
+    "FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "USER_TAGS_DYNAMO_TABLE": [DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.PUT_ITEM],
+    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT]
+})
+def my_lambda_function(event, context):
+    # Function implementation
+```
+
+#### **Environment Variable Population Process**
+
+**CRITICAL**: The decorator creates entries in the `ENV_VARS_TRACKING_TABLE` which:
+- **Specifies** which environment variables each Lambda function requires
+- **Documents** the specific AWS operations (DynamoDB, S3, etc.) each function performs
+- **Tracks** environment variable usage across the entire platform
+- **Provides** IAM policy requirements for security auditing
+
+#### **Lambda Execution Requirements**
+
+⚠️ **IMPORTANT**: Lambdas decorated with `@required_env_vars` will **NOT be runnable** until:
+
+1. **Parameter Store is populated** with required values:
+   ```bash
+   python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
+   ```
+
+2. **Environment variables are resolved** from Parameter Store during Lambda execution
+
+3. **Tracking entries are created** in the `ENV_VARS_TRACKING_TABLE` automatically
+
+#### **Decorator Benefits**
+
+- **Automatic Resolution**: No manual environment variable configuration needed
+- **Security Auditing**: Clear documentation of AWS operations for IAM policies
+- **Centralized Tracking**: Single source of truth for environment variable usage
+- **Error Prevention**: Early failure if required variables are missing
+- **Compliance**: Detailed logging of AWS resource access patterns
 
 ## 🚨 **CRITICAL: User ID Migration Requirements**
 
@@ -210,7 +289,10 @@ environment:
 
 **Check if you need this**:
 ```bash
-# Check if user storage table exists and has data
+# Check if user storage table exists and has data (replace with your deployment config)
+aws dynamodb scan --table-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}-user-storage --select COUNT
+
+# Example for DEP_NAME="v6", STAGE="dev":
 aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --select COUNT
 ```
 - **If table doesn't exist or COUNT = 0**: Skip user storage migration steps
@@ -221,7 +303,10 @@ aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --se
 
 **Check if you need this**:
 ```bash
-# Check if basic-ops CloudFormation stack exists
+# Check if basic-ops CloudFormation stack exists (replace with your deployment config)
+aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}
+
+# Example for DEP_NAME="v6", STAGE="dev":
 aws cloudformation describe-stacks --stack-name amplify-v6-lambda-basic-ops-dev
 ```
 - **If stack doesn't exist**: No conflict resolution needed
@@ -230,19 +315,33 @@ aws cloudformation describe-stacks --stack-name amplify-v6-lambda-basic-ops-dev
 ---
 
 #### Background (If Migration Required)
-- **Old table**: `amplify-v6-lambda-basic-ops-dev-user-storage` (in basic-ops service)
-- **New table**: `amplify-v6-lambda-dev-user-data-storage` (in amplify-lambda service) 
+- **Old table**: `amplify-{dep-name}-lambda-basic-ops-{stage}-user-storage` (in basic-ops service)
+- **New table**: `amplify-{dep-name}-lambda-{stage}-user-data-storage` (in amplify-lambda service) 
 - **API Conflict**: Both services try to use `/user-data` endpoint, causing deployment failures
 - **Error**: `CREATE_FAILED: ApiGatewayResourceUserDashdata - Another resource with the same parent already has this name: user-data`
+
+**Table Name Examples** (using DEP_NAME="v6", STAGE="dev"):
+- Old: `amplify-v6-lambda-basic-ops-dev-user-storage`
+- New: `amplify-v6-lambda-dev-user-data-storage`
 
 #### Required Deployment Sequence (If Both Prerequisites Apply)
 
 **⚠️ CRITICAL**: Follow this exact order to avoid API Gateway conflicts:
 
 ##### Step 4a: Backup User Storage Data (If Table Has Data)
+
+**IMPORTANT**: The user storage data backup is **automatically handled** by the ID migration script in Step 6. No separate backup script is needed.
+
+**What happens during ID migration**:
+- The migration script detects existing user storage data in the old table
+- Automatically migrates all data to the new `USER_DATA_STORAGE_TABLE` 
+- Preserves all user data during the transition
+- No manual backup/restore process required
+
+**Manual backup option** (if you want extra safety):
 ```bash
-# Create backup of user storage table BEFORE freeing /user-data endpoint
-python3 scripts/user_storage_backup.py
+# Optional: Create manual DynamoDB backup before migration
+python3 scripts/backup_prereq.py --backup-name "user-storage-backup-$(date +%Y%m%d-%H%M%S)"
 ```
 
 ##### Step 4b: Free the `/user-data` API Gateway Endpoint
@@ -262,10 +361,36 @@ python3 scripts/user_storage_backup.py
 serverless amplify-lambda:deploy --stage dev
 ```
 
-##### Step 4d: Import User Storage Data (If You Backed Up Data)
-The user storage data will be automatically imported during the ID migration script (Step 6). No manual import is needed - the migration script handles this automatically during Step 2 of the migration process.
+##### Step 4d: User Storage Data Migration
+The user storage data migration is **fully automated** during the ID migration script (Step 6):
+
+**What the migration script does**:
+1. **Detects** existing data in old basic-ops user storage table
+2. **Migrates** all user data to new amplify-lambda user-data-storage table
+3. **Translates** user IDs during the migration process
+4. **Preserves** all existing user data and structure
+
+**No manual intervention required** - the migration handles the entire user storage transition seamlessly.
 
 **✅ This sequence resolves the API Gateway `/user-data` endpoint conflict by ensuring only one service owns the endpoint at any time.**
+
+#### **🔄 Complete Migration Flow Summary**
+
+**The complete migration process integrates several components**:
+
+1. **Parameter Store Setup** (Steps 1-3): Establishes shared configuration infrastructure
+2. **Service Deployment** (Steps 4-5): Deploys amplify-lambda and other services with new configuration
+3. **User Data Migration** (Step 6): Comprehensive data migration including:
+   - User ID translation across 40+ DynamoDB tables
+   - User storage table migration: old basic-ops table → new amplify-lambda table
+   - S3 consolidation: scattered buckets → centralized consolidation bucket
+   - Data format migration: S3 files → DynamoDB entries where appropriate
+
+**Key Integration Points**:
+- User storage data is **automatically migrated** during Step 6 (no separate backup/restore needed)
+- S3 consolidation happens **as part of** user ID migration
+- All migration is **coordinated** through the id_migration.py script
+- **No manual data movement** required between services
 
 ---
 
@@ -438,7 +563,8 @@ This is useful when:
 **✅ NEW: No manual environment variables needed!**
 
 The migration scripts now automatically load all bucket and table names from `config.py`. 
-Make sure you've configured your `DEP_NAME` and `STAGE` in Step 0.
+
+**🚨 PREREQUISITE**: You **MUST** have updated `DEP_NAME` and `STAGE` in `scripts/config.py` (Step 0) before running any migration scripts. The migration will **fail** if these don't match your actual AWS deployment.
 
 ```bash
 # All bucket names are loaded from config.py automatically
@@ -484,10 +610,12 @@ python3 scripts/s3_data_migration.py --bucket all --log s3_migration.log
 tail -f migration_full.log
 ```
 
-**⚡ New Feature**: The ID migration script now automatically:
-- **Migrates user storage table** from basic-ops to amplify-lambda
-- **Offers S3 bucket migration** after completing user ID migration
-- **Integrates both processes** for a streamlined migration experience
+**⚡ Comprehensive Migration Features**: The ID migration script provides:
+- **User Storage Migration**: Automatically migrates data from old basic-ops user storage → new amplify-lambda user-data-storage
+- **S3 Consolidation**: Migrates scattered S3 data → centralized consolidation bucket
+- **Integrated Workflow**: Combines user ID updates, table migration, and S3 consolidation in one process
+- **Smart Detection**: Automatically detects what needs migration and skips what's already done
+- **Safety First**: Built-in backup verification and rollback capabilities
 
 ### Migration Scope and Impact
 
@@ -508,9 +636,10 @@ The ID migration script processes **40+ tables** including:
 **Administrative**: Admin configs, object access, OAuth integrations, cost tracking
 
 **Special Handling**:
-- `USER_DATA_STORAGE_TABLE`: Migrated from basic-ops to amplify-lambda with ID translation
-- Tables with existence checking: Script validates table exists before processing
-- Missing table handling: Graceful skipping with informational logging
+- **User Storage Migration**: Data from old `amplify-{dep-name}-lambda-basic-ops-{stage}-user-storage` → new `amplify-{dep-name}-lambda-{stage}-user-data-storage` with ID translation
+- **Table Validation**: Script validates each table exists before processing
+- **Missing Resources**: Graceful skipping with informational logging
+- **Cross-Service Migration**: Handles data movement between different Lambda services
 
 #### S3 Data Migrations
 
@@ -537,15 +666,24 @@ apiDocumentation/                    ← S3_API_DOCUMENTATION_BUCKET/
 
 #### Verify Migration Success
 ```bash
-# Check DynamoDB records updated
-aws dynamodb query --table-name amplify-v6-object-access-dev-cognito-users --key-condition-expression "user_id = :uid" --expression-attribute-values '{":uid":{"S":"haysgs"}}'
+# Check DynamoDB records updated (using your deployment config)
+aws dynamodb query --table-name amplify-v6-object-access-dev-cognito-users \
+  --key-condition-expression "user_id = :uid" \
+  --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
 
-# Check S3 consolidation bucket contents
-aws s3 ls s3://amplify-v6-lambda-dev-consolidation/conversations/haysgs/ --recursive
+# Check S3 consolidation bucket contents (replace bucket name with your deployment)
+aws s3 ls s3://amplify-v6-lambda-dev-consolidation/conversations/NEW_USER_ID/ --recursive
 
-# Check USER_DATA_STORAGE_TABLE entries  
-aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --filter-expression "contains(PK, :uid)" --expression-attribute-values '{":uid":{"S":"haysgs"}}'
+# Check NEW user data storage table entries (replace table name with your deployment)
+aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage \
+  --filter-expression "contains(PK, :uid)" \
+  --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
 ```
+
+**Replace in commands above**:
+- `v6` with your `DEP_NAME` from config.py
+- `dev` with your `STAGE` from config.py  
+- `NEW_USER_ID` with actual user ID from your migration CSV
 
 #### Migration Rollback
 If issues occur during migration:
@@ -556,21 +694,32 @@ If issues occur during migration:
 
 ### Post-Migration Verification
 
-#### Verify Migration Success
+#### Final Migration Verification
 ```bash
-# Check updated DynamoDB records
+# 1. Check user ID updates in DynamoDB tables
 aws dynamodb query --table-name amplify-v6-object-access-dev-cognito-users \
   --key-condition-expression "user_id = :uid" \
   --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
 
-# Check S3 consolidation bucket contents
-aws s3 ls s3://amplify-v6-lambda-dev-user-data-storage/conversations/NEW_USER_ID/ --recursive
+# 2. Check S3 consolidation bucket (conversations migrated here)
+aws s3 ls s3://amplify-v6-lambda-dev-consolidation/conversations/NEW_USER_ID/ --recursive
 
-# Check USER_DATA_STORAGE_TABLE entries  
+# 3. Check USER_DATA_STORAGE_TABLE (artifacts, workflows, etc. migrated here)
 aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage \
   --filter-expression "contains(PK, :uid)" \
   --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
+
+# 4. Verify old basic-ops user storage data was migrated (should show migrated entries)
+aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage \
+  --filter-expression "contains(PK, :uid)" \
+  --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}' \
+  --projection-expression "PK,SK,entityType"
 ```
+
+**Command Customization**:
+- Replace `v6` → your `DEP_NAME`
+- Replace `dev` → your `STAGE` 
+- Replace `NEW_USER_ID` → actual migrated user ID
 
 #### Migration Rollback
 If issues occur:

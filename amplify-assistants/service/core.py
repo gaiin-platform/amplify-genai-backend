@@ -1070,7 +1070,7 @@ def assistant_share_save(access_token, current_user, shared_with, note, assistan
             "sharedBy": current_user,
             "note": note,
             "sharedAt": timestamp,
-            "key": s3_key,  # Clean key without shares/ prefix
+            "key": consolidation_key,  # Full S3 key WITH shares/ prefix for consistency
         }
 
         # Make HTTP request to user-data API (cross-service call)

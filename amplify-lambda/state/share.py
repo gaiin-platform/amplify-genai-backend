@@ -40,8 +40,17 @@ def get_s3_data(s3_key):
     consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
     shares_bucket = os.environ.get("S3_SHARE_BUCKET_NAME")  # Legacy bucket
     
+    # Handle new format (key already includes shares/ prefix) and old format (key without prefix)
+    if s3_key.startswith("shares/"):
+        # New format: key already includes shares/ prefix
+        consolidation_key = s3_key
+        legacy_key = s3_key[7:]  # Remove shares/ prefix for legacy bucket
+    else:
+        # Old format: key without shares/ prefix (backward compatibility)
+        consolidation_key = f"shares/{s3_key}"
+        legacy_key = s3_key
+    
     # Try consolidation bucket first (new format)  
-    consolidation_key = f"shares/{s3_key}"
     try:
         logger.debug("Fetching data from consolidation bucket: %s/%s", consolidation_bucket, consolidation_key)
         obj = s3.Object(consolidation_bucket, consolidation_key)
@@ -53,8 +62,8 @@ def get_s3_data(s3_key):
     # Fallback to legacy bucket if available
     if shares_bucket:
         try:
-            logger.debug("Fetching data from legacy bucket: %s/%s", shares_bucket, s3_key)
-            obj = s3.Object(shares_bucket, s3_key) 
+            logger.debug("Fetching data from legacy bucket: %s/%s", shares_bucket, legacy_key)
+            obj = s3.Object(shares_bucket, legacy_key) 
             data = obj.get()["Body"].read().decode("utf-8")
             return data
         except Exception as e:
@@ -217,7 +226,7 @@ def put_s3_data(filename, data):
     )
     
     logger.info("Successfully uploaded share to consolidation bucket: %s", consolidation_key)
-    return filename  # Return original filename without shares/ prefix for DynamoDB storage
+    return consolidation_key  # Return full S3 key WITH shares/ prefix for DynamoDB storage
 
 
 def handle_conversation_datasource_permissions(
