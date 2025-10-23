@@ -17,6 +17,9 @@ from pycommon.dal.providers.aws.resource_perms import (
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value])
 
+from pycommon.logger import getLogger
+logger = getLogger("code_interpreter")
+
 @api_tool(
     path="/assistant/chat/codeinterpreter",
     name="chatWithCodeInterpreter",
@@ -173,7 +176,7 @@ def chat_with_code_interpreter(event, context, current_user, name, data):
             "message": "API key does not have access to assistant functionality",
         }
 
-    print("Chat_with_code_interpreter validated")
+    logger.debug("Chat_with_code_interpreter validated")
     assistant_id = data["data"]["assistantId"]
     messages = data["data"]["messages"]
 
@@ -347,7 +350,7 @@ def create_code_interpreter_assistant(event, context, current_user, name, data):
 @validated(op="delete")
 def delete_assistant(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     assistant_id = query_params.get("assistantId", "")
     if not assistant_id or not is_valid_query_param_id(
         assistant_id, current_user, "ast"
@@ -356,7 +359,7 @@ def delete_assistant(event, context, current_user, name, data):
             "success": False,
             "message": "Invalid or missing assistant id parameter",
         }
-    print(f"Deleting assistant: {assistant_id}")
+    logger.info("Deleting assistant: %s", assistant_id)
     return assistants.delete_assistant_by_id(assistant_id, current_user)
 
 
@@ -404,7 +407,7 @@ def delete_assistant(event, context, current_user, name, data):
 @validated(op="delete")
 def delete_assistant_thread(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     thread_id = query_params.get("threadId", "")
     if not thread_id or not is_valid_query_param_id(thread_id, current_user, "thr"):
         return {"success": False, "message": "Invalid or missing thread id parameter"}

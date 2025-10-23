@@ -17,7 +17,8 @@ from pycommon.api.user_data import load_user_data, save_user_data
 from pycommon.api.ses_email import send_email
 from pycommon.lzw import safe_compress
 from croniter import croniter
-
+from pycommon.logger import getLogger
+logger = getLogger("agent_scheduled_tasks")
 
 class DecimalEncoder(json.JSONEncoder):
     """
@@ -49,11 +50,11 @@ class TasksMessageHandler(MessageHandler):
         try:
             # Check if this is a scheduled task message
             if message.get("source") == "scheduled-task":
-                print(f"TasksMessageHandler can handle this scheduled task message")
+                logger.debug("TasksMessageHandler can handle this scheduled task message")
                 return True
             return False
         except Exception as e:
-            print(f"Error in TasksMessageHandler.can_handle: {e}")
+            logger.error("Error in TasksMessageHandler.can_handle: %s", e)
             return False
 
     def process(self, message: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -76,8 +77,8 @@ class TasksMessageHandler(MessageHandler):
             runtime = get_timestamp(False)
             last_run_at_utc = datetime.now(pytz.utc).isoformat()
 
-            print(
-                f"Processing scheduled task: { task_data.get('taskName')} ({task_id}) for user {user_id}"
+            logger.info(
+                "Processing scheduled task: %s (%s) for user %s", task_data.get('taskName'), task_id, user_id
             )
             # Clear the lastCheckedAt field so the task can be retried
             if source == "scheduled-task":
@@ -123,7 +124,7 @@ class TasksMessageHandler(MessageHandler):
             return event_payload
 
         except Exception as e:
-            print(f"Error processing scheduled task: {e}")
+            logger.error("Error processing scheduled task: %s", e)
             return None
 
     def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
@@ -134,10 +135,10 @@ class TasksMessageHandler(MessageHandler):
             event: The input event that failed processing
             error: The exception that caused the failure
         """
-        print(f"Task failure handler for event {event}")
+        logger.debug("Task failure handler for event %s", event)
         # Extract task info from event metadata
         task_data = event.get("taskData", {})
-        print(f"Task data: {task_data}")
+        logger.debug("Task data: %s", task_data)
         user_id = task_data.get("user")
         task_id = task_data.get("taskId")
 
@@ -153,7 +154,7 @@ class TasksMessageHandler(MessageHandler):
             task_data["sessionId"] = session_id
 
         if not user_id or not task_id:
-            print(f"Error in onFailure: Missing task data in event")
+            logger.error("Error in onFailure: Missing task data in event")
             add_task_execution_record(
                 user_id,
                 task_id,
@@ -169,7 +170,7 @@ class TasksMessageHandler(MessageHandler):
             )
             return
 
-        print(f"Task failure handler called for task {task_id}: {str(error)}")
+        logger.warning("Task failure handler called for task %s: %s", task_id, str(error))
         task_failed(user_id, task_id, str(error), task_data)
 
     def onSuccess(
@@ -182,7 +183,7 @@ class TasksMessageHandler(MessageHandler):
             agent_input_event: The input event that was processed
             agent_result: The result of processing
         """
-        print(f"Task success handler called for agent input {agent_input_event}")
+        logger.debug("Task success handler called for agent input %s", agent_input_event)
         # Extract task info from event metadata
         task_data = agent_input_event.get("metadata", {}).get("requestContent", {})
         user_id = agent_input_event.get("currentUser")
@@ -196,12 +197,12 @@ class TasksMessageHandler(MessageHandler):
             task_data["sessionId"] = session_id
 
         if not user_id or not task_id:
-            print(
-                f"Error in onSuccess: Missing task data in event: {agent_input_event}"
+            logger.error(
+                "Error in onSuccess: Missing task data in event: %s", agent_input_event
             )
             return
 
-        print(f"Task success handler called for task {task_id}")
+        logger.info("Task success handler called for task %s", task_id)
         task_completed(user_id, task_id, task_data, agent_result) 
 
     def _reset_task_check_status(self, user_id, task_id, last_run_at):
@@ -224,9 +225,9 @@ class TasksMessageHandler(MessageHandler):
                 ReturnValues="NONE",
             )
 
-            print(f"Reset check status and updated lastRunAt for task {task_id}")
+            logger.debug("Reset check status and updated lastRunAt for task %s", task_id)
         except Exception as e:
-            print(f"Error resetting task check status: {e}")
+            logger.error("Error resetting task check status: %s", e)
 
     def _resolved_object_info(self, user, object_info, object_type, access_token):
         object_id = object_info.get("objectId")
@@ -242,12 +243,12 @@ class TasksMessageHandler(MessageHandler):
             return {"assistant": assistant_response["data"]}
 
         elif object_type == "actionSet":
-            print(f"Processing actionSet with object_id: {object_id}")
+            logger.debug("Processing actionSet with object_id: %s", object_id)
             APP_ID = "amplify-action-sets"
             ENTITY_TYPE = "action-sets"
             action_set = load_user_data(access_token, APP_ID, ENTITY_TYPE, object_id)
             actions = action_set.get("data", {}).get("actions", [])
-            print(f"Found {len(actions)} actions in the action set")
+            logger.debug("Found %s actions in the action set", len(actions))
             operations = []
 
             for action in actions:
@@ -255,20 +256,20 @@ class TasksMessageHandler(MessageHandler):
                 operation = action.get("operation", {})
                 defined_tool_parameters = action.get("parameters", {})
 
-                print(f"Defined tool parameters: {defined_tool_parameters}")
+                logger.debug("Defined tool parameters: %s", defined_tool_parameters)
 
                 bindings = {
                     k: v for k, v in defined_tool_parameters.items() if v["value"] != ""
                 }
 
                 operation["bindings"] = bindings
-                print("Operation: ", operation)
+                logger.debug("Operation: %s", operation)
                 operations.append(operation)
 
             return {"operations": operations}
         elif object_type == "apiTool":
             # object_info.data.op should be in the expected operation format
-            print(f"Processing apiTool with object_info: {object_info}")
+            logger.debug("Processing apiTool with object_info: %s", object_info)
             return {"operations": [object_info.get("data", {}).get("op", {})]}
 
 
@@ -316,12 +317,12 @@ def task_completed(user_id, task_id, task_data, result):
                 ReturnValues="NONE",
             )
 
-            print(f"Task {task_id} completed successfully and reset for next run")
+            logger.info("Task %s completed successfully and reset for next run", task_id)
 
         if task_data.get("notifyOnCompletion", False) and task_data.get(
             "notifyEmailAddresses", []
         ):
-            print(f"Sending task completion notification for task {task_id}")
+            logger.info("Sending task completion notification for task %s", task_id)
             # Prepare rich notification content
             task_name = task_data.get("taskName", "Unknown Task")
             # Create a detailed failure message
@@ -346,7 +347,7 @@ def task_completed(user_id, task_id, task_data, result):
             )
 
     except Exception as e:
-        print(f"Error handling task completion: {e}")
+        logger.error("Error handling task completion: %s", e)
 
 
 def task_failed(user_id, task_id, error, task_data):
@@ -426,7 +427,7 @@ def task_failed(user_id, task_id, error, task_data):
             )
 
     except Exception as e:
-        print(f"Error handling task failure: {e}")
+        logger.error("Error handling task failure: %s", e)
         return None
 
 
@@ -465,13 +466,13 @@ def extract_task_detail_message(task_data):
 
 
 def email_task_details(api_key, email_subject, email_body, email_addresses):
-    print(f"Sending task notification to configured addresses: {email_addresses}")
+    logger.info("Sending task notification to configured addresses: %s", email_addresses)
 
     for email_address in email_addresses:
         address = email_address.strip()
         result = send_email(api_key, address, email_subject, email_body)
         if not result:
-            print(f"Failed to send task notification to {address}")
+            logger.warning("Failed to send task notification to %s", address)
 
 
 def add_task_execution_record(current_user, task_id, status, details=None, execution_id=None, access_token=None):
@@ -580,9 +581,9 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
                         }
                         
                         save_user_data(access_token, app_id, "scheduled-task-logs", task_id, consolidated_data)
-                        print(f"Stored execution {execution_id} in logs dictionary for task {task_id}")
+                        logger.debug("Stored execution %s in logs dictionary for task %s", execution_id, task_id)
                     except Exception as e:
-                        print(f"Failed to store in USER_STORAGE_TABLE, falling back to S3: {e}")
+                        logger.warning("Failed to store in USER_STORAGE_TABLE, falling back to S3: %s", e)
                         # Fallback to S3 if USER_STORAGE_TABLE fails
                         s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
                         s3.put_object(
@@ -612,11 +613,11 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
             if "startTime" in existing_record and status != "running":
                 execution_record["startTime"] = existing_record["startTime"]
             logs[existing_record_index] = execution_record
-            print(f"Updated existing execution record {execution_id} with status {status}")
+            logger.debug("Updated existing execution record %s with status %s", execution_id, status)
         else:
             # Insert new record at the beginning
             logs.insert(0, execution_record)
-            print(f"Created new execution record {execution_id} with status {status}")
+            logger.debug("Created new execution record %s with status %s", execution_id, status)
 
         # Update the task
         update_expression = "SET logs = :logs, lastRunAt = :executedAt"
@@ -639,7 +640,7 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
         }
 
     except Exception as e:
-        print(f"Error adding execution record: {e}")
+        logger.error("Error adding execution record: %s", e)
         raise RuntimeError(f"Failed to add execution record: {e}")
 
 
@@ -664,7 +665,7 @@ def find_tasks_to_execute():
     run_id = str(uuid.uuid4())  # Unique ID for this scheduler run
     deserializer = TypeDeserializer()
 
-    print(f"Scanning for active tasks. Current time (UTC): {now_iso}, Run ID: {run_id}")
+    logger.info("Scanning for active tasks. Current time (UTC): %s, Run ID: %s", now_iso, run_id)
 
     try:
         # Scan for all active tasks. Filtering for "due" tasks will happen in Lambda.
@@ -689,28 +690,28 @@ def find_tasks_to_execute():
                 try:
                     user_tz = ZoneInfo(user_timezone_str)
                 except:
-                    print(
-                        f"Invalid timezone '{user_timezone_str}' for task {task_id}. Using America/Chicago."
+                    logger.warning(
+                        "Invalid timezone '%s' for task %s. Using America/Chicago.", user_timezone_str, task_id
                     )
                     user_tz = ZoneInfo("America/Chicago")
 
                 if not user or not task_id:
-                    print(f"Skipping item due to missing user or taskId: {item}")
+                    logger.warning("Skipping item due to missing user or taskId: %s", item)
                     continue
 
                 if not cron_expression:
-                    print(
-                        f"Task {task_id} for user {user} is active but has no cronExpression. Skipping."
+                    logger.warning(
+                        "Task %s for user %s is active but has no cronExpression. Skipping.", task_id, user
                     )
                     continue
 
                 # Convert current time to user's timezone for display
                 now_user_tz = now_utc.astimezone(user_tz)
-                print(
-                    f"\n--- Processing task {task_id} (user: {user}, cron: {cron_expression}, timezone: {user_timezone_str}) ---"
+                logger.debug(
+                    "Processing task %s (user: %s, cron: %s, timezone: %s)", task_id, user, cron_expression, user_timezone_str
                 )
-                print(
-                    f"Current time in user's timezone: {now_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+                logger.debug(
+                    "Current time in user's timezone: %s", now_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')
                 )
 
                 # 1. Date Range Check (these remain in UTC as they're already stored that way)
@@ -733,12 +734,12 @@ def find_tasks_to_execute():
                                 ).astimezone(pytz.utc)
                             if now_utc < start_date:
                                 skip_task_due_to_date_range = True
-                                print(
-                                    f"Task not started yet. Start date: {start_date.isoformat()}"
+                                logger.debug(
+                                    "Task not started yet. Start date: %s", start_date.isoformat()
                                 )
                     except (ValueError, TypeError) as e:
-                        print(
-                            f"Error parsing start date for task {task_id} (user {user}): {e}. Skipping."
+                        logger.error(
+                            "Error parsing start date for task %s (user %s): %s. Skipping.", task_id, user, e
                         )
                         skip_task_due_to_date_range = True
 
@@ -763,17 +764,17 @@ def find_tasks_to_execute():
                                 ).astimezone(pytz.utc)
                             if now_utc > end_date:
                                 skip_task_due_to_date_range = True
-                                print(
-                                    f"Task has ended. End date: {end_date.isoformat()}"
+                                logger.debug(
+                                    "Task has ended. End date: %s", end_date.isoformat()
                                 )
                     except (ValueError, TypeError) as e:
-                        print(
-                            f"Error parsing end date for task {task_id} (user {user}): {e}. Skipping."
+                        logger.error(
+                            "Error parsing end date for task %s (user %s): %s. Skipping.", task_id, user, e
                         )
                         skip_task_due_to_date_range = True
 
                 if skip_task_due_to_date_range:
-                    print(f"Skipping task {task_id} for user {user} due to date range.")
+                    logger.debug("Skipping task %s for user %s due to date range.", task_id, user)
                     continue
 
                 # 2. Get last checked time to avoid re-processing instances
@@ -786,10 +787,10 @@ def find_tasks_to_execute():
                             last_checked_at = pytz.utc.localize(last_checked_at)
                         else:
                             last_checked_at = last_checked_at.astimezone(pytz.utc)
-                        print(f"Last checked at (UTC): {last_checked_at.isoformat()}")
+                        logger.debug("Last checked at (UTC): %s", last_checked_at.isoformat())
                     except ValueError:
-                        print(
-                            f"Error parsing lastCheckedAt '{last_checked_at_str}'. Treating as None."
+                        logger.error(
+                            "Error parsing lastCheckedAt '%s'. Treating as None.", last_checked_at_str
                         )
                         last_checked_at = None
 
@@ -804,24 +805,24 @@ def find_tasks_to_execute():
                         try:
                             # Since these are already UTC with timezone info, just parse directly
                             base_dt_utc = datetime.fromisoformat(date_str)
-                            print(
-                                f"Using {date_type} as base (UTC): {base_dt_utc.isoformat()}"
+                            logger.debug(
+                                "Using %s as base (UTC): %s", date_type, base_dt_utc.isoformat()
                             )
                             break
                         except ValueError:
-                            print(f"Error parsing {date_type} '{date_str}'.")
+                            logger.error("Error parsing %s '%s'.", date_type, date_str)
                             continue
 
                 if not base_dt_utc:
-                    print(
-                        f"Task {task_id} has no valid lastRunAt or createdAt. Skipping."
+                    logger.error(
+                        "Task %s has no valid lastRunAt or createdAt. Skipping.", task_id
                     )
                     continue
 
                 # Convert base time to user's timezone for cron calculation
                 base_dt_user_tz = base_dt_utc.astimezone(user_tz)
-                print(
-                    f"Base time in user timezone: {base_dt_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+                logger.debug(
+                    "Base time in user timezone: %s", base_dt_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')
                 )
 
                 # 4. Find ALL instances that are due (between base time and now)
@@ -840,8 +841,8 @@ def find_tasks_to_execute():
 
                         if next_instance_utc > now_utc:
                             # Log the next scheduled run for clarity
-                            print(
-                                f"Next scheduled run: {next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')})"
+                            logger.debug(
+                                "Next scheduled run: %s (%s)", next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z'), next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')
                             )
                             break
 
@@ -851,20 +852,20 @@ def find_tasks_to_execute():
                             or next_instance_utc > last_checked_at
                         ):
                             due_instances_utc.append(next_instance_utc)
-                            print(
-                                f"  Found due instance: {next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')})"
+                            logger.debug(
+                                "Found due instance: %s (%s)", next_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z'), next_instance_utc.strftime('%Y-%m-%d %H:%M:%S %Z')
                             )
 
                         # Safety limit to prevent infinite loops
                         if len(due_instances_utc) > 1000:
-                            print(
-                                f"WARNING: Task {task_id} has over 1000 due instances. Limiting to most recent 100."
+                            logger.warning(
+                                "Task %s has over 1000 due instances. Limiting to most recent 100.", task_id
                             )
                             due_instances_utc = due_instances_utc[-100:]
                             break
 
                     if not due_instances_utc:
-                        print(f"No due instances found for task {task_id}")
+                        logger.debug("No due instances found for task %s", task_id)
                         continue
 
                     # Get the earliest due instance that hasn't been processed
@@ -872,24 +873,21 @@ def find_tasks_to_execute():
                     earliest_due_instance_user_tz = (
                         earliest_due_instance_utc.astimezone(user_tz)
                     )
-                    print(
-                        f"Will process earliest due instance: {earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')} ({earliest_due_instance_utc.isoformat()})"
+                    logger.debug(
+                        "Will process earliest due instance: %s (%s)", earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z'), earliest_due_instance_utc.isoformat()
                     )
                     if len(due_instances_utc) > 1:
-                        print(
-                            f"  Note: {len(due_instances_utc) - 1} additional instance(s) pending"
+                        logger.debug(
+                            "Note: %s additional instance(s) pending", len(due_instances_utc) - 1
                         )
 
                 except Exception as e:
-                    print(f"Error with croniter for task {task_id}: {e}. Skipping.")
-                    import traceback
-
-                    traceback.print_exc()
+                    logger.error("Error with croniter for task %s: %s. Skipping.", task_id, e, exc_info=True)
                     continue
 
                 # 5. Attempt to claim the earliest due instance atomically
-                print(
-                    f"Attempting to claim task {task_id} for instance {earliest_due_instance_utc.isoformat()}"
+                logger.debug(
+                    "Attempting to claim task %s for instance %s", task_id, earliest_due_instance_utc.isoformat()
                 )
                 try:
                     # Use conditional update to prevent race conditions
@@ -909,30 +907,30 @@ def find_tasks_to_execute():
                         ReturnValues="NONE",
                     )
 
-                    print(
-                        f"✓ Successfully claimed task {task_id} (user {user}) for instance {earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+                    logger.info(
+                        "Successfully claimed task %s (user %s) for instance %s", task_id, user, earliest_due_instance_user_tz.strftime('%Y-%m-%d %H:%M:%S %Z')
                     )
                     tasks.append(task)
 
                 except dynamodb.exceptions.ConditionalCheckFailedException:
-                    print(
-                        f"✗ Task {task_id} (user {user}) already claimed by another process"
+                    logger.debug(
+                        "Task %s (user %s) already claimed by another process", task_id, user
                     )
                     continue
                 except Exception as e:
-                    print(
-                        f"✗ Error updating lastCheckedAt for task {task_id} (user {user}): {e}"
+                    logger.error(
+                        "Error updating lastCheckedAt for task %s (user %s): %s", task_id, user, e
                     )
                     continue
 
-        print(f"\n=== Summary: Found {len(tasks)} tasks to execute in run {run_id} ===")
+        logger.info("Summary: Found %s tasks to execute in run %s", len(tasks), run_id)
         return tasks
 
     except Exception as e:
         import traceback
 
-        print(
-            f"General error in find_tasks_to_execute (run {run_id}): {e}\n{traceback.format_exc()}"
+        logger.error(
+            "General error in find_tasks_to_execute (run %s): %s\n%s", run_id, e, traceback.format_exc()
         )
         raise RuntimeError(f"Failed to find tasks to execute (run {run_id}): {str(e)}")
 
@@ -961,10 +959,10 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
 
     for task in tasks:
         current_user = task["user"]
-        print(f"Current user: {current_user}")
+        logger.debug("Current user: %s", current_user)
         task_id = task["taskId"]
 
-        print("Retrieving api key for task")
+        logger.debug("Retrieving api key for task")
         api_key_id = task.get("apiKeyId")
         # Retrieve API key
         api_result = get_api_key_directly_by_id(api_key_id)
@@ -984,7 +982,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
         try:
             # Create message payload
             message = {"source": "scheduled-task", "taskData": task}
-            print(f"Sending task {task_id} to queue")
+            logger.debug("Sending task %s to queue", task_id)
             # Send message to queue with our safe JSON serialization helper
             response = sqs.send_message(
                 QueueUrl=queue_url, MessageBody=safe_json_dumps(message)
@@ -995,7 +993,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
             )
 
         except Exception as e:
-            print(f"Error sending task {task['taskId']} to queue: {e}")
+            logger.error("Error sending task %s to queue: %s", task['taskId'], e)
             failed.append(
                 {
                     "taskId": task["taskId"],
@@ -1006,7 +1004,7 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
             )
     for failedTask in failed:
         id = failedTask["taskId"]
-        print(f"Failed to send task {id} to queue: {failedTask['error']}")
+        logger.error("Failed to send task %s to queue: %s", id, failedTask['error'])
         
         # Create a sessionId for this failed queue operation
         runtime = get_timestamp(False)
@@ -1068,7 +1066,7 @@ def execute_scheduled_tasks(event, context):
         }
 
     except Exception as e:
-        print(f"Error executing scheduled tasks: {e}")
+        logger.error("Error executing scheduled tasks: %s", e)
         return {
             "statusCode": 500,
             "body": safe_json_dumps(

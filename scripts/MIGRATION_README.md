@@ -27,17 +27,29 @@ These variables will be used to generate correct table and bucket names for your
 ### **Before Any Deployments**
 
 1. **Var files still required during migration**: Keep your `/var/{stage}-var.yml` files during the migration period
-2. **MANDATORY: Run populate script FIRST**:
+2. **NEW REQUIREMENT: Add LOG_LEVEL to var files**: Add the `LOG_LEVEL` variable to your `/var/{stage}-var.yml` files:
+   ```yaml
+   # Example for dev-var.yml
+   LOG_LEVEL: DEBUG
+   
+   # Example for staging-var.yml  
+   LOG_LEVEL: INFO
+   
+   # Example for prod-var.yml
+   LOG_LEVEL: WARNING
+   ```
+   Valid values: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+3. **MANDATORY: Run populate script FIRST**:
    ```bash
    python3 scripts/populate_parameter_store.py --stage dev --dep-name your-dep-name
    ```
-3. **Verify parameters**: Ensure all shared parameters are populated before deploying any service
+4. **Verify parameters**: Ensure all shared parameters are populated before deploying any service
 
 ### **Shared Variables in Parameter Store**
 
 The following variables are now loaded from Parameter Store instead of var files:
 - `DEP_NAME`, `CUSTOM_API_DOMAIN`, `OAUTH_AUDIENCE`, `OAUTH_ISSUER_BASE_URL` 
-- `IDP_PREFIX`, `LLM_ENDPOINTS_SECRETS_NAME_ARN`, `COGNITO_USER_POOL_ID`
+- `IDP_PREFIX`, `LOG_LEVEL`, `LLM_ENDPOINTS_SECRETS_NAME_ARN`, `COGNITO_USER_POOL_ID`
 - `CHANGE_SET_BOOLEAN`, `DEP_REGION`, `PANDOC_LAMBDA_LAYER_ARN`
 - And 12 additional shared configuration variables
 
@@ -251,12 +263,7 @@ serverless amplify-lambda:deploy --stage dev
 ```
 
 ##### Step 4d: Import User Storage Data (If You Backed Up Data)
-The user storage data will be automatically imported during the ID migration script (Step 6), or you can run it manually:
-
-```bash
-# Manual import if needed (ID migration script handles this automatically)
-python3 scripts/id_migration.py --user-storage-only --csv-file user_storage_backup_TIMESTAMP.csv
-```
+The user storage data will be automatically imported during the ID migration script (Step 6). No manual import is needed - the migration script handles this automatically during Step 2 of the migration process.
 
 **✅ This sequence resolves the API Gateway `/user-data` endpoint conflict by ensuring only one service owns the endpoint at any time.**
 
@@ -329,15 +336,75 @@ After Parameter Store population and service deployments, run the user ID migrat
 - Comprehensive logging with dry-run capability
 - Handles complex data structures (admin configs, feature flags, etc.)
 
+**Command Line Options**:
+- `--dry-run`: Do not make any changes, just show what would happen
+- `--csv-file`: Path to the CSV file containing migration data (default: migration_users.csv)
+- `--no-id-change`: Generate migration_users.csv with same old_id and new_id for S3 consolidation only (no username changes)
+- `--dont-backup`: **NEW** - Skip both backup creation and verification (for users who already have backups)
+- `--region`: **NEW** - AWS region for DynamoDB and S3 operations (default: us-east-1)
+- `--log`: Log output to the specified file (auto-generated if not provided)
+
+**⚠️ All table and bucket names come exclusively from `config.py` - no command-line overrides allowed for consistency.**
+
 #### 2. S3 Data Migration Script (`s3_data_migration.py`)
 **Purpose**: Migrates data from legacy S3 buckets to consolidated storage.
 
 **Migration Types**:
 - **To Consolidation Bucket**: Conversations, shares, code interpreter files, agent state, group conversations
-- **To USER_STORAGE_TABLE**: Artifacts, workflow templates, scheduled task logs, user settings
+- **To USER_DATA_STORAGE_TABLE**: Artifacts, workflow templates, scheduled task logs, user settings
 - **Standalone Buckets**: Data disclosure storage, API documentation
 
 ### Prerequisites
+
+#### Critical Infrastructure Requirements
+
+⚠️ **MANDATORY: The migration script now performs automatic prerequisite validation**
+
+Before migration begins, the script validates that critical infrastructure exists:
+
+1. **S3 Consolidation Bucket** (`S3_CONSOLIDATION_BUCKET_NAME`): Required for all S3 migrations
+2. **User Data Storage Table** (`USER_DATA_STORAGE_TABLE`): Required for data consolidation
+
+**If these don't exist**, the script will display:
+```
+❌ CRITICAL ERROR: S3 consolidation bucket does not exist!
+🚨 MIGRATION CANNOT PROCEED!
+SOLUTION: Deploy amplify-lambda service first:
+   serverless amplify-lambda:deploy --stage dev
+```
+
+**✅ Deploy amplify-lambda service FIRST** to create required infrastructure before running migration.
+
+#### Backup Strategy
+
+The migration script includes built-in backup verification to ensure data safety:
+
+**Option 1: Automatic Backup Verification (Default)**
+```bash
+# Script automatically checks for recent backups before migration
+python3 scripts/id_migration.py --csv-file migration_users.csv --log migration_full.log
+```
+
+**Option 2: Skip Backup Process (For Users Who Already Have Backups)**
+```bash
+# Use this if you've already created backups manually
+python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv --log migration_full.log
+```
+
+**Option 3: Specify Custom AWS Region**
+```bash
+# Use this if your AWS resources are in a different region
+python3 scripts/id_migration.py --region us-west-2 --csv-file migration_users.csv --log migration_full.log
+```
+
+**Creating Backups Manually:**
+```bash
+# Create comprehensive backups before migration
+python3 scripts/backup_prereq.py --backup-name "pre-migration-$(date +%Y%m%d-%H%M%S)"
+
+# Verify backups exist
+python3 scripts/backup_prereq.py --verify-only --backup-name "pre-migration-20241022"
+```
 
 #### CSV File Setup
 
@@ -353,7 +420,7 @@ allen.karns@vanderbilt.edu,karnsab
 If you only need S3 consolidation without changing user IDs, use the `--no-id-change` flag:
 ```bash
 # Automatically generates migration_users.csv from all Cognito users
-python3 id_migration.py --no-id-change --dry-run --log migration_setup.log
+python3 scripts/id_migration.py --no-id-change --dry-run --log migration_setup.log
 
 # This creates migration_users.csv with same old_id and new_id:
 # old_id,new_id
@@ -391,10 +458,10 @@ export S3_CONSOLIDATION_BUCKET_NAME="custom-consolidation-bucket"  # Optional ov
 
 ```bash
 # 1. Dry run ID migration (shows what tables/data would be migrated)
-python3 id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
+python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
 
 # 3. Dry run S3-only migration (standalone buckets)  
-python3 s3_data_migration.py --dry-run --bucket all --log s3_dryrun.log
+python3 scripts/s3_data_migration.py --dry-run --bucket all --log s3_dryrun.log
 
 # 4. Review logs to understand migration scope
 tail -f migration_dryrun.log
@@ -405,10 +472,13 @@ tail -f migration_dryrun.log
 
 ```bash
 # 1. Execute ID migration (includes user storage migration + offers S3 migration)
-python3 id_migration.py --csv-file migration_users.csv --log migration_full.log
+python3 scripts/id_migration.py --csv-file migration_users.csv --log migration_full.log
+
+# 1a. If you already have backups, skip backup verification:
+python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv --log migration_full.log
 
 # 2. Optional: Execute standalone S3 bucket migrations manually
-python3 s3_data_migration.py --bucket all --log s3_migration.log
+python3 scripts/s3_data_migration.py --bucket all --log s3_migration.log
 
 # 3. Monitor progress in real-time
 tail -f migration_full.log
@@ -421,33 +491,26 @@ tail -f migration_full.log
 
 ### Migration Scope and Impact
 
+#### Automatic Resource Detection
+
+**NEW**: The migration script automatically detects which resources exist and adapts the migration plan accordingly:
+
+- ✅ **Tables/Buckets that exist**: Will be migrated
+- ⏭️ **Missing resources**: Automatically skipped with clear logging
+- 🚨 **Critical missing infrastructure**: Migration stops with deployment instructions
+
 #### DynamoDB Tables Updated
 The ID migration script processes **40+ tables** including:
 
-**Core User Tables**:
-- `COGNITO_USERS_DYNAMODB_TABLE`: User identity records
-- `ACCOUNTS_DYNAMO_TABLE`: User account information
-- `API_KEYS_DYNAMODB_TABLE`: API key ownership and delegation
+**Core Tables**: User identity, accounts, API keys, conversations, files  
+**AI/Assistant Tables**: Assistant definitions, threads, code interpreter, groups  
+**Agent Tables**: Agent state, workflow templates, scheduled tasks, email settings  
+**Administrative**: Admin configs, object access, OAuth integrations, cost tracking
 
-**Assistant & AI Tables**:  
-- `ASSISTANTS_DYNAMODB_TABLE`: AI assistant definitions
-- `ASSISTANT_THREADS_DYNAMODB_TABLE`: Conversation threads
-- `ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE`: Code execution records
-
-**Data & Files Tables**:
-- `FILES_DYNAMO_TABLE`: File metadata and ownership
-- `ARTIFACTS_DYNAMODB_TABLE`: User artifacts with S3 migration
-- `CONVERSATION_METADATA_TABLE`: Chat conversation metadata
-- `USER_STORAGE_TABLE`: **⚠️ MIGRATED** from basic-ops to amplify-lambda as `user-data-storage`
-
-**Agent & Workflow Tables**:
-- `AGENT_STATE_DYNAMODB_TABLE`: Agent execution state
-- `WORKFLOW_TEMPLATES_TABLE`: Custom workflow definitions
-- `SCHEDULED_TASKS_TABLE`: Scheduled automation tasks
-
-**Administrative Tables**:
-- `AMPLIFY_ADMIN_DYNAMODB_TABLE`: Admin configurations and permissions
-- `OBJECT_ACCESS_DYNAMODB_TABLE`: Access control records
+**Special Handling**:
+- `USER_DATA_STORAGE_TABLE`: Migrated from basic-ops to amplify-lambda with ID translation
+- Tables with existence checking: Script validates table exists before processing
+- Missing table handling: Graceful skipping with informational logging
 
 #### S3 Data Migrations
 
@@ -462,7 +525,7 @@ dataDisclosure/                      ← DATA_DISCLOSURE_STORAGE_BUCKET/
 apiDocumentation/                    ← S3_API_DOCUMENTATION_BUCKET/
 ```
 
-**To USER_STORAGE_TABLE** (DynamoDB):
+**To USER_DATA_STORAGE_TABLE** (DynamoDB):
 ```
 {new_user_id}#amplify-artifacts#artifact-content     ← S3_ARTIFACTS_BUCKET content
 {new_user_id}#amplify-workflows#workflow-templates   ← WORKFLOW_TEMPLATES_BUCKET content  
@@ -480,7 +543,7 @@ aws dynamodb query --table-name amplify-v6-object-access-dev-cognito-users --key
 # Check S3 consolidation bucket contents
 aws s3 ls s3://amplify-v6-lambda-dev-consolidation/conversations/haysgs/ --recursive
 
-# Check USER_STORAGE_TABLE entries  
+# Check USER_DATA_STORAGE_TABLE entries  
 aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --filter-expression "contains(PK, :uid)" --expression-attribute-values '{":uid":{"S":"haysgs"}}'
 ```
 
@@ -491,218 +554,106 @@ If issues occur during migration:
 2. **S3 Rollback**: Objects remain in source buckets (migration copies, doesn't move)
 3. **Selective Re-run**: Scripts are idempotent - safe to re-run for specific users
 
-### Post-Migration Cleanup
+### Post-Migration Verification
 
-#### Understanding Old Record Retention
-
-The migration script **intentionally preserves old records** as a safety measure. For tables where user IDs are part of the primary key, the migration creates new records with the new user ID while keeping the old ones intact. This provides:
-
-- **Rollback Safety**: Old records available if rollback is needed
-- **Gradual Migration**: Services can read from both IDs during transition
-- **Audit Trail**: Historical record of the migration
-
-#### Tables That Retain Old Records
-
-The following tables will have duplicate records (old and new user IDs) after migration:
-
-1. **COGNITO_USERS_DYNAMODB_TABLE** - User identity records
-2. **ARTIFACTS_DYNAMODB_TABLE** - User artifacts
-3. **SHARES_DYNAMODB_TABLE** - Share records
-4. **CONVERSATION_METADATA_TABLE** - Chat conversations
-5. **USER_STORAGE_TABLE** - Consolidated user storage
-6. **USER_TAGS_DYNAMO_TABLE** - User tags
-7. **AGENT_STATE_DYNAMODB_TABLE** - Agent state
-8. **AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE** - Event templates
-9. **WORKFLOW_TEMPLATES_TABLE** - Workflow definitions
-10. **SCHEDULED_TASKS_TABLE** - Scheduled tasks
-11. **OAUTH_STATE_TABLE** - OAuth state
-12. **OAUTH_USER_TABLE** - OAuth integrations
-13. **DATA_DISCLOSURE_ACCEPTANCE_TABLE** - Data disclosure
-14. **HISTORY_COST_CALCULATIONS_DYNAMO_TABLE** - Cost history
-15. **GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE** - Group conversations
-16. **ASSISTANTS_ALIASES_DYNAMODB_TABLE** - Assistant aliases
-
-#### When to Run Cleanup
-
-Run the cleanup script **ONLY AFTER**:
-
-1. ✅ All services have been deployed with new configurations
-2. ✅ Verified all features work with new user IDs
-3. ✅ No errors in CloudWatch logs for 24-48 hours
-4. ✅ User acceptance testing completed
-5. ✅ Backups have been verified
-
-**⚠️ WARNING**: Cleanup is irreversible. Always maintain backups before cleanup.
-
-#### Running the Cleanup Script
-
+#### Verify Migration Success
 ```bash
-# 1. First, do a dry run to see what would be deleted
-python3 scripts/id_migration_cleanup.py --csv-file migration_users.csv --log cleanup_dryrun.log --dry-run
+# Check updated DynamoDB records
+aws dynamodb query --table-name amplify-v6-object-access-dev-cognito-users \
+  --key-condition-expression "user_id = :uid" \
+  --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
 
-# 2. Review the dry run log carefully
-tail -f cleanup_dryrun.log
+# Check S3 consolidation bucket contents
+aws s3 ls s3://amplify-v6-lambda-dev-user-data-storage/conversations/NEW_USER_ID/ --recursive
 
-# 3. If everything looks correct, run the actual cleanup
-python3 scripts/id_migration_cleanup.py --csv-file migration_users.csv --log cleanup.log
-
-# The script will ask for confirmation - type 'DELETE' to proceed
-
-# 4. To skip confirmation (for automation), use --force flag (USE WITH EXTREME CAUTION)
-python3 scripts/id_migration_cleanup.py --csv-file migration_users.csv --log cleanup.log --force
+# Check USER_DATA_STORAGE_TABLE entries  
+aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage \
+  --filter-expression "contains(PK, :uid)" \
+  --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
 ```
 
-#### Cleanup Verification
+#### Migration Rollback
+If issues occur:
 
-After cleanup, verify old records are removed:
-
-```bash
-# Check that old user ID returns no results
-aws dynamodb get-item --table-name amplify-v6-object-access-dev-cognito-users \
-  --key '{"user_id":{"S":"karely.rodriguez@vanderbilt.edu"}}'
-
-# Verify new user ID still works
-aws dynamodb get-item --table-name amplify-v6-object-access-dev-cognito-users \
-  --key '{"user_id":{"S":"rodrikm1"}}'
-```
-
-#### Alternative: Keep Old Records
-
-You may choose to **keep old records indefinitely** for:
-
-- **Compliance**: Audit requirements
-- **Analytics**: Historical analysis
-- **Safety**: Ultra-conservative approach
-
-If keeping old records, ensure your application ignores them by:
-- Using only new user IDs in queries
-- Adding a "deprecated" flag to old records
-- Implementing application-level filtering
+1. **Database Rollback**: Use DynamoDB Point-in-Time Recovery
+2. **S3 Rollback**: Objects remain in source buckets (migration copies, doesn't move)
+3. **Selective Re-run**: Scripts are idempotent - safe to re-run for specific users
 
 ### Key Migration Features
 
-#### Migration Detection
-- **S3 Bucket Detection**: Checks file prefixes and consolidation bucket paths
-- **DynamoDB Detection**: Handles existing records and updates in place
-- **USER_STORAGE_TABLE Detection**: Uses special fields (`migrated_from_s3`, etc.)
+#### Smart Resource Detection
+- **Prerequisite Validation**: Automatically checks for critical infrastructure before starting
+- **Adaptive Migration Plans**: Skips missing resources with clear explanations
+- **Comprehensive Logging**: Detailed logs with timestamps for troubleshooting
 
 #### Error Handling  
-- **Partial Migration Support**: Scripts continue processing other users if one fails
-- **Comprehensive Logging**: Detailed logs with timestamps for troubleshooting
+- **Graceful Degradation**: Continues processing when non-critical resources are missing
+- **Partial Migration Support**: Processes available resources, skips unavailable ones
 - **Validation Checks**: Verifies S3 copies and DynamoDB updates before marking complete
 
-#### Performance Optimization
-- **Batch Processing**: Efficient DynamoDB queries using GSI indexes where available
-- **LZW Compression**: Compresses large log data for DynamoDB storage
+#### Performance & Safety
+- **Idempotent Operations**: Safe to re-run migrations multiple times
+- **Backup Integration**: Built-in backup verification before dangerous operations
 - **Size Monitoring**: Warns about DynamoDB 400KB item limit approaches
 
 ## Troubleshooting
 
 ### Migration Script Issues
 
-#### Configuration Loading Issues
+#### Common Migration Issues
+
+**Prerequisites Not Met**:
 ```bash
-# Verify config.py is properly configured
-python3 -c "from config import get_config; import json; print(json.dumps(get_config(), indent=2))"
-
-# Check that DEP_NAME and STAGE are set correctly in config.py
-grep -E "^(DEP_NAME|STAGE)" scripts/config.py
-```
-
-#### CSV File Validation Errors
-```bash
-# Check CSV format
-head -5 migration_users.csv
-
-# Verify no duplicate new_ids
-cut -d',' -f2 migration_users.csv | sort | uniq -d
-```
-
-#### DynamoDB Table Access Issues
-```bash
-# Verify table exists and you have access
-aws dynamodb describe-table --table-name amplify-v6-object-access-dev-cognito-users
-
-# Check IAM permissions for DynamoDB and S3 access
-aws sts get-caller-identity
-```
-
-#### S3 Migration Failures
-```bash
-# Verify source and target buckets exist
-aws s3 ls s3://amplify-v6-lambda-dev-user-conversations/
-aws s3 ls s3://amplify-v6-lambda-dev-consolidation/
-
-# Check bucket permissions
-aws s3api get-bucket-policy --bucket amplify-v6-lambda-dev-consolidation
-```
-
-#### User Storage Table Migration Issues
-```bash
-# Check if old table exists
-aws dynamodb describe-table --table-name amplify-v6-lambda-basic-ops-dev-user-storage
-
-# Check if new table exists  
-aws dynamodb describe-table --table-name amplify-v6-lambda-dev-user-data-storage
-
-# Verify backup CSV exists
-ls -la user_storage_backup*.csv
-
-# Manual backup if needed
-python3 user_storage_backup.py
-
-# Check data in new table
-aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage --select COUNT
-```
-
-#### API Gateway Conflict Resolution
-If you get "Another resource with the same parent already has this name: user-data" error:
-
-**ROOT CAUSE**: Both `amplify-lambda-basic-ops` and `amplify-lambda` services define `/user-data` endpoints.
-
-**SOLUTION**: Follow the correct deployment sequence (Step 4):
-
-```bash
-# 1. Backup user storage data first
-python3 scripts/user_storage_backup.py
-
-# 2. Remove basic-ops service to free the endpoint
-serverless amplify-lambda-basic-ops:remove --stage dev
-
-# 3. Deploy amplify-lambda (now endpoint is available)
+# Error: "CRITICAL ERROR: S3 consolidation bucket does not exist!"
+# Solution: Deploy amplify-lambda service first
 serverless amplify-lambda:deploy --stage dev
 ```
 
-**If already in conflict state**:
+**Configuration Issues**:
 ```bash
-# Check existing API Gateway resources
-aws apigateway get-resources --rest-api-id YOUR_API_ID
+# Verify config.py is properly configured
+grep -E "^(DEP_NAME|STAGE)" scripts/config.py
 
-# Delete conflicting CloudFormation stack manually if needed
-aws cloudformation delete-stack --stack-name amplify-v6-lambda-dev
-
-# Then follow the correct sequence above
+# Validate configuration generates correct names
+python3 -c "from config import get_config; print(get_config()['S3_CONSOLIDATION_BUCKET_NAME'])"
 ```
 
-**⚠️ NEVER deploy amplify-lambda while basic-ops still exists** - this will always cause the API Gateway conflict.
+**CSV File Issues**:
+```bash
+# Check CSV format and duplicates
+head -5 migration_users.csv
+cut -d',' -f2 migration_users.csv | sort | uniq -d
+```
+
+**Access Issues**:
+```bash
+# Check AWS credentials and permissions
+aws sts get-caller-identity
+aws dynamodb list-tables --max-items 5
+```
+
+#### API Gateway Conflicts
+**Error**: "Another resource with the same parent already has this name: user-data"
+
+**SOLUTION**: Deploy amplify-lambda service first (before migration), which creates all required infrastructure:
+```bash
+# This creates the consolidation bucket and user data storage table
+serverless amplify-lambda:deploy --stage dev
+```
+
+**If conflict exists**: Remove conflicting service first, then deploy amplify-lambda.
 
 ### Service Deployment Issues
 
 #### Missing Parameters
-If a service fails with missing environment variables:
 ```bash
 # Check if parameter exists
 aws ssm get-parameter --name "/amplify/dev/service-name/VARIABLE_NAME"
 
-# Re-run population script for specific fixes
+# Re-run population script
 python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
 ```
 
-#### IAM Permissions
-Ensure your Lambda execution roles have Parameter Store access:
-- `ssm:GetParameter`
-- `ssm:GetParameters`
-- `ssm:GetParametersByPath`
-
-### Service Dependencies
-If serverless-compose deployment fails, check that all dependent services are deployed in the correct order as defined in `serverless-compose.yml`.
+#### Required Permissions
+Ensure Lambda execution roles have Parameter Store access:
+- `ssm:GetParameter`, `ssm:GetParameters`, `ssm:GetParametersByPath`

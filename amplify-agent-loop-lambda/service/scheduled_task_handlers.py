@@ -12,6 +12,8 @@ from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation, SQSOperation
 )
+from pycommon.logger import getLogger
+logger = getLogger("scheduled_task_handlers")
 
 
 @required_env_vars({
@@ -125,7 +127,7 @@ def create_scheduled_task_handler(
     time_zone=None,
 ):
     try:
-        print(f"Creating scheduled task with object_info: {object_info}")
+        logger.info("Creating scheduled task with object_info: %s", object_info)
         task_id = create_scheduled_task(
             current_user=current_user,
             task_name=task_name,
@@ -150,7 +152,7 @@ def create_scheduled_task_handler(
             "message": "Scheduled task created successfully",
         }
     except Exception as e:
-        print(f"Error creating scheduled task: {e}")
+        logger.error("Error creating scheduled task: %s", e)
         return {
             "success": False,
             "message": f"Failed to create scheduled task: {str(e)}",
@@ -211,7 +213,7 @@ def get_scheduled_task_handler(current_user, access_token, task_id):
             return {"success": False, "message": "Task not found"}
         return {"success": True, "task": task, "message": "Task retrieved successfully"}
     except Exception as e:
-        print(f"Error getting scheduled task: {e}")
+        logger.error("Error getting scheduled task: %s", e)
         return {"success": False, "message": f"Failed to get scheduled task: {str(e)}"}
 
 
@@ -258,7 +260,7 @@ def list_scheduled_tasks_handler(current_user, access_token):
             "message": "Tasks retrieved successfully",
         }
     except Exception as e:
-        print(f"Error listing scheduled tasks: {e}")
+        logger.error("Error listing scheduled tasks: %s", e)
         return {
             "success": False,
             "message": f"Failed to list scheduled tasks: {str(e)}",
@@ -387,7 +389,7 @@ def update_scheduled_task_handler(
         )
         return result
     except Exception as e:
-        print(f"Error updating scheduled task: {e}")
+        logger.error("Error updating scheduled task: %s", e)
         return {
             "success": False,
             "message": f"Failed to update scheduled task: {str(e)}",
@@ -427,7 +429,7 @@ def delete_scheduled_task_handler(current_user, access_token, task_id):
         result = delete_scheduled_task(current_user, task_id, access_token)
         return result
     except Exception as e:
-        print(f"Error deleting scheduled task: {e}")
+        logger.error("Error deleting scheduled task: %s", e)
         return {
             "success": False,
             "message": f"Failed to delete scheduled task: {str(e)}",
@@ -555,7 +557,7 @@ def get_task_execution_details_handler(
             "message": "Execution details retrieved successfully",
         }
     except Exception as e:
-        print(f"Error getting task execution details: {e}")
+        logger.error("Error getting task execution details: %s", e)
         return {
             "success": False,
             "message": f"Failed to get task execution details: {str(e)}",
@@ -599,5 +601,5 @@ def execute_task_handler(current_user, access_token, task_id):
         result = execute_specific_task(current_user, task_id)
         return result
     except Exception as e:
-        print(f"Error executing task: {e}")
+        logger.error("Error executing task: %s", e)
         return {"success": False, "message": f"Failed to execute task: {str(e)}"}

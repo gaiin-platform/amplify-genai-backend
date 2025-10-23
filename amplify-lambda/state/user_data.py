@@ -22,6 +22,8 @@ from state.routes import route_data
 set_route_data(route_data)
 set_permissions_by_state(permissions)
 
+from pycommon.logger import getLogger
+logger = getLogger("user-data")
 
 USER_DATA_TABLE = os.environ["USER_STORAGE_TABLE"]
 table_name = os.getenv("USER_STORAGE_TABLE")
@@ -53,7 +55,7 @@ def camel_to_snake(name):
 def common_handler(operation, func_schema, **optional_params):
     def handler(event, context, current_user, name, data):
         try:
-            print(f"Function schema: {func_schema}")
+            logger.debug("Function schema: %s", func_schema)
 
             access_token = data["access_token"]
 
@@ -64,14 +66,14 @@ def common_handler(operation, func_schema, **optional_params):
             }
 
             # Validate the data against the schema
-            print("Validating request")
+            logger.debug("Validating request")
             try:
                 validate(data, wrapper_schema)
             except ValidationError as e:
-                print("Validation error: ", str(e))
+                logger.error("Validation error: %s", str(e))
                 raise ValueError(f"Invalid request: {str(e)}")
 
-            print("Converting parameters to snake case")
+            logger.debug("Converting parameters to snake case")
             # build a keyword argument dictionary from the data based on the schema
             args = {
                 camel_to_snake(param): data["data"].get(
@@ -86,16 +88,13 @@ def common_handler(operation, func_schema, **optional_params):
             if has_named_parameter(operation, "access_token"):
                 args["access_token"] = access_token
 
-            print("Invoking operation")
+            logger.debug("Invoking operation")
             response = operation(**args)
             success = response.get("success", True)
-            print(f"Returning response success: {success}")
+            logger.debug("Returning response success: %s", success)
             return {"success": success, "data": response}
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            print(f"Unexpected error: {str(e)}")
+            logger.error("Unexpected error in common_handler operation: %s", str(e), exc_info=True)
             return {"success": False, "error": "Unexpected error."}
 
     return handler
@@ -118,9 +117,9 @@ def route(event, context, current_user, name, data):
         # get the request path from the event and remove the first component...if there aren't enough components
         # then the path is invalid
         target_path_string = event["path"]
-        print(f"Route: {target_path_string}")
+        logger.debug("Route: %s", target_path_string)
 
-        print(f"Route data: {route_data}")
+        logger.debug("Route data: %s", route_data)
 
         route_info = route_data.get(target_path_string, None)
         if not route_info:
@@ -133,9 +132,7 @@ def route(event, context, current_user, name, data):
             event, context, current_user, name, data
         )
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        logger.error("Error in route handler: %s", str(e), exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -556,7 +553,7 @@ def handle_batch_get_items(current_user, app_id, entity_type, item_ids):
     hash_key = _create_hash_key(current_user, app_id)
     items = storage.batch_get_items(hash_key, entity_type, item_ids)
 
-    print(f"items: {items}")
+    logger.debug("items: %s", items)
 
     # Filter items to ensure they belong to this user and convert app_id
     return [
@@ -872,7 +869,7 @@ def handle_list_user_apps(current_user, prefix=None):
 
     app_ids = storage.list_app_ids(prefix=search_prefix)
 
-    print(f"AppIds {app_ids}")
+    logger.debug("AppIds %s", app_ids)
 
     # Decode the app IDs to remove the user prefix
     decoded_app_ids = [_decode_app_id(app_id) for app_id in app_ids]

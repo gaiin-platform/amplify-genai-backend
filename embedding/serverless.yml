@@ -25,7 +25,7 @@ custom:
   depName: ${self:custom.stageVars.DEP_NAME}
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
     
 
   prune:
@@ -69,19 +69,20 @@ provider:
   
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
 
-    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
-    API_VERSION: ${ssm:/amplify/${sls:stage}/shared/API_VERSION}
-    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/APP_ARN_NAME}
-    COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/shared/COGNITO_USER_POOL_ID}
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    MAX_ACU: ${ssm:/amplify/${sls:stage}/shared/MAX_ACU}
-    MIN_ACU: ${ssm:/amplify/${sls:stage}/shared/MIN_ACU}
-    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/shared/OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/shared/OAUTH_ISSUER_BASE_URL}
-    PRIVATE_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/shared/PRIVATE_SUBNET_ONE}
-    PRIVATE_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/shared/PRIVATE_SUBNET_TWO}
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    API_VERSION: ${ssm:/amplify/${sls:stage}/API_VERSION}
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
+    COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/COGNITO_USER_POOL_ID}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    MAX_ACU: ${ssm:/amplify/${sls:stage}/MAX_ACU}
+    MIN_ACU: ${ssm:/amplify/${sls:stage}/MIN_ACU}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    PRIVATE_SUBNET_ONE: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_ONE}
+    PRIVATE_SUBNET_TWO: ${ssm:/amplify/${sls:stage}/PRIVATE_SUBNET_TWO}
     RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
     RAG_POSTGRES_DB_READ_ENDPOINT: !GetAtt RagPostgresDbCluster.ReadEndpoint.Address
     RAG_POSTGRES_DB_SECRET: ${sls:stage}/${self:service}/rag/postgres/db-creds
@@ -90,8 +91,8 @@ provider:
     REGION: ${self:provider.region}
     STAGE: ${sls:stage}
     SERVICE_NAME: ${self:service}
-    VPC_CIDR: ${ssm:/amplify/${sls:stage}/shared/VPC_CIDR}
-    VPC_ID: ${ssm:/amplify/${sls:stage}/shared/VPC_ID}
+    VPC_CIDR: ${ssm:/amplify/${sls:stage}/VPC_CIDR}
+    VPC_ID: ${ssm:/amplify/${sls:stage}/VPC_ID}
     # RAG_POSTGRES_DB_ENV: ${self:custom.stageVariables.RAG_POSTGRES_DB_ENV} #Optional for running locally
     # SNAPSHOT_ID: ${self:custom.stageVariables.SNAPSHOT_ID}
 
@@ -167,7 +168,7 @@ functions:
         RAG_POSTGRES_DB_NAME: RagVectorDb_${sls:stage}
         RAG_POSTGRES_DB_USERNAME: ragadmin_${sls:stage}
         RAG_POSTGRES_DB_WRITE_ENDPOINT: !GetAtt RagPostgresDbCluster.Endpoint.Address
-        LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+        LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
         MODEL_RATE_TABLE: amplify-${self:custom.depName}-chat-billing-${sls:stage}-model-rates
         AMPLIFY_ADMIN_DYNAMODB_TABLE: amplify-${self:custom.depName}-admin-${sls:stage}-admin-configs
         API_VERSION: ${self:provider.environment.API_VERSION}

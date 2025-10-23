@@ -31,7 +31,7 @@ custom:
     - staging
     - prod
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
   # Using your existing repository
   ecrRepository: 654654422653.dkr.ecr.us-east-1.amazonaws.com/dev-amplifygenai-repo
   # Add timestamp to image tags from build script
@@ -55,16 +55,16 @@ provider:
 
   environment:
     AGENT_QUEUE_URL: !Ref AgentQueue
-    API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}"
-    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/APP_ARN_NAME}
+    API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}"
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
     DEFAULT_SECRET_PARAMETER_PREFIX: "/agent"
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME}
-    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/shared/OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/shared/OAUTH_ISSUER_BASE_URL}
-    ORGANIZATION_EMAIL_DOMAIN: ${ssm:/amplify/${sls:stage}/shared/ORGANIZATION_EMAIL_DOMAIN}
-    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/SECRETS_ARN_NAME}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    ORGANIZATION_EMAIL_DOMAIN: ${ssm:/amplify/${sls:stage}/ORGANIZATION_EMAIL_DOMAIN}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 

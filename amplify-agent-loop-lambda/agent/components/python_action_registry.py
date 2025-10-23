@@ -5,7 +5,8 @@ import traceback
 from agent.components import tool
 from agent.core import Action, ActionRegistry
 from agent.prompt import Prompt
-
+from pycommon.logger import getLogger
+logger = getLogger("action_registry")
 
 class PythonActionRegistry(ActionRegistry):
     def __init__(self, tags: List[str] = [], tool_names: List[str] = []):
@@ -23,8 +24,8 @@ class PythonActionRegistry(ActionRegistry):
             ):
                 continue
 
-            print(
-                f"-- Action Registry: Registering Initial Built-In Tool -- {tool_name}"
+            logger.info(
+                "Action Registry: Registering Initial Built-In Tool -- %s", tool_name
             )
 
             self.register(
@@ -54,7 +55,7 @@ class PythonActionRegistry(ActionRegistry):
             raise Exception("Terminate tool not found in tool registry")
 
     def register_bound_tool_by_name(self, operation):
-        print("Registering bound builtIn tool: ", operation)
+        logger.info("Registering bound builtIn tool: %s", operation)
         # {'name': 'get_current_directory', 'operation': {'name':
         tool_name = operation.get("name", None)
         return self.register_tool_by_name(tool_name)
@@ -62,8 +63,8 @@ class PythonActionRegistry(ActionRegistry):
     def register_tool_by_name(self, tool_name):
         if tool_name in tool.tools:
             tool_desc = tool.tools[tool_name]
-            print(
-                f"-- Action Registry: Registering Built-In Tool by Name -- {tool_name}"
+            logger.info(
+                "Action Registry: Registering Built-In Tool by Name -- %s", tool_name
             )
             self.register(
                 Action(
@@ -77,7 +78,7 @@ class PythonActionRegistry(ActionRegistry):
             )
             return True
         else:
-            print(f"Tool '{tool_name}' not found in tool registry")
+            logger.warning("Tool '%s' not found in tool registry", tool_name)
             return False
 
     def filter_tools_by_relevance(self, llm, user_input, goals=None, max_tools=10):
@@ -93,17 +94,17 @@ class PythonActionRegistry(ActionRegistry):
         Returns:
             A new filtered action registry with only the most relevant tools
         """
-        print("Filtering registry tools by relevance")
+        logger.info("Filtering registry tools by relevance")
 
         # Check if we have no tools or only the terminate tool
         if len(self.actions) == 0:
-            print("No tools to filter - registry is empty")
+            logger.info("No tools to filter - registry is empty")
             if self.terminate_tool:
-                print("Adding terminate tool to empty registry")
+                logger.info("Adding terminate tool to empty registry")
                 self.register_terminate_tool()
             return self
         elif len(self.actions) == 1 and "terminate" in self.actions:
-            print("Only terminate tool present - no filtering needed")
+            logger.info("Only terminate tool present - no filtering needed")
             return self
 
         # Define marker for tool response format
@@ -251,11 +252,11 @@ Remember to format your response exactly as specified, with only a JSON array of
                 try:
                     selected_tools = json.loads(json_str)
                 except json.JSONDecodeError:
-                    print(f"Failed to parse JSON between delimiters: '{json_str}'")
+                    logger.warning("Failed to parse JSON between delimiters: '%s'", json_str)
 
             # Validate the response format
             if not isinstance(selected_tools, list):
-                print("Invalid response format: not a list")
+                logger.warning("Invalid response format: not a list")
                 return self
 
             # Filter to only include valid tool names
@@ -273,15 +274,14 @@ Remember to format your response exactly as specified, with only a JSON array of
             for tool_name in selected_tools:
                 filtered_actions[tool_name] = self.actions[tool_name]
 
-            print(f"Filtered tools from {len(self.actions)} to {len(filtered_actions)}")
+            logger.info("Filtered tools from %d to %d", len(self.actions), len(filtered_actions))
             # print(f"Selected tools: {', '.join(filtered_actions.keys())}")
 
             # Update the actions dictionary
             self.actions = filtered_actions
 
         except Exception as e:
-            print(f"Error during tool filtering: {str(e)}")
-            traceback.print_exc()
+            logger.error("Error during tool filtering: %s", str(e), exc_info=True)
             # If there's an error, keep all tools
 
         return self

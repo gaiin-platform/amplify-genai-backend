@@ -7,6 +7,7 @@ import uuid
 from typing import Optional, Dict, Any
 from botocore.exceptions import ClientError
 from decimal import Decimal
+from boto3.dynamodb.conditions import Key
 from pycommon.lzw import safe_compress
 from config import get_config
 
@@ -14,28 +15,24 @@ from config import get_config
 CONFIG = get_config()
 
 # DynamoDB table for user storage
-USER_STORAGE_TABLE = CONFIG.get("USER_STORAGE_TABLE", "amplify-v6-lambda-dev-user-data-storage")
+USER_STORAGE_TABLE = CONFIG.get("USER_DATA_STORAGE_TABLE")
 
-# S3 bucket names from config
-needs_edit = CONFIG.get("needs_edit", {})
-consolidated_buckets = needs_edit.get("consolidated_buckets", {})
-to_user_storage_buckets = needs_edit.get("to_user_storage_table", {})
-
-# Consolidated bucket names
-S3_CONSOLIDATION_BUCKET_NAME = os.environ.get("S3_CONSOLIDATION_BUCKET_NAME") or f"{CONFIG.get('DEP_NAME', 'v6')}-consolidation-bucket"
-S3_CONVERSATIONS_BUCKET_NAME = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME") or consolidated_buckets.get("S3_CONVERSATIONS_BUCKET_NAME")
-S3_SHARE_BUCKET_NAME = os.environ.get("S3_SHARE_BUCKET_NAME") or consolidated_buckets.get("S3_SHARE_BUCKET_NAME")
-ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME = os.environ.get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME") or consolidated_buckets.get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME")
-AGENT_STATE_BUCKET = os.environ.get("AGENT_STATE_BUCKET") or consolidated_buckets.get("AGENT_STATE_BUCKET")
-S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME = os.environ.get("S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME") or consolidated_buckets.get("S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME")
-DATA_DISCLOSURE_STORAGE_BUCKET = os.environ.get("DATA_DISCLOSURE_STORAGE_BUCKET") or consolidated_buckets.get("DATA_DISCLOSURE_STORAGE_BUCKET")
-S3_API_DOCUMENTATION_BUCKET = os.environ.get("S3_API_DOCUMENTATION_BUCKET") or consolidated_buckets.get("S3_API_DOCUMENTATION_BUCKET")
-
-# To user storage table buckets
-WORKFLOW_TEMPLATES_BUCKET = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") or to_user_storage_buckets.get("WORKFLOW_TEMPLATES_BUCKET")
-SCHEDULED_TASKS_LOGS_BUCKET = os.environ.get("SCHEDULED_TASKS_LOGS_BUCKET") or to_user_storage_buckets.get("SCHEDULED_TASKS_LOGS_BUCKET")
-S3_ARTIFACTS_BUCKET = os.environ.get("S3_ARTIFACTS_BUCKET") or to_user_storage_buckets.get("S3_ARTIFACTS_BUCKET")
-
+# S3 bucket names from flattened config structure
+S3_CONSOLIDATION_BUCKET_NAME = CONFIG.get("S3_CONSOLIDATION_BUCKET_NAME")
+S3_CONVERSATIONS_BUCKET_NAME = CONFIG.get("S3_CONVERSATIONS_BUCKET_NAME")
+S3_SHARE_BUCKET_NAME = CONFIG.get("S3_SHARE_BUCKET_NAME")
+ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME = CONFIG.get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME")
+AGENT_STATE_BUCKET = CONFIG.get("AGENT_STATE_BUCKET")
+S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME = CONFIG.get("S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME")
+DATA_DISCLOSURE_STORAGE_BUCKET = CONFIG.get("DATA_DISCLOSURE_STORAGE_BUCKET")
+S3_API_DOCUMENTATION_BUCKET = CONFIG.get("S3_API_DOCUMENTATION_BUCKET")
+S3_CONVERSION_INPUT_BUCKET_NAME = CONFIG.get("S3_CONVERSION_INPUT_BUCKET_NAME")
+S3_CONVERSION_OUTPUT_BUCKET_NAME = CONFIG.get("S3_CONVERSION_OUTPUT_BUCKET_NAME")
+S3_ZIP_FILE_BUCKET_NAME = CONFIG.get("S3_ZIP_FILE_BUCKET_NAME")
+# Buckets that migrate to USER_STORAGE_TABLE
+WORKFLOW_TEMPLATES_BUCKET = CONFIG.get("WORKFLOW_TEMPLATES_BUCKET")
+SCHEDULED_TASKS_LOGS_BUCKET = CONFIG.get("SCHEDULED_TASKS_LOGS_BUCKET")
+S3_ARTIFACTS_BUCKET = CONFIG.get("S3_ARTIFACTS_BUCKET")
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -274,8 +271,16 @@ def migrate_conversations_bucket_for_user(old_id: str, new_id: str, dry_run: boo
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                        
+                        # After successful copy, delete the original file to complete migration
+                        try:
+                            s3_client.delete_object(Bucket=source_bucket, Key=old_key)
+                            log(f"{log_prefix}Successfully migrated and cleaned up conversation: {conversation_id}")
+                        except ClientError as delete_e:
+                            log(f"{log_prefix}Warning: Failed to delete original file {old_key} from {source_bucket}: {str(delete_e)}")
+                            # Don't fail the migration for cleanup errors, but log it
+                        
                         successful_migrations += 1
-                        log(f"{log_prefix}Successfully migrated conversation: {conversation_id}")
                     except ClientError:
                         log(f"{log_prefix}Failed to verify migrated conversation: {conversation_id}")
                         failed_migrations += 1
@@ -454,8 +459,16 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                        
+                        # After successful copy, delete the original file to complete migration
+                        try:
+                            s3_client.delete_object(Bucket=shares_bucket, Key=old_key)
+                            log(f"Successfully migrated and cleaned up share: {old_key} -> {new_key}")
+                        except ClientError as delete_e:
+                            log(f"Warning: Failed to delete original share file {old_key} from {shares_bucket}: {str(delete_e)}")
+                            # Don't fail the migration for cleanup errors, but log it
+                        
                         successful_migrations += 1
-                        log(f"Successfully migrated share: {old_key} -> {new_key}")
                     except ClientError:
                         log(f"Failed to verify migrated share: {new_key}")
                         failed_migrations += 1
@@ -480,7 +493,7 @@ def migrate_shares_bucket_for_user(old_id: str, new_id: str, dry_run: bool = Fal
         log(f"Unexpected error during shares migration: {str(e)}")
         return False
 
-def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, workflow_table_row: dict = None) -> tuple:
+def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, workflow_table_row: dict = None, region: str = "us-east-1") -> tuple:
     """
     Migrate workflow template from S3 to USER_STORAGE_TABLE and remove s3_key from record.
     
@@ -517,22 +530,69 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
             log(f"Missing template_uuid for workflow template, cannot migrate for user {old_id}.")
             return (False, None)
         
-        # Check if template already exists in USER_STORAGE_TABLE
+        # Check if template already exists in USER_STORAGE_TABLE (and fix malformed entries)
         if not dry_run:
             try:
-                user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
-                hash_key = _create_hash_key(new_id, "amplify-workflows")
+                user_storage_table = boto3.resource('dynamodb', region_name=region).Table(USER_STORAGE_TABLE)
                 
+                # CONSISTENT WITH workflow_template_registry.py: use same app_id pattern
+                correct_app_id = f"{new_id}#amplify-workflows"
+                correct_pk = f"{correct_app_id}#workflow-templates"
+                
+                # Check for correct format first
                 response = user_storage_table.get_item(
                     Key={
-                        "PK": f"{hash_key}#workflow-templates",
+                        "PK": correct_pk,
                         "SK": template_uuid
                     }
                 )
                 
                 if 'Item' in response:
                     log(f"Workflow template already migrated to USER_STORAGE_TABLE for user {old_id}, template: {template_uuid}")
-                    # Return workflow item with s3_key removed since it's already migrated
+                    updated_workflow_item = workflow_table_row.copy()
+                    if "s3_key" in updated_workflow_item:
+                        del updated_workflow_item["s3_key"]
+                    return (True, updated_workflow_item)
+                
+                # REPAIR LOGIC: Check for malformed entries (old user ID in app_id portion)
+                # Malformed pattern: "new_id#old-user-id-amplify-workflows#workflow-templates" 
+                old_id_sanitized = re.sub(r"[^a-zA-Z0-9@._-]", "-", old_id)
+                malformed_app_id = f"{new_id}#{old_id_sanitized}-amplify-workflows"
+                malformed_pk = f"{malformed_app_id}#workflow-templates"
+                
+                malformed_response = user_storage_table.get_item(
+                    Key={
+                        "PK": malformed_pk,
+                        "SK": template_uuid
+                    }
+                )
+                
+                if 'Item' in malformed_response:
+                    log(f"DETECTED MALFORMED ENTRY: Repairing workflow template with incorrect PK: {malformed_pk}")
+                    malformed_item = malformed_response['Item']
+                    
+                    # Copy to correct location with proper PK
+                    corrected_item = malformed_item.copy()
+                    corrected_item['PK'] = correct_pk
+                    corrected_item['appId'] = correct_app_id
+                    
+                    # Save corrected entry
+                    user_storage_table.put_item(Item=corrected_item)
+                    log(f"Created corrected entry at PK: {correct_pk}")
+                    
+                    # Delete malformed entry
+                    try:
+                        user_storage_table.delete_item(
+                            Key={
+                                "PK": malformed_pk,
+                                "SK": template_uuid
+                            }
+                        )
+                        log(f"Deleted malformed entry: {malformed_pk}")
+                    except Exception as delete_e:
+                        log(f"Warning: Failed to delete malformed entry: {delete_e}")
+                    
+                    # Return as already migrated
                     updated_workflow_item = workflow_table_row.copy()
                     if "s3_key" in updated_workflow_item:
                         del updated_workflow_item["s3_key"]
@@ -559,7 +619,7 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
         
         # Initialize clients for actual migration
         s3_client = boto3.client('s3')
-        user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+        user_storage_table = boto3.resource('dynamodb', region_name=region).Table(USER_STORAGE_TABLE)
         
         # Download S3 content
         log(f"Downloading workflow template from S3: {s3_key}")
@@ -570,14 +630,15 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
         workflow_content = json.loads(s3_response['Body'].read().decode('utf-8'))
         
         # Store in USER_STORAGE_TABLE using template_uuid directly
-        hash_key = _create_hash_key(new_id, "amplify-workflows")
+        # CONSISTENT WITH workflow_template_registry.py: use same app_id pattern  
+        app_id = f"{new_id}#amplify-workflows"
         
         storage_item = {
-            "PK": f"{hash_key}#workflow-templates",
+            "PK": f"{app_id}#workflow-templates",
             "SK": template_uuid,  # Use template_uuid directly as SK
             "UUID": str(uuid.uuid4()),
             "data": _float_to_decimal(workflow_content),
-            "appId": hash_key,
+            "appId": app_id,
             "entityType": "workflow-templates",
             "createdAt": int(time.time()),
             "migrated_from_s3": True,
@@ -587,7 +648,15 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
         }
         
         user_storage_table.put_item(Item=storage_item)
-        log(f"Successfully migrated workflow template: {s3_key} → USER_STORAGE_TABLE[{template_uuid}]")
+        log(f"Successfully migrated workflow template: {s3_key} → USER_STORAGE_TABLE[PK: {app_id}#workflow-templates, SK: {template_uuid}]")
+        
+        # After successful migration to USER_STORAGE_TABLE, delete the original S3 file
+        try:
+            s3_client.delete_object(Bucket=WORKFLOW_TEMPLATES_BUCKET, Key=s3_key)
+            log(f"Successfully cleaned up original workflow template S3 file: {s3_key}")
+        except ClientError as delete_e:
+            log(f"Warning: Failed to delete original workflow template S3 file {s3_key}: {str(delete_e)}")
+            # Don't fail the migration for cleanup errors, but log it
         
         # Return updated workflow item with s3_key removed
         updated_workflow_item = workflow_table_row.copy()
@@ -604,7 +673,7 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
 
 
 
-def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, scheduled_tasks_table_row: dict = None) -> tuple:
+def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, scheduled_tasks_table_row: dict = None, region: str = "us-east-1") -> tuple:
     """
     Migrate scheduled task logs from S3 to USER_STORAGE_TABLE and remove detailsKey from logs array.
     
@@ -650,7 +719,7 @@ def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_r
         # Check if consolidated logs already exist in USER_STORAGE_TABLE
         if not dry_run:
             try:
-                user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+                user_storage_table = boto3.resource('dynamodb', region_name=region).Table(USER_STORAGE_TABLE)
                 hash_key = _create_hash_key(new_id, "amplify-agent-logs")
                 
                 response = user_storage_table.get_item(
@@ -713,7 +782,7 @@ def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_r
             return (True, updated_task_item)
         
         # Actually migrate the logs using existing function
-        success = migrate_single_task_logs(task_id, new_id, logs_array, dry_run=False)
+        success = migrate_single_task_logs(task_id, new_id, logs_array, dry_run=False, region=region)
         
         if not success:
             log(f"Failed to migrate logs for task {task_id}")
@@ -741,13 +810,18 @@ def migrate_scheduled_tasks_logs_bucket_for_user(old_id: str, new_id: str, dry_r
         return (False, None)
 
 
-def _get_artifacts_data(old_id: str, artifacts_table_row: dict = None) -> tuple:
+def _get_artifacts_data(old_id: str, artifacts_table_row: dict = None, region: str = "us-east-1") -> tuple:
     """Get artifacts data from provided row or fetch from table."""
     if artifacts_table_row:
         return artifacts_table_row, artifacts_table_row.get("artifacts", [])
     
-    dynamodb = boto3.resource('dynamodb')
-    artifacts_table = dynamodb.Table(CONFIG.get("ARTIFACTS_DYNAMODB_TABLE", "amplify-v6-artifacts-dev-user-artifacts"))
+    table_name = CONFIG.get("ARTIFACTS_DYNAMODB_TABLE")
+    if not table_name:
+        print(f"ERROR: ARTIFACTS_DYNAMODB_TABLE not found in config")
+        return None, []
+    
+    dynamodb = boto3.resource('dynamodb', region_name=region)
+    artifacts_table = dynamodb.Table(table_name)
     response = artifacts_table.get_item(Key={"user_id": old_id})
     if "Item" not in response:
         return None, []
@@ -769,11 +843,7 @@ def _create_storage_item(artifact_content: dict, new_key: str, new_id: str, old_
         "data": _float_to_decimal(artifact_content),
         "appId": hash_key,
         "entityType": "artifact-content", 
-        "createdAt": int(time.time()),
-        "migrated_from_s3": True,
-        "original_bucket": S3_ARTIFACTS_BUCKET,
-        "original_path": old_key,
-        "migration_timestamp": str(int(time.time()))
+        "createdAt": int(time.time())
     }
 
 
@@ -807,15 +877,22 @@ def _process_single_artifact(artifact_metadata: dict, old_id: str, new_id: str, 
             storage_item = _create_storage_item(artifact_content, new_key, new_id, old_key)
             user_storage_table.put_item(Item=storage_item)
             
+            # Delete original S3 object after successful migration
+            try:
+                s3_client.delete_object(Bucket=S3_ARTIFACTS_BUCKET, Key=old_key)
+                result_msg = f"Successfully migrated and cleaned up: {old_key} → {new_key}"
+            except Exception as delete_e:
+                result_msg = f"Successfully migrated {old_key} → {new_key}, but failed to delete original: {delete_e}"
+            
             updated_metadata = artifact_metadata.copy()
             updated_metadata["key"] = new_key
-            return updated_metadata, f"Successfully migrated: {old_key} → {new_key}"
+            return updated_metadata, result_msg
             
     except Exception as e:
         return artifact_metadata, f"Error: {e}"
 
 
-def migrate_artifacts_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, artifacts_table_row: dict = None) -> tuple:
+def migrate_artifacts_bucket_for_user(old_id: str, new_id: str, dry_run: bool = False, artifacts_table_row: dict = None, region: str = "us-east-1") -> tuple:
     """
     Migrate artifacts bucket data from S3 to USER_STORAGE_TABLE and update key format.
     ENHANCED: Handles partial migrations where some artifacts may already be migrated.
@@ -839,7 +916,7 @@ def migrate_artifacts_bucket_for_user(old_id: str, new_id: str, dry_run: bool = 
     
     try:
         # Get artifacts data
-        user_artifacts_item, artifacts_array = _get_artifacts_data(old_id, artifacts_table_row)
+        user_artifacts_item, artifacts_array = _get_artifacts_data(old_id, artifacts_table_row, region)
         
         if not user_artifacts_item:
             log(f"No artifacts found for user {old_id}.")
@@ -877,12 +954,12 @@ def migrate_artifacts_bucket_for_user(old_id: str, new_id: str, dry_run: bool = 
         # Check USER_STORAGE_TABLE for actually migrated content
         if not dry_run and legacy_artifacts:
             try:
-                user_storage_table = boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+                user_storage_table = boto3.resource('dynamodb', region_name=region).Table(USER_STORAGE_TABLE)
                 hash_key = _create_hash_key(new_id, "amplify-artifacts")
                 
                 # Check if any artifacts already exist for this user
                 response = user_storage_table.query(
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key('PK').eq(f"{hash_key}#artifact-content")
+                    KeyConditionExpression=Key('PK').eq(f"{hash_key}#artifact-content")
                 )
                 
                 existing_in_table = set()
@@ -923,36 +1000,60 @@ def migrate_artifacts_bucket_for_user(old_id: str, new_id: str, dry_run: bool = 
         
         # Initialize clients
         s3_client = boto3.client('s3')
-        user_storage_table = None if dry_run else boto3.resource('dynamodb').Table(USER_STORAGE_TABLE)
+        user_storage_table = None if dry_run else boto3.resource('dynamodb', region_name=region).Table(USER_STORAGE_TABLE)
         
-        updated_artifacts_array = []
         success_count = 0
         
-        # Process each artifact
+        # Process artifacts that need S3 migration
+        s3_migrated_keys = set()
         for artifact_metadata in artifacts_array:
-            updated_metadata, result_info = _process_single_artifact(
-                artifact_metadata, old_id, new_id, s3_client, user_storage_table, dry_run
-            )
-            updated_artifacts_array.append(updated_metadata)
+            old_key = artifact_metadata.get("key", "")
+            if old_key in legacy_artifacts:
+                # Only process artifacts that actually need S3 migration
+                updated_metadata, result_info = _process_single_artifact(
+                    artifact_metadata, old_id, new_id, s3_client, user_storage_table, dry_run
+                )
+                s3_migrated_keys.add(old_key)
+                
+                if not dry_run and "Successfully migrated" in str(result_info):
+                    success_count += 1
+        
+        # CRITICAL FIX: Apply key transformation to ALL artifacts from original array
+        # This ensures shared artifacts and other non-S3 artifacts get clean keys
+        final_artifacts_array = []
+        for artifact_metadata in artifacts_array:
+            old_key = artifact_metadata.get("key", "")
+            updated_metadata = artifact_metadata.copy()
             
-            if not dry_run and "Successfully migrated" in str(result_info):
-                success_count += 1
+            # Apply key transformation to ALL artifacts
+            updated_metadata["key"] = transformed_map.get(old_key, old_key)
+            
+            # ALSO FIX: Update sharedBy field if it references the old user ID
+            if "sharedBy" in updated_metadata and updated_metadata["sharedBy"] == old_id:
+                updated_metadata["sharedBy"] = new_id
+                log(f"Updated sharedBy field: {old_id} -> {new_id}")
+            
+            final_artifacts_array.append(updated_metadata)
+            
+            if old_key not in s3_migrated_keys:
+                log(f"Applied key transformation (no S3 migration needed): {old_key} -> {updated_metadata['key']}")
         
         if dry_run:
-            log(f"Would migrate {len(artifacts_array)} S3 artifacts to USER_STORAGE_TABLE.")
-            log(f"Would update artifacts array with {len(updated_artifacts_array)} items with clean keys.")
+            log(f"Would migrate {len(legacy_artifacts)} S3 artifacts to USER_STORAGE_TABLE.")
+            log(f"Would update artifacts array with {len(final_artifacts_array)} items with clean keys.")
         else:
-            log(f"Migrated {success_count}/{len(artifacts_array)} S3 artifacts to USER_STORAGE_TABLE.")
-            log(f"Updated artifacts array with {len(updated_artifacts_array)} items with clean keys.")
+            log(f"Migrated {success_count}/{len(legacy_artifacts)} S3 artifacts to USER_STORAGE_TABLE.")
+            log(f"Updated artifacts array with {len(final_artifacts_array)} items with clean keys.")
+            log(f"Total artifacts processed: {len(final_artifacts_array)} (including shared/migrated artifacts)")
         
-        return (True, updated_artifacts_array if updated_artifacts_array else None)
+        return (True, final_artifacts_array if final_artifacts_array else None)
         
     except Exception as e:
         log(f"Error migrating artifacts for user ID from {old_id} to {new_id}: {e}")
         return (False, None)
 
 
-def migrate_single_task_logs(task_id: str, task_user: str, logs_array: list, dry_run: bool = False) -> bool:
+def migrate_single_task_logs(task_id: str, task_user: str, logs_array: list, dry_run: bool = False, region: str = "us-east-1") -> bool:
     """
     Migrate all S3 log files for a single scheduled task into consolidated USER_STORAGE_TABLE entry.
     
@@ -1031,7 +1132,7 @@ def migrate_single_task_logs(task_id: str, task_user: str, logs_array: list, dry
         }
         
         # Store directly in DynamoDB without going through S3
-        dynamodb = boto3.resource('dynamodb')
+        dynamodb = boto3.resource('dynamodb', region_name=region)
         table = dynamodb.Table(USER_STORAGE_TABLE)
         
         hash_key = _create_hash_key(task_user, "amplify-agent-logs")
@@ -1056,6 +1157,18 @@ def migrate_single_task_logs(task_id: str, task_user: str, logs_array: list, dry
         
         if result:
             print(f"Successfully consolidated {len(consolidated_logs)} logs for task {task_id}")
+            
+            # After successful consolidation to USER_STORAGE_TABLE, delete original S3 log files
+            for log_entry in logs_array:
+                details_key = log_entry.get('detailsKey')
+                if details_key:
+                    try:
+                        s3_client.delete_object(Bucket=SCHEDULED_TASKS_LOGS_BUCKET, Key=details_key)
+                        print(f"Successfully cleaned up original log file: {details_key}")
+                    except Exception as delete_e:
+                        print(f"Warning: Failed to delete original log file {details_key}: {str(delete_e)}")
+                        # Don't fail the migration for cleanup errors, but log it
+            
             return True
         else:
             print(f"Failed to store consolidated logs for task {task_id}")
@@ -1066,7 +1179,7 @@ def migrate_single_task_logs(task_id: str, task_user: str, logs_array: list, dry
         return False
 
 
-def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = False, shares_table_row: dict = None) -> bool:
+def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = False, shares_table_row: dict = None, region: str = "us-east-1") -> bool:
     """
     Migrate user settings from SHARES_DYNAMODB_TABLE settings column to USER_STORAGE_TABLE.
     Returns True if migration was successful or not needed, False if failed.
@@ -1084,21 +1197,65 @@ def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = Fal
             print(f"No settings data found for user {old_id}, skipping migration")
             return True
         
-        # Check if user settings already exist in USER_STORAGE_TABLE
+        # Check if user settings already exist in USER_STORAGE_TABLE (and fix malformed entries)
         try:
-            dynamodb = boto3.resource('dynamodb')
+            dynamodb = boto3.resource('dynamodb', region_name=region)
             table = dynamodb.Table(USER_STORAGE_TABLE)
-            hash_key = _create_hash_key(new_id, "amplify-user-settings")
             
+            # CONSISTENT FORMAT: Use same pattern as production code
+            correct_app_id = f"{new_id}#amplify-user-settings"
+            correct_pk = f"{correct_app_id}#user-settings"
+            
+            # Check for correct format first
             response = table.get_item(
                 Key={
-                    "PK": f"{hash_key}#user-settings",
+                    "PK": correct_pk,
                     "SK": "user-settings"
                 }
             )
             
             if 'Item' in response:
                 print(f"User settings already migrated to USER_STORAGE_TABLE for user {old_id} -> {new_id}")
+                return True
+            
+            # REPAIR LOGIC: Check for malformed entries (old user ID in app_id portion)
+            old_id_sanitized = re.sub(r"[^a-zA-Z0-9@._-]", "-", old_id)
+            malformed_app_id = f"{new_id}#{old_id_sanitized}-amplify-user-settings"
+            malformed_pk = f"{malformed_app_id}#user-settings"
+            
+            malformed_response = table.get_item(
+                Key={
+                    "PK": malformed_pk,
+                    "SK": "user-settings"
+                }
+            )
+            
+            if 'Item' in malformed_response:
+                print(f"DETECTED MALFORMED USER SETTINGS: Repairing entry with incorrect PK: {malformed_pk}")
+                malformed_item = malformed_response['Item']
+                
+                # Copy to correct location with proper PK
+                corrected_item = malformed_item.copy()
+                corrected_item['PK'] = correct_pk
+                corrected_item['appId'] = correct_app_id
+                
+                # Save corrected entry
+                table.put_item(Item=corrected_item)
+                print(f"Created corrected user settings entry at PK: {correct_pk}")
+                
+                # Delete malformed entry
+                try:
+                    table.delete_item(
+                        Key={
+                            "PK": malformed_pk,
+                            "SK": "user-settings"
+                        }
+                    )
+                    print(f"Deleted malformed user settings entry: {malformed_pk}")
+                except Exception as delete_e:
+                    print(f"Warning: Failed to delete malformed user settings entry: {delete_e}")
+                
+                # Return as already migrated
                 return True
                 
         except Exception as e:
@@ -1110,18 +1267,19 @@ def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = Fal
             return True
         
         # Store settings in USER_STORAGE_TABLE
-        dynamodb = boto3.resource('dynamodb')
+        dynamodb = boto3.resource('dynamodb', region_name=region)
         table = dynamodb.Table(USER_STORAGE_TABLE)
         
-        hash_key = _create_hash_key(new_id, "amplify-user-settings")
+        # CONSISTENT FORMAT: Use same pattern as production code
+        app_id = f"{new_id}#amplify-user-settings"
         sk = "user-settings"
         
         item = {
-            "PK": f"{hash_key}#user-settings",
+            "PK": f"{app_id}#user-settings",
             "SK": sk,
             "UUID": str(uuid.uuid4()),
             "data": _float_to_decimal({"settings": settings_data}),
-            "appId": hash_key,
+            "appId": app_id,
             "entityType": "user-settings",
             "createdAt": int(time.time()),
             "migrated_from_shares_table": True,
@@ -1130,7 +1288,7 @@ def migrate_user_settings_for_user(old_id: str, new_id: str, dry_run: bool = Fal
         }
         
         table.put_item(Item=item)
-        print(f"Successfully migrated user settings for {old_id} -> {new_id}")
+        print(f"Successfully migrated user settings for {old_id} -> {new_id} [PK: {app_id}#user-settings]")
         return True
         
     except Exception as e:
@@ -1274,8 +1432,16 @@ def migrate_code_interpreter_files_bucket_for_user(old_id: str, new_id: str, dry
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                        
+                        # After successful copy, delete the original file to complete migration
+                        try:
+                            s3_client.delete_object(Bucket=code_interpreter_bucket, Key=old_key)
+                            log(f"Successfully migrated and cleaned up code interpreter file: {file_path}")
+                        except ClientError as delete_e:
+                            log(f"Warning: Failed to delete original code interpreter file {old_key} from {code_interpreter_bucket}: {str(delete_e)}")
+                            # Don't fail the migration for cleanup errors, but log it
+                        
                         successful_migrations += 1
-                        log(f"Successfully migrated code interpreter file: {file_path}")
                     except ClientError:
                         log(f"Failed to verify migrated code interpreter file: {file_path}")
                         failed_migrations += 1
@@ -1493,8 +1659,16 @@ def migrate_agent_state_bucket_for_user(old_id: str, new_id: str, dry_run: bool 
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                        
+                        # After successful copy, delete the original file to complete migration
+                        try:
+                            s3_client.delete_object(Bucket=source_bucket, Key=old_key)
+                            log(f"{log_prefix}Successfully migrated and cleaned up agent state file: {file_path}")
+                        except ClientError as delete_e:
+                            log(f"{log_prefix}Warning: Failed to delete original file {old_key} from {source_bucket}: {str(delete_e)}")
+                            # Don't fail the migration for cleanup errors, but log it
+                        
                         successful_migrations += 1
-                        log(f"{log_prefix}Successfully migrated agent state file: {file_path}")
                     except ClientError:
                         log(f"{log_prefix}Failed to verify migrated agent state file: {file_path}")
                         failed_migrations += 1
@@ -1654,8 +1828,16 @@ def migrate_group_assistant_conversations_bucket_for_user(old_id: str, new_id: s
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
-                        successful_migrations += 1
-                        log(f"Successfully migrated: {old_key} -> {new_key}")
+                        
+                        # Delete original object after successful copy and verification
+                        try:
+                            s3_client.delete_object(Bucket=group_conversations_bucket, Key=old_key)
+                            successful_migrations += 1
+                            log(f"Successfully migrated and cleaned up: {old_key} -> {new_key}")
+                        except ClientError as delete_e:
+                            successful_migrations += 1  # Still count as successful migration
+                            log(f"Successfully migrated {old_key} -> {new_key}, but failed to delete original: {str(delete_e)}")
+                            
                     except ClientError:
                         log(f"Failed to verify migrated file: {new_key}")
                         failed_migrations += 1
@@ -1770,8 +1952,16 @@ def migrate_data_disclosure_storage_bucket(dry_run: bool = False) -> bool:
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
-                        successful_migrations += 1
-                        log(f"Successfully migrated: {old_key} -> {new_key}")
+                        
+                        # Delete original object after successful copy and verification
+                        try:
+                            s3_client.delete_object(Bucket=data_disclosure_bucket, Key=old_key)
+                            successful_migrations += 1
+                            log(f"Successfully migrated and cleaned up: {old_key} -> {new_key}")
+                        except ClientError as delete_e:
+                            successful_migrations += 1  # Still count as successful migration
+                            log(f"Successfully migrated {old_key} -> {new_key}, but failed to delete original: {str(delete_e)}")
+                            
                     except ClientError:
                         log(f"Failed to verify migrated file: {new_key}")
                         failed_migrations += 1
@@ -1886,8 +2076,16 @@ def migrate_api_documentation_bucket(dry_run: bool = False) -> bool:
                     # Verify the copy was successful by checking if object exists
                     try:
                         s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
-                        successful_migrations += 1
-                        log(f"Successfully migrated: {old_key} -> {new_key}")
+                        
+                        # Delete original object after successful copy and verification
+                        try:
+                            s3_client.delete_object(Bucket=api_documentation_bucket, Key=old_key)
+                            successful_migrations += 1
+                            log(f"Successfully migrated and cleaned up: {old_key} -> {new_key}")
+                        except ClientError as delete_e:
+                            successful_migrations += 1  # Still count as successful migration
+                            log(f"Successfully migrated {old_key} -> {new_key}, but failed to delete original: {str(delete_e)}")
+                            
                     except ClientError:
                         log(f"Failed to verify migrated file: {new_key}")
                         failed_migrations += 1
@@ -1942,21 +2140,51 @@ def main():
     )
     parser.add_argument(
         "--log",
-        help="Log output to the specified file (optional)"
+        help="Log output to the specified file (auto-generated if not provided)"
     )
     
     args = parser.parse_args()
     
-    # Set up logging
-    if args.log:
-        try:
-            logfile = open(args.log, "w")
-            import sys
-            sys.stdout = logfile
-            sys.stderr = logfile
-        except Exception as e:
-            print(f"Error opening log file {args.log}: {e}")
-            return False
+    # Set up logging - auto-generate filename if not provided
+    if not args.log:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mode = "dry_run" if args.dry_run else "migration"
+        args.log = f"s3_migration_{mode}_{timestamp}.log"
+    
+    try:
+        print(f"Logging to file: {args.log}")
+        logfile = open(args.log, "w")
+        
+        # Use tee-like functionality to show output in both console and file
+        import sys
+        
+        class TeeOutput:
+            def __init__(self, file1, file2):
+                self.file1 = file1
+                self.file2 = file2
+            
+            def write(self, data):
+                self.file1.write(data)
+                self.file2.write(data)
+                self.file1.flush()
+                self.file2.flush()
+            
+            def flush(self):
+                self.file1.flush()
+                self.file2.flush()
+        
+        # Keep original stdout/stderr for console output
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        
+        # Create tee output to both console and file
+        sys.stdout = TeeOutput(original_stdout, logfile)
+        sys.stderr = TeeOutput(original_stderr, logfile)
+        
+    except Exception as e:
+        print(f"Error opening log file {args.log}: {e}")
+        return False
     
     log(f"Starting standalone S3 bucket migration. Dry run: {args.dry_run}")
     log(f"Target bucket(s): {args.bucket}")
@@ -1994,11 +2222,14 @@ def main():
         return False
     
     finally:
-        if args.log:
-            try:
-                logfile.close()
-            except:
-                pass
+        try:
+            # Restore original stdout/stderr
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            logfile.close()
+            print(f"S3 migration completed. Full log available in: {args.log}")
+        except:
+            pass
 
 
 if __name__ == "__main__":
