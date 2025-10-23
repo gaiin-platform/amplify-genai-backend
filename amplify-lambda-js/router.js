@@ -11,14 +11,20 @@ import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
-import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation} from "./common/envVarsTracking.js";
+import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
 import {CacheManager} from "./common/cache.js";
 // LiteLLM integration - use litellmClient for all LLM calls
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {StateBasedAssistant} from "./assistants/statemachine/states.js";
 import {initPythonProcess} from "./litellm/litellmClient.js";
 // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION
-// ✅ ELIMINATED: No longer need getDefaultLLM - assistants create their own InternalLLM
+
+// 🛡️ DEFENSIVE ROUTING
+import { 
+    validateModelConfiguration, 
+    validateRequestBody,
+    withCostMonitoring
+} from "./common/defensiveRouting.js";
 
 
 const doTrace = process.env.TRACING_ENABLED === 'true';
@@ -83,6 +89,17 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
             const response = await handleDatasourceRequest(params, params.body.datasourceRequest);
             returnResponse(responseStream, response);
         } else {
+            // 🛡️ DEFENSIVE VALIDATION
+            try {
+                validateRequestBody(params.body);
+            } catch (error) {
+                logger.error("Request validation failed:", error.message);
+                return returnResponse(responseStream, {
+                    statusCode: error.statusCode || 400,
+                    body: { error: error.message }
+                });
+            }
+            
             // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION - All router operations in parallel!
             logger.info("🚀 Starting comprehensive parallel router setup...");
             const parallelStartTime = Date.now();
@@ -185,12 +202,11 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
             
             const models = user_model_data.models;
             if (!models) {
-                    returnResponse(responseStream, {
+                    return returnResponse(responseStream, {
                     statusCode: 400,
                     body: {error: "No user models."}
                 });
             }
-
 
             logger.debug("Processing request");
                                                                         
@@ -203,12 +219,32 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
             
             const modelId = (options.model && options.model.id);
 
-            const model = models[modelId];
-
-            if (!model) {
-                returnResponse(responseStream, {
-                    statusCode: 400,
-                    body: {error: "Invalid model."}
+            // 🛡️ STRICT VALIDATION: Bad data = immediate rejection, no fallbacks
+            let model;
+            try {
+                if (!modelId) {
+                    const error = new Error("No model ID provided in request");
+                    error.statusCode = 400;
+                    error.code = "MISSING_MODEL_ID";
+                    throw error;
+                }
+                
+                // Use defensive validation instead of direct access
+                model = validateModelConfiguration(models, modelId, options.model, params.user);
+                logger.info(`✅ Model validation passed: ${modelId}`);
+                
+            } catch (error) {
+                logger.error(`❌ Model validation failed for ${modelId} - REJECTING REQUEST:`, error.message);
+                
+                // 🚫 NO FALLBACKS: Bad data gets kicked out immediately
+                return returnResponse(responseStream, {
+                    statusCode: error.statusCode || 400,
+                    body: { 
+                        error: `Invalid model: ${error.message}`,
+                        code: error.code || "INVALID_MODEL",
+                        requestedModel: modelId,
+                        availableModels: Object.keys(models).slice(0, 10) // Help debugging
+                    }
                 });
             }
 
@@ -235,7 +271,7 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
 
             
             // ⚡ Create request state 
-            const requestStateResult = await createRequestState(params.user, requestId);
+            await createRequestState(params.user, requestId);
             
             logger.debug("🎯 Router: Passing raw datasources to assistant:", {
                 dataSources_length: dataSources.length,
@@ -275,17 +311,7 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 // ✅ OPTIMIZED PATH: LiteLLM Integration with all optimizations
                 logger.info(`Using LiteLLM optimized path for user ${params.user}`);
                 
-                sendStateEventToStream(responseStream, {
-                    assistant: "LiteLLM", 
-                    routingTime: 5, // Fast routing with no LLM-based assistant selection
-                    optimizationFlags: {
-                        litellm: true,
-                        caching: true,
-                        parallel: true
-                    }
-                });
-                // Removed X-Ray tracing for performance
-                
+               
                 // 🚀 BREAKTHROUGH: Direct assistant execution without LLM dependency
                 // Assistants now create their own InternalLLM internally for massive performance gains
                 const selectedAssistant = await chooseAssistantForRequest(assistantParams.account, model, body, dataSources, responseStream);
@@ -369,7 +395,7 @@ const routeRequestWrapper = requiredEnvVars({
     "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
     "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "CONVERSATION_ANALYSIS_QUEUE_URL": [] 
+    "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
 })(routeRequestCore);
 
 // Main export that accepts pythonProcessPromise from index.js
