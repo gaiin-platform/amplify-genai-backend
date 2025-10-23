@@ -1,7 +1,6 @@
 from datetime import datetime
 import json
 import re
-import time
 import boto3
 import os
 import boto3
@@ -21,6 +20,9 @@ from pycommon.const import APIAccessType
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ARTIFACTS.value])
 
+from pycommon.logger import getLogger
+logger = getLogger("artifacts")
+
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 artifacts_table_name = os.environ["ARTIFACTS_DYNAMODB_TABLE"]
@@ -30,7 +32,7 @@ artifact_bucket = os.environ["S3_ARTIFACTS_BUCKET"] #Marked for future deletion
 # USER_STORAGE_TABLE for direct access (shared artifacts only)
 user_storage_table_name = os.environ.get("USER_STORAGE_TABLE")
 user_storage_table = dynamodb.Table(user_storage_table_name) if user_storage_table_name else None
-print(f"DEBUG: USER_STORAGE_TABLE environment variable = {user_storage_table_name}")
+logger.debug("USER_STORAGE_TABLE environment variable = %s", user_storage_table_name)
 
 def get_app_id(current_user: str) -> str:
     return "amplify-artifacts"
@@ -68,36 +70,36 @@ def get_artifact(event, context, current_user, name, data):
     try:
         if is_migrated_artifact(artifact_key):
             # Check if this is a shared artifact
-            print(f"DEBUG: user_artifact_info = {user_artifact_info}")
+            logger.debug("user_artifact_info = %s", user_artifact_info)
             shared_by = user_artifact_info.get("sharedBy")
-            print(f"DEBUG: sharedBy field = {shared_by}")
+            logger.debug("sharedBy field = %s", shared_by)
             
             if shared_by:
                 # DIRECT DYNAMODB ACCESS: Required because pycommon functions use access token's user
                 # for PK creation. Shared artifacts are stored under sharer's PK but we have recipient's token.
                 # This is the ONLY case where we bypass pycommon to avoid cross-user access limitations.
-                print(f"SHARED ARTIFACT DETECTED: Retrieving from {shared_by}'s storage: {artifact_key}")
+                logger.info("SHARED ARTIFACT DETECTED: Retrieving from %s's storage: %s", shared_by, artifact_key)
                 
                 # Construct PK/SK directly to access sharer's storage  
                 # Use recipient-specific SK that matches pycommon's actual structure
                 pk = f"{shared_by}#amplify-artifacts#artifact-content"  # pycommon includes entity in PK
-                print(f"DEBUG: Constructed PK for shared retrieval: {pk}")
+                logger.debug("Constructed PK for shared retrieval: %s", pk)
                 shared_artifact_key = f"shared-with-{current_user}#{artifact_key}"
                 sk = shared_artifact_key  # pycommon uses just item_id as SK, no entity prefix
-                print(f"DEBUG: Searching for PK={pk}, SK={sk}")
+                logger.debug("Searching for PK=%s, SK=%s", pk, sk)
                 
                 try:
-                    print(f"DEBUG: Searching in table: {user_storage_table_name}")
+                    logger.debug("Searching in table: %s", user_storage_table_name)
                     response = user_storage_table.get_item(Key={"PK": pk, "SK": sk})
-                    print(f"DEBUG: DynamoDB response = {response}")
+                    logger.debug("DynamoDB response = %s", response)
                     artifact_content = response.get("Item") if "Item" in response else None
-                    print(f"DEBUG: Extracted artifact_content = {artifact_content is not None}")
+                    logger.debug("Extracted artifact_content = %s", artifact_content is not None)
                 except Exception as e:
-                    print(f"ERROR: Failed to retrieve shared artifact: {e}")
+                    logger.error("Failed to retrieve shared artifact: %s", e)
                     artifact_content = None
             else:
                 # NORMAL CASE: Use pycommon for user's own artifacts
-                print(f"Retrieving artifact from USER_STORAGE_TABLE: {artifact_key}")
+                logger.info("Retrieving artifact from USER_STORAGE_TABLE: %s", artifact_key)
                 app_id = "amplify-artifacts"
                 artifact_content = load_user_data(data["access_token"], app_id, "artifact-content", artifact_key)
             
@@ -110,7 +112,7 @@ def get_artifact(event, context, current_user, name, data):
                 
                 # Check if contents field is compressed and decompress if needed
                 if "contents" in actual_artifact and is_lzw_compressed_format(actual_artifact["contents"]):
-                    print("Decompressing artifact contents")
+                    logger.info("Decompressing artifact contents")
                     actual_artifact["contents"] = lzw_uncompress(actual_artifact["contents"])
             else:
                 # Fallback: return the whole content if structure is different
@@ -119,14 +121,14 @@ def get_artifact(event, context, current_user, name, data):
             return {"success": True, "data": actual_artifact}
         else:
             # Old format: Get from S3
-            print(f"Retrieving legacy artifact from S3: {artifact_key}")
+            logger.info("Retrieving legacy artifact from S3: %s", artifact_key)
             
             response = s3.get_object(Bucket=artifact_bucket, Key=artifact_key)
             contents = response["Body"].read().decode("utf-8")
             return {"success": True, "data": json.loads(contents)}
 
     except Exception as e:
-        print(f"Error retrieving artifact: {e}")
+        logger.error("Error retrieving artifact: %s", e)
         return {"success": False, "message": "Failed to retrieve artifact."}
 
 
@@ -136,7 +138,7 @@ def get_artifact(event, context, current_user, name, data):
 @validated("read")
 def get_artifacts_info(event, context, current_user, name, data):
     try:
-        print("retrieving entry from the table")
+        logger.info("retrieving entry from the table")
         response = artifact_table.get_item(Key={"user_id": current_user})
 
         if "Item" in response:
@@ -148,7 +150,7 @@ def get_artifacts_info(event, context, current_user, name, data):
             return {"success": True, "message": []}
     except Exception as e:
         # Handle any potential errors during the operation
-        print(f"Error retrieving artifacts for user {current_user}: {e}")
+        logger.error("Error retrieving artifacts for user %s: %s", current_user, e)
         return {"success": False, "message": "Failed to retrieve artifacts."}
 
 
@@ -180,7 +182,7 @@ def delete_artifact(event, context, current_user, name, data):
                 # SHARED ARTIFACT DELETE: Remove recipient's specific copy AND metadata
                 # Each share creates a unique copy, so safe to delete this specific one
                 shared_by_user = user_artifact_info.get("sharedBy")
-                print(f"Deleting shared artifact copy for {current_user} from {shared_by_user}'s storage: {artifact_key}")
+                logger.info("Deleting shared artifact copy for %s from %s's storage: %s", current_user, shared_by_user, artifact_key)
                 
                 # Delete the recipient-specific copy
                 pk = f"{shared_by_user}#amplify-artifacts#artifact-content"  # pycommon includes entity in PK
@@ -189,14 +191,14 @@ def delete_artifact(event, context, current_user, name, data):
                 
                 try:
                     user_storage_table.delete_item(Key={"PK": pk, "SK": sk})
-                    print(f"DEBUG: Deleted shared copy at PK={pk}, SK={sk}")
+                    logger.debug("Deleted shared copy at PK=%s, SK=%s", pk, sk)
                     result = True
                 except Exception as e:
-                    print(f"Error deleting shared artifact copy: {e}")
+                    logger.error("Error deleting shared artifact copy: %s", e)
                     result = None
             else:
                 # NORMAL CASE: Use pycommon for user's own artifacts
-                print(f"Deleting artifact from USER_STORAGE_TABLE: {artifact_key}")
+                logger.info("Deleting artifact from USER_STORAGE_TABLE: %s", artifact_key)
                 app_id = "amplify-artifacts"
                 result = delete_user_data(data["access_token"], app_id, "artifact-content", artifact_key)
             
@@ -204,11 +206,11 @@ def delete_artifact(event, context, current_user, name, data):
                 return {"success": False, "message": "Failed to delete migrated artifact."}
         else:
             # Old format: Delete from S3
-            print(f"Deleting legacy artifact from S3: {artifact_key}")
+            logger.info("Deleting legacy artifact from S3: %s", artifact_key)
             s3.delete_object(Bucket=artifact_bucket, Key=artifact_key)
 
         # After successfully deleting content, remove the artifact from the DynamoDB metadata table
-        print("Remove artifact from metadata table")
+        logger.info("Remove artifact from metadata table")
         response = artifact_table.get_item(Key={"user_id": current_user})
         if "Item" in response:
             artifacts = response["Item"].get("artifacts", [])
@@ -230,12 +232,12 @@ def delete_artifact(event, context, current_user, name, data):
         return {"success": True, "message": "Artifact deleted successfully."}
 
     except Exception as e:
-        print(f"Error deleting artifact: {e}")
+        logger.error("Error deleting artifact: %s", e)
         return {"success": False, "message": "Failed to delete artifact."}
 
 
 def create_artifact_keys(current_user, artifact):
-    print("creating artifact key data")
+    logger.info("creating artifact key data")
     created_at_str = artifact["createdAt"]
     created_at_dt = datetime.strptime(created_at_str, "%b %d, %Y")
     created_at_num = created_at_dt.strftime("%Y%m%d")
@@ -257,7 +259,7 @@ def save_artifact(event, context, current_user, name, data):
 
 
 def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
-    print("saving artifact for user ", current_user)
+    logger.info("saving artifact for user %s", current_user)
     
     # Use updated create_artifact_keys which now returns clean format
     artifact_key, artifact_id, created_at_str = create_artifact_keys(current_user, artifact)
@@ -272,12 +274,12 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         "tags": artifact.get("tags", []),
     }
     if sharedBy:
-        print(f"DEBUG: Adding sharedBy field: {sharedBy}")
+        logger.debug("Adding sharedBy field: %s", sharedBy)
         artifact_table_data["sharedBy"] = sharedBy
-        print(f"DEBUG: Complete metadata will be: {artifact_table_data}")
+        logger.debug("Complete metadata will be: %s", artifact_table_data)
         
     try:
-        print("Adding artifact details to the table")
+        logger.info("Adding artifact details to the table")
         createdAt = ""
         response = artifact_table.get_item(Key={"user_id": current_user})
         if "Item" in response:
@@ -303,24 +305,24 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         )
 
         # Store artifact content in USER_STORAGE_TABLE
-        print("Store artifact content in USER_STORAGE_TABLE")
+        logger.info("Store artifact content in USER_STORAGE_TABLE")
         artifact["artifactId"] = artifact_id
         
         if sharedBy:
             # SHARED ARTIFACT: Store in sharer's storage space using sharer's access token
             # Use recipient-specific SK to avoid overwrites when sharing with multiple users
-            print(f"SHARED ARTIFACT STORAGE: Storing in {sharedBy}'s storage space for recipient {current_user}")
+            logger.info("SHARED ARTIFACT STORAGE: Storing in %s's storage space for recipient %s", sharedBy, current_user)
             app_id = "amplify-artifacts"
             # Create unique key per share to avoid overwrites
             shared_artifact_key = f"shared-with-{current_user}#{artifact_key}"
-            print(f"DEBUG: Using app_id = {app_id} for shared storage")
-            print(f"DEBUG: Shared artifact key = {shared_artifact_key}")
-            print(f"DEBUG: This will create PK = {sharedBy}#{app_id} = {sharedBy}#amplify-artifacts")
+            logger.debug("Using app_id = %s for shared storage", app_id)
+            logger.debug("Shared artifact key = %s", shared_artifact_key)
+            logger.debug("This will create PK = %s#%s = %s#amplify-artifacts", sharedBy, app_id, sharedBy)
             try:
                 result = save_user_data(access_token, app_id, "artifact-content", shared_artifact_key, artifact)
-                print(f"DEBUG: save_user_data result = {result}")
+                logger.debug("save_user_data result = %s", result)
             except Exception as e:
-                print(f"ERROR: save_user_data failed: {e}")
+                logger.error("save_user_data failed: %s", e)
                 result = None
         else:
             # REGULAR ARTIFACT: Store in current user's storage space  
@@ -332,14 +334,14 @@ def save_artifact_for_user(current_user, artifact, access_token, sharedBy=None):
         
         # Verify the save was successful
         if not result.get("success", True):  # Some pycommon functions return success flag
-            print(f"ERROR: save_user_data reported failure: {result}")
+            logger.error("save_user_data reported failure: %s", result)
             return {"success": False, "message": f"Failed to save artifact content: {result.get('message', 'Unknown error')}"}
 
         # Return success with appended artifact data
         return {"success": True, "data": artifact_table_data}
 
     except Exception as e:
-        print(f"Error saving artifact: {e}")
+        logger.error("Error saving artifact: %s", e)
         return {"success": False, "message": "Failed to save artifact"}
 
 
@@ -368,13 +370,13 @@ def share_artifact(event, context, current_user, name, data):
     # Iterate over each email in the email list and save the artifact for each user
     for email in valid_users:
         try:
-            print(f"Sharing artifact with user {email}")
+            logger.info("Sharing artifact with user %s", email)
             result = save_artifact_for_user(email, artifact, access_token, current_user)
             if not result["success"]:
-                print(f"Failed to save artifact for {email}: {result['message']}")
+                logger.warning("Failed to save artifact for %s: %s", email, result['message'])
                 errors.append({"email": email, "message": result["message"]})
         except Exception as e:
-            print(f"Error sharing artifact with {email}: {e}")
+            logger.error("Error sharing artifact with %s: %s", email, e)
             errors.append({"email": email, "message": str(e)})
 
     # If there were no errors, return success
@@ -393,7 +395,7 @@ def share_artifact(event, context, current_user, name, data):
 
 
 def validate_user_and_get_artifact_info(current_user, artifact_key):
-    print("Validating user and getting artifact info")
+    logger.info("Validating user and getting artifact info")
     try:
         # Retrieve the user's entry from the DynamoDB table
         response = artifact_table.get_item(Key={"user_id": current_user})
@@ -407,7 +409,7 @@ def validate_user_and_get_artifact_info(current_user, artifact_key):
                     return artifact  # Return full artifact info
         return None  # No matching artifact found
     except Exception as e:
-        print(f"Error validating user permissions: {e}")
+        logger.error("Error validating user permissions: %s", e)
         return None
 
 def validate_user(current_user, artifact_key):
@@ -417,7 +419,7 @@ def validate_user(current_user, artifact_key):
 
 
 def validate_query_param(query_params):
-    print("Query params: ", query_params)
+    logger.info("Query params: %s", query_params)
     if not query_params or not query_params.get("artifact_id"):
         return {"success": False, "message": "Missing artifact_id parameter"}
     artifact_key = query_params.get("artifact_id")

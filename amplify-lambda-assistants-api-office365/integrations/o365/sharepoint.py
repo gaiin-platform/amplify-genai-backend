@@ -11,6 +11,8 @@ GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 # You frequently discover these IDs via the list_sites and list_site_lists calls,
 #  or by using GET /sites/root or GET /sites/{hostname}:{sitePath} to look up a site by URL.
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 class SharePointError(Exception):
     """Base exception for SharePoint operations"""

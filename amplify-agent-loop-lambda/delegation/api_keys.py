@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from typing import Union, Dict
 import os
-import json
 import uuid
 import requests
 import boto3
+from pycommon.logger import getLogger
+logger = getLogger("api_keys")
 
 dynamodb = boto3.resource("dynamodb")
 
@@ -90,7 +91,7 @@ def create_api_key(
     """
     name = pascalCase(app_name)
 
-    print("create api key for agent")
+    logger.info("Creating api key for agent")
     api_keys_table_name = os.environ["API_KEYS_DYNAMODB_TABLE"]
     api_table = dynamodb.Table(api_keys_table_name)
 
@@ -98,7 +99,7 @@ def create_api_key(
     timestamp = datetime.now(timezone.utc).isoformat()
     apiKey = 'amp-' + str(uuid.uuid4())
     try:
-        print("Put entry in api keys table")
+        logger.info("Put entry in api keys table")
         # Put (or update) the item for the specified user in the DynamoDB table
         response = api_table.put_item(
             Item={
@@ -120,16 +121,16 @@ def create_api_key(
         )
 
         if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
-            print(f"API key for created successfully")
+            logger.info("API key created successfully")
             return {"success": True,
                     "data": {"id": api_owner_id, "apiKey": apiKey},
                     "message": "API key created successfully",
                     }
         else:
-            print(f"Failed to create API key")
+            logger.error("Failed to create API key")
             return {"success": False, "message": "Failed to create API key"}
     except Exception as e:
-        print(f"An error occurred while saving API key: {e}")
+        logger.error("An error occurred while saving API key: %s", e)
         return {
             "success": False,
             "message": f"An error occurred while saving API key: {str(e)}",
@@ -200,11 +201,11 @@ def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
 
     api_base = os.environ.get("API_BASE_URL", None)
     if not api_base:
-        print("API_BASE_URL is not set.")
+        logger.error("API_BASE_URL is not set")
         return None
 
     if not api_key_id:
-        print("API Key ID is required.")
+        logger.error("API Key ID is required")
         return None
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -217,10 +218,10 @@ def get_api_key_by_id(token: str, api_key_id: str) -> Union[Dict, None]:
         response.raise_for_status()
         result = response.json()
 
-        print(f"Retrieved API Key: {result}")
+        logger.info("Retrieved API Key: %s", result)
         return result["data"]
     except Exception as e:
-        print(f"Failed to retrieve API key: {str(e)}")
+        logger.error("Failed to retrieve API key: %s", str(e))
         return None
 
 
@@ -237,7 +238,7 @@ def get_api_keys(token: str) -> Union[Dict, None]:
 
     api_base = os.environ.get("API_BASE_URL", None)
     if not api_base:
-        print("API_BASE_URL is not set.")
+        logger.error("API_BASE_URL is not set")
         return None
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -247,10 +248,10 @@ def get_api_keys(token: str) -> Union[Dict, None]:
         response.raise_for_status()
         result = response.json()
 
-        print(f"Retrieved API Keys: {result}")
+        logger.info("Retrieved API Keys: %s", result)
         return result
     except Exception as e:
-        print(f"Failed to retrieve API keys: {str(e)}")
+        logger.error("Failed to retrieve API keys: %s", str(e))
         return None
 
 

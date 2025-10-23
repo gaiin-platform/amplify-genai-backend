@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 User Storage Table Backup Script
-Backs up USER_STORAGE_TABLE from basic-ops to CSV for migration to amplify-lambda
+Backs up OLD_USER_STORAGE_TABLE from basic-ops to CSV for migration to amplify-lambda
 """
 import boto3
 import csv
@@ -10,6 +10,7 @@ import argparse
 import sys
 from datetime import datetime
 from typing import List, Dict, Any
+from config import get_config
 
 def flatten_dynamodb_item(item: Dict[str, Any]) -> Dict[str, str]:
     """Convert DynamoDB item format to flat dictionary with string values."""
@@ -47,7 +48,7 @@ def flatten_dynamodb_item(item: Dict[str, Any]) -> Dict[str, str]:
     return flattened
 
 def backup_user_storage_table(table_name: str, output_file: str = None) -> tuple[str, int]:
-    """Backup USER_STORAGE_TABLE to CSV, returns (filename, item_count)."""
+    """Backup OLD_USER_STORAGE_TABLE to CSV, returns (filename, item_count)."""
     
     dynamodb = boto3.client('dynamodb')
     
@@ -137,20 +138,24 @@ def main():
     """Main backup function."""
     parser = argparse.ArgumentParser(description='Backup DynamoDB User Storage Table to CSV')
     parser.add_argument(
-        '--table-name', 
-        default="amplify-v6-lambda-basic-ops-dev-user-storage",
-        help='DynamoDB table name to backup (default: amplify-v6-lambda-basic-ops-dev-user-storage)'
-    )
-    parser.add_argument(
         '--output-file',
         help='Output CSV filename (default: auto-generated with timestamp)'
     )
     
     args = parser.parse_args()
     
-    print(f"Backing up table: {args.table_name}")
+    # Get table name from config instead of hardcoded argument
+    config = get_config()
+    table_name = config.get("OLD_USER_STORAGE_TABLE")
     
-    backup_file, item_count = backup_user_storage_table(args.table_name, args.output_file)
+    if not table_name:
+        print("❌ ERROR: OLD_USER_STORAGE_TABLE not configured in config.py")
+        print("Please check your DEP_NAME and STAGE settings in config.py")
+        sys.exit(1)
+    
+    print(f"Backing up table: {table_name} (from config.py)")
+    
+    backup_file, item_count = backup_user_storage_table(table_name, args.output_file)
     
     if backup_file and item_count > 0:
         print(f"\nBackup saved to: {backup_file}")

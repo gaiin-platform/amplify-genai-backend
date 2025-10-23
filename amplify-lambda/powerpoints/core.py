@@ -11,6 +11,8 @@ consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
 
 PPTX_TEMPLATES = "powerPointTemplates"
 
+from pycommon.logger import getLogger
+logger = getLogger("powerpoints")
 
 def handle_pptx_upload(event, context):
     records = event.get("Records", [])
@@ -20,12 +22,12 @@ def handle_pptx_upload(event, context):
         object_key = s3_info.get("object", {}).get("key")
 
         if not bucket_name or not object_key:
-            print("Skipping record: missing bucket_name or object_key.")
+            logger.warning("Skipping record: missing bucket_name or object_key.")
             continue
 
         # Make sure this is in the powerPointTemplates/ prefix
         if not object_key.startswith("powerPointTemplates/"):
-            print(f"Skipping record: object {object_key} is not in powerPointTemplates/ prefix.")
+            logger.info("Skipping record: object %s is not in powerPointTemplates/ prefix.", object_key)
             continue
 
         template_name = object_key.replace("powerPointTemplates/", "")
@@ -33,7 +35,7 @@ def handle_pptx_upload(event, context):
         try:
             obj_head = s3_client.head_object(Bucket=bucket_name, Key=object_key)
         except ClientError as e:
-            print(f"Could not find object {object_key} in {bucket_name}: {str(e)}")
+            logger.error("Could not find object %s in %s: %s", object_key, bucket_name, str(e))
             continue
 
         # Extract metadata
@@ -76,8 +78,8 @@ def handle_pptx_upload(event, context):
                     "last_updated": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            print(f"Template '{template_name}' registered successfully in DynamoDB.")
+            logger.info("Template '%s' registered successfully in DynamoDB.", template_name)
         except Exception as e:
-            print(f"Error registering template '{template_name}': {str(e)}")
+            logger.error("Error registering template '%s': %s", template_name, str(e))
 
     return {"status": "done"}

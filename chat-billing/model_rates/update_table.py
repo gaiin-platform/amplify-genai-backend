@@ -8,6 +8,8 @@ from decimal import Decimal
 # Initialize a DynamoDB client with Boto3
 dynamodb = boto3.resource("dynamodb")
 
+from pycommon.logger import getLogger
+logger = getLogger("models_csv_updates")
 
 def load_model_rate_table(model_data):
     # Retrieve the environment variable for the table name
@@ -30,23 +32,23 @@ def load_model_rate_table(model_data):
 
                 existing_item = model_data.get(model_id, {})
                 if check_old_data_by_col(existing_item.keys()):
-                    print(f"ModelID {model_id} is outdated/missing, adding new row")
+                    logger.info(f"ModelID {model_id} is outdated/missing, adding new row")
                     response = table.put_item(Item=csv_item)
                 else:
-                    print(
+                    logger.info(
                         f"ModelID {model_id} is up to date, updating existing col if missing"
                     )
                     updated_item = dict(existing_item)
                     for key, value in csv_item.items():
                         if key not in existing_item:
-                            print("Updating column: ", key)
+                            logger.debug("Updating column: %s", key)
                             # Only add the column if it doesn't exist in the existing item
                             updated_item[key] = value
 
                     table.put_item(Item=updated_item)
 
             except ClientError as e:
-                print(e.response["Error"]["Message"])
+                logger.error(e.response["Error"]["Message"])
                 return False
 
     # Return a success response after updating the table with all entries

@@ -39,7 +39,7 @@ custom:
     number: 20
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
 
   stages:
     - dev
@@ -50,7 +50,7 @@ custom:
   ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
   customDomain:
-    domainName: ${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
+    domainName: ${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
     #certificateArn: ${self:custom.stageVars.SSL_CERT_ARN}
     certificateName:
     basePath:
@@ -66,22 +66,24 @@ provider:
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
   environment:
-    CHANGE_SET_BOOLEAN: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
-    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
-    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/APP_ARN_NAME}
-    DEP_REGION: ${ssm:/amplify/${sls:stage}/shared/DEP_REGION}
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+    
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}
+    DEP_REGION: ${ssm:/amplify/${sls:stage}/DEP_REGION}
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     MAX_CHUNKS: 1000
-    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/shared/OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/shared/OAUTH_ISSUER_BASE_URL}
-    PANDOC_LAYER: ${ssm:/amplify/${sls:stage}/shared/PANDOC_LAMBDA_LAYER_ARN}
+    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
+    PANDOC_LAYER: ${ssm:/amplify/${sls:stage}/PANDOC_LAMBDA_LAYER_ARN}
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
 
     # Locally Defined Variables
     ACCOUNTS_DYNAMO_TABLE: ${self:service}-${sls:stage}-accounts
     ENV_VARS_TRACKING_TABLE: ${self:service}-${sls:stage}-env-vars-tracking
-    CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usages
+    CHAT_USAGE_DYNAMO_TABLE: ${self:service}-${sls:stage}-chat-usage
     CONVERSATION_METADATA_TABLE: ${self:service}-${sls:stage}-conversation-metadata
     DB_CONNECTIONS_TABLE: ${self:service}-${sls:stage}-db-connections
     FILES_DYNAMO_TABLE: ${self:service}-${sls:stage}-user-files

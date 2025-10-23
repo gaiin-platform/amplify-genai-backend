@@ -2,6 +2,8 @@ import boto3
 from datetime import datetime, timezone
 import os
 
+from pycommon.logger import getLogger
+logger = getLogger("cognito_sync")
 
 def sync_users_to_dynamo(event, context):
     cognito = boto3.client("cognito-idp")
@@ -72,12 +74,12 @@ def sync_users_to_dynamo(event, context):
                                 for k, v in filtered_attributes.items()
                             },
                         )
-                        print(f"Updated user: {user_id}")
+                        logger.info(f"Updated user: {user_id}")
                 else:
                     dynamo_table.put_item(Item=filtered_attributes)
-                    print(f"Created user: {user_id}")
+                    logger.info(f"Created user: {user_id}")
             else:
-                print("No email found for the user, skipping...")
+                logger.warning("No email found for the user, skipping...")
 
         pagination_token = response.get("PaginationToken")
         if not pagination_token:

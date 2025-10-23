@@ -12,6 +12,9 @@ from rag.handlers.shared_functions import (
     format_visual_chunk_data,
 )
 
+from pycommon.logger import getLogger
+logger = getLogger("rag_excel")
+
 
 PNG = "image/png"
 
@@ -152,7 +155,7 @@ class ExcelHandler(TextExtractionHandler):
                 self._append_marker_to_sheet(sheet, marker)
                 
         except Exception as e:
-            print(f"Error injecting marker {marker}: {e}")
+            logger.error("Error injecting marker %s: %s", marker, e)
             # Fallback: add to the end of the sheet
             self._append_marker_to_sheet(sheet, marker)
 
@@ -192,7 +195,7 @@ class ExcelHandler(TextExtractionHandler):
             return None
             
         except Exception as e:
-            print(f"Error finding insertion cell: {e}")
+            logger.error("Error finding insertion cell: %s", e)
             return None
 
     def _append_marker_to_sheet(self, sheet, marker):
@@ -209,7 +212,7 @@ class ExcelHandler(TextExtractionHandler):
             # print(f"Appended {marker} to row {target_row}")
             
         except Exception as e:
-            print(f"Error appending marker: {e}")
+            logger.error("Error appending marker: %s", e)
 
     def _workbook_to_bytes(self, workbook):
         """
@@ -243,7 +246,7 @@ class ExcelHandler(TextExtractionHandler):
 
     def extract_image_data(self, image, sheet_number, sheet_name):
         """Extract image data from Excel sheet"""
-        print(f"Extracting image data from sheet {sheet_name}")
+        logger.debug("Extracting image data from sheet %s", sheet_name)
 
         try:
             # Get image bytes
@@ -253,7 +256,7 @@ class ExcelHandler(TextExtractionHandler):
                 # Handle image reference
                 image_bytes = image.ref
             else:
-                print(f"Could not extract image data from sheet {sheet_name}")
+                logger.warning("Could not extract image data from sheet %s", sheet_name)
                 return None
 
             # Determine original format
@@ -290,7 +293,7 @@ class ExcelHandler(TextExtractionHandler):
             }
 
         except Exception as e:
-            print(f"Image extraction failed on sheet {sheet_name}: {e}")
+            logger.error("Image extraction failed on sheet %s: %s", sheet_name, e)
             return None
 
     ### Helper Methods ###
@@ -341,6 +344,6 @@ class ExcelHandler(TextExtractionHandler):
                 metadata["hyperlink"] = str(image.hyperlink)
 
         except Exception as e:
-            print(f"Error extracting image metadata: {e}")
+            logger.error("Error extracting image metadata: %s", e)
 
         return metadata

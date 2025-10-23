@@ -4,6 +4,10 @@
 import re
 from rag.handlers.text import TextExtractionHandler
 from rag.handlers.shared_functions import format_visual_chunk_data
+
+from pycommon.logger import getLogger
+logger = getLogger("rag_markdown")
+
 class MarkDownHandler(TextExtractionHandler):
     """
     Handler for processing Markdown content, removing unnecessary markdown syntax
@@ -91,11 +95,11 @@ class MarkDownHandler(TextExtractionHandler):
                 if marker_key not in processed_visual_markers:
                     visual_chunk = self._format_visual_chunk_data(key, visual_data)
                     chunks.append(visual_chunk)
-            print("Markdown chunks:\n", chunks)
+            logger.debug("Markdown chunks: %s", chunks)
             return chunks
 
         except Exception as e:
-            print(f"Error processing markdown file: {str(e)}")
+            logger.error("Error processing markdown file: %s", str(e))
             return []
 
     def _format_visual_chunk_data(self, key, visual_data):

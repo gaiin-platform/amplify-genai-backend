@@ -5,6 +5,8 @@ import re
 
 # from markdown import MarkDownHandler
 
+from pycommon.logger import getLogger
+logger = getLogger("rag_markitdown")
 
 class MarkItDownExtractor:
     def __init__(self, docintel_endpoint=None):
@@ -21,7 +23,7 @@ class MarkItDownExtractor:
 
             return result.text_content.replace("NaN", " ")
         except Exception as e:
-            print(f"Error extracting text with MarkItDown from {file_path}: {str(e)}")
+            logger.error("Error extracting text with MarkItDown from %s: %s", file_path, str(e))
             return None
 
     def extract_from_content(self, file_content, file_name):
@@ -43,11 +45,11 @@ class MarkItDownExtractor:
             # Return the structured content
             return result.text_content.replace("NaN", " ")
         except Exception as e:
-            print(f"Error extracting text with MarkItDown from content: {str(e)}")
+            logger.error("Error extracting text with MarkItDown from content: %s", str(e))
             return None
 
     def _clean_excel_content(self, content):
-        print(f"Cleaning Excel content")
+        logger.debug("Cleaning Excel content")
         """Clean up the Excel content to extract meaningful data."""
         try:
             # Extract only the worksheet content that contains actual data
@@ -106,7 +108,7 @@ class MarkItDownExtractor:
             return cleaned_content
 
         except Exception as e:
-            print(f"Error cleaning Excel content: {str(e)}")
+            logger.error("Error cleaning Excel content: %s", str(e))
             # Fall back to the original content
             return content
 
@@ -119,7 +121,7 @@ if __name__ == "__main__":
     # method 1 - Read from the file path:
     result = extractor.extract_from_path(file_path)
     if result:
-        print(f"\n\nMethod 1 Result: \n\n{result}")
+        logger.debug("Method 1 Result: %s", result)
 
     # # method 2 - Read the file content:
     # with open(file_path, 'rb') as file:
