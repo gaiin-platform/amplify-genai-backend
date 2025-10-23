@@ -10,6 +10,9 @@ import {
     endStream
 } from "./streams.js";
 import { parseValue } from "./incrementalJsonParser.js";
+import { getLogger } from "./logging.js";
+
+const logger = getLogger("internalLLM");
 
 /**
  * FastLLM - High-performance LLM class that provides the same interface as the original LLM class
@@ -36,7 +39,7 @@ export class InternalLLM {
             "n": 1,
             "stream": false // Most internal calls don't need streaming
         };
-        console.log("Created InternalLLM Instance for model:", model?.id || model);
+        logger.info("Created InternalLLM Instance for model:", model?.id || model);
     }
 
     clone() {
@@ -59,7 +62,7 @@ export class InternalLLM {
      */
     prefixesToData(inputString, prefixes) {
         if (!inputString) {
-            console.log("Prefixes to Data is Empty");
+            logger.debug("Prefixes to Data is Empty");
             return {};
         }
         const lines = inputString.split('\n');
@@ -110,7 +113,7 @@ export class InternalLLM {
                     this.responseStream.end();
                 }
             } catch (err) {
-                console.error('Error while terminating stream:', err);
+                logger.error('Error while terminating stream:', err);
             }
         }
     }
@@ -183,7 +186,7 @@ export class InternalLLM {
                 return result || "";
             }
         } catch (error) {
-            console.error("InternalLLM promptForString error:", error);
+            logger.error("InternalLLM promptForString error:", error);
             if (retries > 0) {
                 return await this.promptForString(body, dataSources, prompt, targetStream, retries - 1, streamToUser);
             }
@@ -235,7 +238,7 @@ export class InternalLLM {
                     return result;
                 }
             } catch (error) {
-                console.error(`InternalLLM promptForData attempt ${i + 1} error:`, error);
+                logger.error(`InternalLLM promptForData attempt ${i + 1} error:`, error);
             }
         }
 
@@ -255,7 +258,7 @@ export class InternalLLM {
                     return data;
                 }
             } catch (error) {
-                console.error(`InternalLLM promptForPrefixData attempt ${i + 1} error:`, error);
+                logger.error(`InternalLLM promptForPrefixData attempt ${i + 1} error:`, error);
             }
         }
 
@@ -289,7 +292,7 @@ export class InternalLLM {
 
             return result;
         } catch (error) {
-            console.error("InternalLLM promptForJson error:", error);
+            logger.error("InternalLLM promptForJson error:", error);
             return {};
         }
     }
@@ -340,23 +343,23 @@ export class InternalLLM {
 
     // Compatibility methods that aren't needed for StateBasedAssistants but maintain interface
     async prompt(body, dataSources = [], targetStream = null) {
-        console.warn("InternalLLM.prompt() called - this should not happen for StateBasedAssistants");
+        logger.warn("InternalLLM.prompt() called - this should not happen for StateBasedAssistants");
         return await this.promptForString(body, dataSources, null, targetStream);
     }
 
     async promptForFunctionCall(body, functions, function_call, dataSources = [], targetStream = null) {
-        console.warn("InternalLLM.promptForFunctionCall() called - not optimized yet");
+        logger.warn("InternalLLM.promptForFunctionCall() called - not optimized yet");
         // Could implement if needed, but StateBasedAssistants don't use this
         return {};
     }
 
     async promptForFunctionCallStreaming(body, functions, function_call, dataSources = [], targetStream = null) {
-        console.warn("InternalLLM.promptForFunctionCallStreaming() called - not optimized yet");
+        logger.warn("InternalLLM.promptForFunctionCallStreaming() called - not optimized yet");
         return {};
     }
 
     async promptForJsonStreaming(body, targetSchema, dataSources = [], targetStream = null) {
-        console.warn("InternalLLM.promptForJsonStreaming() called - not optimized yet");
+        logger.warn("InternalLLM.promptForJsonStreaming() called - not optimized yet");
         return {};
     }
 }

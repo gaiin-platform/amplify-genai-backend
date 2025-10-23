@@ -13,10 +13,16 @@ let lifetimeCalculationCache = new Map(); // Expensive lifetime calculations
 
 // 🛡️ PROGRESSIVE RATE LIMITING: Track consecutive violations
 let rateLimitViolations = new Map(); // userId -> { count, lastViolation, timeoutUntil }
-const CONSECUTIVE_LIMIT_THRESHOLD = 5; // 5 consecutive hits = ban
+const CONSECUTIVE_LIMIT_THRESHOLD = 10; // 10 consecutive hits = ban
 const VIOLATION_WINDOW_MS = 60 * 1000; // 1 minute window (keeping the charming "wiolation widow"!)
 const SHORT_TIMEOUT_MS = 60 * 1000; // 1 minute timeout
 const LONG_TIMEOUT_MS = 15 * 60 * 1000; // 15 minute timeout
+
+// 🚨 ERROR-BASED RATE LIMITING: Track consecutive errors
+let errorViolations = new Map(); // userId -> { count, lastError, timeoutUntil }
+const ERROR_LIMIT_THRESHOLD = 20; // 20 consecutive errors = ban
+const ERROR_WINDOW_MS = 5 * 60 * 1000; // 5 minute window
+const ERROR_TIMEOUT_MS = 10 * 60 * 1000; // 10 minute timeout for errors
 
 
 async function calculateTotalLifetimeCost(userEmail, accountInfo) {
@@ -307,15 +313,71 @@ function recordRateLimitViolation(userId) {
 }
 
 /**
+ * 🚨 ERROR-BASED RATE LIMITING: Check if user is in error timeout
+ */
+function isUserInErrorTimeout(userId) {
+    const violations = errorViolations.get(userId);
+    if (!violations) return false;
+    
+    const now = Date.now();
+    if (violations.timeoutUntil && now < violations.timeoutUntil) {
+        const remainingMs = violations.timeoutUntil - now;
+        logger.debug(`User ${userId} is in error timeout for ${Math.ceil(remainingMs / 1000)}s more`);
+        return { inTimeout: true, remainingMs, reason: 'consecutive_errors' };
+    }
+    
+    return false;
+}
+
+/**
+ * 🚨 ERROR-BASED RATE LIMITING: Record consecutive error
+ */
+function recordErrorViolation(userId) {
+    const now = Date.now();
+    let violations = errorViolations.get(userId) || { count: 0, lastError: 0, timeoutUntil: 0 };
+    
+    // Reset count if it's been more than error window since last error
+    if (now - violations.lastError > ERROR_WINDOW_MS) {
+        violations.count = 0;
+    }
+    
+    violations.count++;
+    violations.lastError = now;
+    
+    // Apply error-based punishment
+    if (violations.count >= ERROR_LIMIT_THRESHOLD) {
+        violations.timeoutUntil = now + ERROR_TIMEOUT_MS;
+        logger.warn(`🚨 ERROR BAN: User ${userId} banned for 10min (${violations.count} consecutive errors in ${ERROR_WINDOW_MS/60000}min)`);
+        
+        // Reset error count after applying timeout
+        violations.count = 0;
+    } else {
+        logger.debug(`🚨 Error violation ${violations.count}/${ERROR_LIMIT_THRESHOLD} for user ${userId}`);
+    }
+    
+    errorViolations.set(userId, violations);
+    
+    return violations;
+}
+
+/**
  * 🧹 CLEANUP: Remove old violation records to prevent memory leaks
  */
 function cleanupOldViolations() {
     const now = Date.now();
     const maxAge = 24 * 60 * 60 * 1000; // 24 hours
     
+    // Clean rate limit violations
     for (const [userId, violations] of rateLimitViolations.entries()) {
         if (now - violations.lastViolation > maxAge) {
             rateLimitViolations.delete(userId);
+        }
+    }
+    
+    // Clean error violations
+    for (const [userId, violations] of errorViolations.entries()) {
+        if (now - violations.lastError > maxAge) {
+            errorViolations.delete(userId);
         }
     }
 }
@@ -323,6 +385,7 @@ function cleanupOldViolations() {
 export async function isRateLimited(params) {
     // 🧹 CLEANUP: Periodically clean old records
     if (Math.random() < 0.01) cleanupOldViolations(); // 1% chance
+    
     
     // 🛡️ EARLY EXIT: Check if user is in progressive timeout
     const timeoutStatus = isUserInTimeout(params.user);
@@ -334,6 +397,21 @@ export async function isRateLimited(params) {
             limitType: 'progressive_timeout',
             adminSet: true,
             timeoutRemaining: Math.ceil(timeoutStatus.remainingMs / 1000)
+        };
+        return true; // User is banned
+    }
+    
+    // 🚨 EARLY EXIT: Check if user is in error timeout
+    const errorTimeoutStatus = isUserInErrorTimeout(params.user);
+    if (errorTimeoutStatus.inTimeout) {
+        params.body.options.rateLimit = {
+            period: 'Error',
+            rate: 0,
+            currentSpent: 0,
+            limitType: 'error_timeout',
+            adminSet: true,
+            timeoutRemaining: Math.ceil(errorTimeoutStatus.remainingMs / 1000),
+            reason: errorTimeoutStatus.reason
         };
         return true; // User is banned
     }
@@ -351,7 +429,7 @@ export async function isRateLimited(params) {
     const costCalcTable = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
     if (!costCalcTable) {
-        console.log("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
+        logger.error("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
         throw new Error("COST_CALCULATIONS_DYNAMO_TABLE is not provided in the environment variables.");
     }
 
@@ -392,6 +470,7 @@ export async function isRateLimited(params) {
             precomputedLifetimeCost = await calculateTotalLifetimeCost(params.user, rateData.accountInfo);
         }
 
+
         // Check limits in order: admin -> groups -> user
         
         // 1. Check admin limit first
@@ -423,7 +502,7 @@ export async function isRateLimited(params) {
         return false;
         
     } catch (error) {
-        console.error("Error during rate limit DynamoDB operation:", error);
+        logger.error("Error during rate limit DynamoDB operation:", error);
         // let it slide for now
         return false;
     }
@@ -446,7 +525,7 @@ async function getAdminRateLimit() {
     const adminTable = process.env.AMPLIFY_ADMIN_DYNAMODB_TABLE;
 
     if (!adminTable) {
-        console.log("AMPLIFY_ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
+        logger.error("AMPLIFY_ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
         throw new Error("AMPLIFY_ADMIN_DYNAMODB_TABLE is not provided in the environment variables.");
     }
     
@@ -466,7 +545,7 @@ async function getAdminRateLimit() {
         const item = response.Items[0];
 
         if (!item) {
-            console.log(`❌ No admin rate limit config found in table: ${adminTable}`);
+            logger.warn(`❌ No admin rate limit config found in table: ${adminTable}`);
             logger.error("Table entry does not exist. Can not verify if rate limited");
             return false;
         }
@@ -479,7 +558,7 @@ async function getAdminRateLimit() {
         return rateData.data;
         
     } catch (error) {
-        console.error("Error during rate limit DynamoDB operation:", error);
+        logger.error("Error during rate limit DynamoDB operation:", error);
         // Return cached data if available, even if stale
         if (adminRateLimitCache) {
             logger.debug('Using stale cached admin rate limit due to error');
@@ -499,6 +578,12 @@ export const formatCurrentSpent = (limit) =>  {
     if (limit.limitType === 'progressive_timeout') {
         const minutes = Math.ceil(limit.timeoutRemaining / 60);
         return `You have been temporarily banned for ${minutes > 1 ? `${minutes} minutes` : `${limit.timeoutRemaining} seconds`} due to repeated rate limit violations. Please try again later.`;
+    }
+    
+    // 🚨 ERROR-BASED PUNISHMENT: Handle error timeout messages  
+    if (limit.limitType === 'error_timeout') {
+        const minutes = Math.ceil(limit.timeoutRemaining / 60);
+        return `You have been temporarily banned for ${minutes > 1 ? `${minutes} minutes` : `${limit.timeoutRemaining} seconds`} due to repeated system errors. Please try again later.`;
     }
     
     if (limit.currentSpent === undefined || limit.currentSpent === null) return "";
@@ -521,7 +606,12 @@ export const formatCurrentSpent = (limit) =>  {
         limitSource = " (User limit)";
     } else if (limit.limitType === 'progressive_timeout') {
         limitSource = " (Progressive timeout)";
+    } else if (limit.limitType === 'error_timeout') {
+        limitSource = " (Error timeout)";
     }
     
     return `$${limit.currentSpent} spent ${periodText}${limitSource}.`;
 }
+
+// Export error violation recording for use in router catch blocks
+export { recordErrorViolation };

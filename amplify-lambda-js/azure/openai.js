@@ -186,7 +186,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                         response.data.on('data', chunk => {
                           jsonBuffer += chunk.toString();
                           numOfChunks++;
-                          console.log("O1 chunks recieved: ",numOfChunks)
+                          logger.debug("O1 chunks received:", numOfChunks)
                         });
                     
                         response.data.on('end', () => {
@@ -199,7 +199,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                             finalizeSuccess();
                           } catch (err) {
                             // handle JSON parse error
-                            console.log("O1 model error: ", err);
+                            logger.error("O1 model error:", err);
                             streamError(err);
                           }
                         });
@@ -238,7 +238,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                     
                     sendErrorMessage(writableStream, e.response?.status, e.response?.statusText);
                     if (e.response && e.response.data) {
-                        console.log("Error invoking OpenAI API: ",e.response.statusText);
+                        logger.error("Error invoking OpenAI API:", e.response.statusText);
 
                         if (e.response.data.readable) {
                             // Stream the data to a variable or process it as it comes
@@ -247,13 +247,13 @@ export const chat = async (endpointProvider, chatBody, writable) => {
                                 errorData += chunk;
                             });
                             e.response.data.on('end', () => {
-                                console.log("Error data from OpenAI API: ", errorData);
+                                logger.error("Error data from OpenAI API:", errorData);
                                 reject(errorData);
                                 return;
                             });
                         }
                     }
-                    console.log("Error invoking OpenAI API: "+e.message);
+                    logger.error("Error invoking OpenAI API:", e.message);
                     reject(e.message);
                 });
         });
@@ -261,7 +261,7 @@ export const chat = async (endpointProvider, chatBody, writable) => {
     let statusTimer = null;
     const statusInterval = model.supportsReasoning ? 15000: 8000;
     const handleSendStatusMessage = () => {
-        // console.log("Sending status message...");
+        // logger.debug("Sending status message...");
         sendStatusMessage(writable);
         statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
         };

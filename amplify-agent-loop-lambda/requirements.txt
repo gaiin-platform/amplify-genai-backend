@@ -1,7 +1,7 @@
 git+https://github.com/gaiin-platform/pycommon.git@v0.1.1
 beautifulsoup4
 aws-xray-sdk==2.14.0
-litellm==1.57.1
+litellm==1.78.7
 pydantic>=2.10.4
 requests==2.32.3
 jsonschema>=4.24.0

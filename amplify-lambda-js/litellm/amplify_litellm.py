@@ -14,6 +14,16 @@ from typing import Dict, Any, Iterator
 import boto3
 import litellm
 from litellm import completion
+import logging
+
+# Set up logging with LOG_LEVEL from environment
+log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stderr  # Log to stderr so it doesn't interfere with JSON output to stdout
+)
+logger = logging.getLogger('amplify_litellm')
 
 # Global memory tracking
 initial_memory = None
@@ -89,11 +99,14 @@ def configure_litellm(model: Dict[str, Any], secrets: Dict[str, Any]) -> tuple:
             return model_id, config
             
     elif is_bedrock_model(model_id):
-        # Bedrock configuration - already thread-safe via client
+        # Bedrock configuration - use environment variables for auth (not deprecated client param)
         region = os.environ.get("AWS_REGION", "us-east-1")
-        bedrock_client = boto3.client("bedrock-runtime", region_name=region)
-        config = {"aws_bedrock_client": bedrock_client}
+        config = {"aws_region_name": region}
         
+        # Avoid double prefixing if model_id already has bedrock prefix
+        if model_id.startswith("bedrock/"):
+            return model_id, config
+            
         # Use converse route for newer Claude models that require it
         if model_id.startswith("us.anthropic.claude"):
             return f"bedrock/converse/{model_id}", config
@@ -318,7 +331,7 @@ def fetch_s3_content(s3_url):
         # Get bucket name from environment
         bucket_name = os.environ.get("S3_FILE_TEXT_BUCKET_NAME")
         if not bucket_name:
-            print(f"ERROR: S3_FILE_TEXT_BUCKET_NAME not set", file=sys.stderr)
+            logger.error("S3_FILE_TEXT_BUCKET_NAME not set")
             return None
             
         # Extract key (remove s3:// prefix)
@@ -331,11 +344,11 @@ def fetch_s3_content(s3_url):
         response = s3_client.get_object(Bucket=bucket_name, Key=key)
         content = response['Body'].read().decode('utf-8')
         
-        print(f"DEBUG: Successfully fetched S3 content, length: {len(content)}", file=sys.stderr)
+        logger.debug(f"Successfully fetched S3 content, length: {len(content)}")
         return content
         
     except Exception as e:
-        print(f"ERROR: Failed to fetch S3 content from {s3_url}: {str(e)}", file=sys.stderr)
+        logger.error(f"Failed to fetch S3 content from {s3_url}: {str(e)}")
         return None
 
 
@@ -362,13 +375,13 @@ def process_datasources(messages, data_sources):
             content = ds['text']
         # Try to fetch from S3 if id looks like S3 URL
         elif 'id' in ds and ds['id'] and ds['id'].startswith('s3://'):
-            print(f"DEBUG: Fetching S3 content for {ds['id']}", file=sys.stderr)
+            logger.debug(f"Fetching S3 content for {ds['id']}")
             content = fetch_s3_content(ds['id'])
         
         if content:
             name = ds.get('name', ds.get('id', 'Document'))
             context_parts.append(f"--- {name} ---\n{content}")
-            print(f"DEBUG: Added content for {name}, length: {len(content)}", file=sys.stderr)
+            logger.debug(f"Added content for {name}, length: {len(content)}")
     
     if context_parts:
         context_message = {
@@ -378,7 +391,7 @@ def process_datasources(messages, data_sources):
         # Insert context before the last user message
         messages = messages.copy()
         messages.insert(-1, context_message)
-        print(f"DEBUG: Added system message with {len(context_parts)} documents", file=sys.stderr)
+        logger.debug(f"Added system message with {len(context_parts)} documents")
     
     return messages
 
@@ -400,7 +413,7 @@ def get_memory_usage():
             'percent': 0  # Not available with resource module
         }
     except Exception as e:
-        print(f"Memory monitoring error: {e}", file=sys.stderr)
+        logger.error(f"Memory monitoring error: {e}")
         return {'rss': 0, 'vms': 0, 'percent': 0}
 
 
@@ -409,7 +422,7 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
     request_id = input_data.get("requestId", "unknown")
     
     # Log concurrent model usage for debugging
-    print(f"[CONCURRENT] Processing request {request_id} with model: {input_data.get('model', {}).get('id', 'unknown')}", file=sys.stderr)
+    logger.info(f"[CONCURRENT] Processing request {request_id} with model: {input_data.get('model', {}).get('id', 'unknown')}")
     
     try:
         chat_request = input_data["chatRequest"]
@@ -425,23 +438,23 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
         model_str, provider_config = configure_litellm(model, secrets)
         
         config_memory = get_memory_usage()
-        print(f"[MEMORY] After LiteLLM config - RSS: {config_memory['rss']}MB (+{config_memory['rss'] - initial_memory['rss']}MB)", file=sys.stderr)
-        print(f"[DEBUG] Using model: {model_str} with per-request config", file=sys.stderr)
+        logger.debug(f"[MEMORY] After LiteLLM config - RSS: {config_memory['rss']}MB (+{config_memory['rss'] - initial_memory['rss']}MB)")
+        logger.debug(f"Using model: {model_str} with per-request config")
         
         # Setup reasoning configuration
         reasoning_config = setup_reasoning_config(model, chat_request, model_str)
         
         # Debug: Check what dataSources we received
-        print(f"DEBUG: Received {len(data_sources)} dataSources", file=sys.stderr)
+        logger.debug(f"Received {len(data_sources)} dataSources")
         for i, ds in enumerate(data_sources):
-            print(f"DEBUG: DataSource {i}: {type(ds)} - Keys: {list(ds.keys()) if isinstance(ds, dict) else 'Not a dict'}", file=sys.stderr)
+            logger.debug(f"DataSource {i}: {type(ds)} - Keys: {list(ds.keys()) if isinstance(ds, dict) else 'Not a dict'}")
             if isinstance(ds, dict):
-                print(f"DEBUG: DataSource {i} content length: {len(str(ds.get('content', ''))) if ds.get('content') else 0}", file=sys.stderr)
-                print(f"DEBUG: DataSource {i} text length: {len(str(ds.get('text', ''))) if ds.get('text') else 0}", file=sys.stderr)
+                logger.debug(f"DataSource {i} content length: {len(str(ds.get('content', ''))) if ds.get('content') else 0}")
+                logger.debug(f"DataSource {i} text length: {len(str(ds.get('text', ''))) if ds.get('text') else 0}")
         
         # Process dataSources and add their content to messages
         if data_sources:
-            print(f"DEBUG: Processing {len(data_sources)} dataSources", file=sys.stderr)
+            logger.debug(f"Processing {len(data_sources)} dataSources")
             output_message({
                 "type": "status",
                 "data": {
@@ -459,14 +472,25 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
         # Debug: Check if messages were modified
         original_count = len(chat_request["messages"])
         new_count = len(messages)
-        print(f"DEBUG: Message count changed from {original_count} to {new_count}", file=sys.stderr)
+        logger.debug(f"Message count changed from {original_count} to {new_count}")
         if new_count > original_count:
-            print(f"DEBUG: Added message content preview: {messages[-2]['content'][:200]}...", file=sys.stderr)
+            logger.debug(f"Added message content preview: {messages[-2]['content'][:200]}...")
+        
+        # Filter out any messages with empty content to prevent Bedrock errors
+        filtered_messages = []
+        for msg in messages:
+            if isinstance(msg.get("content"), str) and msg["content"].strip():
+                filtered_messages.append(msg)
+            elif isinstance(msg.get("content"), list) and msg["content"]:
+                # Handle structured content (images, etc.)
+                filtered_messages.append(msg)
+            else:
+                logger.debug(f"Skipping message with empty content: role={msg.get('role')}")
         
         # Prepare completion parameters
         completion_params = {
             "model": model_str,
-            "messages": messages,
+            "messages": filtered_messages,
             "stream": True,
             "max_tokens": chat_request.get("max_tokens", 1000),
             "temperature": chat_request.get("temperature", 1.0)
@@ -495,20 +519,20 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
         
         # Debug: Check for problematic parameters
         if "function_call" in completion_params and "functions" not in completion_params:
-            print(f"[WARNING] Removing function_call without functions", file=sys.stderr)
+            logger.warning("Removing function_call without functions")
             del completion_params["function_call"]
         
         if "tool_choice" in completion_params and "tools" not in completion_params:
-            print(f"[WARNING] Removing tool_choice without tools", file=sys.stderr)
+            logger.warning("Removing tool_choice without tools")
             del completion_params["tool_choice"]
         
         # Status removed - LLM call happens immediately
         
         # Make the completion call
         pre_completion_memory = get_memory_usage()
-        print(f"[MEMORY] Before LiteLLM completion - RSS: {pre_completion_memory['rss']}MB", file=sys.stderr)
-        print(f"[DEBUG] Completion params: model={model_str}, has_api_key={'api_key' in provider_config}, has_api_base={'api_base' in provider_config}", file=sys.stderr)
-        print(f"[DEBUG] Function calling: has_functions={'functions' in completion_params}, has_function_call={'function_call' in completion_params}, has_tools={'tools' in completion_params}", file=sys.stderr)
+        logger.debug(f"[MEMORY] Before LiteLLM completion - RSS: {pre_completion_memory['rss']}MB")
+        logger.debug(f"Completion params: model={model_str}, has_api_key={'api_key' in provider_config}, has_api_base={'api_base' in provider_config}")
+        logger.debug(f"Function calling: has_functions={'functions' in completion_params}, has_function_call={'function_call' in completion_params}, has_tools={'tools' in completion_params}")
         
         response = completion(**completion_params)
         
@@ -520,7 +544,7 @@ def process_single_request(input_data: Dict[str, Any]) -> None:
         
         final_memory = get_memory_usage()
         total_increase = final_memory['rss'] - initial_memory['rss']
-        print(f"[MEMORY] Python processing complete - RSS: {final_memory['rss']}MB (+{total_increase}MB total)", file=sys.stderr)
+        logger.debug(f"[MEMORY] Python processing complete - RSS: {final_memory['rss']}MB (+{total_increase}MB total)")
         
     except Exception as e:
         # Send error message
@@ -543,7 +567,7 @@ def main():
     import time
     startup_start = time.time()
     
-    print(f"[TIMING] Python server measuring startup time...", file=sys.stderr)
+    logger.debug("[TIMING] Python server measuring startup time...")
     
     # Track initial memory usage
     memory_start = time.time()
@@ -553,8 +577,8 @@ def main():
     
     total_startup = time.time() - startup_start
     
-    print(f"[MEMORY] LiteLLM Python server started - RSS: {initial_memory['rss']}MB", file=sys.stderr)
-    print(f"[TIMING] Python server startup breakdown: total={total_startup:.3f}s, memory={memory_time:.3f}s", file=sys.stderr)
+    logger.info(f"[MEMORY] LiteLLM Python server started - RSS: {initial_memory['rss']}MB")
+    logger.info(f"[TIMING] Python server startup breakdown: total={total_startup:.3f}s, memory={memory_time:.3f}s")
     
     # Signal that server is ready to receive requests
     output_message({"type": "ready", "data": {
@@ -597,7 +621,7 @@ def main():
             output_message({"type": "end"})
             
         except KeyboardInterrupt:
-            print("LiteLLM server shutting down...", file=sys.stderr)
+            logger.info("LiteLLM server shutting down...")
             break
             
         except Exception as e:

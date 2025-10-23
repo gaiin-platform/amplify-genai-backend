@@ -29,10 +29,10 @@ const saveResultToS3 = async (resultKey, result, status, message) => {
     try {
         // Upload the object to S3
         const data = await s3Client.send(new PutObjectCommand(putObjectParams));
-        console.log("Object uploaded successfully. Location:", resultKey);
+        logger.info("Object uploaded successfully. Location:", resultKey);
         return data;
     } catch (error) {
-        console.error("Error uploading object:", error);
+        logger.error("Error uploading object:", error);
         throw error;
     }
 }
@@ -42,12 +42,12 @@ const assistantQueueHandler = async (event, context) => {
     logger.debug("Received event for assistant");
 
     async function processTask(payload) {
-        console.log('Processing task with keys and op:', Object.keys(payload), payload.op);
+        logger.info('Processing task with keys and op:', Object.keys(payload), payload.op);
         const {params, op, resultKey} = payload;
 
         if (op === "chat") {
 
-            console.log('Processing chat task', {
+            logger.info('Processing chat task', {
                 ...params.body,
                 messages:[{role:"user", content:"Messages Omitted"}]
             });
@@ -72,7 +72,7 @@ const assistantQueueHandler = async (event, context) => {
 
     for (const record of event.Records) {
         const payload = JSON.parse(record.body); // Parse the stringified message payload
-        console.log('Received payload');
+        logger.debug('Received payload');
 
         try {
 
@@ -85,10 +85,10 @@ const assistantQueueHandler = async (event, context) => {
                 ReceiptHandle: record.receiptHandle // Unique identifier for the message
             };
             await sqsClient.send(new DeleteMessageCommand(deleteParams));
-            console.log('Deleted message from queue:', record.messageId);
+            logger.info('Deleted message from queue:', record.messageId);
 
         } catch (error) {
-            console.error('Error processing message:', error);
+            logger.error('Error processing message:', error);
             // Here you might want to handle the error differently,
             // such as sending the message to a dead letter queue.
         }

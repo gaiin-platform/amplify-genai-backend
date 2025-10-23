@@ -177,7 +177,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
             return m.data && m.data.dataSources
         }).flatMap(m => m.data.dataSources).filter(ds => !isImage(ds));
 
-    console.log("🔍 Conversation datasources search:", {
+    logger.debug("🔍 Conversation datasources search:", {
         total_messages: chatRequestOrig.messages.length,
         messages_with_data: chatRequestOrig.messages.slice(0,-1).filter(m => m.data && m.data.dataSources).length,
         referencedDataSourcesInMessages_length: referencedDataSourcesInMessages.length,
@@ -213,7 +213,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         ...dataSources,
         ...msgDataSources];
 
-    console.log("🔍 RAG datasource calculation:", {
+    logger.debug("🔍 RAG datasource calculation:", {
         getRagOnly_dataSources: getRagOnly(dataSources).length,
         getRagOnly_msgDataSources: getRagOnly(msgDataSources).length,
         getDocumentDataSources_convoDataSources: getDocumentDataSources(convoDataSources).length,
@@ -248,7 +248,7 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         ragDataSources = [];
     }
 
-    console.log("🔍 Final RAG decision:", {
+    logger.debug("🔍 Final RAG decision:", {
         ragDataSources_length: ragDataSources.length,
         skipRag: params.options?.skipRag,
         ragDataSources_ids: ragDataSources.map(ds => ds.id?.substring(0, 50))
@@ -435,7 +435,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
             const imageSources = dataSources.filter(d => isImage(d));
             if (imageSources.length > 0) body.imageSources = imageSources;
         }
-        console.log("IMAGE: body.imageSources", body.imageSources);
+        logger.debug("IMAGE: body.imageSources", body.imageSources);
     }
 
     dataSources = dataSources.filter(ds => !isImage(ds))
@@ -460,7 +460,7 @@ export const resolveDataSources = async (params, body, dataSources) => {
         //need to ensure we extract the key, so far I have seen all ds start with s3:// but can_access_object table has it without 
         const ds_with_keys = nonUserSources.map(ds => ({ ...ds, id: extractKey(ds.id) }));
         const image_ds_keys = body.imageSources ? body.imageSources.map(ds =>  ({ ...ds, id: extractKey(ds.id) })) : [];
-        console.log("IMAGE: ds_with_keys", image_ds_keys);
+        logger.debug("IMAGE: ds_with_keys", image_ds_keys);
         if (!await canReadDataSources(params.accessToken, [...ds_with_keys, ...image_ds_keys])) {
             throw new Error("Unauthorized data source access.");
         }
@@ -702,7 +702,7 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
             }
             return ds;
         } catch (e) {
-            console.log(e);
+            logger.debug("Error processing datasource:", e);
             return ds;
         }
     }));

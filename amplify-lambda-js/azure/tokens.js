@@ -3,6 +3,9 @@
 
 import tiktokenModel from '@dqbd/tiktoken/encoders/cl100k_base.json' with {type: 'json'};
 import { Tiktoken } from '@dqbd/tiktoken/lite';
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("azure.tokens");
 
 // Global encoder instance - reused across all requests
 let globalEncoder = null;
@@ -58,8 +61,8 @@ export const createTokenCounter = () => {
                 
                 return count;
             } catch (e) {
-                console.error("Uncountable token text: ", text);
-                console.error("Error counting tokens: ", e);
+                logger.error("Uncountable token text:", text);
+                logger.error("Error counting tokens:", e);
                 return 0;
             }
         },

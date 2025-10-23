@@ -3,6 +3,9 @@
 
 import {Writable} from "stream";
 import {TextDecoder} from "util";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("consoleWriteableStream");
 
 export class ConsoleWritableStream extends Writable {
     constructor(outputDeltas, options) {
@@ -49,7 +52,7 @@ export class ConsoleWritableStream extends Writable {
                         }
 
                     } catch (e) {
-                        console.log("Error processing event: " + e, json);
+                        logger.error("Error processing event: " + e, json);
                     }
                 } else {
                     console.log(textChunk);

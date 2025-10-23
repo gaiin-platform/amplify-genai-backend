@@ -393,6 +393,20 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
     # Iterate over each groupId and associated dataSourceIds
     for groupId, dataSourceIds in raw_group_src_ids.items():
         logger.debug("Checking perms for GroupId: %s DS Ids: %s", groupId, dataSourceIds)
+        
+        # Check cache first for this group
+        group_key = f"{groupId}:{current_user}"
+        cached_result = performance_cache.get_cached_group_permissions(current_user, group_key)
+        if cached_result:
+            cached_accessible, cached_denied = cached_result
+            # Filter cached results by current dataSourceIds
+            group_accessible = [src_id for src_id in cached_accessible if src_id in dataSourceIds]
+            group_denied = [src_id for src_id in cached_denied if src_id in dataSourceIds]
+            accessible_src_ids.extend(group_accessible)
+            access_denied_src_ids.extend(group_denied)
+            logger.info(f"Cache hit for group {groupId}: {len(group_accessible)} accessible, {len(group_denied)} denied")
+            continue
+        
         try:
             # ensure the groupId has perms to the ds
             accessible_to_group_ds_ids = []
@@ -434,16 +448,24 @@ def classify_group_src_ids_by_access(raw_group_src_ids, current_user, token):
                     or verify_user_in_amp_group(token, item.get("amplifyGroups", []))
                 ):
                     accessible_src_ids.extend(accessible_to_group_ds_ids)
+                    # Cache successful access
+                    performance_cache.cache_group_permissions(current_user, group_key, accessible_to_group_ds_ids, denied_ids)
                 else:
                     access_denied_src_ids.extend(accessible_to_group_ds_ids)
+                    # Cache denied access
+                    performance_cache.cache_group_permissions(current_user, group_key, [], accessible_to_group_ds_ids)
             else:
                 # If no item found for the groupId, assume access denied
                 access_denied_src_ids.extend(accessible_to_group_ds_ids)
+                # Cache denied access for missing group
+                performance_cache.cache_group_permissions(current_user, group_key, [], accessible_to_group_ds_ids)
 
         except Exception as e:
             logger.error(f"An error occurred while processing groupId {groupId}: {e}")
             # In case of an error, consider the current groupId's src_ids as denied
             access_denied_src_ids.extend(dataSourceIds)
+            # Cache error as denied to avoid repeated failures
+            performance_cache.cache_group_permissions(current_user, group_key, [], dataSourceIds)
 
     logger.debug(f"Group Accessible src_ids: {accessible_src_ids}, Group Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
@@ -481,6 +503,19 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
     # Iterate over each ast_id and associated dataSourceIds  
     for ast_id, data_source_ids in raw_ast_src_ids.items():
         logger.info(f"Checking permissions for AST ID: {ast_id}, DS IDs: {data_source_ids}")
+        
+        # Check cache first for this AST
+        ast_key = f"{ast_id}:{current_user}"
+        cached_result = performance_cache.get_cached_ast_permissions(current_user, ast_key)
+        if cached_result:
+            cached_accessible, cached_denied = cached_result
+            # Filter cached results by current data_source_ids
+            ast_accessible = [src_id for src_id in cached_accessible if src_id in data_source_ids]
+            ast_denied = [src_id for src_id in cached_denied if src_id in data_source_ids]
+            accessible_src_ids.extend(ast_accessible)
+            access_denied_src_ids.extend(ast_denied)
+            logger.info(f"Cache hit for AST {ast_id}: {len(ast_accessible)} accessible, {len(ast_denied)} denied")
+            continue
         
         try:
             # Query the lookup table directly by assistantId using GSI
@@ -527,15 +562,21 @@ def classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token):
                 ast_accessible_src_ids, ast_access_denied_src_ids = classify_src_ids_by_access(data_source_ids, ast_id)
                 accessible_src_ids.extend(ast_accessible_src_ids)
                 access_denied_src_ids.extend(ast_access_denied_src_ids)
+                # Cache the AST permission results
+                performance_cache.cache_ast_permissions(current_user, ast_key, ast_accessible_src_ids, ast_access_denied_src_ids)
             else:
                 # User does not have access to the AST
                 logger.info(f"User {current_user} does not have access to AST {ast_id} - access denied")
                 access_denied_src_ids.extend(data_source_ids)
+                # Cache denied access
+                performance_cache.cache_ast_permissions(current_user, ast_key, [], data_source_ids)
                 
         except Exception as e:
             logger.error(f"Error processing AST {ast_id}: {str(e)}")
             # In case of error, deny access to be safe
             access_denied_src_ids.extend(data_source_ids)
+            # Cache error as denied to avoid repeated failures
+            performance_cache.cache_ast_permissions(current_user, ast_key, [], data_source_ids)
 
     logger.info(f"AST Accessible src_ids: {accessible_src_ids}, AST Access denied src_ids: {access_denied_src_ids}")
     return accessible_src_ids, access_denied_src_ids
@@ -659,26 +700,16 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
     raw_ast_src_ids = data.get("astDataSources", {})
     limit = data.get("limit", 10)
 
-    # Parallel permission checking
-    async def check_individual_permissions():
-        return classify_src_ids_by_access(raw_src_ids, current_user)
-    
-    async def check_group_permissions():
-        return classify_group_src_ids_by_access(raw_group_src_ids, current_user, token)
-    
-    async def check_ast_permissions():
-        return classify_ast_src_ids_by_access(raw_ast_src_ids, current_user, token)
-
     # Run all permission checks in parallel - only run what's needed
     tasks = []
     results_map = {}
     
     if raw_src_ids:
-        tasks.append(('individual', asyncio.to_thread(check_individual_permissions)))
+        tasks.append(('individual', asyncio.to_thread(classify_src_ids_by_access, raw_src_ids, current_user)))
     if raw_group_src_ids:
-        tasks.append(('group', asyncio.to_thread(check_group_permissions)))
+        tasks.append(('group', asyncio.to_thread(classify_group_src_ids_by_access, raw_group_src_ids, current_user, token)))
     if raw_ast_src_ids:
-        tasks.append(('ast', asyncio.to_thread(check_ast_permissions)))
+        tasks.append(('ast', asyncio.to_thread(classify_ast_src_ids_by_access, raw_ast_src_ids, current_user, token)))
     
     if tasks:
         task_results = await asyncio.gather(*[task for _, task in tasks])
@@ -956,6 +987,7 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                 last_updated = item.get("lastUpdated")
 
                 # Handle completed status immediately
+                # Handle completed status immediately
                 if parent_status == "completed":
                     logger.info(f"[COMPLETED] Document {src_id} embedding is complete")
                     performance_cache.cache_embedding_status(src_id, "completed")
@@ -1009,10 +1041,6 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
                             f"[DATETIME ERROR] Could not parse timestamp for {src_id}: {last_updated}. Skipping stall check."
                         )
                         pass
-
-                if parent_status == "completed":
-                    logger.info(f"[COMPLETED] Document {src_id} embedding is complete")
-                    return {"pending": [], "requires_embedding": []}
                 elif parent_status == "failed":
                     # Track requeue failures
                     if requeue_failures is not None:
@@ -1100,10 +1128,10 @@ async def check_embedding_completion(src_ids, account_data, requeue_failures=Non
             if i + batch_size < len(uncached_src_ids):
                 await asyncio.sleep(0.1)
         
-        print(f"Asynchronous embedding check complete - processed {len(uncached_src_ids)} documents in {(len(uncached_src_ids) + batch_size - 1) // batch_size} batches")
+        logger.info(f"Asynchronous embedding check complete - processed {len(uncached_src_ids)} documents in {(len(uncached_src_ids) + batch_size - 1) // batch_size} batches")
     else:
         results = []
-        print("All embedding statuses served from cache!")
+        logger.info("All embedding statuses served from cache!")
     
     # Combine cached results with fresh results
     all_pending_ids = []
@@ -1154,25 +1182,16 @@ def manually_queue_embedding(src_id, account_data):
     
     for retry_attempt in range(max_retries):
         try:
-            # Try to store RAG secrets with retry on rate limits
-            secrets_stored = False
-            for secret_retry in range(max_retries):
-                secrets_result = store_ds_secrets_for_rag(src_id, account_data)
-                if secrets_result.get('success'):
-                    secrets_stored = True
-                    break
-                    
-                # If not last attempt, wait and retry
-                if secret_retry < max_retries - 1:
-                    wait_time = retry_delay * (2 ** secret_retry)  # Exponential backoff: 2, 4, 8 seconds
-                    logger.warning(f"[RATE_LIMIT_RETRY] Failed to store RAG secrets for {src_id}. Retrying in {wait_time} seconds (attempt {secret_retry + 1}/{max_retries})")
-                    time.sleep(wait_time)
-            
-            if not secrets_stored:
-                logger.error(f"Failed to store RAG secrets for {src_id} after {max_retries} attempts")
+            # Try to store RAG secrets - this is critical for embedding processing
+            secrets_result = store_ds_secrets_for_rag(src_id, account_data)
+            if not secrets_result.get('success'):
+                error_msg = f"Failed to store RAG secrets for {src_id}"
+                logger.error(error_msg)
+                # Cache as permanent failure since RAG secrets are critical
+                performance_cache.mark_document_failed(src_id, f"RAG secrets storage failure: {secrets_result.get('error', 'Unknown error')}")
                 return {
                     "success": False,
-                    "message": "Failed to store RAG secrets after multiple attempts",
+                    "message": "Failed to store RAG secrets",
                 }
             
             # Reset embedding status to "starting" to allow reprocessing
@@ -1195,6 +1214,8 @@ def manually_queue_embedding(src_id, account_data):
             # Check if it's an SQS permission error - no point retrying
             if 'AccessDenied' in error_str and 'sqs:sendmessage' in error_str.lower():
                 logger.error(f"[PERMISSION_ERROR] Lambda lacks SQS SendMessage permission for {src_id}: {error_str}")
+                # Cache this as a permanent failure with special TTL
+                performance_cache.mark_document_failed(src_id, f"SQS Permission Error: {error_str}")
                 return {"success": False, "message": "Missing SQS permissions"}
             
             # Check if it's other rate limit errors

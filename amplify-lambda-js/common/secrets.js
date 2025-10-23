@@ -5,6 +5,9 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { getLogger } from './logging.js';
+
+const logger = getLogger("secrets");
 
 // Since __dirname is not available in ES module scope, you have to construct the path differently.
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +38,7 @@ export const getSecret = async (secretName) => {
         }
         return secret;
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         throw error;
     }
 }
@@ -43,7 +46,7 @@ export const getSecret = async (secretName) => {
 // The get_endpoint_data function converted to JavaScript
 const getEndpointData = (parsed_data, model_name) => {
     // Find the model in the list of models
-    console.log("Get endpoint data model_name: ", model_name);
+    logger.debug("Get endpoint data model_name: ", model_name);
     if(model_name === "gpt-4-1106-Preview" || model_name === "gpt-4-1106-preview"){
         model_name = "gpt-4-turbo";
     } else if(model_name === "gpt-35-1106") {

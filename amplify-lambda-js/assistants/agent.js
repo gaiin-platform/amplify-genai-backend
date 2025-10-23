@@ -1,10 +1,13 @@
 import axios from "axios";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("assistants.agent");
 
 
 export const invokeAgent = async function(accessToken, sessionId, requestId, prompt, metadata={}) {
     const endpoint = process.env.AGENT_ENDPOINT;
 
-    console.log("Invoking agent with sessionId:", sessionId, " and Endpoint:", endpoint);
+    logger.info("Invoking agent with sessionId:", sessionId, "and Endpoint:", endpoint);
 
     try {
         const response = await axios.post(
@@ -23,10 +26,10 @@ export const invokeAgent = async function(accessToken, sessionId, requestId, pro
                 }
             }
         );
-        console.log("Agent invocation successful for sessionId:", sessionId);
+        logger.info("Agent invocation successful for sessionId:", sessionId);
         return response.data;
     } catch (error) {
-        console.error("Failed to invoke agent for sessionId:", sessionId, "Error:", error.message);
+        logger.error("Failed to invoke agent for sessionId:", sessionId, "Error:", error.message);
     }
 
 }

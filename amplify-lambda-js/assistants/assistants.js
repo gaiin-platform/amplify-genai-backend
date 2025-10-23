@@ -30,7 +30,7 @@ const defaultAssistant = {
     description: "Default assistant that can handle arbitrary requests with any data type but may " +
         "not be as good as a specialized assistant.",
     handler: async (params, body, dataSources, responseStream) => {
-        console.log("🎯 Assistant: Received datasources:", {
+        logger.debug("🎯 Assistant: Received datasources:", {
             dataSources_length: dataSources?.length || 0,
             dataSources_ids: dataSources?.map(ds => ds.id?.substring(0, 50))
         });
@@ -53,7 +53,7 @@ const defaultAssistant = {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
         }
 
-        console.log("🎯 Assistant decision logic:", {
+        logger.debug("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
             aboveLimit,
             dataSources_length: dataSources.length,
@@ -62,16 +62,29 @@ const defaultAssistant = {
         });
         
         if (!body.options.ragOnly && aboveLimit){
-            console.log("→ Using mapReduceAssistant (token limit exceeded)");
+            logger.info("→ Using mapReduceAssistant (token limit exceeded)");
+            
+            // 🔍 DEBUG: Log dataSources before passing to mapReduce
+            logger.info("🔍 DEBUG - Passing to mapReduce:", {
+                dataSources_length: dataSources?.length || 0,
+                dataSources_preview: dataSources?.slice(0, 2)?.map(ds => ({
+                    id: ds?.id?.substring(0, 50) || "NO_ID",
+                    type: ds?.type || "NO_TYPE",
+                    hasContent: !!ds?.content,
+                    contentPreview: ds?.content?.substring(0, 100) || "NO_CONTENT"
+                })) || []
+            });
+            
+            
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
         } else if (!body.options.ragOnly) {
             // ✅ Always use chatWithData for potential conversation document discovery
-            console.log("→ Using chatWithDataStateless (discover conversation documents)");
+            logger.info("→ Using chatWithDataStateless (discover conversation documents)");
             const {chatWithDataStateless} = await import("../common/chatWithData.js");
             return chatWithDataStateless(params, model, body, dataSources, responseStream);
         } else {
             // ✅ Direct LiteLLM call only when ragOnly mode
-            console.log("→ Using direct callLiteLLM (ragOnly mode)");
+            logger.info("→ Using direct callLiteLLM (ragOnly mode)");
             return await callLiteLLM(body, model, params.account, responseStream, [], true);
         }
     }
@@ -174,7 +187,7 @@ export const chooseAssistantForRequest = async (account, model, body, dataSource
         //codeInterpreterAssistant;
     } else if (body.options.artifactsMode && (!body.options.api_accessed)) {
         selectedAssistant = ArtifactModeAssistant;
-        console.log("ARTIFACT MODE DETERMINED")
+        logger.info("ARTIFACT MODE DETERMINED")
     }
 
     

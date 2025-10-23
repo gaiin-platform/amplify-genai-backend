@@ -5,6 +5,9 @@ import {
 } from "./statemachine/states.js";
 import {sendStateEventToStream} from "../common/streams.js";
 import {getInternalLLM} from "../common/internalLLM.js";
+import {getLogger} from "../common/logging.js";
+
+const logger = getLogger("assistants.ArtifactModeAssistant");
 
 
 const ARTIFACT_COMPLETE_MARKER = "~END_A~";
@@ -84,7 +87,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
     // 🚀 Increase token limits for artifact generation (artifacts can be large)
     llm.defaultBody.max_tokens = 4000; // Increased from 1000 to 4000 for artifact generation
     
-    console.log("🚀 ArtifactMode using InternalLLM for high-speed generation");
+    logger.info("🚀 ArtifactMode using InternalLLM for high-speed generation");
     let retryCount = 0;
     let isComplete = false;
     let accumulatedResponse = "";
@@ -140,7 +143,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
                     if (containsPotentialMarker(this.buffer, ARTIFACT_COMPLETE_MARKER)) {
                         // Check if we have the completion marker
                         if (this.buffer.includes(ARTIFACT_COMPLETE_MARKER)) {
-                            console.log("✅ ARTIFACT_COMPLETE_MARKER found! Artifact generation complete.");
+                            logger.info("✅ ARTIFACT_COMPLETE_MARKER found! Artifact generation complete.");
                             
                             // Extract everything before the marker
                             const markerIndex = this.buffer.indexOf(ARTIFACT_COMPLETE_MARKER);
@@ -153,7 +156,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
                             }
                             
                             this.isComplete = true;
-                            console.log("✅ Artifact completed");
+                            logger.info("✅ Artifact completed");
                             return true;
                         } else {
                             // Potential marker found but not complete - wait for more chunks
@@ -169,7 +172,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
                     }
 
                 } catch (error) {
-                    console.log("Error parsing chunk: ", chunk, "\ncontinuing...");
+                    logger.debug("Error parsing chunk:", chunk, "continuing...");
                 }
         
             } else {
@@ -190,7 +193,7 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
     }
     
     while (!isComplete && retryCount < MAX_RETRIES) {
-        console.log(`🚀 Artifact generation attempt ${retryCount + 1}/${MAX_RETRIES}`);
+        logger.info(`🚀 Artifact generation attempt ${retryCount + 1}/${MAX_RETRIES}`);
         
         // Create custom stream handler
         const streamHandler = new ArtifactStreamHandler(context.responseStream);
@@ -238,9 +241,9 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
         const currentResponse = streamHandler.getAccumulatedResponse();
         
         if (isComplete) {
-            console.log("✅ Artifact generation completed successfully");
+            logger.info("✅ Artifact generation completed successfully");
         } else if (retryCount + 1 < MAX_RETRIES) {
-            console.log(`⚠️ Artifact incomplete, will retry (attempt ${retryCount + 2}/${MAX_RETRIES})`);
+            logger.warn(`⚠️ Artifact incomplete, will retry (attempt ${retryCount + 2}/${MAX_RETRIES})`);
         }
         
         // Update accumulated response for next iteration if needed
@@ -265,7 +268,7 @@ const States = {
             execute: async (llm, context, dataSources) => {
                 // Use our custom handler instead of the standard PromptAction
                 const isComplete = await handleTruncatedMode(llm, context, dataSources);
-                console.log("Artifact complete: ", isComplete);
+                logger.info("Artifact complete:", isComplete);
             }
         }, false,
         {
