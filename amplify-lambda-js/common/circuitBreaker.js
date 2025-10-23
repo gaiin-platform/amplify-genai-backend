@@ -1,12 +1,13 @@
 //Copyright (c) 2024 Vanderbilt University
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import { DynamoDBClient, GetItemCommand, PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { getLogger } from "./logging.js";
 
 const logger = getLogger("circuitBreaker");
-const dynamodbClient = new DynamoDBClient();
+
+// 🏠 LOCAL IN-MEMORY CIRCUIT BREAKER STATE
+// Resets on Lambda cold starts, but much simpler
+const circuitBreakerState = new Map(); // circuitKey -> { errors, requests, openedAt, status }
 
 /**
  * 🚨 EMERGENCY COST CIRCUIT BREAKER
@@ -21,220 +22,210 @@ const dynamodbClient = new DynamoDBClient();
 export class CircuitBreaker {
     constructor(functionName, options = {}) {
         this.functionName = functionName;
+        this.userId = options.userId || null; // 🔑 PER-USER ISOLATION
+        this.circuitKey = this.userId ? `${functionName}-user-${this.userId}` : functionName;
         this.maxErrorRate = options.maxErrorRate || 0.25; // 25%
         this.maxCostPerHour = options.maxCostPerHour || 25; // $25/hour
         this.cooldownPeriod = options.cooldownPeriod || 300; // 5 minutes
         this.windowSize = options.windowSize || 60; // 60 seconds
-        this.tableName = process.env.CIRCUIT_BREAKER_TABLE || 'amplify-circuit-breaker';
+        
+        // Initialize local state if it doesn't exist
+        if (!circuitBreakerState.has(this.circuitKey)) {
+            circuitBreakerState.set(this.circuitKey, {
+                errors: 0,
+                requests: 0,
+                status: "CLOSED",
+                lastUpdated: Date.now(),
+                openedAt: null
+            });
+        }
     }
 
     /**
      * Check if circuit breaker is open (function disabled)
      */
-    async isOpen() {
-        try {
-            const response = await dynamodbClient.send(new GetItemCommand({
-                TableName: this.tableName,
-                Key: marshall({ functionName: this.functionName })
-            }));
+    isOpen() {
+        const state = circuitBreakerState.get(this.circuitKey);
+        if (!state) return false;
 
-            if (!response.Item) return false;
-
-            const data = unmarshall(response.Item);
-            const now = Date.now();
-            
-            // Check if still in cooldown period
-            if (data.openedAt && (now - data.openedAt) < (this.cooldownPeriod * 1000)) {
-                logger.warn(`Circuit breaker OPEN for ${this.functionName} - cooldown until ${new Date(data.openedAt + this.cooldownPeriod * 1000)}`);
-                return true;
-            }
-
-            // Reset if cooldown expired
-            if (data.openedAt) {
-                await this.reset();
-            }
-
-            return false;
-        } catch (error) {
-            logger.error("Error checking circuit breaker:", error);
-            return false; // Fail open to avoid blocking all traffic
+        const now = Date.now();
+        
+        // Check if still in cooldown period
+        if (state.openedAt && (now - state.openedAt) < (this.cooldownPeriod * 1000)) {
+            logger.warn(`🚫 PER-USER Circuit breaker OPEN for ${this.circuitKey} - cooldown until ${new Date(state.openedAt + this.cooldownPeriod * 1000)}`);
+            return true;
         }
+
+        // Reset if cooldown expired
+        if (state.openedAt) {
+            this.reset();
+        }
+
+        return false;
     }
 
     /**
      * Record successful request
      */
-    async recordSuccess() {
-        await this.updateMetrics(1, 0);
+    recordSuccess() {
+        this.updateMetrics(1, 0);
     }
 
     /**
      * Record failed request
      */
-    async recordFailure() {
-        await this.updateMetrics(1, 1);
+    recordFailure() {
+        this.updateMetrics(1, 1);
         
         // Check if we need to open the circuit
-        const shouldOpen = await this.shouldOpenCircuit();
+        const shouldOpen = this.shouldOpenCircuit();
         if (shouldOpen) {
-            await this.openCircuit();
+            this.openCircuit();
         }
     }
 
     /**
      * Check if circuit should be opened based on error rate
      */
-    async shouldOpenCircuit() {
-        try {
-            const response = await dynamodbClient.send(new GetItemCommand({
-                TableName: this.tableName,
-                Key: marshall({ functionName: this.functionName })
-            }));
+    shouldOpenCircuit() {
+        const state = circuitBreakerState.get(this.circuitKey);
+        if (!state) return false;
 
-            if (!response.Item) return false;
+        const now = Date.now();
+        const windowStart = now - (this.windowSize * 1000);
 
-            const data = unmarshall(response.Item);
-            const now = Date.now();
-            const windowStart = now - (this.windowSize * 1000);
+        // Only check if we have recent data
+        if (!state.lastUpdated || state.lastUpdated < windowStart) return false;
 
-            // Only check if we have recent data
-            if (!data.lastUpdated || data.lastUpdated < windowStart) return false;
+        const errorRate = state.errors / Math.max(state.requests, 1);
+        logger.debug(`🎯 PER-USER Error rate for ${this.circuitKey}: ${(errorRate * 100).toFixed(1)}% (${state.errors}/${state.requests})`);
 
-            const errorRate = data.errors / Math.max(data.requests, 1);
-            logger.debug(`Error rate for ${this.functionName}: ${(errorRate * 100).toFixed(1)}% (${data.errors}/${data.requests})`);
-
-            return errorRate > this.maxErrorRate && data.requests >= 10; // Min 10 requests before tripping
-        } catch (error) {
-            logger.error("Error calculating error rate:", error);
-            return false;
-        }
+        return errorRate > this.maxErrorRate && state.requests >= 10; // Min 10 requests before tripping
     }
 
     /**
      * Open the circuit breaker (disable function)
      */
-    async openCircuit() {
-        try {
-            const now = Date.now();
-            await dynamodbClient.send(new UpdateItemCommand({
-                TableName: this.tableName,
-                Key: marshall({ functionName: this.functionName }),
-                UpdateExpression: "SET openedAt = :now, #status = :status",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: marshall({
-                    ":now": now,
-                    ":status": "OPEN"
-                })
-            }));
-
-            logger.error(`🚨 CIRCUIT BREAKER OPENED for ${this.functionName} - function disabled for ${this.cooldownPeriod}s due to high error rate`);
-            
-            // Send alert (implement your notification system)
-            await this.sendAlert(`Circuit breaker opened for ${this.functionName} due to high error rate`);
-        } catch (error) {
-            logger.error("Error opening circuit breaker:", error);
+    openCircuit() {
+        const now = Date.now();
+        const state = circuitBreakerState.get(this.circuitKey);
+        
+        if (state) {
+            state.openedAt = now;
+            state.status = "OPEN";
+            circuitBreakerState.set(this.circuitKey, state);
         }
+
+        const userInfo = this.userId ? ` for user ${this.userId.substring(0, 10)}...` : '';
+        logger.error(`🚨 PER-USER CIRCUIT BREAKER OPENED for ${this.circuitKey}${userInfo} - disabled for ${this.cooldownPeriod}s due to high error rate`);
+        
+        // Send alert (implement your notification system)
+        this.sendAlert(`Per-user circuit breaker opened for ${this.circuitKey} due to high error rate`);
     }
 
     /**
      * Reset circuit breaker
      */
-    async reset() {
-        try {
-            await dynamodbClient.send(new PutItemCommand({
-                TableName: this.tableName,
-                Item: marshall({
-                    functionName: this.functionName,
-                    requests: 0,
-                    errors: 0,
-                    status: "CLOSED",
-                    lastUpdated: Date.now()
-                })
-            }));
+    reset() {
+        circuitBreakerState.set(this.circuitKey, {
+            errors: 0,
+            requests: 0,
+            status: "CLOSED",
+            lastUpdated: Date.now(),
+            openedAt: null
+        });
 
-            logger.info(`Circuit breaker RESET for ${this.functionName}`);
-        } catch (error) {
-            logger.error("Error resetting circuit breaker:", error);
-        }
+        logger.info(`🔄 PER-USER Circuit breaker RESET for ${this.circuitKey}`);
     }
 
     /**
      * Update metrics (requests and errors)
      */
-    async updateMetrics(requests, errors) {
-        try {
-            const now = Date.now();
-            const windowStart = now - (this.windowSize * 1000);
-
-            await dynamodbClient.send(new UpdateItemCommand({
-                TableName: this.tableName,
-                Key: marshall({ functionName: this.functionName }),
-                UpdateExpression: "ADD requests :req, errors :err SET lastUpdated = :now",
-                ExpressionAttributeValues: marshall({
-                    ":req": requests,
-                    ":err": errors,
-                    ":now": now
-                }),
-                // Reset counters if data is older than window
-                ConditionExpression: "attribute_not_exists(lastUpdated) OR lastUpdated >= :windowStart",
-                ExpressionAttributeValues: marshall({
-                    ":req": requests,
-                    ":err": errors,
-                    ":now": now,
-                    ":windowStart": windowStart
-                })
-            }));
-        } catch (error) {
-            if (error.name === 'ConditionalCheckFailedException') {
-                // Data is stale, reset and retry
-                await this.reset();
-                await this.updateMetrics(requests, errors);
-            } else {
-                logger.error("Error updating metrics:", error);
-            }
+    updateMetrics(requests, errors) {
+        const now = Date.now();
+        const windowStart = now - (this.windowSize * 1000);
+        const state = circuitBreakerState.get(this.circuitKey);
+        
+        if (!state) {
+            // Initialize if doesn't exist
+            circuitBreakerState.set(this.circuitKey, {
+                errors: errors,
+                requests: requests,
+                status: "CLOSED",
+                lastUpdated: now,
+                openedAt: null
+            });
+            return;
         }
+        
+        // Reset counters if data is older than window
+        if (!state.lastUpdated || state.lastUpdated < windowStart) {
+            state.errors = errors;
+            state.requests = requests;
+        } else {
+            state.errors += errors;
+            state.requests += requests;
+        }
+        
+        state.lastUpdated = now;
+        circuitBreakerState.set(this.circuitKey, state);
     }
 
     /**
      * Send alert notification
      */
-    async sendAlert(message) {
+    sendAlert(message) {
         // Implement your alerting system here (SNS, Slack, etc.)
         logger.error(`ALERT: ${message}`);
     }
 }
 
 /**
- * Circuit breaker middleware for Lambda handlers
+ * 🔑 PER-USER Circuit breaker middleware for Lambda handlers
+ * 
+ * CRITICAL: Each user gets their own circuit breaker to prevent
+ * one problematic user from affecting others
  */
 export const withCircuitBreaker = (functionName, options = {}) => {
     return (handler) => {
-        const circuitBreaker = new CircuitBreaker(functionName, options);
-        
-        return async (event, context) => {
+        return async (event, context, params = null) => {
+            // Extract userId from event or params for per-user isolation
+            const userId = params?.user || event?.user || event?.requestContext?.authorizer?.user || null;
+            
+            if (!userId) {
+                logger.warn("⚠️ No userId found for circuit breaker - falling back to function-wide protection");
+            }
+            
+            // Create per-user circuit breaker
+            const circuitBreaker = new CircuitBreaker(functionName, { ...options, userId });
+            
             // Check circuit breaker first
-            const isOpen = await circuitBreaker.isOpen();
+            const isOpen = circuitBreaker.isOpen();
             if (isOpen) {
+                const userInfo = userId ? ` for user ${userId.substring(0, 10)}...` : '';
+                logger.warn(`🚫 Circuit breaker blocked request${userInfo}`);
+                
                 return {
                     statusCode: 503,
                     body: JSON.stringify({
                         error: "Service temporarily unavailable - circuit breaker open",
-                        retryAfter: circuitBreaker.cooldownPeriod
+                        retryAfter: circuitBreaker.cooldownPeriod,
+                        circuitKey: circuitBreaker.circuitKey
                     }),
                 };
             }
 
             try {
                 // Execute the handler
-                const result = await handler(event, context);
+                const result = await handler(event, context, params);
                 
                 // Record success
-                await circuitBreaker.recordSuccess();
+                circuitBreaker.recordSuccess();
                 
                 return result;
             } catch (error) {
                 // Record failure
-                await circuitBreaker.recordFailure();
+                circuitBreaker.recordFailure();
                 
                 throw error;
             }
