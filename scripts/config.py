@@ -27,7 +27,7 @@ def get_config(dep_name: str = DEP_NAME, stage: str = STAGE) -> dict:
         "ASSISTANT_LOOKUP_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-assistant-lookup",
         "ASSISTANT_THREADS_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-assistant-threads",
         "ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE": f"amplify-{dep_name}-assistants-{stage}-assistant-thread-runs",
-        "CHAT_USAGE_DYNAMO_TABLE": f"amplify-{dep_name}-lambda-{stage}-chat-usages",
+        "CHAT_USAGE_DYNAMO_TABLE": f"amplify-{dep_name}-lambda-{stage}-chat-usage",
         "COGNITO_USERS_DYNAMODB_TABLE": f"amplify-{dep_name}-object-access-{stage}-cognito-users",
         "CONVERSATION_METADATA_TABLE": f"amplify-{dep_name}-lambda-{stage}-conversation-metadata",
         "COST_CALCULATIONS_DYNAMO_TABLE": f"amplify-{dep_name}-lambda-{stage}-cost-calculations",
@@ -45,7 +45,8 @@ def get_config(dep_name: str = DEP_NAME, stage: str = STAGE) -> dict:
         "OPS_DYNAMODB_TABLE": f"amplify-{dep_name}-lambda-ops-{stage}-ops",
         "SCHEDULED_TASKS_TABLE": f"amplify-{dep_name}-agent-loop-{stage}-scheduled-tasks",
         "SHARES_DYNAMODB_TABLE": f"amplify-{dep_name}-lambda-{stage}",
-        "USER_STORAGE_TABLE": f"amplify-{dep_name}-lambda-basic-ops-{stage}-user-storage",
+        "OLD_USER_STORAGE_TABLE": f"amplify-{dep_name}-lambda-basic-ops-{stage}-user-storage",
+        "USER_DATA_STORAGE_TABLE": f"amplify-{dep_name}-lambda-{stage}-user-data-storage",
         "USER_TAGS_DYNAMO_TABLE": f"amplify-{dep_name}-lambda-{stage}-user-tags",
         "WORKFLOW_TEMPLATES_TABLE": f"amplify-{dep_name}-agent-loop-{stage}-workflow-registry",
         "AGENT_STATE_DYNAMODB_TABLE": f"amplify-{dep_name}-agent-loop-{stage}-agent-state",
@@ -56,43 +57,29 @@ def get_config(dep_name: str = DEP_NAME, stage: str = STAGE) -> dict:
         "MEMORY_DYNAMO_TABLE": f"amplify-{dep_name}-memory-{stage}-memory",
         "COMMON_DATA_DYNAMO_TABLE": f"amplify-{dep_name}-se-{stage}-ops-common-data",
         "DYNAMO_DYNAMIC_CODE_TABLE": f"amplify-{dep_name}-se-{stage}-ai-code",
-        "needs_edit": {
-            "non_user_related_tables": {
-                "DATA_DISCLOSURE_VERSIONS_TABLE": f"amplify-{dep_name}-data-disclosure-{stage}-versions",
-                "MODEL_RATE_TABLE": f"amplify-{dep_name}-chat-billing-{stage}-model-rates",
-                "DATASOURCE_REGISTRY_DYNAMO_TABLE": f"amplify-{dep_name}-amplify-js-{stage}-datasource-registry",
-            },
-            "consolidated_buckets": {
-                "S3_CONVERSATIONS_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-user-conversations", #REQUIRES MIGRATION  ***
-                "S3_SHARE_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-share", # POINTER   ***
-                "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": f"amplify-{dep_name}-assistants-{stage}-code-interpreter-files", # NOT CURRENTLY TRACKED  - RETURNED TO USER IN CHAT RESPONSE BODY AND FORGOTTEN  ***
-                "AGENT_STATE_BUCKET": f"amplify-{dep_name}-agent-loop-{stage}-agent-state", # POINTER  *** 
-                "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": f"amplify-{dep_name}-assistants-{stage}-group-conversations-content", # POINTER ***
-                "S3_CONVERSION_INPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-document-conversion-input", # *** 
-                "S3_CONVERSION_OUTPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-document-conversion-output", # templates/ folder contents must remain unchanged ***
-                "S3_ZIP_FILE_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-zip-files", # used for uploading individual files only   NOT DONE YET
-               
-                # non user related buckets
-                "DATA_DISCLOSURE_STORAGE_BUCKET": f"amplify-{dep_name}-data-disclosure-{stage}-storage", # ***
-                # "S3_ACCESS_LOGS_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-access-logs",
-                "S3_API_DOCUMENTATION_BUCKET": f"amplify-{dep_name}-api-{stage}-documentation-bucket", # ***
-                
-            },
-            "to_user_storage_table": {
-                "SCHEDULED_TASKS_LOGS_BUCKET": f"amplify-{dep_name}-agent-loop-{stage}-scheduled-tasks-logs", # POINTER   *****
-                "S3_ARTIFACTS_BUCKET": f"amplify-{dep_name}-artifacts-{stage}-bucket", # POINTER    *****
-                "WORKFLOW_TEMPLATES_BUCKET": f"amplify-{dep_name}-agent-loop-{stage}-workflow-templates", # POINTER    *****
-            },
-            "skip_possibly": {
-                "TRACE_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-chat-traces", # not even turned on at this time  Can SKIP
-            },
-            "cannot_change": {
-                "S3_IMAGE_INPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-image-input",
-                "S3_RAG_INPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-rag-input",
-                "S3_FILE_TEXT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-file-text",
-                "S3_RAG_CHUNKS_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-rag-chunks", # double check
-            }
-        }
+        "EMBEDDING_PROGRESS_TABLE": f"amplify-{dep_name}-embedding-{stage}-embedding-progress",
+        
+        # === S3 BUCKETS FOR CONSOLIDATION (migrate to S3_CONSOLIDATION_BUCKET) ===
+        "S3_CONVERSATIONS_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-user-conversations",  # Migrates to: conversations/
+        "S3_SHARE_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-share",  # Migrates to: shares/
+        "ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME": f"amplify-{dep_name}-assistants-{stage}-code-interpreter-files",  # Migrates to: codeInterpreter/
+        "AGENT_STATE_BUCKET": f"amplify-{dep_name}-agent-loop-{stage}-agent-state",  # Migrates to: agentState/
+        "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": f"amplify-{dep_name}-assistants-{stage}-group-conversations-content",  # Migrates to: agentConversations/
+        "S3_CONVERSION_INPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-document-conversion-input",  # Migrates to: documentConversionInput/
+        "S3_CONVERSION_OUTPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-document-conversion-output",  # Migrates to: documentConversionOutput/ (keep templates/)
+        "S3_ZIP_FILE_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-zip-files",  # Migrates to: zipFiles/
+        
+        # === NON-USER RELATED BUCKETS (migrate to S3_CONSOLIDATION_BUCKET) ===
+        "DATA_DISCLOSURE_STORAGE_BUCKET": f"amplify-{dep_name}-data-disclosure-{stage}-storage",  # Migrates to: dataDisclosure/
+        "S3_API_DOCUMENTATION_BUCKET": f"amplify-{dep_name}-api-{stage}-documentation-bucket",  # Migrates to: apiDocumentation/
+        
+        # === BUCKETS FOR USER_STORAGE_TABLE MIGRATION ===
+        "SCHEDULED_TASKS_LOGS_BUCKET": f"amplify-{dep_name}-agent-loop-{stage}-scheduled-tasks-logs",  # Migrates to: USER_STORAGE_TABLE
+        "S3_ARTIFACTS_BUCKET": f"amplify-{dep_name}-artifacts-{stage}-bucket",  # Migrates to: USER_STORAGE_TABLE
+        "WORKFLOW_TEMPLATES_BUCKET": f"amplify-{dep_name}-agent-loop-{stage}-workflow-templates",  # Migrates to: USER_STORAGE_TABLE
+        
+        # === CONSOLIDATION TARGET BUCKET ===
+        "S3_CONSOLIDATION_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-consolidation"
     }
 
 # Backward compatibility - use default values

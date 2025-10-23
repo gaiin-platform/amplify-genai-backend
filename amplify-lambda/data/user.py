@@ -10,8 +10,9 @@ from decimal import Decimal
 import json
 
 from boto3.dynamodb.types import TypeDeserializer
-from botocore.exceptions import ClientError
 
+from pycommon.logger import getLogger
+logger = getLogger("user_data")
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -239,7 +240,7 @@ class CommonData:
                 request_items = batch_response.get("UnprocessedKeys", {})
                 if request_items:
                     # Add exponential backoff here if needed
-                    print(f"Retrying {len(request_items)} unprocessed keys")
+                    logger.warning("Retrying %d unprocessed keys", len(request_items))
 
         return response_items
 

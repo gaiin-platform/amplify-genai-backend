@@ -11,6 +11,9 @@ import pycommon.dal.providers.aws
 
 dal = DAL(Backend.AWS)
 
+from pycommon.logger import getLogger
+logger = getLogger("object_access_users")
+
 
 def _find_user_by_property(properties: dict) -> tuple[UserABC, str] | None:
     """Helper to find a user by one of several properties.
@@ -75,19 +78,19 @@ def _update_admin_groups(user: UserABC) -> None:
     # is not in the config, or vice versa
     for g in saml_groups:
         if g not in conf:
-            print(f"adding new group {g} to config")
+            logger.info(f"adding new group {g} to config")
             conf[g] = {"members": [user_id], "createdBy": "JIT_PROVISIONER"}
     for g in conf:
         ignore_groups: str = conf[g].get("createdBy", None)
         if ignore_groups and ignore_groups != "JIT_PROVISIONER" and ignore_groups != "Cognito_Sync":
-            print(f"ignoring group {g} because createdBy is {ignore_groups}")
+            logger.info(f"ignoring group {g} because createdBy is {ignore_groups}")
             continue
-        print(f"looking for group {g}")
+        logger.debug(f"looking for group {g}")
         if g in saml_groups and user_id not in conf.get(g, {}).get("members", []):
-            print(f"adding user {user_id} to group {g}")
+            logger.info(f"adding user {user_id} to group {g}")
             conf[g].setdefault("members", []).append(user_id)
         elif g not in saml_groups and user_id in conf.get(g, {}).get("members", []):
-            print(f"removing user {user_id} from group {g}")
+            logger.info(f"removing user {user_id} from group {g}")
             if conf[g].get("members"):
                 conf[g]["members"].remove(user_id)
     dal.AdminConfig.set_config(config_id, conf)
@@ -123,7 +126,6 @@ def create_or_update_user(event, context):
     3c2. If the email does not exist then we create a new user.
     """  # noqa: E501
 
-    # print("Creating or updating user")
 
     # snag our auth header - because this is pre-auth, we cannot use the @validated
     # decorator.
@@ -145,17 +147,14 @@ def create_or_update_user(event, context):
         # verify the token structure...
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
-        # print(f"token header: {header}, kid: {kid}")
         if not kid:
             return {"statusCode": 401, "body": "Unauthorized: No kid in token header"}
 
         # get the JWKS to validate the signature
         jwks = pycommon.authz.get_jwks_for_url(base_url)
-        # print(f"jwks: {jwks}")
 
         # try to find a matching key id (kid)
         key = next((k for k in jwks["keys"] if k["kid"] == kid), None)
-        # print(f"found key: {key}")
         if not key:
             return {"statusCode": 401, "body": "Unauthorized: No matching key found"}
 
@@ -168,7 +167,6 @@ def create_or_update_user(event, context):
             issuer=base_url,
         )
 
-        # print(f"token payload: {payload}")
         # get the payload to search in the DAL
         # while immutable_id is the primary key, we also want to check email due to
         # previous system versions that did not enforce immutable_id as primary key.
@@ -186,12 +184,10 @@ def create_or_update_user(event, context):
         if prop_name == "email":
             # user needs to have attributes updated, potentially and if
             # the version is old enough, upgraded.
-            # print(f"found user user by email. details: {user}")
             _update_attributes(payload, user)
             _update_admin_groups(user)
         if prop_name == "immutable_id":
             # user found by immutable_id, so just update attributes as needed
-            # print(f"found user by immutable_id. details: {user}")
             _update_attributes(payload, user)
             _update_admin_groups(user)
 
@@ -203,6 +199,6 @@ def create_or_update_user(event, context):
         jose.ExpiredSignatureError,
         jose.exceptions.JWTClaimsError,
     ) as e:
-        print(f"Token error: {str(e)}")
+        logger.error(f"Token error: {str(e)}")
         return {"statusCode": 401, "body": json.dumps({"message": f"Unauthorized: {str(e)}"})}
 

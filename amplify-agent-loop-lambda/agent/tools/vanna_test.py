@@ -1,15 +1,13 @@
 import os
 import requests
-import json
-import logging
 import yaml
 from dotenv import load_dotenv
 from vanna.base import VannaBase
 from vanna.chromadb import ChromaDB_VectorStore
 
 # Configure logging to suppress Vanna's verbose output
-logging.getLogger("vanna").setLevel(logging.WARNING)
-
+from pycommon.logger import getLogger
+logger = getLogger("vanna")
 
 def load_config():
     """Load configuration from YAML file"""
@@ -112,14 +110,14 @@ class AmplifyLLM(VannaBase):
             response = requests.post(url, headers=headers, json=payload)
 
             if response.status_code != 200:
-                print(f"Error: {response.status_code} - {response.text}")
+                logger.error("Error: %s - %s", response.status_code, response.text)
 
             response.raise_for_status()
             return response.json().get("data", "")
         except Exception as e:
-            print(f"Error in submit_prompt: {str(e)}")
+            logger.error("Error in submit_prompt: %s", str(e))
             if hasattr(e, "response"):
-                print(f"Error details: {e.response.text}")
+                logger.error("Error details: %s", e.response.text)
             return None
 
     def generate_sql(self, question: str, **kwargs) -> str:
@@ -196,7 +194,7 @@ def test_amplify_vanna():
             raise ValueError(f"Unsupported database type: {db_type}")
 
         # Get information schema for all tables
-        print("Getting information schema for all tables...")
+        logger.info("Getting information schema for all tables...")
 
         # Get database configuration
         db_config = DB_CONFIG[db_type]
@@ -220,12 +218,12 @@ def test_amplify_vanna():
         unique_tables = df_information_schema["TABLE_NAME"].unique()
         # Limit to 3 tables
         unique_tables = unique_tables[:3]
-        print(
-            f"Processing {len(unique_tables)} tables in schema {schema} (limited to 3 tables)"
+        logger.info(
+            "Processing %s tables in schema %s (limited to 3 tables)", len(unique_tables), schema
         )
 
         for table_name in unique_tables:
-            print(f"Processing table: {table_name}")
+            logger.info("Processing table: %s", table_name)
             # Get all columns for this table
             table_columns = df_information_schema[
                 df_information_schema["TABLE_NAME"] == table_name
@@ -247,22 +245,22 @@ def test_amplify_vanna():
         vn.set_db_schema(schema_info)
 
         # Generate training plan
-        print("Generating and executing training plan...")
+        logger.info("Generating and executing training plan...")
         try:
             # Use the full information schema for training plan generation
             plan = vn.get_training_plan_generic(df_information_schema)
             if plan:
-                print("Training on schema...")
+                logger.info("Training on schema...")
                 vn.train(plan=plan)
-                print("Training completed")
+                logger.info("Training completed")
             else:
-                print("Warning: No training plan generated")
+                logger.warning("Warning: No training plan generated")
         except Exception as e:
-            print(f"Warning: Could not generate training plan: {str(e)}")
-            print("Continuing with schema training...")
+            logger.warning("Warning: Could not generate training plan: %s", str(e))
+            logger.info("Continuing with schema training...")
 
         # Add DDL schema
-        print("Adding DDL schema...")
+        logger.info("Adding DDL schema...")
         try:
             # Get table information for only our limited set of tables
             tables_query = f"""
@@ -304,16 +302,16 @@ def test_amplify_vanna():
 
                 try:
                     vn.train(ddl=ddl)
-                    print(f"Successfully added DDL for {table_name}")
+                    logger.info("Successfully added DDL for %s", table_name)
                 except Exception as e:
-                    print(
-                        f"Warning: Could not add DDL for table {table_name}: {str(e)}"
+                    logger.warning(
+                        "Warning: Could not add DDL for table %s: %s", table_name, str(e)
                     )
         except Exception as e:
-            print(f"Warning: Could not generate DDL statements: {str(e)}")
+            logger.warning("Warning: Could not generate DDL statements: %s", str(e))
 
         # Add documentation
-        print("Adding documentation...")
+        logger.info("Adding documentation...")
         try:
             documentation = "Database Schema Documentation:\n\n"
             for table_name in unique_tables:
@@ -328,10 +326,10 @@ def test_amplify_vanna():
                 documentation += "\n"
             vn.train(documentation=documentation)
         except Exception as e:
-            print(f"Warning: Could not add documentation: {str(e)}")
+            logger.warning("Warning: Could not add documentation: %s", str(e))
 
         # Add example queries
-        print("\nTraining with example queries...")
+        logger.info("Training with example queries...")
         try:
             # Create a set to track added queries
             added_queries = set()
@@ -355,15 +353,15 @@ def test_amplify_vanna():
                     try:
                         vn.train(sql=example_query)
                         added_queries.add(example_query)
-                        print(f"Added example query for {table_name}")
+                        logger.info("Added example query for %s", table_name)
                     except Exception as e:
-                        print(
-                            f"Warning: Error during example query training for table {table_name}: {str(e)}"
+                        logger.warning(
+                            "Warning: Error during example query training for table %s: %s", table_name, str(e)
                         )
         except Exception as e:
-            print(f"Warning: Error during example query generation: {str(e)}")
+            logger.warning("Warning: Error during example query generation: %s", str(e))
 
-        print("Schema training completed.")
+        logger.info("Schema training completed.")
 
         # Test a simple question for each table
         for table_name in unique_tables:
@@ -380,22 +378,22 @@ def test_amplify_vanna():
             question = (
                 f"Show me the first 5 rows from the {fully_qualified_table} table"
             )
-            print(f"\nTesting query for {table_name}: {question}")
+            logger.info("Testing query for %s: %s", table_name, question)
 
             # Use ask() instead of generate_sql()
             result = vn.ask(question=question)
             if not result:
-                print(
-                    f"\nCould not generate a valid SQL query for {table_name}. Trying a more specific question..."
+                logger.warning(
+                    "Could not generate a valid SQL query for %s. Trying a more specific question...", table_name
                 )
                 # Try a more specific question with the actual table name and columns
                 columns_str = ", ".join(table_columns)
                 question = f"Show me the first 5 rows of {columns_str} from the {fully_qualified_table} table"
-                print(f"\nTesting query: {question}")
+                logger.info("Testing query: %s", question)
                 result = vn.ask(question=question)
 
             if result:
-                print(f"\nGenerated SQL:\n{result}")
+                logger.info("Generated SQL:\n%s", result)
                 try:
                     # Clean up any remaining markdown or formatting
                     clean_sql = result.replace("```sql", "").replace("```", "").strip()
@@ -412,27 +410,27 @@ def test_amplify_vanna():
                         )
 
                     # Print the final SQL for debugging
-                    print(f"\nExecuting SQL:\n{clean_sql}")
+                    logger.info("Executing SQL:\n%s", clean_sql)
 
                     results = vn.run_sql(clean_sql)
-                    print(f"\nQuery Results:\n{results}")
+                    logger.info("Query Results:\n%s", results)
                 except Exception as e:
-                    print(f"Error running query: {str(e)}")
-                    print(f"\nTrying to list columns for table {table_name}...")
+                    logger.error("Error running query: %s", str(e))
+                    logger.info("Trying to list columns for table %s...", table_name)
                     try:
                         columns = vn.run_sql(f"SHOW COLUMNS IN {fully_qualified_table}")
-                        print("\nAvailable columns:")
-                        print(columns)
+                        logger.info("Available columns:")
+                        logger.info("%s", columns)
                     except Exception as e2:
-                        print(f"Error listing columns: {str(e2)}")
+                        logger.error("Error listing columns: %s", str(e2))
             else:
-                print(f"\nCould not generate a valid SQL query for {table_name}.")
+                logger.warning("Could not generate a valid SQL query for %s.", table_name)
 
     except Exception as e:
-        print(f"Error during database operations: {str(e)}")
+        logger.error("Error during database operations: %s", str(e))
         import traceback
 
-        print(f"Full error traceback:\n{traceback.format_exc()}")
+        logger.error("Full error traceback:\n%s", traceback.format_exc())
 
 
 if __name__ == "__main__":

@@ -11,16 +11,18 @@ setup_validated(rules, get_permission_checker)
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
 
+from pycommon.logger import getLogger
+logger = getLogger("admin_user_services")
 
 @validated(op="read")
 def verify_is_in_amp_group(event, context, current_user, name, data):
     amp_groups = data["data"]["groups"]
     try:
         isMember = is_in_amp_group(current_user, amp_groups)
-        print(f"User {current_user} is in group: {isMember}")
+        logger.debug("User %s is in group: %s", current_user, isMember)
         return {"success": True, "isMember": isMember}
     except Exception as e:
-        print(f"Error verifying is in amp group: {str(e)}")
+        logger.error("Error verifying is in amp group: %s", str(e)
         return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
 
 
@@ -101,9 +103,9 @@ def get_all_amplify_groups():
         if "Item" in config_item and "data" in config_item["Item"]:
             return config_item["Item"]["data"]
         else:
-            print("No Amplify Groups Found")
+            logger.warning("No Amplify Groups Found")
     except Exception as e:
-        print(f"Error retrieving {AdminConfigTypes.AMPLIFY_GROUPS.value}: {str(e)}")
+        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e)
     return None
 
 
@@ -117,7 +119,7 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
         affiliated_groups = find_all_user_groups(current_user, all_groups)
         return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
     except Exception as e:
-        print(f"Error retrieving user affiliated groups: {str(e)}")
+        logger.error("Error retrieving user affiliated groups: %s", str(e)
         return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
 
 

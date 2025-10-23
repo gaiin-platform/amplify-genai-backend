@@ -16,7 +16,7 @@ custom:
  
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/shared/CHANGE_SET_BOOLEAN}
+    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN}
 
   stages:
     - dev
@@ -49,18 +49,19 @@ provider:
 
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
-    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/shared/AGENT_ENDPOINT}
-    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/shared/CUSTOM_API_DOMAIN}
-    BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/shared/BEDROCK_GUARDRAIL_ID, ''}
-    BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/shared/BEDROCK_GUARDRAIL_VERSION, ''}
-    COGNITO_CLIENT_ID: ${ssm:/amplify/${sls:stage}/shared/COGNITO_CLIENT_ID}
-    COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/shared/COGNITO_USER_POOL_ID}
-    DEP_REGION: ${ssm:/amplify/${sls:stage}/shared/DEP_REGION} 
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/shared/IDP_PREFIX}
-    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME_ARN}
-    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/shared/LLM_ENDPOINTS_SECRETS_NAME}
-    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/shared/SECRETS_ARN_NAME}
+    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT}
+    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
+    BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_ID, ''}
+    BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_VERSION, ''}
+    COGNITO_CLIENT_ID: ${ssm:/amplify/${sls:stage}/COGNITO_CLIENT_ID}
+    COGNITO_USER_POOL_ID: ${ssm:/amplify/${sls:stage}/COGNITO_USER_POOL_ID}
+    DEP_REGION: ${ssm:/amplify/${sls:stage}/DEP_REGION} 
+    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
+    LLM_ENDPOINTS_SECRETS_NAME_ARN: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME_ARN}
+    LLM_ENDPOINTS_SECRETS_NAME: ${ssm:/amplify/${sls:stage}/LLM_ENDPOINTS_SECRETS_NAME}
+    SECRETS_ARN_NAME: ${ssm:/amplify/${sls:stage}/SECRETS_ARN_NAME}
     TRACING_ENABLED: false
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}

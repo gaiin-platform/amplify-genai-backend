@@ -10,17 +10,15 @@ import re
 import os
 import boto3
 from boto3.dynamodb.conditions import Key
-import logging
 from pycommon.api.credentials import get_endpoint
 from embedding_models import get_embedding_models
 from pycommon.llm.chat import chat
 from pycommon.api.get_endpoint import get_endpoint as get_chat_endpoint, EndpointType
 import time
 import random
-    
+from pycommon.logger import getLogger
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger = getLogger("embedding_shared_functions")
 
 endpoints_arn = os.environ["LLM_ENDPOINTS_SECRETS_NAME_ARN"]
 api_version = os.environ["API_VERSION"]
@@ -39,7 +37,7 @@ embedding_provider = None
 qa_provider = None
 qa_model_name = None
 model_result = get_embedding_models()
-print("Model_result", model_result)
+logger.debug("Model_result: %s", model_result)
 if model_result["success"]:
     data = model_result["data"]
     embedding_model_name = data["embedding"]["model_id"]
@@ -152,10 +150,10 @@ def generate_questions(content, account_data = None):
     chat_endpoint = get_chat_endpoint(EndpointType.CHAT_ENDPOINT)
 
     if not chat_endpoint or not account_data or not account_data.get('access_token'):
-        print("CHAT_ENDPOINT environment variable or account_data not set")
+        logger.error("CHAT_ENDPOINT environment variable or account_data not set")
         raise Exception("CHAT_ENDPOINT environment variable or account_data not set")
     
-    print(f"Generating questions with {qa_provider}")
+    logger.info(f"Generating questions with {qa_provider}")
     
     system_prompt = "With every prompt I send, think about what questions the text might be able to answer and return those questions. Please create many questions."
     payload = {
@@ -217,17 +215,17 @@ def generate_questions(content, account_data = None):
     
     for attempt in range(max(max_normal_retries, max_rate_limit_retries) + 1):
         try:
-            print(f"[QA_RETRY] Attempt {attempt + 1} for question generation")
+            logger.debug(f"[QA_RETRY] Attempt {attempt + 1} for question generation")
             response, metadata = chat(chat_endpoint, account_data['access_token'], payload)    
             
             # Handle both error string returns and successful responses
             if response.startswith("Error:"):
                 error_message = response
-                print(f"[QA_RETRY] Error response received: {error_message}")
+                logger.debug(f"[QA_RETRY] Error response received: {error_message}")
                 
                 # Check if it's an internal rate limit (don't retry)
                 if is_internal_rate_limit(error_message):
-                    print(f"[QA_RETRY] 🚫 Internal rate limit detected - not retrying: {error_message}")
+                    logger.warning(f"[QA_RETRY] 🚫 Internal rate limit detected - not retrying: {error_message}")
                     return {"success": False, "error": error_message}
                 
                 # Check if it's a model rate limit
@@ -235,28 +233,28 @@ def generate_questions(content, account_data = None):
                 max_retries = max_rate_limit_retries if is_model_rl else max_normal_retries
                 
                 if attempt >= max_retries:
-                    print(f"[QA_RETRY] ❌ Max retries ({max_retries}) reached for {'model rate limit' if is_model_rl else 'normal error'}")
+                    logger.error(f"[QA_RETRY] ❌ Max retries ({max_retries}) reached for {'model rate limit' if is_model_rl else 'normal error'}")
                     return {"success": False, "error": error_message}
                 
                 # Calculate and wait before retry
                 delay = calculate_backoff_delay(attempt, is_model_rl)
                 error_type = "model rate limit" if is_model_rl else "error"
-                print(f"[QA_RETRY] ⏳ {error_type} detected, waiting {delay:.2f}s before retry {attempt + 2}/{max_retries + 1}")
+                logger.debug(f"[QA_RETRY] ⏳ {error_type} detected, waiting {delay:.2f}s before retry {attempt + 2}/{max_retries + 1}")
                 time.sleep(delay)
                 last_error = error_message
                 continue
             
             # Success case
-            print(f"[QA_RETRY] ✅ Question generation successful on attempt {attempt + 1}")
+            logger.info(f"[QA_RETRY] ✅ Question generation successful on attempt {attempt + 1}")
             return {"success": True, "data": response}
             
         except Exception as e:
             error_message = str(e)
-            print(f"[QA_RETRY] Exception occurred: {error_message}")
+            logger.error(f"[QA_RETRY] Exception occurred: {error_message}")
             
             # Check if it's an internal rate limit (don't retry)
             if "429" in error_message and is_internal_rate_limit(error_message):
-                print(f"[QA_RETRY] 🚫 Internal rate limit exception - not retrying: {error_message}")
+                logger.warning(f"[QA_RETRY] 🚫 Internal rate limit exception - not retrying: {error_message}")
                 return {"success": False, "error": error_message}
             
             # Check if it's a model rate limit or timeout
@@ -264,14 +262,14 @@ def generate_questions(content, account_data = None):
             max_retries = max_rate_limit_retries if is_model_rl else max_normal_retries
             
             if attempt >= max_retries:
-                print(f"[QA_RETRY] ❌ Max retries ({max_retries}) reached for {'model rate limit' if is_model_rl else 'normal error'}")
+                logger.error(f"[QA_RETRY] ❌ Max retries ({max_retries}) reached for {'model rate limit' if is_model_rl else 'normal error'}")
                 logger.error(f"An error occurred with chat js call after {attempt + 1} attempts: {e}")
                 return {"success": False, "error": error_message}
             
             # Calculate and wait before retry
             delay = calculate_backoff_delay(attempt, is_model_rl)
             error_type = "model rate limit" if is_model_rl else "exception"
-            print(f"[QA_RETRY] ⏳ {error_type} detected, waiting {delay:.2f}s before retry {attempt + 2}/{max_retries + 1}")
+            logger.debug(f"[QA_RETRY] ⏳ {error_type} detected, waiting {delay:.2f}s before retry {attempt + 2}/{max_retries + 1}")
             time.sleep(delay)
             last_error = error_message
     
@@ -298,11 +296,11 @@ def get_original_creator(textLocationKey):
             IndexName="TextLocationIndex",  # Specify the GSI name here
             KeyConditionExpression=Key("textLocationKey").eq(textLocationKey),
         )
-        print(f"Response: {response}")
+        logger.debug(f"Response: {response}")
 
         # Check if the items exist in the table
         if "Items" in response and response["Items"]:
-            print("items: ", response["Items"])
+            logger.debug("items: %s", response["Items"])
             # Filter items to ensure createdAt is present and valid
             valid_items = [
                 item
@@ -333,5 +331,5 @@ def get_original_creator(textLocationKey):
             return None
 
     except Exception as e:
-        print(f"Error retrieving item: {e}")
+        logger.error(f"Error retrieving item: {e}")
         return None

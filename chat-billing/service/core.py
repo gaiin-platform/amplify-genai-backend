@@ -26,6 +26,8 @@ COST_FIELDS = [
 ]
 DEFAULT_MODELS = "defaultModels"
 
+from pycommon.logger import getLogger
+logger = getLogger("models")
 
 @api_tool(
     path="/available_models",
@@ -155,7 +157,7 @@ def get_user_available_models(event, context, current_user, name, data):
 
     supported_models = supported_models_result.get("data", {}).items()
     affiliated_groups, _ = get_user_affiliated_groups(data["access_token"])
-    print("User affiliated_groups: ", affiliated_groups)
+    logger.debug("User affiliated_groups: %s", affiliated_groups)
 
     # Filter and format the available models directly using a list comprehension
     available_models = [
@@ -166,14 +168,14 @@ def get_user_available_models(event, context, current_user, name, data):
         )
     ]
     
-    # print("Available user models:", available_models)
+    # logger.debug("Available user models:", available_models)
 
     default_results = get_admin_default_models()
     # setting as None if not found
     default_model = None
     advanced_model = None
     cheapest_model = None
-    # print("default_results: ", default_results)
+    # logger.debug("default_results: ", default_results)
     if not default_results or len(default_results.keys()) == 0:
         default_model, advanced_model, cheapest_model, _ = (
             extract_and_update_default_models()
@@ -192,7 +194,7 @@ def get_user_available_models(event, context, current_user, name, data):
             model_id = default_results.get(model_type)
             if model_id and model_id in available_models_by_id:
                 default_model_types[model_type] = available_models_by_id[model_id]
-            print(f"{model_type}_model: {default_model_types[model_type]}")
+            logger.debug(f"{model_type}_model: {default_model_types[model_type]}")
 
         # Assign variables from the dictionary
         default_model = default_model_types["user"]
@@ -214,7 +216,7 @@ def get_user_available_models(event, context, current_user, name, data):
 
 # to seamlessly update to the new form of saving default models - over time this will not be needed
 def extract_and_update_default_models():
-    print("Directly querying for default models in table")
+    logger.debug("Directly querying for default models in table")
     model_rate_table = dynamodb.Table(os.environ["MODEL_RATE_TABLE"])
 
     # Map DB fields to result types
@@ -247,11 +249,11 @@ def extract_and_update_default_models():
                 # Transform to our internal format and extract data
                 transformed_model = model_transform_db_to_internal(model_data)
                 results[model_type] = extract_data(model_id, transformed_model)
-                print(f"Found {model_type} model: {model_id}")
+                logger.debug(f"Found {model_type} model: {model_id}")
 
         # Update the admin table with the found defaults
         if any(model is not None for model in results.values()):
-            print("Updating default models in admin table")
+            logger.debug("Updating default models in admin table")
             admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
 
             default_models_data = {
@@ -271,7 +273,7 @@ def extract_and_update_default_models():
             )
 
     except Exception as e:
-        print(f"Error querying/updating default models: {str(e)}")
+        logger.error(f"Error querying/updating default models: {str(e)}")
         raise e
 
     return (
@@ -324,7 +326,7 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
     if not model_result["success"] or models_are_current(current_model_data):
         return model_result
 
-    print("Models are not popluated or are outdated")
+    logger.info("Models are not popluated or are outdated")
     if current_model_data:
         current_model_data = {
             model["id"]: adjust_data_to_decimal(model_transform_internal_to_db(model))
@@ -389,7 +391,7 @@ def get_supported_models():
         if is_model_current(transformed_model):
             supported_models_config[model_id] = transformed_model
         else:
-            print("Skipping outdated model: ", model_id)
+            logger.debug("Skipping outdated model: %s", model_id)
 
     return {"success": True, "data": supported_models_config}
 
@@ -402,7 +404,7 @@ def adjust_data_to_decimal(model):
                 try:
                     model[field] = Decimal(str(model[field]))
                 except (ValueError, TypeError) as e:
-                    print(f"Warning: Could not convert {field} value '{model[field]}' to Decimal: {e}")
+                    logger.warning(f"Warning: Could not convert {field} value '{model[field]}' to Decimal: {e}")
     return model
 
 
@@ -432,7 +434,7 @@ def update_supported_models(event, context, current_user, name, data):
             )
             existing_models.extend(response.get("Items", []))
     except Exception as e:
-        print(f"Error retrieving existing models: {str(e)}")
+        logger.error(f"Error retrieving existing models: {str(e)}")
         return {
             "success": False,
             "message": f"Error retrieving existing models: {str(e)}",
@@ -450,15 +452,15 @@ def update_supported_models(event, context, current_user, name, data):
 
     # Models to delete (in existing but not in new)
     models_to_delete = existing_model_ids - new_model_ids
-    print("delete: ", models_to_delete)
+    logger.debug("delete: %s", models_to_delete)
 
     # Models to add (in new but not in existing)
     models_to_add = new_model_ids - existing_model_ids
-    print("add: ", models_to_add)
+    logger.debug("add: %s", models_to_add)
 
     # Models to update (in both existing and new)
     models_to_update = existing_model_ids & new_model_ids
-    print("update: ", models_to_update)
+    logger.debug("update: %s", models_to_update)
 
     try:
         # Batch Write Operations
@@ -475,11 +477,11 @@ def update_supported_models(event, context, current_user, name, data):
                 if not models_are_equal(
                     existing_models_dict[model_id], new_models_dict[model_id]
                 ):
-                    print("updating model: ", model_id)
+                    logger.debug("updating model: %s", model_id)
                     updated_model = adjust_data_to_decimal(new_models_dict[model_id])
                     batch.put_item(Item=updated_model)
     except Exception as e:
-        print(f"Error batch writing models: {str(e)}")
+        logger.error(f"Error batch writing models: {str(e)}")
         return {"success": False, "message": f"Error batch writing models: {str(e)}"}
 
     return {"success": True, "message": "Model configurations updated successfully."}
@@ -574,13 +576,13 @@ def get_default_models(event, context, current_user, name, data):
 def get_admin_default_models():
     admin_table = dynamodb.Table(os.environ["AMPLIFY_ADMIN_DYNAMODB_TABLE"])
     try:
-        print("Getting default model ids from admin table")
+        logger.debug("Getting default model ids from admin table")
         response = admin_table.get_item(Key={"config_id": DEFAULT_MODELS})
         if "Item" in response:
             return response["Item"]["data"]
         else:
-            print(f"No Default Models Data Found")
+            logger.error(f"No Default Models Data Found")
             return {}
     except Exception as e:
-        print(f"Error retrieving default models: {str(e)}")
+        logger.error(f"Error retrieving default models: {str(e)}")
     return None

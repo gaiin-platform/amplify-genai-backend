@@ -15,6 +15,9 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
+from pycommon.logger import getLogger
+logger = getLogger("cognito_users")
+
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value, 
                       APIAccessType.ADMIN.value, APIAccessType.API_KEY.value,])
@@ -28,7 +31,7 @@ def get_emails(event, context, current_user, name, data):
     Returns dict with user_id as key and email as value (or user_id if no email exists).
     """
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     email_prefix = query_params.get("emailprefix", "")
     if not email_prefix or not is_valid_email_prefix(email_prefix):
         return {
@@ -40,7 +43,7 @@ def get_emails(event, context, current_user, name, data):
     cognito_user_table = dynamodb.Table(os.environ["COGNITO_USERS_DYNAMODB_TABLE"])
 
     try:
-        print("Initiate query to cognito user dynamo table")
+        logger.debug("Initiate query to cognito user dynamo table")
         
         # Collect all items across multiple pages
         all_items = []
@@ -76,10 +79,10 @@ def get_emails(event, context, current_user, name, data):
             if not last_evaluated_key:
                 break  # No more pages
                 
-        print(f"Retrieved {len(all_items)} total items")
+        logger.debug(f"Retrieved {len(all_items)} total items")
         
         if not all_items:
-            print("No matching users found")
+            logger.info("No matching users found")
             return {
                 "statusCode": 404,
                 "body": json.dumps({"error": "No matching users found"}),
@@ -93,7 +96,7 @@ def get_emails(event, context, current_user, name, data):
             if user_id:
                 user_email_map[user_id] = email
         
-        print(f"Built user-email mapping for {len(user_email_map)} users")
+        logger.debug(f"Built user-email mapping for {len(user_email_map)} users")
         
         # Keep backward compatibility: also return the old "emails" list
         email_matches = list(user_email_map.keys())  # List of user_ids for backward compat
@@ -107,7 +110,7 @@ def get_emails(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        print("Error: ", e.response["Error"]["Message"])
+        logger.error("Error: %s", e.response["Error"]["Message"])
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
 
@@ -134,10 +137,10 @@ def get_cognito_amplify_groups(current_user):
     cognito_user_table = dynamodb.Table(os.environ["COGNITO_USERS_DYNAMODB_TABLE"])
 
     try:
-        print("Initiate query to cognito user dynamo table for user: ", current_user)
+        logger.debug("Initiate query to cognito user dynamo table for user: %s", current_user)
         response = cognito_user_table.get_item(Key={"user_id": current_user})
 
-        print("Response: ", response)
+        logger.debug("Response: %s", response)
 
         if "Item" not in response:
             return {"status": 404, "data": {"error": "Failed to check cognito groups"}}
@@ -145,8 +148,8 @@ def get_cognito_amplify_groups(current_user):
         cognito_groups = response["Item"].get("custom:vu_groups", [])
         amplify_groups = response["Item"].get("amplify_groups", [])
 
-        print("cognito groups: ", cognito_groups)
-        print("amplify groups", amplify_groups)
+        logger.debug("cognito groups: %s", cognito_groups)
+        logger.debug("amplify groups: %s", amplify_groups)
 
         return {
             "status": 200,
@@ -154,5 +157,5 @@ def get_cognito_amplify_groups(current_user):
         }
 
     except ClientError as e:
-        print("Error: ", e.response["Error"]["Message"])
+        logger.error("Error: %s", e.response["Error"]["Message"])
         return {"status": 500, "data": {"error": str(e)}}

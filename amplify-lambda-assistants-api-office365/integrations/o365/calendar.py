@@ -8,6 +8,8 @@ import base64
 integration_name = "microsoft_calendar"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 class CalendarError(Exception):
     """Base exception for calendar operations"""
@@ -284,7 +286,7 @@ def list_calendars(
             handle_graph_error(response)
 
         calendars = response.json().get("value", [])
-        print(f"Calendars: {calendars}")
+        logger.debug("Calendars: %s", calendars)
 
         # Process direct calendars
         for cal in calendars:
@@ -324,7 +326,7 @@ def list_calendars(
         # 2. Get calendars from all calendar groups (includes "People's Calendars")
         groups_url = f"{GRAPH_ENDPOINT}/me/calendarGroups"
         groups_response = session.get(groups_url)
-        print(f"Groups Response: {groups_response.json()}")
+        logger.debug("Groups Response: %s", groups_response.json())
         if groups_response.ok:
             calendar_groups = groups_response.json().get("value", [])
 
@@ -338,7 +340,7 @@ def list_calendars(
                     f"{GRAPH_ENDPOINT}/me/calendarGroups/{group_id}/calendars"
                 )
                 group_cal_response = session.get(group_calendars_url)
-                print(f"Group Calendars Response: {group_cal_response.json()}")
+                logger.debug("Group Calendars Response: %s", group_cal_response.json())
                 if group_cal_response.ok:
                     group_calendars = group_cal_response.json().get("value", [])
 
@@ -1094,7 +1096,7 @@ def check_event_conflicts(
                     }
             except Exception as e:
                 # If we can't access a calendar, skip it but log the error
-                print(f"Error checking calendar {calendar_id}: {str(e)}")
+                logger.warning("Error checking calendar %s: %s", calendar_id, str(e))
                 continue
 
         has_conflict = len(all_conflicts) > 0

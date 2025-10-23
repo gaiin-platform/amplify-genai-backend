@@ -215,7 +215,7 @@ class ParameterStorePopulator:
                 # Define the shared variables to migrate
                 shared_var_names = [
                     'ADMINS', 'CHANGE_SET_BOOLEAN', 'CUSTOM_API_DOMAIN', 'DEP_REGION', 'IDP_PREFIX',
-                    'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
+                    'LOG_LEVEL', 'OAUTH_AUDIENCE', 'OAUTH_ISSUER_BASE_URL', 'PANDOC_LAMBDA_LAYER_ARN',
                     'ASSISTANTS_OPENAI_PROVIDER', 'LLM_ENDPOINTS_SECRETS_NAME_ARN',
                     'AGENT_ENDPOINT', 'BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION',
                     'COGNITO_CLIENT_ID', 'COGNITO_USER_POOL_ID', 'ORGANIZATION_EMAIL_DOMAIN',
@@ -261,7 +261,7 @@ class ParameterStorePopulator:
 
     def create_shared_parameter(self, var_name: str, var_value: str) -> bool:
         """Create a shared parameter in AWS Parameter Store."""
-        parameter_name = f"/amplify/{self.stage}/shared/{var_name}"
+        parameter_name = f"/amplify/{self.stage}/{var_name}"
         
         if self.dry_run:
             print(f"[DRY RUN] Would create shared parameter: {parameter_name} = {var_value}")

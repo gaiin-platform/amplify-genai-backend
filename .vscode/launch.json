@@ -23,6 +23,88 @@
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env.local",
             "cwd": "${workspaceFolder}/amplify-lambda"
+        },
+        
+        { // ID Migration: Dry Run with Full Validation
+            "name": "Python: ID Migration (Dry Run)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/id_migration.py",
+            "args": [
+                "--dry-run",
+                "--csv-file", "migration_users.csv",
+                "--log", "debug_migration_dryrun.log"
+            ],
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/scripts"
+        },
+        { // ID Migration: Generate CSV for S3 Consolidation Only
+            "name": "Python: ID Migration (Generate S3 Consolidation CSV)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/id_migration.py",
+            "args": [
+                "--no-id-change",
+                "--dry-run",
+                "--log", "debug_csv_generation.log"
+            ],
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/scripts"
+        },
+        { // ID Migration: Real Run with Don't Backup (User Already Has Backups)
+            "name": "Python: ID Migration (Real - Don't Backup)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/id_migration.py",
+            "args": [
+                "--dont-backup",
+                "--csv-file", "migration_users.csv",
+                "--log", "debug_migration_no_backup.log",
+                "--no-confirmation"
+            ],
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/scripts"
+        },
+        { // S3 Migration: Dry Run All Buckets
+            "name": "Python: S3 Migration (Dry Run - All)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/s3_data_migration.py",
+            "args": [
+                "--dry-run", 
+                "--bucket", "all",
+                "--log", "debug_s3_migration.log"
+            ],
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/scripts"
+        },
+        { // S3 Migration: Specific Bucket Testing
+            "name": "Python: S3 Migration (Specific Bucket)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/s3_data_migration.py",
+            "args": [
+                "--dry-run", 
+                "--bucket", "conversations",
+                "--log", "debug_s3_specific.log"
+            ],
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/scripts"
+        },
+        { // For debugging the backup prerequisite script
+            "name": "Python: Backup Prerequisite",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/backup_prereq.py",
+            "args": ["--dry-run"],
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env.local",
+            "cwd": "${workspaceFolder}/scripts"
         }
     ]
 }

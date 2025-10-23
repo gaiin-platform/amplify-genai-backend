@@ -19,6 +19,8 @@ from pycommon.authz import validated, setup_validated, add_api_access_types
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
 
+from pycommon.logger import getLogger
+logger = getLogger("assistants_drive_files")
 
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value])
@@ -31,7 +33,7 @@ def process_assistant_drive_sources(assistant_data, access_token):
     try:
         drive_data = assistant_data.get("integrationDriveData", {})
         if not drive_data or not has_drive_data(drive_data):
-            print("No integration drive data to process for this assistant")
+            logger.info("No integration drive data to process for this assistant")
             return {
                 "success": True,
                 "message": "No integration drive data to process for this assistant",
@@ -49,7 +51,7 @@ def process_assistant_drive_sources(assistant_data, access_token):
                 }
     
     except Exception as e:
-        print(f"Error processing assistant drive data: {e}")
+        logger.error("Error processing assistant drive data: %s", e)
         return {"success": False, "message": f"Failed to process assistant integration drive data: {str(e)}"}
 
 
@@ -94,7 +96,7 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         dict: Response containing success status and updated payload data,
               or error information if unsuccessful
     """
-    print("Initiate upload integration files to datasources call")
+    logger.info("Initiate upload integration files to datasources call")
 
     upload_endpoint = os.environ["API_BASE_URL"] + "/integrations/user/files/upload"
 
@@ -109,16 +111,16 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
             upload_endpoint, headers=headers, data=json.dumps(data)
         )
         response_content = response.json()
-        print("Response: ", response_content)
+        logger.debug("Response: %s", response_content)
 
         if response.status_code == 200 and response_content.get("success", False):
-            print("Integration Drive files uploaded successfully")
+            logger.info("Integration Drive files uploaded successfully")
             return {
                 "success": True,
                 "data": response_content.get("data"),
                 "message": "Integration Drive files uploaded successfully"
             }
-        print("Failed to upload integration drive files")
+        logger.warning("Failed to upload integration drive files")
         return {
             "success": False,
             "error": response_content.get("error", "Unknown error occurred"),
@@ -126,7 +128,7 @@ def upload_integration_files_to_datasources(drive_files_data: dict, access_token
         }
 
     except Exception as e:
-        print(f"Error uploading integration files: {e}")
+        logger.error("Error uploading integration files: %s", e)
         return {
             "success": False,
             "error": str(e),
@@ -298,7 +300,7 @@ def process_drive_sources(event, context, current_user, name, data=None):
         }
         
     except Exception as e:
-        print(f"Error processing drive sources: {e}")
+        logger.error("Error processing drive sources: %s", e)
         return {"success": False, "message": f"Failed to process drive sources: {str(e)}"}
     
 
@@ -319,5 +321,5 @@ def has_drive_data(payload):
             files = provider_data.get('files', {})
             if isinstance(files, dict) and len(files) > 0:
                 return True
-    print(f"No drive files found")
+    logger.debug("No drive files found")
     return False

@@ -14,6 +14,9 @@ from pycommon.const import APIAccessType
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 
+from pycommon.logger import getLogger
+logger = getLogger("assistants_group_ast")
+
 from pycommon.decorators import required_env_vars
 from pycommon.dal.providers.aws.resource_perms import (
     DynamoDBOperation, S3Operation
@@ -38,7 +41,7 @@ from service.core import get_most_recent_assistant_version
 @validated(op="get")
 def retrieve_astg_for_system_use(event, context, current_user, name, data):
     query_params = event.get("queryStringParameters", {})
-    print("Query params: ", query_params)
+    logger.debug("Query params: %s", query_params)
     assistantId = query_params.get("assistantId", "")
     pattern = r"^[a-zA-Z0-9-]+-\d{6}$"
     # must be in system user format
@@ -55,7 +58,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
                 },
             }
         )
-    print("retrieving astgp data")
+    logger.info("retrieving astgp data")
     dynamodb = boto3.resource("dynamodb")
     assistants_table = dynamodb.Table(os.environ["ASSISTANTS_DYNAMODB_TABLE"])
 
@@ -79,7 +82,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
             }
         )
 
-    print("checking perms from group table")
+    logger.debug("checking perms from group table")
     # check system user has access to group assistant
     groups_table = dynamodb.Table(os.environ["ASSISTANT_GROUPS_DYNAMO_TABLE"])
 
@@ -106,7 +109,7 @@ def retrieve_astg_for_system_use(event, context, current_user, name, data):
             )
 
     except Exception as e:
-        print(f"Error getting group from dynamo: {e}")
+        logger.error("Error getting group from dynamo: %s", e)
         return json.dumps(
             {
                 "statusCode": 400,
@@ -181,10 +184,10 @@ def get_group_assistant_conversations(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        print(f"DynamoDB ClientError: {str(e)}")
+        logger.error("DynamoDB ClientError: %s", str(e))
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        logger.error("Unexpected error: %s", str(e))
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),
@@ -356,7 +359,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                     total_user_rating += float(user_rating)
                     user_rating_count += 1
                 except ValueError:
-                    print(f"Invalid user rating value: {user_rating}")
+                    logger.warning("Invalid user rating value: %s", user_rating)
 
             # Calculate system rating
             system_rating = conv.get("systemRating")
@@ -365,7 +368,7 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                     total_system_rating += float(system_rating)
                     system_rating_count += 1
                 except ValueError:
-                    print(f"Invalid system rating value: {system_rating}")
+                    logger.warning("Invalid system rating value: %s", system_rating)
 
         average_user_rating = (
             float(total_user_rating) / float(user_rating_count)
@@ -437,12 +440,14 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
                             )
                         except ClientError as e:
                             if e.response["Error"]["Code"] == "NoSuchKey":
-                                print(
-                                    f"Conversation content not found for {conversation_id} at {bucket_to_use}/{key}"
+                                logger.warning(
+                                    "Conversation content not found for %s at %s/%s",
+                                    conversation_id, bucket_to_use, key
                                 )
                             else:
-                                print(
-                                    f"Error retrieving S3 content for conversation {conversation_id}: {str(e)}"
+                                logger.error(
+                                    "Error retrieving S3 content for conversation %s: %s",
+                                    conversation_id, str(e)
                                 )
 
             # response_data["conversationData"] = conversations
@@ -474,10 +479,10 @@ def get_group_assistant_dashboards(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        print(f"DynamoDB ClientError: {str(e)}")
+        logger.error("DynamoDB ClientError: %s", str(e))
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        logger.error("Unexpected error: %s", str(e))
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),
@@ -539,10 +544,10 @@ def save_user_rating(event, context, current_user, name, data):
         }
 
     except ClientError as e:
-        print(f"DynamoDB ClientError: {str(e)}")
+        logger.error("DynamoDB ClientError: %s", str(e))
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        logger.error("Unexpected error: %s", str(e))
         return {
             "statusCode": 500,
             "body": json.dumps({"error": "An unexpected error occurred"}),

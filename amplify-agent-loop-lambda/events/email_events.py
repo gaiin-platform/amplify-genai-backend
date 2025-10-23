@@ -19,6 +19,8 @@ from events.event_templates import get_event_template
 from delegation.api_keys import get_api_key_directly_by_id
 from service.conversations import register_agent_conversation
 from pycommon.const import IMAGE_FILE_TYPES
+from pycommon.logger import getLogger
+logger = getLogger("agent_email_events")
 
 organization_email_domain = os.environ["ORGANIZATION_EMAIL_DOMAIN"]
 
@@ -50,10 +52,10 @@ def check_allowed_senders(allowed_patterns, input_string):
         try:
             pattern = re.compile(pattern_str)
             if pattern.match(input_string):
-                print(f"Matched sender pattern: {pattern_str}")
+                logger.info("Matched sender pattern: %s", pattern_str)
                 return True
         except re.error as e:
-            print(f"Invalid regex: {pattern_str} - {e}")
+            logger.error("Invalid regex: %s - %s", pattern_str, e)
     return False
 
 
@@ -175,7 +177,7 @@ def save_email_to_s3(current_user, email_details, tags):
     # Check if the target key already exists and just return True if it does
     try:
         s3.head_object(Bucket=bucket_name, Key=body_key)
-        print(f"Email already exists in s3://{bucket_name}/{body_key}")
+        logger.info("Email already exists in s3://%s/%s", bucket_name, body_key)
         return True
     except ClientError:
         pass
@@ -183,7 +185,7 @@ def save_email_to_s3(current_user, email_details, tags):
     # Save the body content to S3
     s3.put_object(Bucket=bucket_name, Key=body_key, Body=email_to_save_string)
 
-    print(f"Saved email body to s3://{bucket_name}/{body_key}")
+    logger.info("Saved email body to s3://%s/%s", bucket_name, body_key)
 
     # Loop through and save all attachments (2)
     for attachment in email_content["attachments"]:
@@ -198,22 +200,22 @@ def save_email_to_s3(current_user, email_details, tags):
         # Save the file to S3
         s3.put_object(Bucket=attach_bucket_name, Key=attach_body_key, Body=file_content)
 
-        print(f"Saved attachment to s3://{attach_bucket_name}/{attach_body_key}")
+        logger.info("Saved attachment to s3://%s/%s", attach_bucket_name, attach_body_key)
 
 
 def index_email(user_email, project_tag, email_id, email_details):
 
-    print(f"Email ID: {email_id}")
+    logger.info("Email ID: %s", email_id)
     s3_key = get_target_s3_key_base(user_email, project_tag, email_id)
-    print(f"S3 Key Base: {s3_key}")
+    logger.info("S3 Key Base: %s", s3_key)
 
     email_subject = email_details["subject"]
     email_subject_tags = find_hash_tags(email_subject)
-    print(f"Email Subject Tags: {email_subject_tags}")
+    logger.info("Email Subject Tags: %s", email_subject_tags)
 
     all_tags = [project_tag]
     if email_subject_tags and len(email_subject_tags) > 0:
-        print(f"Updating tags for email {email_id}")
+        logger.info("Updating tags for email %s", email_id)
         all_tags.extend(email_subject_tags)
 
     # Save the email to S3
@@ -232,7 +234,7 @@ def process_email(event, context):
         or ses_notification["receipt"]["spamVerdict"]["status"] == "FAIL"
         or ses_notification["receipt"]["virusVerdict"]["status"] == "FAIL"
     ):
-        print("Dropping spam")
+        logger.info("Dropping spam")
         # Stop processing rule set, dropping message
         return {"disposition": "STOP_RULE_SET"}
     else:
@@ -243,32 +245,32 @@ def process_email(event, context):
 
         destination_emails = ses_notification["mail"]["destination"]
 
-        print(f"Source Email: {source_email}")
-        print(f"Destination Emails: {destination_emails}")
+        logger.info("Source Email: %s", source_email)
+        logger.info("Destination Emails: %s", destination_emails)
 
         parsed_source_email = parse_email(source_email)
-        print(f"Parsed Source Email: {json.dumps(parsed_source_email, indent=2)}")
+        logger.info("Parsed Source Email: %s", json.dumps(parsed_source_email, indent=2))
         parsed_destination_emails = [parse_email(email) for email in destination_emails]
 
         for email in parsed_destination_emails:
-            print(f"Parsed Destination Email: {json.dumps(email, indent=2)}")
+            logger.info("Parsed Destination Email: %s", json.dumps(email, indent=2))
 
             tag = email["tag"] if email["tag"] else "default"
             email["tag"] = tag
-            print(f"Tag: {tag}")
+            logger.info("Tag: %s", tag)
 
             target_email_lookup = f"{email['user']}@{email['domain']}"
-            print(f"Target Email Lookup: {target_email_lookup} :: {tag}")
+            logger.info("Target Email Lookup: %s :: %s", target_email_lookup, tag)
             owner_email = f"{email['user']}@{organization_email_domain}"
-            print(f"Owner Email: {owner_email}")
-            print(f"Source Email: {source_email}")
+            logger.info("Owner Email: %s", owner_email)
+            logger.info("Source Email: %s", source_email)
 
             # Use is_allowed_sender function
             if is_allowed_sender(owner_email, tag, source_email):
-                print(f"Sender {source_email} is allowed.")
+                logger.info("Sender %s is allowed", source_email)
                 return to_agent_event(email, source_email, ses_notification)
 
-            print(f"Sender {source_email} is NOT allowed.")
+            logger.warning("Sender %s is NOT allowed", source_email)
             return None
 
         return None
@@ -342,7 +344,7 @@ def update_file_tags(current_user, item_id, tags):
             return False, "File not found or not authorized to update tags"
 
     except ClientError as e:
-        print(f"Unable to update tags: {e.response['Error']['Message']}")
+        logger.error("Unable to update tags: %s", e.response['Error']['Message'])
         return False, "Unable to update tags"
 
 
@@ -363,7 +365,7 @@ def add_tags_to_user(current_user, tags_to_add):
             },
             ReturnValues="UPDATED_NEW",
         )
-        print(f"Tags added successfully to user ID: {current_user}")
+        logger.info("Tags added successfully to user ID: %s", current_user)
         return {"success": True, "message": "Tags added successfully"}
 
     except ClientError as e:
@@ -373,11 +375,11 @@ def add_tags_to_user(current_user, tags_to_add):
             response = table.put_item(
                 Item={"UserID": current_user, "tags": set(tags_to_add)}
             )
-            print(f"New user created with tags for user ID: {current_user}")
+            logger.info("New user created with tags for user ID: %s", current_user)
             return {"success": True, "message": "Tags added successfully"}
         else:
-            print(
-                f"Error adding tags to user ID: {current_user}: {e.response['Error']['Message']}"
+            logger.error(
+                "Error adding tags to user ID: %s: %s", current_user, e.response['Error']['Message']
             )
             return {"success": False, "message": e.response["Error"]["Message"]}
 
@@ -396,7 +398,7 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
         dict: Formatted event for the agent, or None if no event match is found.
     """
 
-    print(f"Routing email from {source_email} to {parsed_destination_email}")
+    logger.info("Routing email from %s to %s", source_email, parsed_destination_email)
 
     # Extract email metadata
     mail_data = ses_notification["mail"]
@@ -423,23 +425,23 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
 
     # Determine user and project tag
     user = f"{parsed_destination_email['user']}@{organization_email_domain}"
-    print(f"User: {user}")
+    logger.info("User: %s", user)
 
     project_tag = parsed_destination_email.get("tag", "email")
-    print(f"Project Tag: {project_tag}")
+    logger.info("Project Tag: %s", project_tag)
 
     # Extract tags from email subject
     email_subject_tags = find_hash_tags(email_details["subject"])
-    print(f"Email Subject Tags: {email_subject_tags}")
+    logger.info("Email Subject Tags: %s", email_subject_tags)
 
     # Prioritize matching order: project_tag first, then email subject tags
     all_tags = [project_tag] + (email_subject_tags if email_subject_tags else [])
-    print(f"All Tags: {all_tags}")
+    logger.info("All Tags: %s", all_tags)
 
     # Attempt to find a matching event in DynamoDB
     event_data = None
     for tag in all_tags:
-        print(f"Looking up event for user '{user}' and tag '{tag}'...")
+        logger.info("Looking up event for user '%s' and tag '%s'", user, tag)
 
         # Use `get_event_template` to retrieve the event and its resolved API key
         event_response = get_event_template(user, tag)
@@ -453,13 +455,13 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
 
             event_data["apiKey"] = api_result["apiKey"]
 
-            print(
-                f"Found matching event for user '{user}' and tag '{tag}': {event_data}"
+            logger.info(
+                "Found matching event for user '%s' and tag '%s': %s", user, tag, event_data
             )
             break  # Stop searching once a match is found
 
     if not event_data:
-        print("No matching event found in DynamoDB. Indexing email...")
+        logger.info("No matching event found in DynamoDB. Indexing email")
         # reset to full contents of email
         email_details["contents"] = parsed_email
         index_email(user, project_tag, email_id, email_details)
@@ -485,11 +487,11 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
                 email_details
             )
         except KeyError as e:
-            print(f"Error filling template: missing key {e}")
+            logger.error("Error filling template: missing key %s", e)
             formatted_content = content_template  # Fallback to original if missing data
 
         formatted_prompt.append({"role": entry["role"], "content": formatted_content})
-    print(f"Formatted Prompt: {formatted_prompt}")
+    logger.info("Formatted Prompt: %s", formatted_prompt)
     # Construct final event to pass to the agent
     event_payload = {
         "currentUser": user,
@@ -534,17 +536,17 @@ class SESMessageHandler(MessageHandler):
     def can_handle(self, message: Dict[str, Any]) -> bool:
         try:
             ses_content = json.loads(message["Message"])
-            print(f"notificationType: {ses_content.get('notificationType')}")
-            print(f"mail: {ses_content.get('mail')}")
-            print(f"receipt: {ses_content.get('receipt')}")
+            logger.debug("notificationType: %s", ses_content.get('notificationType'))
+            logger.debug("mail: %s", ses_content.get('mail'))
+            logger.debug("receipt: %s", ses_content.get('receipt'))
             can_handle = all(
                 k in ses_content for k in ["notificationType", "mail", "receipt"]
             )
-            print(f"SESMessageHandler can_handle:{can_handle}")
+            logger.debug("SESMessageHandler can_handle: %s", can_handle)
             return can_handle
         except (KeyError, json.JSONDecodeError) as e:
-            print(f"Error: {e}")
-            print("SESMessageHandler cannot handle message")
+            logger.error("Error: %s", e)
+            logger.warning("SESMessageHandler cannot handle message")
             return False
 
     def process(self, message: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -553,7 +555,7 @@ class SESMessageHandler(MessageHandler):
         return event
 
     def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
-        print(f"SESMessageHandler onFailure: {error}")
+        logger.error("SESMessageHandler onFailure: %s", error)
         pass
 
     def onSuccess(
@@ -563,9 +565,9 @@ class SESMessageHandler(MessageHandler):
         accessToken = metadata.get("accessToken")
 
         if accessToken:
-            print(f"Registering agent conversation")
+            logger.info("Registering agent conversation")
             register_agent_conversation(
                 access_token=accessToken, input=agent_input_event, result=agent_result
             )
         else:
-            print(f"No access token found")
+            logger.warning("No access token found")

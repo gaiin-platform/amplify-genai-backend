@@ -6,7 +6,8 @@ from decimal import Decimal
 
 import requests
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from pycommon.logger import getLogger
+logger = getLogger("agent_conversations")
 
 
 # Custom JSON encoder to handle Decimal objects
@@ -113,7 +114,7 @@ def register_agent_conversation(
         response.raise_for_status()
         response_content = response.json()
         if response_content.get("success", False):
-            print("Successfully registered conversation")
+            logger.info("Successfully registered conversation")
 
         return response_content  # Return response data if successful
 
