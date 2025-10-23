@@ -7,9 +7,11 @@ import { promisify } from 'util';
 import { extractParams } from "./common/handlers.js";  
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
-import { debug } from 'console';
 // Removed AWS X-Ray for performance optimization
 import {initPythonProcess} from "./litellm/litellmClient.js";
+// 🛡️ COST PROTECTION
+import { withCircuitBreaker, withTimeout } from "./common/circuitBreaker.js";
+import { withCostMonitoring } from "./common/defensiveRouting.js";
 
 const pipelineAsync = promisify(pipeline);
 const logger = getLogger("index");
@@ -87,7 +89,16 @@ const returnResponse = async (responseStream, response) => {
 };
 
 
-export const handler = awslambda.streamifyResponse(async (event, responseStream, context) => {
+// 🛡️ COST PROTECTION: Wrap with circuit breaker and timeout
+const protectedHandler = (event, responseStream, context) => {
+    // Dynamic function name from Lambda context or environment
+    const functionName = context.functionName || process.env.SERVICE_NAME || 'amplify-lambda-js';
+    
+    return withCircuitBreaker(functionName, {
+        maxErrorRate: 0.20, // 20% error rate threshold  
+        maxCostPerHour: 30,  // $30/hour cost threshold
+        cooldownPeriod: 300  // 5-minute cooldown
+    })(withCostMonitoring(async (event, responseStream, context) => {
 
     // 🚀 ULTIMATE OPTIMIZATION: Start Python process IMMEDIATELY - before authentication!
     // This saves 1-8 seconds since Python starts in parallel with auth
@@ -97,8 +108,12 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream,
 
     try {
       logger.debug("Extracting params from event");
-      const params = await extractParams(event);
-      await routeRequest(params, returnResponse, effectiveStream, pythonProcessPromise);
+      
+      // 🛡️ TIMEOUT PROTECTION: Prevent expensive hangs during param extraction
+      const params = await withTimeout(30000)(extractParams(event));
+      
+      // 🛡️ TIMEOUT PROTECTION: Main routing with 3-minute timeout (down from 15 min)
+      await withTimeout(180000)(routeRequest(params, returnResponse, effectiveStream, pythonProcessPromise));
   
       // If we are not streaming, send the final aggregated response now
       if (!streamEnabled) {
@@ -106,12 +121,36 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream,
       }
     } catch (e) {
         logger.error("Error processing request: " + e.message, e);
-        await returnResponse(responseStream, {
-            statusCode: 400,
-            body: { error: e.message }
-        });
+        
+        // Enhanced error response with debugging info
+        const errorResponse = {
+            statusCode: 500,
+            body: { 
+                error: e.message,
+                timestamp: new Date().toISOString(),
+                requestId: context.awsRequestId
+            }
+        };
+        
+        // Special handling for timeout errors
+        if (e.message.includes('timed out')) {
+            errorResponse.statusCode = 408;
+            errorResponse.body.error = 'Request timeout - operation took too long';
+            logger.error("⏰ REQUEST TIMEOUT - prevented expensive hang:", {
+                duration: context.getRemainingTimeInMillis ? (900000 - context.getRemainingTimeInMillis()) : 'unknown',
+                requestId: context.awsRequestId
+            });
+        }
+        
+        await returnResponse(responseStream, errorResponse);
+        
+        // Re-throw to trigger circuit breaker
+        throw e;
     } finally {
         // Removed X-Ray tracing for performance optimization
     }
-  });
+    }))(event, responseStream, context);
+};
+
+export const handler = awslambda.streamifyResponse(protectedHandler);
 
