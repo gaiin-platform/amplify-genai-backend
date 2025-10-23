@@ -33,11 +33,6 @@ services:
     dependsOn:
       - amplify-lambda
 
-  amplify-lambda-optimizer:
-    path: ./amplify-lambda-optimizer
-    dependsOn:
-      - amplify-lambda
-
   chat-billing:
     path: ./chat-billing
     dependsOn:
