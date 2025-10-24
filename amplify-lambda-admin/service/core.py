@@ -561,7 +561,7 @@ def initialize_config(config_type):
         admin_table.put_item(Item=item)
         logger.info("Config Item Initialized: %s", config_type.value)
     except Exception as e:
-        logger.error("Error initializing AMPLIFY_GROUPS config: %s", str(e)
+        logger.error("Error initializing AMPLIFY_GROUPS config: %s", str(e))
 
     return item["data"]
 
@@ -683,7 +683,7 @@ def check_and_update_missing_base_flags(stored_flags):
                 "Updated feature flags in DynamoDB with %d new base flags", len(missing_flags)
             )
         except Exception as e:
-            logger.error("Error updating feature flags in DynamoDB: %s", str(e)
+            logger.error("Error updating feature flags in DynamoDB: %s", str(e))
             # We'll return an empty dict if we couldn't update the table
             return {}
 
@@ -715,7 +715,7 @@ def get_pptx_for_users(event, context, current_user, name, data):
             return {"success": True, "data": []}
 
     except Exception as e:
-        logger.error("Error retrieving PPTX_TEMPLATES: %s", str(e)
+        logger.error("Error retrieving PPTX_TEMPLATES: %s", str(e))
         return {
             "success": False,
             "message": f"Error retrieving PPTX_TEMPLATES: {str(e)}",
@@ -815,7 +815,7 @@ def delete_pptx_by_admin(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        logger.error("Error deleting template: %s", str(e)
+        logger.error("Error deleting template: %s", str(e))
         return {"success": False, "message": f"Error deleting template: {str(e)}"}
 
 
@@ -880,7 +880,7 @@ def generate_presigned_url_for_upload(event, context, current_user, name, data):
 
         return {"success": True, "presigned_url": presigned_url}
     except ClientError as e:
-        logger.error("Error generating presigned URL: %s", str(e)
+        logger.error("Error generating presigned URL: %s", str(e))
         return {
             "success": False,
             "message": f"Error generating presigned URL: {str(e)}",
@@ -909,7 +909,7 @@ def get_all_amplify_groups():
         else:
             logger.warning("No Amplify Groups Found")
     except Exception as e:
-        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e)
+        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
     return None
 
 
@@ -926,7 +926,7 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
         affiliated_groups = find_all_user_groups(current_user, all_groups)
         return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
     except Exception as e:
-        logger.error("Error retrieving user affiliated groups: %s", str(e)
+        logger.error("Error retrieving user affiliated groups: %s", str(e))
         return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
 
 
@@ -990,7 +990,7 @@ def verify_is_in_amp_group(event, context, current_user, name, data):
         logger.debug("User %s is in group: %s", current_user, isMember)
         return {"success": True, "isMember": isMember}
     except Exception as e:
-        logger.error("Error verifying is in amp group: %s", str(e)
+        logger.error("Error verifying is in amp group: %s", str(e))
         return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
 
 
@@ -1082,7 +1082,7 @@ def authorized_admin(current_user, forFeatureFlags=False):
             return current_user in init_admins
 
     except Exception as e:
-        logger.error("Error in authorized_admin: %s", str(e)
+        logger.error("Error in authorized_admin: %s", str(e))
     logger.warning("%s is not authorized to make changes.", current_user)
 
     # using for authentication
@@ -1125,7 +1125,7 @@ def sync_assistant_admins(event, context):
             # ast admin is set to false so it will get updated to the table
             feature_flags = initialize_config(AdminConfigTypes.FEATURE_FLAGS)
     except Exception as e:
-        logger.error("Error retrieving feature flags: %s", str(e)
+        logger.error("Error retrieving feature flags: %s", str(e))
         return {"statusCode": 500, "body": f"Error retrieving feature flags: {str(e)}"}
 
     if not feature_flags or AST_ADMIN_UI_FLAG not in feature_flags:
