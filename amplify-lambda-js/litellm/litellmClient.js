@@ -66,7 +66,9 @@ export function initPythonProcess() {
             // Set PYTHONPATH to include the layer's Python packages
             PYTHONPATH: isLambda ? '/opt/python' : process.env.PYTHONPATH,
             // Add layer bin to PATH for any Python binaries
-            PATH: isLambda ? `/opt/python/bin:${process.env.PATH}` : process.env.PATH
+            PATH: isLambda ? `/opt/python/bin:${process.env.PATH}` : process.env.PATH,
+            // Set LD_LIBRARY_PATH for Python shared libraries
+            LD_LIBRARY_PATH: isLambda ? `/opt/python/lib:${process.env.LD_LIBRARY_PATH || ''}` : process.env.LD_LIBRARY_PATH
         }
     });
 
