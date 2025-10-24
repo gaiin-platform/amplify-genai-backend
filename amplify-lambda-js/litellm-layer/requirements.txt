@@ -1,0 +1,3 @@
+# LiteLLM and dependencies for Lambda Layer
+litellm==1.78.7
+boto3>=1.26.0
