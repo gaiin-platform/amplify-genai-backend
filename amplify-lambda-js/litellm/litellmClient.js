@@ -46,16 +46,34 @@ export function initPythonProcess() {
 
     const pythonScriptPath = join(__dirname, 'amplify_litellm.py');
     processStartTime = Date.now();
-    
-    logger.info("[TIMING] Starting persistent Python LiteLLM server");
-    
-    globalPythonProcess = spawn('python3', [pythonScriptPath], {
-        stdio: ['pipe', 'pipe', 'pipe']
+
+    // Determine Python path based on environment
+    // In Lambda with layer: /opt/python/bin/python3
+    // Locally: python3
+    const isLambda = !!process.env.LAMBDA_TASK_ROOT || !!process.env.AWS_EXECUTION_ENV;
+    const pythonPath = isLambda ? '/opt/python/bin/python3' : 'python3';
+
+    logger.info("[TIMING] Starting persistent Python LiteLLM server", {
+        pythonPath,
+        isLambda,
+        scriptPath: pythonScriptPath
     });
-    
+
+    globalPythonProcess = spawn(pythonPath, [pythonScriptPath], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+            ...process.env,
+            // Set PYTHONPATH to include the layer's Python packages
+            PYTHONPATH: isLambda ? '/opt/python' : process.env.PYTHONPATH,
+            // Add layer bin to PATH for any Python binaries
+            PATH: isLambda ? `/opt/python/bin:${process.env.PATH}` : process.env.PATH
+        }
+    });
+
     const spawnDuration = Date.now() - processStartTime;
     logger.info("[TIMING] Python LiteLLM server spawned", {
         spawnDuration,
+        pythonPath,
         pid: globalPythonProcess.pid
     });
     
