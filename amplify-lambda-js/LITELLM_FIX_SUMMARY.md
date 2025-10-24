@@ -2,13 +2,23 @@
 
 ## Problem Statement
 
-The `amplify-lambda-js` Lambda function was failing with the error:
+The `amplify-lambda-js` Lambda function was failing with errors:
+
+**Initial Error:**
 ```
 Error: spawn python3 ENOENT
 Python runtime not available in this Lambda environment
 ```
 
-**Root Cause:** The function is a Node.js 22.x runtime that attempts to spawn Python subprocesses to run LiteLLM, but Python does not exist in the Node.js Lambda environment.
+**After Initial Fix:**
+```
+/opt/python/bin/python3: error while loading shared libraries:
+libpython3.11.so.1.0: cannot open shared object file: No such file or directory
+```
+
+**Root Causes:**
+1. The function is a Node.js 22.x runtime that attempts to spawn Python subprocesses to run LiteLLM, but Python does not exist in the Node.js Lambda environment
+2. Python binary requires shared libraries (libpython3.11.so, libz.so, etc.) that were not initially included in the layer
 
 ## Solution Overview
 
@@ -63,6 +73,11 @@ When deployed, the layer creates this structure in Lambda at `/opt/`:
 ├── python/
 │   ├── bin/
 │   │   └── python3           # Python 3.11 binary (x86_64)
+│   ├── lib/
+│   │   ├── libpython3.11.so.1.0  # Python shared library (20MB)
+│   │   ├── libz.so.1         # Compression library
+│   │   ├── libexpat.so.1     # XML parsing library
+│   │   └── lib-dynload/      # Python dynamic modules
 │   ├── litellm/              # LiteLLM 1.78.7
 │   ├── boto3/                # AWS SDK for Python
 │   ├── openai/               # OpenAI client
