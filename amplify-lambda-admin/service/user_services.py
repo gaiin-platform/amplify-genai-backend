@@ -22,7 +22,7 @@ def verify_is_in_amp_group(event, context, current_user, name, data):
         logger.debug("User %s is in group: %s", current_user, isMember)
         return {"success": True, "isMember": isMember}
     except Exception as e:
-        logger.error("Error verifying is in amp group: %s", str(e)
+        logger.error("Error verifying is in amp group: %s", str(e))
         return {"success": False, "message": f"Error verifying is in amp group: {str(e)}"}
 
 
@@ -105,7 +105,7 @@ def get_all_amplify_groups():
         else:
             logger.warning("No Amplify Groups Found")
     except Exception as e:
-        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e)
+        logger.error("Error retrieving %s: %s", AdminConfigTypes.AMPLIFY_GROUPS.value, str(e))
     return None
 
 
@@ -119,7 +119,7 @@ def get_user_affiliated_groups(event, context, current_user, name, data):
         affiliated_groups = find_all_user_groups(current_user, all_groups)
         return {"success": True, "data": affiliated_groups, "all_groups": all_groups}
     except Exception as e:
-        logger.error("Error retrieving user affiliated groups: %s", str(e)
+        logger.error("Error retrieving user affiliated groups: %s", str(e))
         return {"success": False, "message": f"Error retrieving user affiliated groups: {str(e)}"}
 
 
