@@ -54,6 +54,7 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     AGENT_QUEUE_URL: !Ref AgentQueue
     API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}"
     APP_ARN_NAME: ${ssm:/amplify/${sls:stage}/APP_ARN_NAME}

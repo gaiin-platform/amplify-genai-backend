@@ -42,6 +42,9 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
+    CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
+
     API_BASE_URL: "https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}"
     IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
     INTEGRATION_STAGE: ${self:provider.stage}
