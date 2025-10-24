@@ -24,15 +24,27 @@ docker run --rm --entrypoint pip \
 
 echo "Python packages installed successfully"
 
-# Copy Python 3.11 binary from Lambda container (x86_64 architecture)
-echo "Copying Python 3.11 binary (x86_64)..."
+# Copy Python 3.11 binary and shared libraries from Lambda container (x86_64 architecture)
+echo "Copying Python 3.11 binary and shared libraries (x86_64)..."
 docker run --rm --platform linux/amd64 \
-  -v $(pwd)/python/bin:/output \
+  -v $(pwd)/python:/output \
   --entrypoint /bin/bash \
   public.ecr.aws/lambda/python:3.11 \
-  -c "cp /var/lang/bin/python3.11 /output/python3 && chmod +x /output/python3"
+  -c "
+    # Copy Python binary
+    cp /var/lang/bin/python3.11 /output/bin/python3 && chmod +x /output/bin/python3
 
-echo "Python binary installed successfully"
+    # Copy Python shared libraries
+    mkdir -p /output/lib
+    cp -r /var/lang/lib/libpython3.11.so* /output/lib/ 2>/dev/null || true
+    cp -r /var/lang/lib/python3.11/lib-dynload /output/lib/ 2>/dev/null || true
+
+    # Copy other essential shared libraries that Python depends on
+    cp /lib64/libz.so.1 /output/lib/ 2>/dev/null || true
+    cp /lib64/libexpat.so.1 /output/lib/ 2>/dev/null || true
+  "
+
+echo "Python binary and libraries installed successfully"
 
 # Verify Python binary exists
 if [ -f "python/bin/python3" ]; then
@@ -40,6 +52,13 @@ if [ -f "python/bin/python3" ]; then
 else
     echo "✗ ERROR: Python binary not found!"
     exit 1
+fi
+
+# Verify shared library exists
+if [ -f "python/lib/libpython3.11.so.1.0" ]; then
+    echo "✓ Python shared library verified at python/lib/libpython3.11.so.1.0"
+else
+    echo "⚠ WARNING: Python shared library not found (may still work)"
 fi
 
 # Clean up unnecessary files to reduce layer size
