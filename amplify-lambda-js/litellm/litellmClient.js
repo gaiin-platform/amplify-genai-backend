@@ -35,6 +35,46 @@ let serverReady = false;
 let pendingRequests = []; // Queue for requests while server initializes
 let activeRequests = new Map(); // requestId -> {responseStream, startTime, resolve, reject}
 let requestCounter = 0;
+let pythonEnvironmentFailed = false;
+let pythonStartupTimeout = null;
+let pythonInitializing = false;
+
+/**
+ * Fail all active and pending requests when Python environment is unavailable
+ */
+function failAllRequestsDueToPythonEnvironment() {
+    pythonEnvironmentFailed = true;
+    const errorMessage = "Internal Server error: python environment";
+    
+    logger.error(`Python environment failed - failing ${activeRequests.size} active and ${pendingRequests.length} pending requests`);
+    
+    // Fail all active requests
+    activeRequests.forEach((request, requestId) => {
+        try {
+            if (!request.responseStream.destroyed && !request.responseStream.writableEnded) {
+                sendErrorMessage(request.responseStream, 500, errorMessage);
+                request.responseStream.end();
+            }
+            request.reject(new Error(errorMessage));
+        } catch (e) {
+            logger.debug(`Error failing request ${requestId}:`, e);
+        }
+    });
+    
+    // Clear all requests
+    activeRequests.clear();
+    pendingRequests.length = 0;
+    
+    // Clear any startup timeout
+    if (pythonStartupTimeout) {
+        clearTimeout(pythonStartupTimeout);
+        pythonStartupTimeout = null;
+    }
+    
+    // Reset server state
+    globalPythonProcess = null;
+    serverReady = false;
+}
 
 /**
  * Initialize persistent Python process
@@ -43,6 +83,14 @@ export function initPythonProcess() {
     if (globalPythonProcess && !globalPythonProcess.killed) {
         return globalPythonProcess;
     }
+    
+    // Prevent multiple simultaneous initialization attempts
+    if (pythonInitializing) {
+        logger.debug("Python already initializing, returning null");
+        return null;
+    }
+    
+    pythonInitializing = true;
 
     const pythonScriptPath = join(__dirname, 'amplify_litellm.py');
     processStartTime = Date.now();
@@ -128,9 +176,28 @@ export function initPythonProcess() {
     
     globalPythonProcess.on('error', (error) => {
         logger.error("Python process error:", error);
+        
+        // If Python executable not found, fail fast
+        if (error.code === 'ENOENT') {
+            logger.error("CRITICAL: Python executable not found - failing all requests");
+            pythonInitializing = false; // Reset flag
+            failAllRequestsDueToPythonEnvironment();
+            return;
+        }
+        
+        pythonInitializing = false; // Reset flag for other errors too
         globalPythonProcess = null;
         serverReady = false;
     });
+    
+    // Add timeout to detect if Python fails to start
+    pythonStartupTimeout = setTimeout(() => {
+        if (!serverReady && globalPythonProcess && !pythonEnvironmentFailed) {
+            logger.error("Python startup timeout - treating as environment failure");
+            pythonInitializing = false; // Reset flag
+            failAllRequestsDueToPythonEnvironment();
+        }
+    }, 5000); // 5 second timeout
     
     return globalPythonProcess;
 }
@@ -148,6 +215,15 @@ async function routeMessage(message) {
             const readyTime = Date.now();
             const startupDuration = readyTime - processStartTime;
             serverReady = true;
+            
+            // Clear startup timeout since server is ready
+            if (pythonStartupTimeout) {
+                clearTimeout(pythonStartupTimeout);
+                pythonStartupTimeout = null;
+            }
+            
+            // Reset initialization flag since server is ready
+            pythonInitializing = false;
             
             logger.info("[TIMING] Python LiteLLM server ready", {
                 startupDuration,
@@ -454,6 +530,20 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
             heapTotal: `${Math.round(initialMemory.heapTotal / 1024 / 1024)}MB`,
             external: `${Math.round(initialMemory.external / 1024 / 1024)}MB`
         });
+        
+        // Early check: Fail fast if Python environment has already failed
+        if (pythonEnvironmentFailed) {
+            const errorMessage = "Internal Server error: python environment";
+            logger.error("Rejecting request - Python environment unavailable");
+            
+            if (!responseStream.destroyed && !responseStream.writableEnded) {
+                sendErrorMessage(responseStream, 500, errorMessage);
+                responseStream.end();
+            }
+            
+            reject(new Error(errorMessage));
+            return;
+        }
         
         try {
             // Ensure Python process is running
