@@ -3,6 +3,7 @@ import re
 import time
 import uuid
 from typing import List, Dict, Any
+import ast
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -10,6 +11,9 @@ from decimal import Decimal
 import json
 
 from boto3.dynamodb.types import TypeDeserializer
+
+# Initialize the DynamoDB type deserializer
+deserializer = TypeDeserializer()
 
 from pycommon.logger import getLogger
 logger = getLogger("user_data")
@@ -32,6 +36,103 @@ class CommonData:
     def _decimal_to_float(self, data):
         """Convert Decimals back to floats in data structure"""
         return json.loads(json.dumps(data, cls=DecimalEncoder))
+
+    def _deserialize_dynamodb_types(self, data):
+        """Recursively deserialize DynamoDB attribute types (M, L, S, etc.) to clean JSON"""
+        if isinstance(data, dict):
+            # Check if this looks like a DynamoDB attribute type with proper nested structure
+            if len(data) == 1:
+                key = list(data.keys())[0]
+                value = data[key]
+                
+                # More specific checks for DynamoDB format
+                if key == 'M' and isinstance(value, dict):  # Map type
+                    return deserializer.deserialize(data)
+                elif key == 'L' and isinstance(value, list):  # List type
+                    return deserializer.deserialize(data)
+                elif key == 'S' and isinstance(value, str):  # String type
+                    return deserializer.deserialize(data)
+                elif key in ['N', 'B', 'SS', 'NS', 'BS', 'BOOL', 'NULL']:  # Other DynamoDB types
+                    return deserializer.deserialize(data)
+                else:
+                    # Regular single-key dict, recurse through values
+                    return {k: self._deserialize_dynamodb_types(v) for k, v in data.items()}
+            else:
+                # Regular dict, recurse through values
+                return {k: self._deserialize_dynamodb_types(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._deserialize_dynamodb_types(item) for item in data]
+        elif isinstance(data, str):
+            # CRITICAL FIX: Parse Python dict strings to JSON objects
+            # This fixes action sets displaying as "Unnamed Action" due to string format
+            return self._parse_python_dict_string(data)
+        else:
+            return data
+
+    def _parse_python_dict_string(self, data):
+        """
+        Safely parse strings that look like Python dict representations into JSON objects.
+        Only processes strings that clearly match Python dict/list patterns.
+        Returns original string if parsing fails or doesn't look like Python syntax.
+        """
+        if not isinstance(data, str):
+            return data
+        
+        # Strip whitespace for pattern matching
+        stripped = data.strip()
+        
+        # Safety check: Only process strings that look like Python dict/list syntax
+        # Must start with { or [ and end with } or ]
+        if not ((stripped.startswith('{') and stripped.endswith('}')) or 
+                (stripped.startswith('[') and stripped.endswith(']'))):
+            return data
+        
+        # SAFE DETECTION: Only parse if there's clear evidence of Python dict/list corruption
+        # Look for specific Python syntax patterns that indicate migration corruption
+        
+        # Pattern 1: Python dict with single quotes: {'key': 'value', 'key2': True}
+        is_python_dict = (stripped.startswith("{'") and stripped.endswith("'}") and 
+                         "': " in stripped and stripped.count("'") >= 4)
+        
+        # Pattern 2: Python list with single quotes: ['item1', 'item2']  
+        is_python_list = (stripped.startswith("['") and stripped.endswith("']") and
+                         stripped.count("'") >= 4)
+        
+        # Pattern 3: Action set data (existing logic)
+        is_action_set_data = ("'" in stripped and 
+                             ('name' in stripped or 'customName' in stripped or 'id' in stripped or 'type' in stripped))
+        
+        # Only parse if it matches clear corruption patterns
+        if not (is_python_dict or is_python_list or is_action_set_data):
+            return data
+        
+        if is_python_dict or is_python_list:
+            logger.info("Detected Python syntax corruption, parsing: %s...", stripped[:80])
+        elif is_action_set_data:
+            logger.debug("Parsing action set data: %s...", stripped[:50])
+        
+        try:
+            # Use ast.literal_eval for safe parsing of Python literals
+            # This only evaluates literals (strings, numbers, tuples, lists, dicts, booleans, None)
+            # and raises ValueError for expressions that aren't safe literals
+            parsed_data = ast.literal_eval(stripped)
+            
+            # Verify we got the expected type (dict or list)
+            if isinstance(parsed_data, (dict, list)):
+                logger.debug(f"Successfully parsed Python dict string: {stripped[:100]}...")
+                return parsed_data
+            else:
+                logger.debug(f"Parsed data is not dict/list, returning original string: {type(parsed_data)}")
+                return data
+                
+        except (ValueError, SyntaxError) as e:
+            # Not a valid Python literal, return original string
+            logger.debug(f"Failed to parse potential Python dict string: {str(e)[:100]}")
+            return data
+        except Exception as e:
+            # Catch any other unexpected errors and return original string
+            logger.warning(f"Unexpected error parsing dict string: {str(e)[:100]}")
+            return data
 
     def put_item(self, app_id, entity_type, item_id, data, range_key=None):
         sk = f"{item_id}#{range_key}" if range_key else item_id
@@ -66,7 +167,8 @@ class CommonData:
         )
         items = response.get("Items", [])
         if items:
-            return self._decimal_to_float(items[0])
+            item = self._deserialize_dynamodb_types(items[0])
+            return self._decimal_to_float(item)
         return None
 
     def get_item(self, app_id, entity_type, item_id, range_key=None):
@@ -74,6 +176,8 @@ class CommonData:
         response = self.table.get_item(Key={"PK": f"{app_id}#{entity_type}", "SK": sk})
         item = response.get("Item")
         if item:
+            # First deserialize any DynamoDB attribute types, then convert decimals
+            item = self._deserialize_dynamodb_types(item)
             return self._decimal_to_float(item)
         return None
 
@@ -90,7 +194,8 @@ class CommonData:
             key_condition = key_condition & Key("SK").lte(range_end)
 
         response = self.table.query(KeyConditionExpression=key_condition, Limit=limit)
-        return self._decimal_to_float(response["Items"])
+        items = [self._deserialize_dynamodb_types(item) for item in response["Items"]]
+        return self._decimal_to_float(items)
 
     def query_by_prefix(self, app_id, entity_type, prefix, limit=100):
         response = self.table.query(
@@ -98,7 +203,8 @@ class CommonData:
             & Key("SK").begins_with(prefix),
             Limit=limit,
         )
-        return self._decimal_to_float(response["Items"])
+        items = [self._deserialize_dynamodb_types(item) for item in response["Items"]]
+        return self._decimal_to_float(items)
 
     def query_by_type(self, app_id, entity_type, limit=100):
         """
@@ -113,7 +219,8 @@ class CommonData:
         response = self.table.query(
             KeyConditionExpression=Key("PK").eq(f"{app_id}#{entity_type}"), Limit=limit
         )
-        return self._decimal_to_float(response.get("Items", []))
+        items = [self._deserialize_dynamodb_types(item) for item in response.get("Items", [])]
+        return self._decimal_to_float(items)
 
     def delete_item(self, app_id, entity_type, item_id, range_key=None):
         sk = f"{item_id}#{range_key}" if range_key else item_id

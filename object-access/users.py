@@ -70,7 +70,7 @@ def _update_admin_groups(user: UserABC) -> None:
     conf = dal.AdminConfig.get_config(config_id)
 
     if not conf:
-        # TODO(karely): we might wish to log this
+        logger.info(f"No admin config found for {config_id}, skipping group sync")
         return
     saml_groups = json.loads(user.cust_saml_groups) if user.cust_saml_groups else []
     user_id = user.user_id
