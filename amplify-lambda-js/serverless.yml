@@ -81,7 +81,7 @@ provider:
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
     TRACE_BUCKET_NAME: amplify-${self:custom.depName}-lambda-${sls:stage}-chat-traces
-    CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis-queue
+    CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis
   
     # Imported Variables from Parameter Store
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}

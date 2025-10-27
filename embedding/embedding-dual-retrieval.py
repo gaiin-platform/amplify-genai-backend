@@ -833,10 +833,10 @@ async def _async_process_input_with_dual_retrieval(event, context, current_user,
         logger.error(f"Embedding generation failed: {error}")
         return {"error": error}
     
-    async def get_similar_docs():
+    def get_similar_docs():
         return get_top_similar_docs(embeddings, src_ids, limit)
     
-    async def get_similar_qas():
+    def get_similar_qas():
         return get_top_similar_qas(embeddings, src_ids, limit)
 
     # Execute both retrieval operations in parallel

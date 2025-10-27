@@ -86,8 +86,22 @@ export function initPythonProcess() {
     
     // Prevent multiple simultaneous initialization attempts
     if (pythonInitializing) {
-        logger.debug("Python already initializing, returning null");
-        return null;
+        logger.debug("Python already initializing, waiting for it to complete...");
+        // Wait for initialization to complete
+        return new Promise((resolve) => {
+            const checkReady = () => {
+                if (serverReady && globalPythonProcess && !globalPythonProcess.killed) {
+                    resolve(globalPythonProcess);
+                } else if (!pythonInitializing && (!globalPythonProcess || globalPythonProcess.killed)) {
+                    // Initialization failed
+                    resolve(null);
+                } else {
+                    // Still initializing, check again in 100ms
+                    setTimeout(checkReady, 100);
+                }
+            };
+            checkReady();
+        });
     }
     
     pythonInitializing = true;
