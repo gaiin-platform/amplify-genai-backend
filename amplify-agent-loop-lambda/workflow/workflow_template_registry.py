@@ -109,7 +109,27 @@ def get_workflow_template(
             if "Items" in is_public_response and is_public_response["Items"]:
                 response = {"Item": is_public_response["Items"][0]}
             else:
-                logger.warning("No public template found for template_id: %s", template_id)
+                # FALLBACK: Check if this is a migrated template with missing metadata
+                logger.info("Template metadata not found, checking USER_DATA_STORAGE_TABLE directly: %s", template_id)
+                
+                app_id = get_app_id()
+                template_data = load_user_data(access_token, app_id, "workflow-templates", template_id)
+                
+                if template_data is not None:
+                    logger.info("Found migrated template data, creating default metadata")
+                    # Return template with default metadata
+                    return {
+                        "name": f"Migrated Template {template_id[:8]}",
+                        "description": "Migrated workflow template",
+                        "inputSchema": {},
+                        "outputSchema": {},
+                        "templateId": template_id,
+                        "template": template_data,
+                        "isPublic": False,
+                        "isBaseTemplate": False,
+                    }
+                
+                logger.warning("No template found for template_id: %s", template_id)
                 return None
 
         # Deserialize the response item
