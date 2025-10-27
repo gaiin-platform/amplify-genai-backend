@@ -90,9 +90,15 @@ def common_handler(operation, func_schema, **optional_params):
 
             logger.debug("Invoking operation")
             response = operation(**args)
-            success = response.get("success", True)
-            logger.debug("Returning response success: %s", success)
-            return {"success": success, "data": response}
+            
+            # Handle both dict and list responses
+            if isinstance(response, dict):
+                success = response.get("success", True)
+                return {"success": success, "data": response}
+            else:
+                # Raw list/data response - wrap it
+                logger.debug("Wrapping raw response in success format")
+                return {"success": True, "data": response}
         except Exception as e:
             logger.error("Unexpected error in common_handler operation: %s", str(e), exc_info=True)
             return {"success": False, "error": "Unexpected error."}
