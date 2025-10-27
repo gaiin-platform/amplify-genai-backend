@@ -772,7 +772,7 @@ def update_ops_table(old_id: str, new_id: str, dry_run: bool) -> bool:
 
 # "SHARES_DYNAMODB_TABLE" : "amplify-v6-lambda-dev",
 # "S3_SHARE_BUCKET_NAME": "amplify-v6-lambda-dev-share", #Marked for deletion
-def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
+def update_shares_table(old_id: str, new_id: str, all_users_map: dict, dry_run: bool) -> bool:
     """
     Migrate shares for a user from SHARES_DYNAMODB_TABLE to USER_DATA_STORAGE_TABLE.
     
@@ -780,6 +780,12 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
     1. Migrate S3 shares files to consolidation bucket
     2. Transform and migrate DynamoDB records to USER_DATA_STORAGE_TABLE with new schema
     3. Delete old records from SHARES_DYNAMODB_TABLE
+    
+    Args:
+        old_id: The old user ID being migrated
+        new_id: The new user ID
+        all_users_map: Complete mapping of all old_id -> new_id (for cross-user S3 key updates)
+        dry_run: If True, only show what would be done
     
     New schema in USER_DATA_STORAGE_TABLE:
     - PK: "{new_user_id}#amplify-shares#received"  
@@ -865,27 +871,30 @@ def update_shares_table(old_id: str, new_id: str, dry_run: bool) -> bool:
                         log(msg % f"Skipping share entry missing required fields")
                         continue
                     
-                    # Translate sharer ID if it matches old_id
-                    new_shared_by = new_id if old_shared_by == old_id else old_shared_by
+                    # Translate sharer ID using complete user mappings (not just current migration)
+                    new_shared_by = all_users_map.get(old_shared_by, old_shared_by)
                     
-                    # Update key to match actual S3 location (WITH shares/ prefix for consistency)
+                    # Update key to match actual S3 location using ALL user mappings
                     # Both DB key and S3 path will be: shares/recipient/sharer/date/file.json
                     key_parts = old_key.split('/')
                     if len(key_parts) >= 2:
-                        # Transform the key to match the new user IDs
+                        # Transform the key to match ALL new user IDs (cross-user aware)
                         new_key_parts = []
                         for part in key_parts:
-                            # Replace any user ID that matches old_id with new_id
-                            new_key_parts.append(new_id if part == old_id else part)
+                            # Replace ANY user ID from the complete mapping
+                            new_key_parts.append(all_users_map.get(part, part))
                         # Construct new key WITH shares/ prefix to match S3 structure
                         new_key = f"shares/{'/'.join(new_key_parts)}"
                     else:
-                        # Fallback: ensure shares/ prefix and update user ID
+                        # Fallback: ensure shares/ prefix and update ALL user IDs
                         new_key = old_key
-                        if old_id in new_key:
-                            new_key = new_key.replace(old_id, new_id)
+                        for map_old_id, map_new_id in all_users_map.items():
+                            if map_old_id in new_key:
+                                new_key = new_key.replace(map_old_id, map_new_id)
                         if not new_key.startswith("shares/"):
                             new_key = f"shares/{new_key}"
+                    
+                    log(msg % f"Cross-user key update: {old_key} -> {new_key}")
                     
                     # Check if this share already exists in USER_DATA_STORAGE_TABLE
                     if new_key in existing_shares:
@@ -2916,10 +2925,11 @@ def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
         table = dynamodb.Table(table_name)
         updated_count = 0
         
-        # Scan entire table and update all records
-        paginator = table.scan()
+        # Scan entire table and update all records using proper pagination
+        scan_kwargs = {}
         while True:
-            for item in paginator.get('Items', []):
+            response = table.scan(**scan_kwargs)
+            for item in response.get('Items', []):
                 # Check if PK or SK contains any old user IDs
                 pk = item.get('PK', '')
                 sk = item.get('SK', '')
@@ -2972,7 +2982,73 @@ def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
                         new_sk = f"{new_id}#{sk_suffix}"
                         updated = True
                 
-                if updated:
+                # Check data fields for ALL items (not just ones with PK/SK updates)
+                data_key_updated = False
+                
+                # Update data fields in shares and other records
+                if 'data' in item and isinstance(item['data'], dict):
+                    # Update sharedBy field
+                    if 'sharedBy' in item['data']:
+                        shared_by = item['data']['sharedBy']
+                        for old_id, new_id in users_map.items():
+                            if shared_by == old_id:
+                                item['data']['sharedBy'] = new_id
+                                data_key_updated = True
+                                break
+                    
+                    # Update key field for shares AND received (S3 paths containing user IDs)
+                    # Handle both DynamoDB attribute format and clean format
+                    data = item.get('data', {})
+                    key_value = None
+                    
+                    # Extract key from DynamoDB format or clean format
+                    if isinstance(data, dict):
+                        if 'M' in data and isinstance(data['M'], dict) and 'key' in data['M']:
+                            # DynamoDB attribute format: data.M.key.S
+                            key_attr = data['M']['key']
+                            if isinstance(key_attr, dict) and 'S' in key_attr:
+                                key_value = key_attr['S']
+                        elif 'key' in data:
+                            # Clean format: data.key
+                            key_value = data['key']
+                    
+                    if key_value:
+                        entity_type = item.get('entityType', '')
+                        
+                        # Handle both shares and received entity types
+                        if entity_type in ['received'] or "#amplify-shares#" in pk:
+                            old_key = key_value
+                            new_key = old_key
+                            key_updated = False
+                            
+                            log(msg % f"DEBUG: Processing key update - PK: {pk}, entityType: {entity_type}, old_key: {old_key}")
+                            log(msg % f"DEBUG: Available user mappings: {users_map}")
+                            
+                            # Replace old user IDs with new user IDs in S3 paths
+                            for old_id, new_id in users_map.items():
+                                if old_id in new_key:
+                                    new_key = new_key.replace(old_id, new_id)
+                                    key_updated = True
+                                    data_key_updated = True
+                                    log(msg % f"✅ Replacing '{old_id}' with '{new_id}' in S3 key (entityType: {entity_type})")
+                            
+                            # Ensure key has shares/ prefix for consistency with S3 structure
+                            if not new_key.startswith("shares/") and key_updated:
+                                new_key = f"shares/{new_key}"
+                            
+                            if new_key != old_key:
+                                # Update key in correct format (DynamoDB attribute or clean)
+                                if 'M' in item['data'] and isinstance(item['data']['M'], dict) and 'key' in item['data']['M']:
+                                    # DynamoDB attribute format: update data.M.key.S
+                                    item['data']['M']['key']['S'] = new_key
+                                else:
+                                    # Clean format: update data.key
+                                    item['data']['key'] = new_key
+                                log(msg % f"✅ Updated S3 key: {old_key} -> {new_key}")
+                           
+                
+                # Now handle PK/SK updates if needed
+                if updated or data_key_updated:
                     if dry_run:
                         if new_pk != pk:
                             log(msg % f"Would update PK: {pk} -> {new_pk}")
@@ -3017,34 +3093,6 @@ def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
                                         log(msg % f"REPAIRED MALFORMED appId: {malformed_app} -> {correct_app}")
                                         break
                         
-                        # Update data fields in shares and other records
-                        if 'data' in item and isinstance(item['data'], dict):
-                            # Update sharedBy field
-                            if 'sharedBy' in item['data']:
-                                shared_by = item['data']['sharedBy']
-                                for old_id, new_id in users_map.items():
-                                    if shared_by == old_id:
-                                        item['data']['sharedBy'] = new_id
-                                        break
-                            
-                            # Update key field for shares (S3 paths containing user IDs)
-                            if 'key' in item['data'] and "#amplify-shares#" in pk:
-                                old_key = item['data']['key']
-                                new_key = old_key
-                                
-                                # Replace old user IDs with new user IDs
-                                for old_id, new_id in users_map.items():
-                                    if old_id in new_key:
-                                        new_key = new_key.replace(old_id, new_id)
-                                
-                                # Ensure key has shares/ prefix for consistency with S3 structure
-                                if not new_key.startswith("shares/"):
-                                    new_key = f"shares/{new_key}"
-                                
-                                if new_key != old_key:
-                                    item['data']['key'] = new_key
-                                    log(msg % f"Updated share key: {old_key} -> {new_key}")
-                        
                         # Put new record
                         table.put_item(Item=item)
                         
@@ -3058,10 +3106,10 @@ def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
                     updated_count += 1
             
             # Check for more pages
-            if 'LastEvaluatedKey' not in paginator:
+            if 'LastEvaluatedKey' not in response:
                 break
             
-            paginator = table.scan(ExclusiveStartKey=paginator['LastEvaluatedKey'])
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
         
         log(msg % f"Updated {updated_count} records in USER_DATA_STORAGE table")
         return True
@@ -3838,7 +3886,7 @@ if __name__ == "__main__":
                 table_exists = validation_results["tables"].get("SHARES_DYNAMODB_TABLE", False)
                 bucket_exists = validation_results["buckets"].get("S3_SHARE_BUCKET_NAME", False)
                 if table_exists or bucket_exists:
-                    if not update_shares_table(old_user_id, new_user_id, args.dry_run):
+                    if not update_shares_table(old_user_id, new_user_id, users_map, args.dry_run):
                         log(f"Unable to update shares records for {old_user_id}. This is assumed reasonable as not all users have shares records.")
                 else:
                     log(f"[{old_user_id}] Skipping shares migration - table and bucket do not exist")
