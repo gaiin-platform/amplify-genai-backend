@@ -81,7 +81,7 @@ provider:
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
     TRACE_BUCKET_NAME: amplify-${self:custom.depName}-lambda-${sls:stage}-chat-traces
-    CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis
+    CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis-queue
   
     # Imported Variables from Parameter Store
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
@@ -193,6 +193,8 @@ functions:
     handler: groupassistants/conversationAnalysis.sqsProcessorHandler
     memorySize: 512
     timeout: 300
+    layers:
+      - !Ref PythonLiteLLMLambdaLayer
     events:
       - sqs:
           arn: !GetAtt ConversationAnalysisQueue.Arn
@@ -411,7 +413,7 @@ resources:
     ConversationAnalysisQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: ${self:service}-${sls:stage}-conversation-analysis
+        QueueName: ${self:service}-${sls:stage}-conversation-analysis-queue
         VisibilityTimeout: 360
         MessageRetentionPeriod: 1209600 # 14 days
         RedrivePolicy:
