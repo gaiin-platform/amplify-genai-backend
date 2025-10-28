@@ -125,6 +125,8 @@ export function initPythonProcess() {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
             ...process.env,
+            // Set PYTHONHOME to point to the layer's Python installation
+            PYTHONHOME: isLambda ? '/opt/python' : process.env.PYTHONHOME,
             // Set PYTHONPATH to include the layer's Python packages
             PYTHONPATH: isLambda ? '/opt/python' : process.env.PYTHONPATH,
             // Add layer bin to PATH for any Python binaries
