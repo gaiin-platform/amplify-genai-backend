@@ -46,21 +46,24 @@ docker run --rm --platform linux/amd64 \
     # Core encoding/decoding (REQUIRED - fixes encodings error)
     cp -r /var/lang/lib/python3.11/encodings /output/lib/python3.11/ 2>/dev/null || true
 
-    # Core Python modules (required for basic operation)
+    # Core Python modules (required for basic operation - single files only)
     for module in \
-      collections abc re sre_compile sre_parse copyreg types functools \
+      collections abc sre_compile sre_parse copyreg types functools \
       operator reprlib keyword heapq bisect weakref io _collections_abc \
       _weakrefset threading _threading_local contextvars enum warnings \
       linecache tokenize token _bootsubprocess os stat posixpath genericpath \
-      _sitebuiltins site codecs struct; do
+      _sitebuiltins site codecs struct string datetime calendar locale \
+      traceback tempfile shutil fnmatch glob pathlib ntpath platform copy \
+      textwrap argparse gettext selectors ssl socket ipaddress base64 hmac \
+      hashlib secrets random uuid quopri uu binascii pickle queue dataclasses; do
       if [ -f "/var/lang/lib/python3.11/${module}.py" ]; then
         cp "/var/lang/lib/python3.11/${module}.py" /output/lib/python3.11/
       fi
     done
 
-    # Copy essential directories (only what LiteLLM needs)
-    for dir in importlib json logging urllib http email asyncio concurrent \
-               multiprocessing xml; do
+    # Copy essential directories (both core and LiteLLM-specific)
+    for dir in re importlib json logging urllib http email asyncio concurrent \
+               multiprocessing xml collections ctypes unittest; do
       if [ -d "/var/lang/lib/python3.11/${dir}" ]; then
         cp -r "/var/lang/lib/python3.11/${dir}" /output/lib/python3.11/
       fi
