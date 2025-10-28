@@ -436,14 +436,13 @@ def handle_event(
             )
 
             if "workflow" in metadata or "workflowTemplateId" in assistant_data:
-                templateId = metadata.get("workflow", {}).get(
-                    "templateId"
-                ) or assistant_data.get("workflowTemplateId")
+                templateId = metadata.get("workflow", {}).get( "templateId") or \
+                             assistant_data.get("workflowTemplateId")
                 logger.info("Workflow templateId: %s", templateId)
                 if templateId:
                     logger.info("Loading workflow template: %s", templateId)
                     workflow_definition = get_workflow_template(
-                        current_user, templateId
+                        current_user, templateId, access_token
                     )
                     if workflow_definition:
                         try:

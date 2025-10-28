@@ -87,8 +87,8 @@ class TasksMessageHandler(MessageHandler):
             # Clear the lastCheckedAt field so the task can be retried
             if source == "scheduled-task":
                 self._reset_task_check_status(user_id, task_id, last_run_at_utc)
-            # Create a unique session ID
-            session_id = f"scheduled-task-{task_id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+            # Create a unique session ID with short UUID format
+            session_id = f"execution-{str(uuid.uuid4())}"
 
             # Format the task instructions as prompt
             prompt = [{"role": "user", "content": task_instructions}]
@@ -149,9 +149,8 @@ class TasksMessageHandler(MessageHandler):
         # Try to extract sessionId - it might be available in task_data or we can reconstruct it
         session_id = task_data.get("sessionId")
         if not session_id and task_id:
-            # Try to reconstruct sessionId using current time (best effort)
-            runtime = get_timestamp(False)
-            session_id = f"scheduled-task-{task_id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+            # Try to reconstruct sessionId using short UUID format (best effort)
+            session_id = f"execution-{str(uuid.uuid4())}"
         
         # Add sessionId to task_data for consistency
         if session_id:
@@ -275,6 +274,9 @@ class TasksMessageHandler(MessageHandler):
             # object_info.data.op should be in the expected operation format
             logger.debug("Processing apiTool with object_info: %s", object_info)
             return {"operations": [object_info.get("data", {}).get("op", {})]}
+        elif object_type == "workflow":
+            template_id = object_info.get("data", {}).get("templateId")
+            return {"workflow": {"templateId": template_id}}
 
 
 def task_completed(user_id, task_id, task_data, result):
@@ -683,7 +685,7 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
                 if access_token:
                     try:
                         # Get existing logs dictionary or create new
-                        app_id = f"{current_user}#amplify-agent-logs"
+                        app_id = "amplify-agent-logs"
                         existing_logs_data = None
                         try:
                             existing_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
@@ -732,9 +734,17 @@ def add_task_execution_record(current_user, task_id, status, details=None, execu
                             "logs": logs_dict
                         }
                         
-                        save_user_data(access_token, app_id, "scheduled-task-logs", task_id, consolidated_data)
-                        logger.debug("Stored execution %s in logs dictionary for task %s", execution_id, task_id)
+                        save_result = save_user_data(access_token, app_id, "scheduled-task-logs", task_id, consolidated_data)
+                        
+                        # DEBUG: Log save result 
+                        logger.debug("save_user_data returned: %s", save_result)
+                        
+                        if save_result:
+                            logger.info("✅ Successfully stored execution %s in logs dictionary for task %s", execution_id, task_id)
+                        else:
+                            logger.error("❌ FAILED to store execution %s - save_user_data returned: %s", execution_id, save_result)
                     except Exception as e:
+                        logger.error("SAVE DEBUG: Exception during USER_STORAGE_TABLE save: %s", e, exc_info=True)
                         logger.warning("Failed to store in USER_STORAGE_TABLE, falling back to S3: %s", e)
                         # Fallback to S3 if USER_STORAGE_TABLE fails
                         s3_key = f"{current_user}/{task_id}/logs/{execution_id}.json"
@@ -1158,9 +1168,8 @@ def send_tasks_to_queue(tasks: List[Dict[str, Any]], task_source="scheduled-task
         id = failedTask["taskId"]
         logger.error("Failed to send task %s to queue: %s", id, failedTask['error'])
         
-        # Create a sessionId for this failed queue operation
-        runtime = get_timestamp(False)
-        session_id = f"scheduled-task-{id}-{runtime.strftime('%Y%m%d%H%M%S')}"
+        # Create a sessionId for this failed queue operation with short UUID format
+        session_id = f"execution-{str(uuid.uuid4())}"
         
         add_task_execution_record(
             failedTask["userId"],

@@ -4,9 +4,68 @@ import boto3
 import uuid
 from boto3.dynamodb.types import TypeSerializer, TypeDeserializer
 import json
+import ast
 from pycommon.api.user_data import load_user_data, save_user_data, delete_user_data
 from pycommon.logger import getLogger
 logger = getLogger("workflow_template_registry")
+
+
+def _fix_python_dict_strings_in_data(data):
+    """
+     Recursively detect and parse Python dict strings in data structure.
+    This prevents Python dict strings from causing frontend crashes.
+    
+    Detects patterns like: "{'key': 'value'}" and converts them to proper dict objects.
+    """
+    if isinstance(data, dict):
+        # Recursively process all values in dictionary
+        fixed_dict = {}
+        for key, value in data.items():
+            fixed_dict[key] = _fix_python_dict_strings_in_data(value)
+        return fixed_dict
+    elif isinstance(data, list):
+        # Process each item in list (this is where workflow steps corruption happens)
+        fixed_list = []
+        for item in data:
+            if isinstance(item, str):
+                # Check if this string looks like a Python dict representation
+                item_stripped = item.strip()
+                
+                # DEBUG: Log what we're checking
+                starts_with = item_stripped.startswith("{'")
+                ends_with = item_stripped.endswith("}")  # FIXED: Check for } not '}
+                has_colon = "': " in item_stripped
+                quote_count = item_stripped.count("'")
+                logger.debug(" Checking string - starts_with=%s, ends_with=%s, has_colon=%s, quote_count=%s", 
+                           starts_with, ends_with, has_colon, quote_count)
+                logger.debug(" Full string: %s", item_stripped)
+                
+                if (starts_with and ends_with and has_colon and quote_count >= 4):
+                    try:
+                        logger.info(" Attempting to parse Python dict string...")
+                        # Safely parse the Python dict string to an actual dict
+                        parsed_item = ast.literal_eval(item_stripped)
+                        if isinstance(parsed_item, dict):
+                            logger.info(" Successfully converted Python dict string to object: %s", item_stripped[:50])
+                            # Recursively fix any nested Python dict strings
+                            fixed_list.append(_fix_python_dict_strings_in_data(parsed_item))
+                        else:
+                            logger.warning(" Parsed item is not dict, type=%s", type(parsed_item))
+                            fixed_list.append(item)  # Keep original if not dict
+                    except (ValueError, SyntaxError) as e:
+                        logger.warning(" Failed to parse potential dict string: %s - Error: %s", item_stripped[:50], str(e))
+                        fixed_list.append(item)  # Keep original on parse error
+                else:
+                    # Regular string, keep as-is
+                    logger.debug(" Keeping as normal string (doesn't match Python dict pattern)")
+                    fixed_list.append(item)
+            else:
+                # Non-string item, recursively process
+                fixed_list.append(_fix_python_dict_strings_in_data(item))
+        return fixed_list
+    else:
+        # Primitive type (string, number, boolean, null), return as-is
+        return data
 
 def get_app_id() -> str:
     return "amplify-workflows"
@@ -36,10 +95,31 @@ def register_workflow_template(
     # Generate a unique UUID for the new workflow template
     template_id = str(uuid.uuid4())  # Changed from template_uuid to template_id
     logger.info("Registering workflow template: %s", template_id)
+    
+    # DEBUG: Log the incoming template to see if corruption is already present
+    logger.debug("Incoming template type: %s", type(template))
+    logger.debug("Incoming template content: %s", json.dumps(template, indent=2))
+    if "steps" in template:
+        logger.debug("Steps type: %s", type(template["steps"]))
+        if isinstance(template["steps"], list):
+            for i, step in enumerate(template["steps"]):
+                logger.debug("Step %d type: %s, content: %s", i, type(step), str(step)[:100])
+    
     try:
-        # Save the template to USER_STORAGE_TABLE (new approach - no more S3)
+        #  Clean any Python dict strings from the template before saving
+        logger.info("Applying Python dict string safety fix to template: %s", template_id)
+        cleaned_template = _fix_python_dict_strings_in_data(template)
+        
+        # DEBUG: Log the cleaned template to see if anything changed
+        logger.debug("Cleaned template content: %s", json.dumps(cleaned_template, indent=2))
+        if "steps" in cleaned_template:
+            if isinstance(cleaned_template["steps"], list):
+                for i, step in enumerate(cleaned_template["steps"]):
+                    logger.debug("Cleaned Step %d type: %s, content: %s", i, type(step), str(step)[:100])
+        
+        # Save the cleaned template to USER_STORAGE_TABLE (new approach - no more S3)
         app_id = get_app_id()
-        result = save_user_data(access_token, app_id, "workflow-templates", template_id, template)
+        result = save_user_data(access_token, app_id, "workflow-templates", template_id, cleaned_template)
         
         if result is None:
             raise RuntimeError("Failed to save workflow template to USER_STORAGE_TABLE")
@@ -117,6 +197,16 @@ def get_workflow_template(
                 
                 if template_data is not None:
                     logger.info("Found migrated template data, creating default metadata")
+                    
+                    #  Apply comprehensive Python dict string fix to fallback template data
+                    logger.info("Applying fallback Python dict string safety fix to template: %s", template_id)
+                    template_data = _fix_python_dict_strings_in_data(template_data)
+                    
+                    # Flatten steps for consistency
+                    if "data" in template_data and "steps" in template_data["data"]:
+                        template_data["steps"] = template_data["data"]["steps"]
+                        logger.info(f"Fallback flattened {len(template_data['steps']) if isinstance(template_data['steps'], list) else 'non-list'} workflow steps")
+                    
                     # Return template with default metadata
                     return {
                         "name": f"Migrated Template {template_id[:8]}",
@@ -163,10 +253,15 @@ def get_workflow_template(
             if template is None:
                 raise RuntimeError(f"Workflow template not found in USER_STORAGE_TABLE: {template_id}")
             
+            #  Apply comprehensive Python dict string fix to entire template
+            logger.info("Applying comprehensive Python dict string safety fix to template: %s", template_id)
+            template = _fix_python_dict_strings_in_data(template)
+            
             # Extract steps from nested structure for USER_STORAGE_TABLE workflows
             if "data" in template and "steps" in template["data"]:
                 # Flatten the structure - move steps to root level
                 template["steps"] = template["data"]["steps"]
+                logger.info(f"Flattened {len(template['steps']) if isinstance(template['steps'], list) else 'non-list'} workflow steps to root level")
 
         # Combine metadata and template into a single object using camel case
         result = {
@@ -402,8 +497,12 @@ def update_workflow_template(
             # New workflow: Update USER_STORAGE_TABLE
             logger.info("Updating migrated workflow template in USER_STORAGE_TABLE: %s", template_id)
             
+            #  Clean any Python dict strings from the template before updating
+            logger.info("Applying Python dict string safety fix to updated template: %s", template_id)
+            cleaned_template = _fix_python_dict_strings_in_data(template)
+            
             app_id = get_app_id()
-            result = save_user_data(access_token, app_id, "workflow-templates", template_id, template)
+            result = save_user_data(access_token, app_id, "workflow-templates", template_id, cleaned_template)
             
             if result is None:
                 return {
