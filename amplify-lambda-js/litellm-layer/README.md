@@ -12,23 +12,54 @@ The `amplify-lambda-js` service is a **Node.js 22.x Lambda** that needs to spawn
 
 ## 🚀 Quick Start
 
-### Standard Build (~117MB)
+### Getting "262MB limit exceeded" error? Use Ultra-Slim! ⭐⭐⭐
+
 ```bash
 cd litellm-layer
+./build-layer-ultra-slim.sh
+```
+
+**Removes 50-70MB to fix deployment errors. See [FIX_262MB_LIMIT.md](FIX_262MB_LIMIT.md)**
+
+### Other Build Options:
+
+**Standard Build (~117MB)**
+```bash
 ./build-layer.sh
 ```
 
-### **Optimized Build (~60-75MB)** ⭐ Recommended
+**Optimized Build (~80-90MB)** ⭐ Recommended for normal use
 ```bash
-cd litellm-layer
 ./build-layer-optimized.sh
 ```
 
-**The optimized build removes 40-60MB (35-50%) by removing documentation, tests, examples, and other non-runtime files. See [SIZE_REDUCTION_SUMMARY.md](SIZE_REDUCTION_SUMMARY.md) for details.**
+**Ultra-Slim Build (~60-70MB)** ⭐⭐⭐ For 262MB limit errors
+```bash
+./build-layer-ultra-slim.sh
+```
 
 ## Build Options
 
-### 1. Standard Build (Original)
+### 1. Ultra-Slim Build (For 262MB Limit Errors) ⭐⭐⭐
+```bash
+./build-layer-ultra-slim.sh
+```
+- Size: ~60-70MB uncompressed (50-70MB saved)
+- **Strips debug symbols from .so files** (biggest win: 15-25MB)
+- Removes all non-runtime files
+- **Use this if you get deployment size errors**
+- Same functionality as other builds
+
+### 2. Optimized Build (Recommended for Normal Use) ⭐
+```bash
+./build-layer-optimized.sh
+```
+- Size: ~80-90MB uncompressed (30-40MB saved)
+- Aggressive cleanup of non-runtime files
+- Detailed analysis report
+- Good balance of size vs build time
+
+### 3. Standard Build (Original)
 ```bash
 ./build-layer.sh
 ```
@@ -36,16 +67,7 @@ cd litellm-layer
 - Basic cleanup only
 - Fastest build time
 
-### 2. Optimized Build (Recommended)
-```bash
-./build-layer-optimized.sh
-```
-- Size: ~60-75MB uncompressed (35-50% smaller)
-- Aggressive cleanup of non-runtime files
-- Detailed analysis report
-- **Same functionality, smaller size**
-
-### 3. Analyze Existing Build
+### 4. Analyze Existing Build
 ```bash
 ./analyze-layer-size.sh
 ```
@@ -53,7 +75,7 @@ cd litellm-layer
 - Generates detailed size breakdown report
 - Helps understand optimization opportunities
 
-### 4. Compare Standard vs Optimized
+### 5. Compare Standard vs Optimized
 ```bash
 ./compare-builds.sh
 ```
