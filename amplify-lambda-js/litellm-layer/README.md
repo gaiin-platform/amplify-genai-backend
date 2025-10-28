@@ -10,29 +10,70 @@ The `amplify-lambda-js` service is a **Node.js 22.x Lambda** that needs to spawn
 - LiteLLM 1.78.7 and all dependencies
 - boto3 for AWS SDK access
 
-## Build Instructions
+## 🚀 Quick Start
 
-### Prerequisites
-- Docker installed and running
-- Bash shell
-
-### Building the Layer
-
+### Standard Build (~117MB)
 ```bash
 cd litellm-layer
 ./build-layer.sh
 ```
 
-This will:
-1. Use Docker with the official Lambda Python 3.11 image
-2. Install all Python dependencies from `requirements.txt`
-3. Extract the Python 3.11 binary from the Lambda container
-4. Clean up unnecessary files (tests, docs, `__pycache__`, etc.)
-5. Produce a `python/` directory ready for Lambda deployment
+### **Optimized Build (~60-75MB)** ⭐ Recommended
+```bash
+cd litellm-layer
+./build-layer-optimized.sh
+```
 
-### Layer Size
+**The optimized build removes 40-60MB (35-50%) by removing documentation, tests, examples, and other non-runtime files. See [SIZE_REDUCTION_SUMMARY.md](SIZE_REDUCTION_SUMMARY.md) for details.**
 
-Expected layer size: ~117MB (uncompressed)
+## Build Options
+
+### 1. Standard Build (Original)
+```bash
+./build-layer.sh
+```
+- Size: ~117MB uncompressed
+- Basic cleanup only
+- Fastest build time
+
+### 2. Optimized Build (Recommended)
+```bash
+./build-layer-optimized.sh
+```
+- Size: ~60-75MB uncompressed (35-50% smaller)
+- Aggressive cleanup of non-runtime files
+- Detailed analysis report
+- **Same functionality, smaller size**
+
+### 3. Analyze Existing Build
+```bash
+./analyze-layer-size.sh
+```
+- Analyzes what can be removed from existing `python/` directory
+- Generates detailed size breakdown report
+- Helps understand optimization opportunities
+
+### 4. Compare Standard vs Optimized
+```bash
+./compare-builds.sh
+```
+- Builds both versions side-by-side
+- Shows exact size differences
+- Displays file count comparisons
+- Takes 4-6 minutes
+
+## Prerequisites
+- Docker installed and running
+- Bash shell
+
+## Documentation
+
+| File | Description |
+|------|-------------|
+| **[QUICK_START.md](QUICK_START.md)** | One-page quick reference |
+| **[SIZE_REDUCTION_SUMMARY.md](SIZE_REDUCTION_SUMMARY.md)** | Detailed breakdown of size savings |
+| **[OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md)** | Complete guide on optimization techniques |
+| **README.md** (this file) | Main documentation |
 
 ## Deployment
 
