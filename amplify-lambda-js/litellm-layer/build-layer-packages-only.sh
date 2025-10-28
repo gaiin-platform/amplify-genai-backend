@@ -2,14 +2,13 @@
 set -e
 
 echo "======================================"
-echo "Building MINIMAL Python LiteLLM Lambda Layer"
-echo "Target: Only essential stdlib modules for LiteLLM"
+echo "Building Python LiteLLM Lambda Layer (Packages Only)"
+echo "Strategy: Use Lambda's built-in Python 3.11, only add LiteLLM packages"
 echo "======================================"
 
 # Clean previous build
-rm -rf python python_analysis.txt minimal_stdlib_savings.txt
-mkdir -p python/bin
-mkdir -p python/lib
+rm -rf python python_analysis.txt packages_only_savings.txt
+mkdir -p python
 
 # Install Python dependencies using Docker for Lambda compatibility
 echo "Installing Python dependencies with Docker..."
@@ -29,65 +28,15 @@ echo "Python packages installed successfully"
 INITIAL_SIZE=$(du -sk python | cut -f1)
 echo "Initial size after pip install: $((INITIAL_SIZE / 1024))MB"
 
-# Copy Python binary and ONLY essential stdlib modules
-echo "Copying Python 3.11 binary and minimal standard library..."
-docker run --rm --platform linux/amd64 \
-  -v $(pwd)/python:/output \
-  --entrypoint /bin/bash \
-  public.ecr.aws/lambda/python:3.11 \
-  -c '
-    # Copy Python binary
-    cp /var/lang/bin/python3.11 /output/bin/python3 && chmod +x /output/bin/python3
-
-    # Create stdlib directory
-    mkdir -p /output/lib/python3.11
-
-    # Copy FULL Python standard library, then remove bloat
-    # This ensures all built-in modules and dependencies work correctly
-    cp -r /var/lang/lib/python3.11/* /output/lib/python3.11/ 2>/dev/null || true
-
-    # Remove the largest bloat items from stdlib (saves ~100MB)
-    echo "Removing bloat from Python stdlib..."
-    # Remove config directory (93MB of build artifacts)
-    rm -rf /output/lib/python3.11/config-3.11-x86_64-linux-gnu 2>/dev/null || true
-    # Remove idlelib (1.8MB - IDE components)
-    rm -rf /output/lib/python3.11/idlelib 2>/dev/null || true
-    # Remove ensurepip (3.2MB - pip installer)
-    rm -rf /output/lib/python3.11/ensurepip 2>/dev/null || true
-    # Remove pydoc_data (764K - documentation)
-    rm -rf /output/lib/python3.11/pydoc_data 2>/dev/null || true
-    # Remove distutils (700K - deprecated build tools)
-    rm -rf /output/lib/python3.11/distutils 2>/dev/null || true
-    # Remove tkinter (380K - GUI toolkit)
-    rm -rf /output/lib/python3.11/tkinter 2>/dev/null || true
-    # Remove turtle (144K - graphics module)
-    rm -rf /output/lib/python3.11/turtle.py /output/lib/python3.11/turtledemo 2>/dev/null || true
-    # Remove lib2to3 (480K - Python 2 to 3 converter)
-    rm -rf /output/lib/python3.11/lib2to3 2>/dev/null || true
-    # Remove unittest2 compatibility (if present)
-    rm -rf /output/lib/python3.11/unittest2 2>/dev/null || true
-
-    # Copy Python shared libraries
-    mkdir -p /output/lib
-    cp -r /var/lang/lib/libpython3.11.so* /output/lib/ 2>/dev/null || true
-
-    # Copy other essential shared libraries
-    cp /lib64/libz.so.1 /output/lib/ 2>/dev/null || true
-    cp /lib64/libexpat.so.1 /output/lib/ 2>/dev/null || true
-  '
-
-AFTER_STDLIB=$(du -sk python | cut -f1)
-echo "Size after minimal stdlib: $((AFTER_STDLIB / 1024))MB"
-
 echo ""
 echo "======================================"
 echo "AGGRESSIVE OPTIMIZATION"
 echo "======================================"
 
 # Track savings
-SAVINGS_LOG="minimal_stdlib_savings.txt"
-echo "Minimal Stdlib Optimization Report" > $SAVINGS_LOG
-echo "===================================" >> $SAVINGS_LOG
+SAVINGS_LOG="packages_only_savings.txt"
+echo "Packages-Only Optimization Report" > $SAVINGS_LOG
+echo "==================================" >> $SAVINGS_LOG
 echo "" >> $SAVINGS_LOG
 
 # PHASE 1: Standard cleanup (10-15MB)
@@ -97,7 +46,7 @@ find python -name "*.pyc" -delete 2>/dev/null || true
 find python -name "*.pyo" -delete 2>/dev/null || true
 find python -name "*.pyd" -delete 2>/dev/null || true
 AFTER_PHASE1=$(du -sk python | cut -f1)
-PHASE1_SAVED=$(((AFTER_STDLIB - AFTER_PHASE1) / 1024))
+PHASE1_SAVED=$(((INITIAL_SIZE - AFTER_PHASE1) / 1024))
 echo "  Saved: ${PHASE1_SAVED}MB" | tee -a $SAVINGS_LOG
 
 # PHASE 2: Remove all metadata, docs, tests (15-20MB)
@@ -225,11 +174,14 @@ printf "  Phase 8 (Type pkgs):    %4s MB\n" "$PHASE8_SAVED"
 printf "  Phase 9 (Unused pkgs):  %4s MB\n" "$PHASE9_SAVED"
 echo ""
 
-# Check if we're under 150MB (safe target)
-if [ $FINAL_SIZE_MB -le 150 ]; then
-    echo "✅ SUCCESS! Final size ${FINAL_SIZE_MB}MB (target was <150MB)"
+# Check if we're under 100MB (safe target for packages only)
+if [ $FINAL_SIZE_MB -le 100 ]; then
+    echo "✅ SUCCESS! Final size ${FINAL_SIZE_MB}MB (target was <100MB)"
+    echo ""
+    echo "NOTE: This layer uses Lambda's built-in Python 3.11 runtime."
+    echo "No Python binary or stdlib included - only LiteLLM packages."
 else
-    echo "⚠️  Final size ${FINAL_SIZE_MB}MB (target was <150MB)"
+    echo "⚠️  Final size ${FINAL_SIZE_MB}MB (target was <100MB)"
     echo ""
     echo "Additional options to consider:"
     echo "  1. Review largest packages above"

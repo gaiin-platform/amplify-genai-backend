@@ -110,10 +110,10 @@ export function initPythonProcess() {
     processStartTime = Date.now();
 
     // Determine Python path based on environment
-    // In Lambda with layer: /opt/python/bin/python3
+    // In Lambda: Use runtime's Python 3.11 (layer only has packages)
     // Locally: python3
     const isLambda = !!process.env.LAMBDA_TASK_ROOT || !!process.env.AWS_EXECUTION_ENV;
-    const pythonPath = isLambda ? '/opt/python/bin/python3' : 'python3';
+    const pythonPath = isLambda ? '/var/lang/bin/python3.11' : 'python3';
 
     logger.info("[TIMING] Starting persistent Python LiteLLM server", {
         pythonPath,
@@ -125,14 +125,8 @@ export function initPythonProcess() {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
             ...process.env,
-            // Set PYTHONHOME to point to the layer's Python installation
-            PYTHONHOME: isLambda ? '/opt/python' : process.env.PYTHONHOME,
-            // Set PYTHONPATH to include the layer's Python packages
-            PYTHONPATH: isLambda ? '/opt/python' : process.env.PYTHONPATH,
-            // Add layer bin to PATH for any Python binaries
-            PATH: isLambda ? `/opt/python/bin:${process.env.PATH}` : process.env.PATH,
-            // Set LD_LIBRARY_PATH for Python shared libraries
-            LD_LIBRARY_PATH: isLambda ? `/opt/python/lib:${process.env.LD_LIBRARY_PATH || ''}` : process.env.LD_LIBRARY_PATH
+            // Add layer packages to PYTHONPATH (layer has packages only, not Python itself)
+            PYTHONPATH: isLambda ? '/opt/python' : process.env.PYTHONPATH
         }
     });
 

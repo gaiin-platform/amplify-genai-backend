@@ -1,8 +1,8 @@
-Minimal Stdlib Optimization Report
-===================================
+Packages-Only Optimization Report
+==================================
 
-  Saved: 189MB
-  Saved: 31MB
+  Saved: 37MB
+  Saved: 3MB
   Saved: 1MB
   Saved: 0MB
   Saved: 0MB
@@ -12,7 +12,6 @@ Minimal Stdlib Optimization Report
   Saved: 14MB
 
 Largest Packages (Top 20):
- 89M	python/lib
  30M	python/litellm
  22M	python/botocore
  10M	python/tokenizers
@@ -32,3 +31,4 @@ Largest Packages (Top 20):
 708K	python/propcache
 708K	python/fsspec
 612K	python/fastuuid
+532K	python/jinja2
