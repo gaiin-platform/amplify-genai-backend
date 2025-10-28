@@ -1,0 +1,33 @@
+Ultra-Slim Optimization Report
+==============================
+
+  Saved: -3MB
+  Saved: 3MB
+  Saved: 1MB
+  Saved: 0MB
+  Saved: 0MB
+  Saved: 0MB
+  Saved: 0MB ⭐ BIGGEST SAVER
+  Saved: 0MB
+
+Largest Packages (Top 20):
+ 41M	python/lib
+ 30M	python/litellm
+ 22M	python/botocore
+ 21M	python/lib/lib-dynload
+ 21M	python/botocore/data
+ 13M	python/litellm/proxy
+ 10M	python/tokenizers
+8.6M	python/litellm/litellm_core_utils
+7.9M	python/hf_xet
+7.6M	python/litellm/proxy/_experimental
+7.6M	python/litellm/litellm_core_utils/tokenizers
+7.3M	python/litellm/proxy/_experimental/out
+6.2M	python/litellm/proxy/_experimental/out/_next/static
+6.2M	python/litellm/proxy/_experimental/out/_next
+6.2M	python/aiohttp
+6.1M	python/openai
+5.5M	python/litellm/proxy/_experimental/out/_next/static/chunks
+4.8M	python/pydantic_core
+3.9M	python/litellm/llms
+3.6M	python/openai/types
