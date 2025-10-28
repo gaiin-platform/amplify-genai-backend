@@ -110,10 +110,10 @@ export function initPythonProcess() {
     processStartTime = Date.now();
 
     // Determine Python path based on environment
-    // In Lambda: Use runtime's system Python (layer only has packages)
-    // Locally: python3
+    // In Lambda: Use layer's bundled Python interpreter (/opt/python/bin/python3.11)
+    // Locally: python3 (fallback for local development)
     const isLambda = !!process.env.LAMBDA_TASK_ROOT || !!process.env.AWS_EXECUTION_ENV;
-    const pythonPath = isLambda ? 'python3' : 'python3';
+    const pythonPath = isLambda ? '/opt/python/bin/python3.11' : 'python3';
 
     logger.info("[TIMING] Starting persistent Python LiteLLM server", {
         pythonPath,
@@ -125,8 +125,9 @@ export function initPythonProcess() {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
             ...process.env,
-            // Add layer packages to PYTHONPATH (layer has packages only, not Python itself)
-            PYTHONPATH: isLambda ? '/opt/python' : process.env.PYTHONPATH
+            // Set PYTHONHOME and PYTHONPATH for bundled interpreter
+            PYTHONHOME: isLambda ? '/opt/python' : process.env.PYTHONHOME,
+            PYTHONPATH: isLambda ? '/opt/python/lib/python3.11' : process.env.PYTHONPATH
         }
     });
 
