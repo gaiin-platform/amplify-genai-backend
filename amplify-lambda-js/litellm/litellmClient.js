@@ -110,10 +110,10 @@ export function initPythonProcess() {
     processStartTime = Date.now();
 
     // Determine Python path based on environment
-    // In Lambda: Use runtime's Python 3.11 (layer only has packages)
+    // In Lambda: Use runtime's system Python (layer only has packages)
     // Locally: python3
     const isLambda = !!process.env.LAMBDA_TASK_ROOT || !!process.env.AWS_EXECUTION_ENV;
-    const pythonPath = isLambda ? '/var/lang/bin/python3.11' : 'python3';
+    const pythonPath = isLambda ? 'python3' : 'python3';
 
     logger.info("[TIMING] Starting persistent Python LiteLLM server", {
         pythonPath,
