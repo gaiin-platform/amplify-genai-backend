@@ -29,8 +29,8 @@ echo "Python packages installed successfully"
 INITIAL_SIZE=$(du -sk python | cut -f1)
 echo "Initial size after pip install: $((INITIAL_SIZE / 1024))MB"
 
-# Copy Python 3.11 binary and shared libraries from Lambda container (x86_64 architecture)
-echo "Copying Python 3.11 binary and shared libraries (x86_64)..."
+# Copy Python 3.11 binary and standard library from Lambda container (x86_64 architecture)
+echo "Copying Python 3.11 binary, standard library, and shared libraries (x86_64)..."
 docker run --rm --platform linux/amd64 \
   -v $(pwd)/python:/output \
   --entrypoint /bin/bash \
@@ -39,10 +39,13 @@ docker run --rm --platform linux/amd64 \
     # Copy Python binary
     cp /var/lang/bin/python3.11 /output/bin/python3 && chmod +x /output/bin/python3
 
+    # Copy Python standard library (essential for encodings module)
+    mkdir -p /output/lib/python3.11
+    cp -r /var/lang/lib/python3.11/* /output/lib/python3.11/ 2>/dev/null || true
+
     # Copy Python shared libraries
     mkdir -p /output/lib
     cp -r /var/lang/lib/libpython3.11.so* /output/lib/ 2>/dev/null || true
-    cp -r /var/lang/lib/python3.11/lib-dynload /output/lib/ 2>/dev/null || true
 
     # Copy other essential shared libraries that Python depends on
     cp /lib64/libz.so.1 /output/lib/ 2>/dev/null || true
