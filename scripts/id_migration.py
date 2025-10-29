@@ -27,6 +27,7 @@ from s3_data_migration import (
     migrate_code_interpreter_files_bucket_for_user,
     migrate_agent_state_bucket_for_user,
     migrate_group_assistant_conversations_bucket_for_user,
+    cleanup_orphaned_workflow_templates_for_user,
     main as s3_migration_main
 )
 from user_storage_backup import backup_user_storage_table
@@ -3533,8 +3534,18 @@ if __name__ == "__main__":
         
         # Show migration plan based on what exists
         steps_needed = validation_results["migration_steps_needed"]
+        
+        # Check if any user IDs are actually changing for step 1 planning
+        ids_changing = any(old_id != new_id for old_id, new_id in users_map.items())
+        
         log(f"\n=== MIGRATION PLAN ===")
-        log(f"Step 1 - USER_DATA_STORAGE ID migration: {'✅ NEEDED' if steps_needed['user_data_storage_id_migration'] else '⏭️  SKIPPED (table missing)'}")
+        if steps_needed['user_data_storage_id_migration']:
+            if ids_changing:
+                log(f"Step 1 - USER_DATA_STORAGE ID migration: ✅ NEEDED")
+            else:
+                log(f"Step 1 - USER_DATA_STORAGE ID migration: ⏭️  SKIPPED (no ID changes, --no-id-change mode)")
+        else:
+            log(f"Step 1 - USER_DATA_STORAGE ID migration: ⏭️  SKIPPED (table missing)")
         log(f"Step 2 - Old→New table migration: {'✅ NEEDED' if steps_needed['old_to_new_table_migration'] else '⏭️  SKIPPED (tables missing)'}")
         log(f"Step 3 - Per-user table updates: {'✅ NEEDED' if steps_needed['per_user_table_updates'] else '⏭️  SKIPPED (Cognito table missing)'}")
         log(f"Step 4 - S3 migrations: {'✅ NEEDED' if steps_needed['s3_migrations'] else '⏭️  SKIPPED (buckets missing)'}")
@@ -3556,12 +3567,19 @@ if __name__ == "__main__":
         
         # Step 1: Migrate all existing USER_DATA_STORAGE table IDs (while it's at its smallest)
         log(f"\n=== STEP 1: USER_DATA_STORAGE ID MIGRATION ===")
+        
+        # Check if any user IDs are actually changing
+        ids_changing = any(old_id != new_id for old_id, new_id in users_map.items())
+        
         if steps_needed["user_data_storage_id_migration"]:
-            log(f"Migrating all existing IDs in USER_DATA_STORAGE table...")
-            if not migrate_all_user_data_storage_ids(users_map, args.dry_run):
-                log(f"USER_DATA_STORAGE ID migration failed. Continuing...")
+            if ids_changing:
+                log(f"Migrating all existing IDs in USER_DATA_STORAGE table...")
+                if not migrate_all_user_data_storage_ids(users_map, args.dry_run):
+                    log(f"USER_DATA_STORAGE ID migration failed. Continuing...")
+                else:
+                    log(f"USER_DATA_STORAGE ID migration completed successfully.")
             else:
-                log(f"USER_DATA_STORAGE ID migration completed successfully.")
+                log(f"⏭️  Skipping USER_DATA_STORAGE ID migration - no user IDs are changing (--no-id-change mode)")
         else:
             log(f"⏭️  Skipping USER_DATA_STORAGE ID migration - table does not exist")
         
@@ -3843,6 +3861,18 @@ if __name__ == "__main__":
                 if table_exists or bucket_exists:
                     if not update_workflow_templates_table(old_user_id, new_user_id, args.dry_run):
                         log(f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates.")
+                    
+                    # CLEANUP: Check for orphaned workflow files in S3 (files without metadata entries)
+                    if bucket_exists:
+                        log(f"[{old_user_id}] Checking for orphaned workflow templates in S3...")
+                        try:
+                            cleanup_success = cleanup_orphaned_workflow_templates_for_user(old_user_id, new_user_id, args.dry_run, AWS_REGION)
+                            if cleanup_success:
+                                log(f"[{old_user_id}] Orphaned workflow templates cleanup completed successfully")
+                            else:
+                                log(f"[{old_user_id}] Warning: Some issues occurred during orphaned workflow cleanup")
+                        except Exception as cleanup_e:
+                            log(f"[{old_user_id}] Warning: Failed to cleanup orphaned workflows: {cleanup_e}")
                 else:
                     log(f"[{old_user_id}] Skipping workflow templates migration - table and bucket do not exist")
 
