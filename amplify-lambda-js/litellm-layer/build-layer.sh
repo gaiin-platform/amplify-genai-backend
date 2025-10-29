@@ -104,19 +104,11 @@ find python -type d -name "examples" -exec rm -rf {} + 2>/dev/null || true
 find python -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find python -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
 
-# Remove large unnecessary Python stdlib components to stay under 200MB
-echo "Removing unnecessary Python stdlib components..."
+# Remove build config to stay under 200MB (saves 93MB)
+echo "Removing Python build config (not needed at runtime)..."
 rm -rf python/lib/python3.11/config-3.11-x86_64-linux-gnu 2>/dev/null || true  # Build config (93MB)
-rm -rf python/lib/python3.11/site-packages 2>/dev/null || true                # Pip packages (38MB)
-rm -rf python/lib/python3.11/ensurepip 2>/dev/null || true                    # pip installer (3.2MB)
-rm -rf python/lib/python3.11/idlelib 2>/dev/null || true                      # IDLE GUI (1.9MB)
-rm -rf python/lib/python3.11/tkinter 2>/dev/null || true                      # GUI toolkit (380K)
-rm -rf python/lib/python3.11/turtle.py 2>/dev/null || true                    # Turtle graphics (144K)
-rm -rf python/lib/python3.11/turtledemo 2>/dev/null || true                   # Turtle demos (112K)
-rm -rf python/lib/python3.11/lib2to3 2>/dev/null || true                      # 2to3 tool (496K)
-rm -rf python/lib/python3.11/distutils 2>/dev/null || true                    # distutils (700K)
 
-# lib-dynload is already copied separately, so remove duplicate
+# lib-dynload is already copied separately at top level, so remove duplicate
 rm -rf python/lib/python3.11/lib-dynload 2>/dev/null || true
 
 echo "Python stdlib cleanup complete"
