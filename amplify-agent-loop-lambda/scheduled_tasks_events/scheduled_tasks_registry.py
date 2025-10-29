@@ -477,7 +477,7 @@ def delete_scheduled_task(current_user, task_id, access_token):
             # Archive migrated logs from USER_STORAGE_TABLE to consolidation bucket
             if any(log_entry for log_entry in logs if "detailsKey" not in log_entry):
                 try:
-                    app_id = f"{current_user}#amplify-agent-logs"
+                    app_id = "amplify-agent-logs"
                     existing_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
                     
                     if existing_logs_data and "logs" in existing_logs_data:
@@ -617,27 +617,162 @@ def get_task_execution_details(current_user, task_id, execution_id, access_token
             
             if access_token:
                 try:
-                    app_id = f"{current_user}#amplify-agent-logs"
+                    app_id = "amplify-agent-logs"
                     consolidated_logs_data = load_user_data(access_token, app_id, "scheduled-task-logs", task_id)
                     
-                    if consolidated_logs_data and "logs" in consolidated_logs_data:
-                        logs_dict = consolidated_logs_data["logs"]
+                    # Follow USER_STORAGE_TABLE structure: data.logs[executionId]
+                    if consolidated_logs_data:
+                        # Try data.logs first (proper structure), then fallback to direct logs
+                        if "data" in consolidated_logs_data and "logs" in consolidated_logs_data["data"]:
+                            logs_dict = consolidated_logs_data["data"]["logs"]
+                        elif "logs" in consolidated_logs_data:
+                            logs_dict = consolidated_logs_data["logs"]
+                        else:
+                            logs_dict = None
+                        
+                        # DEBUG: Log what we're looking for and what we have
+                        if logs_dict is not None:
+                            logger.debug("Looking for execution_id: '%s'", execution_id)
+                            logger.debug("Available execution_ids in logs_dict: %s", list(logs_dict.keys()))
+                            logger.debug("Total logs in dict: %d", len(logs_dict))
                         
                         # Direct lookup by execution_id in USER_STORAGE_TABLE
-                        if execution_id in logs_dict:
+                        if logs_dict is not None and execution_id in logs_dict:
                             compressed_data = logs_dict[execution_id]
                             
-                            # Decompress only this specific log
-                            if is_lzw_compressed_format(compressed_data):
-                                try:
-                                    execution_record["details"] = lzw_uncompress(compressed_data)
-                                    details_found = True
-                                except Exception as e:
-                                    logger.error("Failed to decompress log data for %s: %s", execution_id, e)
-                                    execution_record["detailsError"] = f"Failed to decompress: {e}"
-                            else:
-                                execution_record["details"] = compressed_data
+                            # DEBUG: Log the compressed data format
+                            logger.debug("Found compressed_data type: %s", type(compressed_data))
+                            logger.debug("Compressed_data sample: %s", str(compressed_data)[:200])
+                            if isinstance(compressed_data, list):
+                                if len(compressed_data) > 0:
+                                    logger.debug("First element type: %s, value: %s", type(compressed_data[0]), compressed_data[0])
+                            
+                            # COMPREHENSIVE DECOMPRESSION LOGIC: Handle multiple data formats
+                            try:
+                                decompressed_data = None
+                                
+                                # CASE 1: String representation of LZW array: "[123, 34, 114, ...]"
+                                if isinstance(compressed_data, str):
+                                    data_stripped = compressed_data.strip()
+                                    
+                                    # Check for string array format
+                                    if data_stripped.startswith('[') and data_stripped.endswith(']'):
+                                        logger.debug("Detected string array format, parsing to actual array")
+                                        try:
+                                            import ast
+                                            # Convert string "[123, 34, ...]" to actual array [123, 34, ...]
+                                            parsed_array = ast.literal_eval(data_stripped)
+                                            if isinstance(parsed_array, list):
+                                                logger.debug("Successfully parsed string array, checking LZW compression")
+                                                # Now check if this array is LZW compressed
+                                                if is_lzw_compressed_format(parsed_array):
+                                                    logger.debug("Parsed array is LZW compressed, decompressing")
+                                                    decompressed_data = lzw_uncompress(parsed_array)
+                                                else:
+                                                    logger.debug("Parsed array is not LZW compressed, using as-is")
+                                                    decompressed_data = parsed_array
+                                            else:
+                                                logger.warning("Parsed data is not a list: %s", type(parsed_array))
+                                                decompressed_data = compressed_data
+                                        except (ValueError, SyntaxError) as e:
+                                            logger.warning("Failed to parse string array: %s", e)
+                                            decompressed_data = compressed_data
+                                    
+                                    # Check for Python dict string format: "{'key': 'value', ...}"
+                                    elif (data_stripped.startswith("{'") and data_stripped.endswith("'}") and 
+                                          "': " in data_stripped):
+                                        logger.debug("Detected Python dict string, parsing")
+                                        try:
+                                            import ast
+                                            decompressed_data = ast.literal_eval(data_stripped)
+                                            logger.debug("Successfully parsed Python dict string")
+                                        except (ValueError, SyntaxError) as e:
+                                            logger.warning("DEBUG: Failed to parse Python dict string: %s", e)
+                                            decompressed_data = compressed_data
+                                    else:
+                                        # Regular string, use as-is
+                                        logger.debug("Regular string data, using as-is")
+                                        decompressed_data = compressed_data
+                                
+                                # CASE 2: Already a list/array, check LZW compression directly
+                                elif isinstance(compressed_data, (list, tuple)):
+                                    logger.debug("Data is already array/list, checking LZW compression")
+                                    
+                                    # CRITICAL FIX: Convert floats to ints (DynamoDB deserializes numbers as floats)
+                                    if all(isinstance(x, (int, float)) for x in compressed_data):
+                                        logger.debug("Converting float array to integer array for LZW check")
+                                        int_array = [int(x) for x in compressed_data]
+                                        
+                                        if is_lzw_compressed_format(int_array):
+                                            logger.debug("Array is LZW compressed, decompressing")
+                                            decompressed_data = lzw_uncompress(int_array)
+                                        else:
+                                            logger.debug("Array is not LZW compressed, using as-is")
+                                            decompressed_data = compressed_data
+                                    else:
+                                        logger.debug("Array contains non-numeric data, using as-is")
+                                        decompressed_data = compressed_data
+                                
+                                # CASE 3: Other data types (dict, etc.), use as-is
+                                else:
+                                    logger.debug("Data type %s, using as-is", type(compressed_data))
+                                    decompressed_data = compressed_data
+                                
+                                # NORMALIZATION: Re-save data if we converted string array to proper array for consistency
+                                should_normalize = False
+                                normalized_compressed_data = None
+                                
+                                if isinstance(compressed_data, str) and isinstance(decompressed_data, (list, dict)):
+                                    # We converted a string representation to actual data structure
+                                    data_stripped = compressed_data.strip()
+                                    if data_stripped.startswith('[') and data_stripped.endswith(']'):
+                                        # Convert string array to proper integer array for storage consistency
+                                        try:
+                                            parsed_array = ast.literal_eval(data_stripped)
+                                            if isinstance(parsed_array, list) and all(isinstance(x, (int, float)) for x in parsed_array):
+                                                # Normalize to integer array
+                                                normalized_compressed_data = [int(x) for x in parsed_array]
+                                                should_normalize = True
+                                                logger.debug("NORMALIZATION: String array will be converted to integer array for consistency")
+                                        except (ValueError, SyntaxError):
+                                            pass  # Keep original if parsing fails
+                                
+                                # Set the final result
+                                execution_record["details"] = decompressed_data
                                 details_found = True
+                                logger.debug("Successfully processed log data for execution %s", execution_id)
+                                
+                                # Re-save normalized data for consistency going forward
+                                if should_normalize and normalized_compressed_data is not None and access_token:
+                                    try:
+                                        logger.debug("NORMALIZATION: Re-saving normalized data for execution %s", execution_id)
+                                        
+                                        # Update the logs dictionary with normalized data
+                                        if logs_dict is not None:
+                                            logs_dict[execution_id] = normalized_compressed_data
+                                            
+                                            # Save the updated logs dictionary back to USER_STORAGE_TABLE
+                                            consolidated_data = {
+                                                "taskId": task_id,
+                                                "user": current_user,
+                                                "logs": logs_dict
+                                            }
+                                            
+                                            from pycommon.api.user_data import save_user_data
+                                            save_result = save_user_data(access_token, app_id, "scheduled-task-logs", task_id, consolidated_data)
+                                            
+                                            if save_result:
+                                                logger.debug("NORMALIZATION: Successfully updated logs with normalized data for task %s", task_id)
+                                            else:
+                                                logger.warning("NORMALIZATION: Failed to save normalized data for task %s", task_id)
+                                    except Exception as norm_e:
+                                        logger.warning("NORMALIZATION: Failed to normalize data for %s: %s", execution_id, norm_e)
+                                
+                            except Exception as e:
+                                logger.error("Failed to process log data for %s: %s", execution_id, e)
+                                execution_record["detailsError"] = f"Failed to process log data: {e}"
+                        else:
+                            logger.warning("DEBUG: execution_id '%s' not found in logs_dict keys", execution_id)
                                 
                 except Exception as e:
                     logger.error("Error fetching migrated execution details from USER_STORAGE_TABLE: %s", e)

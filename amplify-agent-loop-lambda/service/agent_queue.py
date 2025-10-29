@@ -72,6 +72,14 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                 "Final agent results: %s", json.dumps(result, separators=(',', ':'))
                             )
                             handler.onSuccess(agent_input_event, result)
+                        else:
+                            # Handle case when fat container returns handled=False
+                            error_msg = response.get("error", "Agent failed to handle event")
+                            logger.error("Agent failed to handle event: %s", error_msg)
+                            handler.onFailure(
+                                agent_input_event,
+                                Exception(f"Agent failed to handle event: {error_msg}")
+                            )
                     else:
                         handler.onFailure(
                             agent_input_event, Exception("No result from handler")
