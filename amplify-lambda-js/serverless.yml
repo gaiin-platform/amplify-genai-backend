@@ -8,8 +8,8 @@ plugins:
 
 layers:
   pythonLiteLLM:
-    path: litellm-layer/layer-build-arm64/layer
-    name: ${self:service}-${sls:stage}-python-litellm-arm64
+    path: litellm-layer/python
+    name: ${self:service}-${sls:stage}-python-litellm
     description: Python 3.11 runtime with LiteLLM (python-build-standalone) for Node.js Lambda
     compatibleRuntimes:
       - nodejs22.x
@@ -44,7 +44,7 @@ custom:
 provider:
   name: aws
   runtime: nodejs22.x
-  architecture: arm64
+  architecture: x86_64
   stage: ${opt:stage, 'dev'}
   region: ${self:custom.stageVars.DEP_REGION}
   versionFunctions: false
@@ -58,8 +58,8 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
-    PYTHONHOME: /opt/python
-    PYTHONPATH: /opt/python/lib/python3.11
+    PYTHONHOME: /opt
+    PYTHONPATH: /opt
     NODE_OPTIONS: "--enable-source-maps"
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
