@@ -47,6 +47,53 @@ def _float_to_decimal(data):
     return json.loads(json.dumps(data), parse_float=Decimal)
 
 
+def _fix_python_dict_strings_in_data(data):
+    """
+    MIGRATION CORRUPTION FIX: Recursively detect and parse Python dict strings in data structure.
+    This prevents Python dict strings from being stored as strings in USER_STORAGE_TABLE.
+    
+    Detects patterns like: "{'key': 'value'}" and converts them to proper dict objects.
+    """
+    if isinstance(data, dict):
+        # Recursively process all values in dictionary
+        fixed_dict = {}
+        for key, value in data.items():
+            fixed_dict[key] = _fix_python_dict_strings_in_data(value)
+        return fixed_dict
+    elif isinstance(data, list):
+        # Process each item in list (this is where workflow steps corruption happens)
+        fixed_list = []
+        for item in data:
+            if isinstance(item, str):
+                # Check if this string looks like a Python dict representation
+                item_stripped = item.strip()
+                if (item_stripped.startswith("{'") and item_stripped.endswith("'}") and 
+                    "': " in item_stripped and item_stripped.count("'") >= 4):
+                    try:
+                        import ast
+                        # Safely parse the Python dict string to an actual dict
+                        parsed_item = ast.literal_eval(item_stripped)
+                        if isinstance(parsed_item, dict):
+                            print(f"[MIGRATION FIX] Converted Python dict string to object: {item_stripped[:50]}...")
+                            # Recursively fix any nested Python dict strings
+                            fixed_list.append(_fix_python_dict_strings_in_data(parsed_item))
+                        else:
+                            fixed_list.append(item)  # Keep original if not dict
+                    except (ValueError, SyntaxError) as e:
+                        print(f"[MIGRATION WARNING] Failed to parse potential dict string: {str(e)[:50]}...")
+                        fixed_list.append(item)  # Keep original on parse error
+                else:
+                    # Regular string, keep as-is
+                    fixed_list.append(item)
+            else:
+                # Non-string item, recursively process
+                fixed_list.append(_fix_python_dict_strings_in_data(item))
+        return fixed_list
+    else:
+        # Primitive type (string, number, boolean, null), return as-is
+        return data
+
+
 def _create_hash_key(current_user, app_id):
     """Create a secure hash key combining user and app_id"""
     if not current_user or not app_id:
@@ -54,6 +101,22 @@ def _create_hash_key(current_user, app_id):
 
     if not isinstance(current_user, str) or not isinstance(app_id, str):
         raise ValueError("Both current_user and app_id must be strings")
+
+    # CRITICAL BUG PREVENTION: Detect if we're being called with old email-format user ID
+    # This prevents malformed entries like "allen-karns-vanderbilt-edu-amplify-workflows#workflow-templates"
+    if "@" in current_user and any(char in current_user for char in [".", "+"]):
+        print(f"[WARNING] _create_hash_key called with email-format user ID: {current_user}")
+        print(f"[WARNING] This may indicate a migration bug - user IDs should be converted to new format first")
+        print(f"[WARNING] app_id: {app_id}")
+        # Still proceed but log the issue for investigation
+    
+    # CRITICAL BUG PREVENTION: Detect if app_id contains old user ID format
+    # Pattern: "old-user-id-sanitized-app-name" instead of just "app-name"
+    if any(email_pattern in app_id for email_pattern in ["-vanderbilt-edu", "-gmail-com", "-edu", "@"]):
+        print(f"[ERROR] _create_hash_key called with corrupted app_id containing user ID: {app_id}")
+        print(f"[ERROR] current_user: {current_user}")
+        print(f"[ERROR] This indicates a serious migration bug - app_id should only be the app name")
+        raise ValueError(f"Corrupted app_id detected: {app_id}. app_id should only contain the app name (e.g., 'amplify-workflows'), not user ID information.")
 
     # Allow underscore in email part, replace other unsafe chars with dash
     sanitized_user = re.sub(r"[^a-zA-Z0-9@._-]", "-", current_user)
@@ -702,6 +765,11 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
         )
         workflow_content = json.loads(s3_response['Body'].read().decode('utf-8'))
         
+        # CRITICAL FIX: Clean up Python dict strings in the content before storing
+        # This prevents future corruption by fixing the data at the migration source
+        log(f"Cleaning Python dict strings from workflow content for template: {template_uuid}")
+        workflow_content = _fix_python_dict_strings_in_data(workflow_content)
+        
         # Store in USER_STORAGE_TABLE using template_uuid directly
         # CONSISTENT WITH workflow_template_registry.py: use same app_id pattern  
         app_id = _create_hash_key(new_id, "amplify-workflows")
@@ -735,6 +803,180 @@ def migrate_workflow_templates_bucket_for_user(old_id: str, new_id: str, dry_run
     except Exception as e:
         log(f"Error migrating workflow template for user ID from {old_id} to {new_id}: {e}")
         return (False, None)
+
+
+def cleanup_orphaned_workflow_templates_for_user(old_id: str, new_id: str, dry_run: bool = False, region: str = "us-east-1") -> bool:
+    """
+    Clean up orphaned workflow templates - S3 files that exist but have no metadata entries.
+    This handles cases where workflow files exist in S3 but were never properly registered
+    or where metadata was lost during testing/migration.
+    
+    Args:
+        old_id: Old user identifier
+        new_id: New user identifier 
+        dry_run: If True, show what would be cleaned up without making changes
+        region: AWS region
+        
+    Returns:
+        bool: True if cleanup was successful, False otherwise
+    """
+    from datetime import datetime
+    import boto3
+    
+    msg = f"[cleanup_orphaned_workflow_templates_for_user][dry-run: {dry_run}] %s"
+    
+    def log(*messages):
+        for message in messages:
+            print(f"[{datetime.now()}] {msg % message}")
+    
+    try:
+        if not WORKFLOW_TEMPLATES_BUCKET:
+            log("WORKFLOW_TEMPLATES_BUCKET not configured, skipping orphaned workflow cleanup")
+            return True
+            
+        # Initialize clients
+        s3_client = boto3.client('s3', region_name=region)
+        dynamodb_client = boto3.client('dynamodb', region_name=region)
+        
+        # Get all workflow files from S3 for this user
+        s3_workflows = []
+        prefix = f"{old_id}/"
+        
+        try:
+            paginator = s3_client.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=WORKFLOW_TEMPLATES_BUCKET, Prefix=prefix):
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        if obj['Key'].endswith('.json'):
+                            filename = obj['Key'].split('/')[-1]
+                            template_id = filename.replace('.json', '')
+                            s3_workflows.append({
+                                's3_key': obj['Key'],
+                                'template_id': template_id,
+                                'size': obj['Size'],
+                                'last_modified': obj['LastModified']
+                            })
+        except ClientError as s3_e:
+            if s3_e.response['Error']['Code'] == 'NoSuchBucket':
+                log(f"Workflow templates bucket does not exist, skipping orphaned cleanup")
+                return True
+            else:
+                log(f"Error listing S3 workflows: {s3_e}")
+                return False
+        
+        if not s3_workflows:
+            log(f"No S3 workflow files found for user {old_id}")
+            return True
+            
+        log(f"Found {len(s3_workflows)} workflow files in S3 for user {old_id}")
+        
+        # Get all template IDs that have metadata entries
+        metadata_template_ids = set()
+        try:
+            # Query the WORKFLOW_TEMPLATES_TABLE to get known template IDs
+            workflow_templates_table_name = CONFIG.get("WORKFLOW_TEMPLATES_TABLE")
+            if not workflow_templates_table_name:
+                log("WORKFLOW_TEMPLATES_TABLE not configured, treating all S3 workflows as orphaned")
+            else:
+                response = dynamodb_client.query(
+                    TableName=workflow_templates_table_name,
+                    KeyConditionExpression="#user = :user",
+                    ExpressionAttributeNames={"#user": "user"},
+                    ExpressionAttributeValues={":user": {"S": old_id}}
+                )
+                
+                for item in response.get('Items', []):
+                    template_id = item.get('templateId', {}).get('S', '')
+                    if template_id:
+                        metadata_template_ids.add(template_id)
+                        
+                log(f"Found {len(metadata_template_ids)} templates with metadata entries")
+        except Exception as metadata_e:
+            log(f"Warning: Could not query metadata table: {metadata_e}")
+            log("Proceeding to migrate all S3 workflows as potentially orphaned")
+        
+        # Find truly orphaned workflows (S3 files without metadata)
+        orphaned_workflows = []
+        for workflow in s3_workflows:
+            if workflow['template_id'] not in metadata_template_ids:
+                orphaned_workflows.append(workflow)
+        
+        if not orphaned_workflows:
+            log("No orphaned workflows found - all S3 workflows have corresponding metadata")
+            return True
+        
+        log(f"Found {len(orphaned_workflows)} orphaned workflows to migrate:")
+        for workflow in orphaned_workflows:
+            log(f"  - {workflow['template_id']} ({workflow['s3_key']}, {workflow['size']} bytes)")
+        
+        if dry_run:
+            log("DRY RUN: Would migrate these orphaned workflows to USER_DATA_STORAGE_TABLE")
+            return True
+        
+        # Migrate orphaned workflows to USER_DATA_STORAGE_TABLE
+        dynamodb = boto3.resource('dynamodb', region_name=region)
+        user_storage_table = dynamodb.Table(USER_STORAGE_TABLE)
+        
+        success_count = 0
+        for workflow in orphaned_workflows:
+            try:
+                s3_key = workflow['s3_key']
+                template_id = workflow['template_id']
+                
+                log(f"Migrating orphaned workflow: {template_id}")
+                
+                # Download workflow content from S3
+                response = s3_client.get_object(Bucket=WORKFLOW_TEMPLATES_BUCKET, Key=s3_key)
+                workflow_content = json.loads(response['Body'].read().decode('utf-8'))
+                
+                # CRITICAL FIX: Clean up Python dict strings in orphaned workflow content  
+                log(f"Cleaning Python dict strings from orphaned workflow: {template_id}")
+                workflow_content = _fix_python_dict_strings_in_data(workflow_content)
+                
+                # Create USER_DATA_STORAGE_TABLE entry using same pattern as normal migration
+                app_id = _create_hash_key(new_id, "amplify-workflows")
+                pk = f"{app_id}#workflow-templates"
+                
+                user_storage_item = {
+                    "PK": pk,
+                    "SK": template_id,
+                    "appId": app_id,
+                    "entityType": "workflow-templates",
+                    "UUID": str(uuid.uuid4()),
+                    "createdAt": int(time.time()),
+                    "data": _float_to_decimal(workflow_content)
+                }
+                
+                # Check if already exists
+                existing_response = user_storage_table.get_item(
+                    Key={"PK": pk, "SK": template_id}
+                )
+                
+                if 'Item' in existing_response:
+                    log(f"Workflow {template_id} already exists in USER_DATA_STORAGE_TABLE, skipping")
+                else:
+                    # Save to USER_DATA_STORAGE_TABLE
+                    user_storage_table.put_item(Item=user_storage_item)
+                    log(f"SUCCESS: Migrated orphaned workflow {template_id} to USER_DATA_STORAGE_TABLE")
+                
+                # Delete from S3 after successful migration
+                try:
+                    s3_client.delete_object(Bucket=WORKFLOW_TEMPLATES_BUCKET, Key=s3_key)
+                    log(f"Cleaned up S3 file: {s3_key}")
+                except Exception as delete_e:
+                    log(f"Warning: Failed to delete S3 file {s3_key}: {delete_e}")
+                
+                success_count += 1
+                
+            except Exception as migrate_e:
+                log(f"ERROR: Failed to migrate orphaned workflow {workflow['template_id']}: {migrate_e}")
+        
+        log(f"Orphaned workflow cleanup complete: {success_count}/{len(orphaned_workflows)} workflows processed")
+        return success_count == len(orphaned_workflows)
+        
+    except Exception as e:
+        log(f"Unexpected error during orphaned workflow cleanup: {e}")
+        return False
 
 
 
@@ -1132,6 +1374,9 @@ def _process_single_artifact(artifact_metadata: dict, old_id: str, new_id: str, 
         # Download S3 content for analysis/migration
         s3_response = s3_client.get_object(Bucket=S3_ARTIFACTS_BUCKET, Key=old_key)
         artifact_content = json.loads(s3_response['Body'].read().decode('utf-8'))
+        
+        # CRITICAL FIX: Clean up Python dict strings in artifact content before storing
+        artifact_content = _fix_python_dict_strings_in_data(artifact_content)
         
         if dry_run:
             # Return analysis info
