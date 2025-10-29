@@ -8,7 +8,7 @@ plugins:
 
 layers:
   pythonLiteLLM:
-    path: ../../layer-build-arm64/layer
+    path: litellm-layer/layer-build-arm64/layer
     name: ${self:service}-${sls:stage}-python-litellm-arm64
     description: Python 3.11 runtime with LiteLLM (python-build-standalone) for Node.js Lambda
     compatibleRuntimes:
