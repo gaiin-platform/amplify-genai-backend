@@ -58,6 +58,10 @@ docker run --rm --platform linux/amd64 \
     cp -r /var/lang/lib/libpython3.11.so* /output/lib/ 2>/dev/null || true
     cp -r /var/lang/lib/python3.11/lib-dynload /output/lib/ 2>/dev/null || true
 
+    # Copy Python standard library
+    mkdir -p /output/lib/python3.11
+    cp -r /var/lang/lib/python3.11/* /output/lib/python3.11/ 2>/dev/null || true
+
     # Copy other essential shared libraries that Python depends on
     cp /lib64/libz.so.1 /output/lib/ 2>/dev/null || true
     cp /lib64/libexpat.so.1 /output/lib/ 2>/dev/null || true
@@ -100,6 +104,14 @@ find python -type d -name "examples" -exec rm -rf {} + 2>/dev/null || true
 find python -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find python -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
 
+# Remove build config to stay under 200MB (saves 93MB)
+echo "Removing Python build config (not needed at runtime)..."
+rm -rf python/lib/python3.11/config-3.11-x86_64-linux-gnu 2>/dev/null || true  # Build config (93MB)
+
+# lib-dynload is already copied separately at top level, so remove duplicate
+rm -rf python/lib/python3.11/lib-dynload 2>/dev/null || true
+
+echo "Python stdlib cleanup complete"
 echo "Final cleanup complete"
 
 # Show layer size and breakdown
