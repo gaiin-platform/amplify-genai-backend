@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 const execFileAsync = promisify(execFile);
 
 // Use explicit path to Python interpreter from the layer
-const PY = "/opt/python/bin/python3.11";
+const PY = "/opt/bin/python3.11";
 
 /**
  * Execute Python code safely in Lambda environment
@@ -24,8 +24,8 @@ export async function runPython(code, extraEnv = {}) {
       env: {
         ...process.env,
         ...extraEnv,
-        PYTHONHOME: "/opt/python",
-        PYTHONPATH: "/opt/python/lib/python3.11"
+        PYTHONHOME: "/opt",
+        PYTHONPATH: "/opt"
       },
       maxBuffer: 1_000_000
     });
