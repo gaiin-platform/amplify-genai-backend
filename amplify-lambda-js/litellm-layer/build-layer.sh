@@ -58,6 +58,10 @@ docker run --rm --platform linux/amd64 \
     cp -r /var/lang/lib/libpython3.11.so* /output/lib/ 2>/dev/null || true
     cp -r /var/lang/lib/python3.11/lib-dynload /output/lib/ 2>/dev/null || true
 
+    # Copy Python standard library
+    mkdir -p /output/lib/python3.11
+    cp -r /var/lang/lib/python3.11/* /output/lib/python3.11/ 2>/dev/null || true
+
     # Copy other essential shared libraries that Python depends on
     cp /lib64/libz.so.1 /output/lib/ 2>/dev/null || true
     cp /lib64/libexpat.so.1 /output/lib/ 2>/dev/null || true
