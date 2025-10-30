@@ -1,6 +1,4 @@
-{
-  "_comment": "REMOVED: openai (^4.23.0) and @azure/openai (^2.0.0-beta.1) - unused, using LiteLLM via Python subprocess",
-  "engines": {
+{ "engines": {
     "node": ">=22.0.0"
   },
   "devDependencies": {
@@ -17,6 +15,7 @@
     "@aws-sdk/lib-dynamodb": "^3.648.0",
     "@aws-sdk/s3-request-presigner": "^3.802.0",
     "@aws-sdk/util-dynamodb": "^3.478.0",
+    "@azure/openai": "^2.0.0-beta.1",
     "@dqbd/tiktoken": "^1.0.15",
     "aws-jwt-verify": "^4.0.0",
     "aws-xray-sdk": "^3.10.3",
@@ -26,6 +25,7 @@
     "dotenv": "^16.4.5",
     "handlebars": "^4.7.8",
     "js-yaml": "^4.1.0",
+    "openai": "^4.23.0",
     "tiny-lru": "^11.2.5",
     "uuid": "^9.0.1"
   },
