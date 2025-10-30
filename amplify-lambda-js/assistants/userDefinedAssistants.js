@@ -638,7 +638,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         ...dataSourceOptions,
                         prompt: instructions,
                         skipDocumentCache: true, // always rag documents for now
-                        skipRag: assistant.skipRag
+                        skipRag: assistant.skipRag,
+                        groupType: groupType // Preserve groupType for conversation analysis
                     }
                 };
             

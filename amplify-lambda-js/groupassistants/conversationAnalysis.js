@@ -109,11 +109,38 @@ async function writeToGroupAssistantConversations(conversationId, assistantId, a
         Item: item
     };
 
+    logger.debug('🗃️ Preparing DynamoDB write operation', {
+        conversationId,
+        tableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE,
+        itemKeys: Object.keys(item),
+        hasOptionalFields: {
+            employeeType: employeeType !== undefined,
+            entryPoint: entryPoint !== undefined,
+            category: category !== undefined,
+            systemRating: systemRating !== undefined
+        }
+    });
+
     try {
         await docClient.send(new PutCommand(params));
-        logger.debug(`Successfully wrote conversation data to DynamoDB for conversationId: ${conversationId}`);
+        logger.info(`✅ Successfully wrote conversation data to DynamoDB`, {
+            conversationId,
+            assistantId,
+            user,
+            category,
+            systemRating,
+            s3Location
+        });
     } catch (error) {
-        logger.debug(`Error writing to DynamoDB: ${error}`);
+        logger.error(`❌ Error writing to DynamoDB`, {
+            conversationId,
+            assistantId,
+            user,
+            error: error.message,
+            stack: error.stack,
+            tableName: process.env.GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE
+        });
+        throw error; // Re-throw to allow proper error handling upstream
     }
 }
 
@@ -140,6 +167,15 @@ const defaultAnalysisSchema = {
 };
 
 export async function analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    logger.info('📊 Starting conversation analysis and recording', {
+        conversationId: chatRequest?.options?.conversationId,
+        assistantId: chatRequest?.options?.assistantId,
+        user: account?.user,
+        performCategoryAnalysis,
+        llmResponseType: typeof llmResponse,
+        llmResponseLength: typeof llmResponse === 'string' ? llmResponse.length : 0
+    });
+
     const user = account.user
     const data = chatRequest.options;
     const conversationId = data.conversationId;
@@ -148,23 +184,39 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const modelUsed = data.model.id;
     const advancedModel = data.advancedModel;
     const numberPrompts = data.numberPrompts || 0; // Use the numberPrompts from options, default to 0 if not set
-    logger.debug(`Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
+    logger.debug(`📈 Conversation metadata extracted`, {
+        conversationId,
+        assistantId,
+        assistantName,
+        modelUsed,
+        advancedModel: advancedModel?.id || advancedModel,
+        numberPrompts,
+        numberPromptsFromOptions: data.numberPrompts,
+        user
+    });
     const employeeType = data.groupType;
     const entryPoint = data.source || "Amplify";
 
-    // Only get categories if category analysis is enabled
-    const categories = performCategoryAnalysis ? (data.analysisCategories || []) : [];
+    // Always get categories from options, regardless of performCategoryAnalysis flag
+    const categories = data.analysisCategories || [];
     const hasCategories = categories.length > 0;
+    
+    logger.debug('📋 Category analysis configuration', {
+        conversationId,
+        performCategoryAnalysis,
+        hasCategories,
+        categoriesCount: categories.length,
+        categories: hasCategories ? categories : 'none'
+    });
 
-    // Create a modified schema based on whether category analysis is enabled
+    // Create analysis schema - always include system rating, include category only if categories provided
     let analysisSchema;
-    if (performCategoryAnalysis) {
+    if (hasCategories) {
+        // Include both category and system rating
         analysisSchema = { ...defaultAnalysisSchema };
-        if (hasCategories) {
-            analysisSchema.properties.category.enum = categories;
-        }
+        analysisSchema.properties.category.enum = categories;
     } else {
-        // If category analysis is disabled, remove the category field from the schema
+        // Only system rating, no category
         analysisSchema = {
             type: "object",
             properties: {
@@ -187,21 +239,52 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const userPrompt = chatRequest.messages[chatRequest.messages.length - 1].content;
 
     const content = `User Prompt:\n${userPrompt}\nAI Response:\n${llmResponse}\n`;
+    
+    logger.debug('📝 Content prepared for S3 upload', {
+        conversationId,
+        userPromptLength: userPrompt?.length || 0,
+        userPromptPreview: userPrompt?.substring(0, 100) + '...',
+        llmResponseLength: typeof llmResponse === 'string' ? llmResponse.length : 0,
+        llmResponsePreview: typeof llmResponse === 'string' ? llmResponse.substring(0, 100) + '...' : llmResponse,
+        totalContentLength: content.length,
+        hasUserPrompt: !!userPrompt,
+        hasLlmResponse: !!llmResponse
+    });
+
+    logger.info('☁️ Uploading conversation to S3', {
+        conversationId,
+        assistantId,
+        contentLength: content.length
+    });
 
     const s3Location = await uploadToS3(assistantId, conversationId, content);
+    
+    logger.debug('✅ S3 upload completed', {
+        conversationId,
+        s3Location,
+        contentLength: content.length
+    });
 
-    if (performCategoryAnalysis) {
-        logger.debug("Peforming AI Analysis on conversation");
+    // Always perform AI analysis (system rating + optional category analysis)
+    logger.info("🤖 Starting AI Analysis on conversation", {
+        conversationId,
+        assistantId,
+        hasCategories,
+        categories: categories.length > 0 ? categories : 'none',
+        advancedModel: advancedModel?.id || advancedModel,
+        analysisType: hasCategories ? 'rating + category' : 'rating only'
+    });
 
-        const model = advancedModel;
+    const model = advancedModel;
 
-        const analysisPrompt = performCategoryAnalysis
-            ? `Analyze the following conversation and determine its ${hasCategories ? "category and " : ""}system rating:
+    try {
+        const analysisPrompt = hasCategories
+                ? `Analyze the following conversation and determine its category and system rating:
 Prompt: ${userPrompt}
 AI Response: ${llmResponse}
-${hasCategories ? `Available categories: ${categories.join(', ')}
-Choose the most appropriate category from this list. ` : ""}Provide ${hasCategories ? "a category from the available categories and " : ""}a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`
-            : `Analyze the following conversation and determine its system rating:
+Available categories: ${categories.join(', ')}
+Choose the most appropriate category from this list and provide a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`
+                : `Analyze the following conversation and determine its system rating:
 Prompt: ${userPrompt}
 AI Response: ${llmResponse}
 Provide a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`;
@@ -210,8 +293,8 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
             messages: [
                 {
                     role: "system",
-                    content: performCategoryAnalysis
-                        ? `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to ${hasCategories ? "categorize the conversation and " : ""}rate the quality of the AI response.${hasCategories ? ` When categorizing, you must choose from the provided list of categories only.` : ""}`
+                    content: hasCategories
+                        ? `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to categorize the conversation and rate the quality of the AI response. When categorizing, you must choose from the provided list of categories only.`
                         : `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to rate the quality of the AI response.`
                 },
                 {
@@ -226,8 +309,7 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
             }
         };
 
-        try {
-            const analysisResult = await promptUnifiedLLMForData(
+        const analysisResult = await promptUnifiedLLMForData(
                 {
                     account,
                     options: {
@@ -236,7 +318,7 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                     }
                 },
                 updatedChatBody.messages,
-                performCategoryAnalysis ? {
+                hasCategories ? {
                     type: "object",
                     properties: {
                         category: {
@@ -274,17 +356,25 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                     if (!isNaN(systemRating) && systemRating >= 1 && systemRating <= 5) {
                         analysis = { systemRating };
                         
-                        // Only validate category if category analysis is enabled
-                        if (performCategoryAnalysis) {
+                        // Only validate category if categories were provided
+                        if (hasCategories) {
                             if (analysisResult.category) {
-                                // Validate category against allowed values if we have them
-                                if (!hasCategories || categories.includes(analysisResult.category)) {
+                                // Validate category against allowed values
+                                if (categories.includes(analysisResult.category)) {
                                     analysis.category = analysisResult.category;
                                 } else {
-                                    logger.error("Invalid category:", analysisResult.category);
+                                    logger.error("❌ Invalid category received from analysis", {
+                                        conversationId,
+                                        receivedCategory: analysisResult.category,
+                                        validCategories: categories
+                                    });
                                 }
                             } else {
-                                logger.error("Missing category in analysis result");
+                                logger.error("❌ Missing category in analysis result when categories expected", {
+                                    conversationId,
+                                    hasCategories,
+                                    expectedCategories: categories
+                                });
                             }
                         }
                     } else {
@@ -297,14 +387,44 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
 
             // Handle case where analysis failed
             if (!analysis) {
-                logger.error("Error analyzing conversation, skipping analysis..");
+                logger.error("❌ AI Analysis failed, skipping conversation recording", {
+                    conversationId,
+                    assistantId,
+                    user: userEmail
+                });
                 return;
             }
 
             // Extract relevant values from analysis
             const systemRating = analysis.systemRating;
-            // Only use category if category analysis is enabled
-            const category = performCategoryAnalysis ? (analysis.category || null) : null;
+            // Only use category if categories were provided and analysis included one
+            const category = hasCategories ? (analysis.category || null) : null;
+            
+            logger.info("✅ AI Analysis completed successfully", {
+                conversationId,
+                assistantId,
+                user: userEmail,
+                analysisResults: {
+                    systemRating,
+                    category: category || 'none'
+                },
+                performCategoryAnalysis,
+                hasCategories
+            });
+
+            logger.info('💾 Writing analysis results to DynamoDB', {
+                conversationId,
+                assistantId,
+                assistantName,
+                modelUsed,
+                numberPrompts,
+                userEmail,
+                s3Location,
+                employeeType,
+                entryPoint,
+                category,
+                systemRating
+            });
 
             await writeToGroupAssistantConversations(
                 conversationId,
@@ -321,25 +441,24 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                     systemRating: systemRating
                 }
             );
-        } catch (error) {
-            logger.debug('Error analyzing or recording conversation:', error);
-        }
-    }
-    else {
-        logger.debug("Skipping AI Analysis on conversation");
-        try {
-            await writeToGroupAssistantConversations(
+            
+            logger.info('🎉 Conversation analysis completed successfully', {
                 conversationId,
                 assistantId,
-                assistantName,
-                modelUsed,
-                numberPrompts,
-                userEmail,
+                user: userEmail,
+                category,
+                systemRating,
                 s3Location
-            );
-        } catch (error) {
-            logger.debug('Error analyzing or recording conversation:', error);
-        }
+            });
+    } catch (error) {
+        logger.error('❌ Error during conversation analysis pipeline', {
+            conversationId,
+            assistantId,
+            user: userEmail,
+            error: error.message,
+            stack: error.stack
+        });
+        throw error; // Re-throw to allow proper error handling upstream
     }
 }
 
@@ -435,25 +554,72 @@ export async function queueConversationAnalysisWithFallback(chatRequest, llmResp
  * ✅ SQS PROCESSOR: Handler for async conversation analysis processing
  */
 export const sqsProcessorHandler = async (event) => {
-    logger.debug('Processing conversation analysis from SQS', { recordCount: event.Records?.length });
+    const startTime = Date.now();
+    logger.info('🚀 Starting SQS conversation analysis processing', { 
+        recordCount: event.Records?.length,
+        eventSource: event.Records?.[0]?.eventSource,
+        timestamp: new Date().toISOString()
+    });
 
     const results = [];
+    let processedCount = 0;
+    let errorCount = 0;
     
     for (const record of event.Records || []) {
+        const recordStartTime = Date.now();
+        logger.debug('📥 Processing SQS record', {
+            messageId: record.messageId,
+            receiptHandle: record.receiptHandle?.substring(0, 20) + '...',
+            approximateReceiveCount: record.attributes?.ApproximateReceiveCount,
+            sentTimestamp: record.attributes?.SentTimestamp,
+            messageSize: record.body?.length
+        });
+        
         try {
+            // Parse message body
+            logger.debug('📄 Parsing message body', { messageId: record.messageId });
             const messageBody = JSON.parse(record.body);
             
             const {
                 chatRequest,
                 llmResponse, 
                 account,
-                performCategoryAnalysis = true
+                performCategoryAnalysis = true,
+                queuedAt
             } = messageBody;
             
-            logger.debug('Processing conversation analysis for request', {
+            // Validate required data
+            logger.debug('🔍 Validating conversation data', {
+                messageId: record.messageId,
+                hasChatRequest: !!chatRequest,
+                hasLlmResponse: !!llmResponse,
+                hasAccount: !!account,
+                llmResponseLength: typeof llmResponse === 'string' ? llmResponse.length : 0,
+                llmResponsePreview: typeof llmResponse === 'string' ? llmResponse.substring(0, 100) + '...' : llmResponse,
                 conversationId: chatRequest?.options?.conversationId,
                 assistantId: chatRequest?.options?.assistantId,
-                user: account?.user
+                assistantName: chatRequest?.options?.assistantName,
+                user: account?.user,
+                performCategoryAnalysis,
+                queuedAt,
+                queueDelay: queuedAt ? Date.now() - new Date(queuedAt).getTime() : 'unknown'
+            });
+            
+            // Check for empty responses
+            if (!llmResponse || (typeof llmResponse === 'string' && llmResponse.trim().length === 0)) {
+                logger.warn('⚠️ Empty LLM response detected', {
+                    messageId: record.messageId,
+                    conversationId: chatRequest?.options?.conversationId,
+                    llmResponse: llmResponse
+                });
+            }
+            
+            logger.info('🔄 Starting conversation analysis processing', {
+                messageId: record.messageId,
+                conversationId: chatRequest?.options?.conversationId,
+                assistantId: chatRequest?.options?.assistantId,
+                user: account?.user,
+                responseLength: typeof llmResponse === 'string' ? llmResponse.length : 0
             });
             
             await analyzeAndRecordGroupAssistantConversation(
@@ -463,37 +629,65 @@ export const sqsProcessorHandler = async (event) => {
                 performCategoryAnalysis
             );
             
+            const recordProcessingTime = Date.now() - recordStartTime;
+            processedCount++;
+            
             results.push({
                 messageId: record.messageId,
-                status: 'success'
+                status: 'success',
+                processingTimeMs: recordProcessingTime
             });
             
-            logger.debug('Successfully processed conversation analysis', {
+            logger.info('✅ Successfully processed conversation analysis', {
                 messageId: record.messageId,
-                conversationId: chatRequest?.options?.conversationId
+                conversationId: chatRequest?.options?.conversationId,
+                user: account?.user,
+                processingTimeMs: recordProcessingTime,
+                totalProcessed: processedCount
             });
             
         } catch (error) {
-            logger.error('Failed to process conversation analysis', {
+            const recordProcessingTime = Date.now() - recordStartTime;
+            errorCount++;
+            
+            logger.error('❌ Failed to process conversation analysis', {
                 messageId: record.messageId,
                 error: error.message,
-                stack: error.stack
+                stack: error.stack,
+                processingTimeMs: recordProcessingTime,
+                totalErrors: errorCount,
+                errorType: error.constructor.name
             });
             
             results.push({
                 messageId: record.messageId,
                 status: 'error',
-                error: error.message
+                error: error.message,
+                processingTimeMs: recordProcessingTime
             });
             
             throw error;
         }
     }
     
+    const totalProcessingTime = Date.now() - startTime;
+    
+    logger.info('🏁 SQS conversation analysis processing completed', {
+        totalRecords: event.Records?.length || 0,
+        successfullyProcessed: processedCount,
+        errors: errorCount,
+        totalProcessingTimeMs: totalProcessingTime,
+        averageProcessingTimeMs: event.Records?.length ? Math.round(totalProcessingTime / event.Records.length) : 0,
+        timestamp: new Date().toISOString()
+    });
+    
     return {
         statusCode: 200,
         body: JSON.stringify({
             processed: results.length,
+            successful: processedCount,
+            errors: errorCount,
+            totalProcessingTimeMs: totalProcessingTime,
             results
         })
     };
