@@ -136,11 +136,17 @@ class TasksMessageHandler(MessageHandler):
         Handle task failure. This is called by the agent_queue when processing fails.
 
         Args:
-            event: The input event that failed processing
+            event: The input event that failed processing (may be None)
             error: The exception that caused the failure
         """
         logger.debug("Task failure handler for event %s", event)
-        # Extract task info from event metadata
+        
+        # Handle None event gracefully
+        if event is None:
+            logger.error("Error in onFailure: event is None, cannot extract task data")
+            return
+        
+        # Extract task info from event metadata  
         task_data = event.get("taskData", {})
         logger.debug("Task data: %s", task_data)
         user_id = task_data.get("user")
@@ -157,20 +163,32 @@ class TasksMessageHandler(MessageHandler):
             task_data["sessionId"] = session_id
 
         if not user_id or not task_id:
-            logger.error("Error in onFailure: Missing task data in event")
-            add_task_execution_record(
-                user_id,
-                task_id,
-                "failure",
-                {
-                    "error": error,
-                    "message": "Agent failed prior to execution",
-                    "failedAt": get_timestamp(),
-                    "source": task_data.get("source", "unknown"),
-                },
-                execution_id=session_id,
-                access_token=event.get("metadata").get("accessToken"),
-            )
+            logger.error("Error in onFailure: Missing task data in event - user_id: %s, task_id: %s", user_id, task_id)
+            # Try to extract basic info from event structure for logging
+            try:
+                if user_id and task_id:  # We have at least something to work with
+                    # Safely extract access token
+                    access_token = None
+                    if event and isinstance(event, dict) and event.get("metadata"):
+                        access_token = event.get("metadata").get("accessToken")
+                    
+                    add_task_execution_record(
+                        user_id,
+                        task_id,
+                        "failure",
+                        {
+                            "error": str(error),
+                            "message": "Agent failed prior to execution - missing task data",
+                            "failedAt": get_timestamp(),
+                            "source": task_data.get("source", "unknown"),
+                        },
+                        execution_id=session_id,
+                        access_token=access_token,
+                    )
+                else:
+                    logger.error("Cannot log task failure: insufficient task identification data")
+            except Exception as log_error:
+                logger.error("Error logging task failure: %s", log_error)
             return
 
         logger.warning("Task failure handler called for task %s: %s", task_id, str(error))
@@ -240,9 +258,9 @@ class TasksMessageHandler(MessageHandler):
         if object_type == "assistant":
             assistant_response = get_assistant_by_alias(user, object_id)
             if not assistant_response["success"]:
-                raise Exception(
-                    f"The scheduled taskexists, but its associated assistant could not be found."
-                )
+                error_msg = f"The scheduled task exists, but its associated assistant (ID: {object_id}) could not be found. The assistant may have been deleted."
+                logger.warning(error_msg)
+                raise Exception(error_msg)
             return {"assistant": assistant_response["data"]}
 
         elif object_type == "actionSet":

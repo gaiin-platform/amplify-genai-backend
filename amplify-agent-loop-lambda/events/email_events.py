@@ -25,6 +25,104 @@ logger = getLogger("agent_email_events")
 organization_email_domain = os.environ["ORGANIZATION_EMAIL_DOMAIN"]
 
 
+
+def lookup_username_from_cognito_table(email_address):
+    """
+    Direct lookup of username from email address using Cognito users table.
+    This bypasses API authentication requirements.
+    
+    Handles two cases:
+    1. User has email field populated → match email field, return user_id
+    2. User has no email field → check if user_id itself matches the email
+    
+    Args:
+        email_address (str): Full email like "karely.rodriguez@vanderbilt.edu"
+        
+    Returns:
+        str: Username like "rodrikm1" or None if not found
+    """
+    if not email_address:
+        return None
+        
+    try:
+        dynamodb = boto3.resource("dynamodb")
+        
+        # Use the same table that object-access service uses
+        table_name = os.environ.get("COGNITO_USERS_DYNAMODB_TABLE")
+        if not table_name:
+            logger.warning("COGNITO_USERS_DYNAMODB_TABLE not configured")
+            return None
+            
+        cognito_user_table = dynamodb.Table(table_name)
+        email_lower = email_address.lower()
+        
+        # Strategy 1: Look for users where email field matches
+        response = cognito_user_table.scan(
+            ProjectionExpression="user_id, email",
+            FilterExpression="email = :target_email",
+            ExpressionAttributeValues={
+                ":target_email": email_lower
+            }
+        )
+        
+        if response.get("Items"):
+            # Found exact match in email field
+            item = response["Items"][0]
+            username = item.get("user_id")
+            if username:
+                logger.info("Cognito email field match: %s -> %s", email_address, username)
+                return username
+        
+        # Strategy 2: Look for users where user_id itself matches the email
+        # (for cases where user_id is the email and email field is missing)
+        response = cognito_user_table.scan(
+            ProjectionExpression="user_id, email", 
+            FilterExpression="user_id = :target_email",
+            ExpressionAttributeValues={
+                ":target_email": email_lower
+            }
+        )
+        
+        if response.get("Items"):
+            # Found match where user_id is the email
+            item = response["Items"][0]
+            username = item.get("user_id")
+            if username:
+                logger.info("Cognito user_id field match: %s -> %s", email_address, username)
+                return username
+                
+        logger.info("No Cognito table match found for email: %s", email_address)
+        return None
+        
+    except Exception as e:
+        logger.error("Error looking up username in Cognito table: %s", e)
+        return None
+
+
+def lookup_username_from_email(email_address):
+    """
+    Look up username from email address using direct Cognito table lookup.
+    
+    Args:
+        email_address (str): Full email like "karely.rodriguez@vanderbilt.edu"
+        
+    Returns:
+        str: Username like "rodrikm1" or fallback to email prefix if not found
+    """
+    if not email_address:
+        return None
+    
+    # Direct Cognito table lookup (no API key required)
+    direct_username = lookup_username_from_cognito_table(email_address)
+    if direct_username:
+        return direct_username
+    
+    # Fallback: extract username portion from email
+    username_fallback = email_address.split('@')[0]
+    logger.info("Username lookup fallback for %s -> %s", email_address, username_fallback)
+    return username_fallback
+
+
 def parse_email(email):
     pattern = re.compile(r"^(?P<user>[^+@]+)(\+(?P<tag>[^@]+))?@(?P<domain>[^@]+)$")
     match = pattern.match(email)
@@ -162,7 +260,7 @@ def save_email_to_s3(current_user, email_details, tags):
     email_base_name = f"Email {email_subject} from {email_sender} at {email_time}"
     email_file_name = f"{email_base_name}.json"
     bucket_name, body_key = create_file_metadata_entry(
-        current_user, email_file_name, "application/json", tags, "email"
+        current_user, email_file_name, "application/json", tags, {}, "email"
     )
 
     email_to_save_string = (
@@ -261,14 +359,18 @@ def process_email(event, context):
 
             target_email_lookup = f"{email['user']}@{email['domain']}"
             logger.info("Target Email Lookup: %s :: %s", target_email_lookup, tag)
+            
+            # Construct the full email and then convert to username
             owner_email = f"{email['user']}@{organization_email_domain}"
-            logger.info("Owner Email: %s", owner_email)
+            owner_username = lookup_username_from_email(owner_email)
+            
+            logger.info("Owner Email: %s -> Username: %s", owner_email, owner_username)
             logger.info("Source Email: %s", source_email)
 
-            # Use is_allowed_sender function
-            if is_allowed_sender(owner_email, tag, source_email):
+            # Use is_allowed_sender function - pass both email and username
+            if is_allowed_sender(owner_username, tag, source_email, owner_email=owner_email):
                 logger.info("Sender %s is allowed", source_email)
-                return to_agent_event(email, source_email, ses_notification)
+                return to_agent_event(email, source_email, ses_notification, owner_username)
 
             logger.warning("Sender %s is NOT allowed", source_email)
             return None
@@ -384,7 +486,7 @@ def add_tags_to_user(current_user, tags_to_add):
             return {"success": False, "message": e.response["Error"]["Message"]}
 
 
-def to_agent_event(parsed_destination_email, source_email, ses_notification):
+def to_agent_event(parsed_destination_email, source_email, ses_notification, owner_username=None):
     """
     Processes an incoming email, looks up an event mapping in DynamoDB based on user and tags,
     fills in the event template (including fetching the actual API key), and returns the formatted event.
@@ -423,9 +525,15 @@ def to_agent_event(parsed_destination_email, source_email, ses_notification):
     email_id = hashlib.sha256(serialized_data).hexdigest()
     email_details["received_time"] = datetime.utcnow().isoformat()
 
-    # Determine user and project tag
-    user = f"{parsed_destination_email['user']}@{organization_email_domain}"
-    logger.info("User: %s", user)
+    # Determine user and project tag - use provided username or construct from email
+    if owner_username:
+        user = owner_username
+        logger.info("Using provided username: %s", user)
+    else:
+        # Fallback to email construction and username lookup
+        constructed_email = f"{parsed_destination_email['user']}@{organization_email_domain}"
+        user = lookup_username_from_email(constructed_email)
+        logger.info("Constructed email: %s -> Username: %s", constructed_email, user)
 
     project_tag = parsed_destination_email.get("tag", "email")
     logger.info("Project Tag: %s", project_tag)

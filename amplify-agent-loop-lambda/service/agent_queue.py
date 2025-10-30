@@ -81,8 +81,10 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                 Exception(f"Agent failed to handle event: {error_msg}")
                             )
                     else:
+                        # If agent_input_event is None, pass the original message_body instead
+                        event_for_failure = agent_input_event if agent_input_event is not None else message_body
                         handler.onFailure(
-                            agent_input_event, Exception("No result from handler")
+                            event_for_failure, Exception("No result from handler")
                         )
                         logger.info(
                             "Ignoring event per handler instructions (e.g., return None)"
@@ -90,7 +92,11 @@ def route_queue_event(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         except Exception as e:
             logger.error("Error processing message: %s", e)
-            handler.onFailure(message_body, e)
+            # Only call onFailure if we have a handler that can process this message
+            for handler in _handlers:
+                if handler.can_handle(message_body):
+                    handler.onFailure(message_body, e)
+                    break
             try:
                 sqs.change_message_visibility(
                     QueueUrl=agent_queue,
