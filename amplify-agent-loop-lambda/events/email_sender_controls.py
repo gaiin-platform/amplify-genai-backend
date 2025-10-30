@@ -23,12 +23,12 @@ email_settings_table = dynamodb.Table(os.getenv("EMAIL_SETTINGS_DYNAMO_TABLE"))
 ### ==========================
 
 
-def add_allowed_sender(user_email: str, tag: str, sender: str):
+def add_allowed_sender(user_username: str, tag: str, sender: str):
     """
     Adds a sender to the allowedSenders list in DynamoDB for a given user and tag.
 
     Args:
-        user_email (str): The user's email (recipient).
+        user_username (str): The user's username (for database lookup).
         tag (str): The tag associated with the recipient.
         sender (str): The sender email or regex pattern to allow.
 
@@ -36,7 +36,7 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         dict: {success, data, message}
     """
     try:
-        response = email_settings_table.get_item(Key={"email": user_email, "tag": tag})
+        response = email_settings_table.get_item(Key={"email": user_username, "tag": tag})
         item = response.get("Item", {})
 
         allowed_senders = set(item.get("allowedSenders", []))
@@ -52,7 +52,7 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
 
         email_settings_table.put_item(
             Item={
-                "email": user_email,
+                "email": user_username,
                 "tag": tag,
                 "allowedSenders": list(allowed_senders),
             }
@@ -71,12 +71,12 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         }
 
 
-def remove_allowed_sender(user_email: str, tag: str, sender: str):
+def remove_allowed_sender(user_username: str, tag: str, sender: str):
     """
     Removes a sender from the allowedSenders list in DynamoDB for a given user and tag.
 
     Args:
-        user_email (str): The user's email (recipient).
+        user_username (str): The user's username (for database lookup).
         tag (str): The tag associated with the recipient.
         sender (str): The sender email or regex pattern to remove.
 
@@ -84,7 +84,7 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         dict: {success, data, message}
     """
     try:
-        response = email_settings_table.get_item(Key={"email": user_email, "tag": tag})
+        response = email_settings_table.get_item(Key={"email": user_username, "tag": tag})
         item = response.get("Item", {})
 
         allowed_senders = set(item.get("allowedSenders", []))
@@ -101,10 +101,10 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
             allowed_senders.discard(sender.lower())
 
         if not allowed_senders:
-            email_settings_table.delete_item(Key={"email": user_email, "tag": tag})
+            email_settings_table.delete_item(Key={"email": user_username, "tag": tag})
         else:
             email_settings_table.update_item(
-                Key={"email": user_email, "tag": tag},
+                Key={"email": user_username, "tag": tag},
                 UpdateExpression="SET allowedSenders = :s",
                 ExpressionAttributeValues={":s": list(allowed_senders)},
             )
@@ -122,28 +122,31 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         }
 
 
-def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
+def is_allowed_sender(owner_username: str, tag: str, sender: str, owner_email: str = None) -> bool:
     """
     Checks if a sender is allowed to send emails to a specific user and tag.
-
+    
     Args:
-        owner_email (str): The owner's email (recipient).
-        user_email (str): The recipient's email (user).
+        owner_username (str): The owner's username (for database lookup).
         tag (str): The tag associated with the recipient.
         sender (str): The sender email to check.
+        owner_email (str): Optional owner's email (for permission comparison).
 
     Returns:
         bool: True if the sender is allowed, False otherwise.
     """
     try:
         logger.info(
-            "Checking allowed sender for user '%s', tag '%s', sender '%s'", owner_email, tag, sender
+            "Checking allowed sender for user '%s', tag '%s', sender '%s'", owner_username, tag, sender
         )
 
-        if sender == owner_email:
-            return True  # Owner is always allowed
+        # Owner is always allowed to email their own assistant
+        if owner_email and sender.lower() == owner_email.lower():
+            logger.info("Sender matches owner email - access granted")
+            return True
 
-        response = email_settings_table.get_item(Key={"email": owner_email, "tag": tag})
+        # Database lookup using username (post-migration key structure)
+        response = email_settings_table.get_item(Key={"email": owner_username, "tag": tag})
         item = response.get("Item", {})
 
         allowed_senders = item.get("allowedSenders", [])
@@ -169,19 +172,19 @@ def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
         return False
 
 
-def list_allowed_senders(user_email: str, tag: str):
+def list_allowed_senders(user_username: str, tag: str):
     """
     Lists all allowed senders for a given user and tag.
 
     Args:
-        user_email (str): The user's email (recipient).
+        user_username (str): The user's username (for database lookup).
         tag (str): The tag associated with the recipient.
 
     Returns:
         dict: {success, data, message}
     """
     try:
-        response = email_settings_table.get_item(Key={"email": user_email, "tag": tag})
+        response = email_settings_table.get_item(Key={"email": user_username, "tag": tag})
         item = response.get("Item", {})
 
         allowed_senders = item.get("allowedSenders", [])
