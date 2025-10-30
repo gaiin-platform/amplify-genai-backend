@@ -97,8 +97,8 @@ async function queueConversationAnalysisWithFallback(params, messages, result) {
             // Use account from params
             const account = params.account;
             
-            // Check if category analysis should be performed
-            const performCategoryAnalysis = !!(params.options?.analysisCategories?.length);
+            // Always perform analysis for system rating, categories are handled separately in analysis function
+            const performCategoryAnalysis = true; // Always analyze for rating, categories determined by analysisCategories presence
             
             await queueConversationAnalysisImpl(
                 chatRequest,
@@ -115,7 +115,7 @@ async function queueConversationAnalysisWithFallback(params, messages, result) {
 /**
  * Create a stream interceptor to capture usage and handle transformations
  */
-function createStreamInterceptor(responseStream, transform, usageTransform, requestState) {
+function createStreamInterceptor(responseStream, transform, usageTransform, requestState, capturedContent = null) {
     let buffer = ''; // Buffer for incomplete SSE data
     
     const interceptor = new Writable({
@@ -142,6 +142,10 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                             const transformed = transform(event, responseStream);
                             if (transformed) {
                                 sendDeltaToStream(responseStream, 'answer', transformed);
+                                // Capture content for conversation analysis if requested
+                                if (capturedContent) {
+                                    capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                                }
                             }
                             
                             // Extract usage
@@ -175,6 +179,10 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                         const transformed = transform(event, responseStream);
                         if (transformed) {
                             sendDeltaToStream(responseStream, 'answer', transformed);
+                            // Capture content for conversation analysis if requested
+                            if (capturedContent) {
+                                capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                            }
                         }
                         
                         // Extract usage
@@ -285,12 +293,14 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
         let result;
 
         if (responseStream) {
-            // Streaming mode - create interceptor stream
+            // Streaming mode - create interceptor stream that captures content
+            const capturedContent = { fullResponse: '' };
             const interceptor = createStreamInterceptor(
                 responseStream,
                 providerConfig.transform,
                 providerConfig.usageTransform,
-                requestState
+                requestState,
+                capturedContent
             );
 
             // Call provider with appropriate arguments
@@ -307,6 +317,13 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 endStream(responseStream);
                 responseStream.end();
             }
+            logger.debug('Streaming LLM call completed: ', requestId);
+            logger.debug('LLM contenet: ', capturedContent.fullResponse);
+            // Create result object with captured content for conversation analysis
+            result = {
+                content: capturedContent.fullResponse,
+                usage: requestState.totalUsage
+            };
 
         } else {
             // Non-streaming mode - create a buffer stream to capture response
