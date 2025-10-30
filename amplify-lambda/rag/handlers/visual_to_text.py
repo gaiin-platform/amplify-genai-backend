@@ -9,6 +9,9 @@ from datetime import datetime
 import os
 from pycommon.api.models import get_default_models
 
+from pycommon.logger import getLogger
+logger = getLogger("rag_visual_to_text")
+
 # uncomment for local development
 # import sys
 # if __name__ == "__main__":
@@ -87,7 +90,7 @@ def save_visual_to_s3(image_data, current_user):
             Bucket=bucket_name, Key=key, Body=encoded_image, ContentType="text/plain"
         )
 
-        print(f"Visual content saved to S3: {key}")
+        logger.info("Visual content saved to S3: %s", key)
 
         # Update permissions following the pattern from images/core.py
         permissions_update = {
@@ -102,12 +105,12 @@ def save_visual_to_s3(image_data, current_user):
         # Update permissions
         update_object_permissions(current_user, permissions_update)
 
-        print(f"Permissions updated for visual: {key}")
+        logger.info("Permissions updated for visual: %s", key)
 
         return key
 
     except Exception as e:
-        print(f"Error saving visual to S3: {str(e)}")
+        logger.error("Error saving visual to S3: %s", str(e))
         raise
 
 
@@ -129,14 +132,14 @@ async def transcribe_visual_content(key, visual_type="image/png", account_data=N
         # Get required environment variables
 
         if not CHAT_ENDPOINT or not account_data:
-            print("CHAT_ENDPOINT environment variable or account_data not set")
+            logger.error("CHAT_ENDPOINT environment variable or account_data not set")
             raise Exception("CHAT_ENDPOINT environment variable or account_data not set")
         access_token = account_data['access_token']
         
         model = get_default_models(access_token).get("cheapest_model")
 
         if not model:
-            print("No model found")
+            logger.error("No model found")
             raise Exception("No model found")
         
         dataSources = [{"type": visual_type, "id": key}]
@@ -276,11 +279,11 @@ Do not include any preambles, explanations, or comments outside of the markers. 
             },
         }
 
-        print(f"Initiating visual transcription for: {key}")
+        logger.info("Initiating visual transcription for: %s", key)
 
         # Call the chat endpoint with timeout handling
         try:
-            print(f"Calling chat endpoint for: {key}")
+            logger.debug("Calling chat endpoint for: %s", key)
             loop = asyncio.get_event_loop()
             
             # Add timeout to prevent hanging
@@ -290,19 +293,19 @@ Do not include any preambles, explanations, or comments outside of the markers. 
                 ),
                 timeout=180.0  # 3 minute timeout
             )
-            print(f"Chat call completed for: {key}")
+            logger.debug("Chat call completed for: %s", key)
             
         except asyncio.TimeoutError:
-            print(f"ERROR: Chat call timed out after 180 seconds for: {key}")
+            logger.error("Chat call timed out after 180 seconds for: %s", key)
             return None
         except Exception as chat_error:
-            print(f"ERROR: Chat call failed for {key}: {str(chat_error)}")
+            logger.error("Chat call failed for %s: %s", key, str(chat_error))
             return None
 
         # Extract the transcription from the response using regex parsing
         if response:
-            print("Transcription Response", response)
-            print(f" Received response for {key}, length: {len(response)}")
+            logger.debug("Transcription Response: %s", response)
+            logger.debug("Received response for %s, length: %d", key, len(response))
             # Parse the transcription using regex similar to the user's pattern
             transcription_regex = (
                 r"/TRANSCRIPTION_START\s*([\s\S]*?)\s*/TRANSCRIPTION_END"
@@ -314,28 +317,28 @@ Do not include any preambles, explanations, or comments outside of the markers. 
 
                 # Check if content is marked as meaningless
                 if NO_SUBSTANCE in transcription:
-                    print(f"Visual content marked as decorative/meaningless: {key}")
+                    logger.debug("Visual content marked as decorative/meaningless: %s", key)
                     return None
 
-                print(f"Visual transcription completed for: {key}")
+                logger.info("Visual transcription completed for: %s", key)
                 return transcription
             else:
                 if NO_SUBSTANCE in response:
-                    print(f"Visual content marked as decorative/meaningless: {key}")
+                    logger.debug("Visual content marked as decorative/meaningless: %s", key)
                 else:
-                    print(f"No transcription markers found in response for: {key}")
+                    logger.warning("No transcription markers found in response for: %s", key)
                     # Debug: Try to find any part of the markers
                     if "/TRANSCRIPTION_START" in response:
-                        print("Found START marker in response")
+                        logger.debug("Found START marker in response")
                     if "/TRANSCRIPTION_END" in response:
-                        print("Found END marker in response")
+                        logger.debug("Found END marker in response")
                 return None
         else:
-            print(f"No response received for visual transcription: {key}")
+            logger.warning("No response received for visual transcription: %s", key)
             return None
 
     except Exception as e:
-        print(f"Error transcribing visual content: {str(e)}")
+        logger.error("Error transcribing visual content: %s", str(e))
         return None
 
 
@@ -363,16 +366,16 @@ async def process_visual_for_llm(visual_data, current_user, account_data):
             raise Exception("No image data found in visual_data")
 
         # Debug: Check the type of image_data to diagnose BytesIO issue
-        print(f"DEBUG: image_data type: {type(image_data)}")
+        logger.debug("image_data type: %s", type(image_data))
         if hasattr(image_data, '__len__'):
             try:
-                print(f"DEBUG: image_data length: {len(image_data)}")
+                logger.debug("image_data length: %d", len(image_data))
             except:
-                print(f"DEBUG: Could not get length of image_data")
+                logger.debug("Could not get length of image_data")
         if isinstance(image_data, io.BytesIO):
-            print(f"DEBUG: BytesIO position: {image_data.tell()}")
-            print(f"DEBUG: BytesIO seekable: {image_data.seekable()}")
-            print(f"DEBUG: BytesIO readable: {image_data.readable()}")
+            logger.debug("BytesIO position: %d", image_data.tell())
+            logger.debug("BytesIO seekable: %s", image_data.seekable())
+            logger.debug("BytesIO readable: %s", image_data.readable())
 
         # Save image locally for debugging first
         if SAVE_IMAGES_LOCALLY:
@@ -389,26 +392,27 @@ async def process_visual_for_llm(visual_data, current_user, account_data):
             bucket_name = os.environ.get("S3_IMAGE_INPUT_BUCKET_NAME")
             if bucket_name:
                 s3.delete_object(Bucket=bucket_name, Key=s3_key)
-                print(f"Cleaned up temporary file: {s3_key}")
+                logger.debug("Cleaned up temporary file: %s", s3_key)
         except Exception as cleanup_error:
-            print(
-                f"Warning: Failed to cleanup temp file {s3_key}: {str(cleanup_error)}"
+            logger.warning(
+                "Failed to cleanup temp file %s: %s",
+                s3_key, str(cleanup_error)
             )
 
         # Return visual_data with transcription added and data removed
         result_data = visual_data.copy()
         if not transcription:
-            print(f"No transcription found for visual, but continuing processing")
+            logger.debug("No transcription found for visual, but continuing processing")
             result_data["transcription"] = None
             return result_data
 
-        print(f"Transcribed visual content complete")
+        logger.info("Transcribed visual content complete")
         result_data["transcription"] = transcription
 
         return result_data
 
     except Exception as e:
-        print(f"Error processing visual for LLM: {str(e)}")
+        logger.error("Error processing visual for LLM: %s", str(e))
         return None
 
 
@@ -418,10 +422,10 @@ async def batch_process_visuals(visual_map, current_user, account_data = None):
     Returns all visual entries, including those with None transcriptions.
     """
     if not visual_map:
-        print("No visuals to process")
+        logger.debug("No visuals to process")
         return {}
     if not account_data or 'access_token' not in account_data:
-        print("No account data provided, can not process visuals")
+        logger.warning("No account data provided, can not process visuals")
         return {}
     # Single pass: separate unique hashed visuals from non-hashed ones
     unique_visuals = {}  # marker -> visual_data (visuals to process)
@@ -443,8 +447,9 @@ async def batch_process_visuals(visual_map, current_user, account_data = None):
 
     unique_count = len(unique_visuals)
     total_count = len(visual_map)
-    print(
-        f"Processing {unique_count} unique visuals (saved {total_count - unique_count} duplicates)"
+    logger.info(
+        "Processing %d unique visuals (saved %d duplicates)",
+        unique_count, total_count - unique_count
     )
 
     # Process all unique visuals
@@ -461,7 +466,7 @@ async def batch_process_visuals(visual_map, current_user, account_data = None):
     for marker, result in zip(markers, results):
         # Handle exceptions from gather operation
         if isinstance(result, Exception):
-            print(f"Exception occurred processing visual {marker}: {str(result)}")
+            logger.error("Exception occurred processing visual %s: %s", marker, str(result))
             transcription = None
         # Get transcription if successful, otherwise None
         elif result and isinstance(result, dict):
@@ -479,8 +484,8 @@ async def batch_process_visuals(visual_map, current_user, account_data = None):
             processed_visuals[target_marker] = enhanced_visual
 
     successful_count = sum(1 for v in processed_visuals.values() if v.get("transcription"))
-    print(f"Completed: {successful_count}/{total_count} visuals transcribed successfully")
-    print(f"Kept all {total_count} visual entries (including {total_count - successful_count} with None transcriptions)")
+    logger.info("Completed: %d/%d visuals transcribed successfully", successful_count, total_count)
+    logger.info("Kept all %d visual entries (including %d with None transcriptions)", total_count, total_count - successful_count)
     return processed_visuals
 
 
@@ -511,7 +516,7 @@ def save_image_locally_for_debug(image_data, filename_prefix="extracted_image"):
             raise ValueError(f"Expected bytes after conversion, got {type(image_data)}")
 
         # Print current working directory for debugging
-        print(f" Current working directory: {os.getcwd()}")
+        logger.debug("Current working directory: %s", os.getcwd())
 
         # Create the directory relative to this script's location
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -527,10 +532,10 @@ def save_image_locally_for_debug(image_data, filename_prefix="extracted_image"):
         image = Image.open(io.BytesIO(image_data))
         image.save(local_path, "PNG")
 
-        print(f" Image saved locally at: {local_path}")
-        print(f" Full path: {os.path.abspath(local_path)}")
+        logger.debug("Image saved locally at: %s", local_path)
+        logger.debug("Full path: %s", os.path.abspath(local_path))
         return local_path
 
     except Exception as e:
-        print(f"Error saving image locally for  {str(e)}")
+        logger.error("Error saving image locally: %s", str(e))
         return None

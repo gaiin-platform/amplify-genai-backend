@@ -1,3 +1,5 @@
+from .rate_limit_schema import rate_limit_schema
+
 update_admin_config_schema = {
     "type": "object",
     "properties": {
@@ -266,9 +268,6 @@ update_admin_config_schema = {
                                     "^.*$": {
                                         "type": "object",
                                         "properties": {
-                                            "groupName": {
-                                                "type": "string"
-                                            },
                                             "createdBy": {
                                                 "type": "string"
                                             },
@@ -283,9 +282,13 @@ update_admin_config_schema = {
                                                 "items": {
                                                     "type": "string"
                                                 }
+                                            },
+                                            "rateLimit" : rate_limit_schema,
+                                            "isBillingGroup": {
+                                                "type": "boolean"
                                             }
                                         },
-                                        "required": ["groupName", "createdBy", "members", ],
+                                        "required": ["createdBy", "members", "rateLimit", "isBillingGroup"],
                                         "additionalProperties": False
 
                                     }
@@ -396,7 +399,22 @@ update_admin_config_schema = {
                         "required": ["type", "data"],
                         "additionalProperties": False
                     },
-                     {
+                    {
+                        # Configuration for 'aiEmailDomain'
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "aiEmailDomain"
+                            },
+                            "data":  {
+                                "type": "string",
+                            },
+                        },
+                        "required": ["type", "data"],
+                        "additionalProperties": False
+                    },
+                    {
                         # Configuration for 'defaultConversationStorage'
                         "type": "object",
                         "properties": {
@@ -421,15 +439,7 @@ update_admin_config_schema = {
                                 "type": "string",
                                 "const": "rateLimit"
                             },
-                            "data": {
-                                "type": "object",
-                                "properties": {
-                                    "period": {"type": "string"},
-                                    "rate": { "type": ["number", "null"] }, 
-                                },
-                                "required": ["period", "rate"],
-                                "additionalProperties": False
-                            }
+                            "data": rate_limit_schema
                         },
                         "required": ["type", "data"],
                         "additionalProperties": False

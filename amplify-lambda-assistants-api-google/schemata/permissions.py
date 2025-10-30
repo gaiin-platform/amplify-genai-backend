@@ -1,9 +1,8 @@
+from pycommon.logger import getLogger
+logger = getLogger("permissions")
+
 def get_permission_checker(user, ptype, op, data):
-    print(
-        "Checking permissions for user: {} and type: {} and op: {}".format(
-            user, ptype, op
-        )
-    )
+    logger.debug("Checking permissions for user: %s and type: %s and op: %s", user, ptype, op)
 
     if op == "route":
         return lambda for_user, with_data: True

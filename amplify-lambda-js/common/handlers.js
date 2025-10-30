@@ -8,6 +8,9 @@ import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { TokenV1 } from './api_utils.js';
+import { getLogger } from './logging.js';
+
+const logger = getLogger("handlers");
 
 // Since __dirname is not available in ES module scope, you have to construct the path differently.
 const __filename = fileURLToPath(import.meta.url);
@@ -70,7 +73,7 @@ export const extractParams = async (event) => {
             );
 
         } catch (e) {
-            console.error(e);
+            logger.error(e);
 
             return {
                 statusCode: 401,
@@ -79,8 +82,11 @@ export const extractParams = async (event) => {
         }
 
         const user = payload.username;
-        const current_user = idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
-        console.log("Current user: " + current_user);
+        const extractIdpPrefix = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
+
+        const current_user = payload.immutable_id ?? extractIdpPrefix();
+       
+        logger.debug("Current user: " + current_user);
 
         let requestBody;
         try {
@@ -101,7 +107,7 @@ const api_authenticator = async (apiKey, event) => {
     const dynamodbClient = new DynamoDBClient({});
 
     if (!apiTable) {
-        console.log("API_KEYS_DYNAMODB_TABLE is not provided in the environment variables.");
+        logger.error("API_KEYS_DYNAMODB_TABLE is not provided in the environment variables.");
         throw new Error("API_KEYS_DYNAMODB_TABLE is not provided in the environment variables.");
     }
 
@@ -124,13 +130,13 @@ const api_authenticator = async (apiKey, event) => {
         });
         
 
-        console.log("Checking API key validity.");
+        logger.debug("Checking API key validity.");
         const response = await dynamodbClient.send(command);
         //FOR GSI 
         const item = response.Items[0];
 
         if (!item) {
-            console.log("API key does not exist.");
+            logger.warn("API key does not exist.");
             return {
                 statusCode: 404,
                 body: JSON.stringify({ message: "API key not found." })
@@ -142,7 +148,7 @@ const api_authenticator = async (apiKey, event) => {
 
         // Check if the API key is active
         if (!apiData.active) {
-            console.log("API key is inactive.");
+            logger.warn("API key is inactive.");
             return {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key is inactive." })
@@ -151,7 +157,7 @@ const api_authenticator = async (apiKey, event) => {
 
         // Optionally check the expiration date if applicable
         if (apiData.expirationDate && new Date(apiData.expirationDate) <= new Date()) {
-            console.log("API key has expired.");
+            logger.warn("API key has expired.");
             return {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key has expired." })
@@ -161,7 +167,7 @@ const api_authenticator = async (apiKey, event) => {
         const access = apiData.accessTypes.flat()
 
         if (!(access && (access.includes('chat') || access.includes('full_access')))) {
-            console.log("API doesn't have access to chat");
+            logger.warn("API doesn't have access to chat");
             return {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key does not have access to chat functionality" })
@@ -177,7 +183,7 @@ const api_authenticator = async (apiKey, event) => {
                 ':now': { S: new Date().toISOString() }
             }
         });
-        console.log("Last Access updated")
+        logger.debug("Last Access updated")
 
         await dynamodbClient.send(updateItemCommand);
 
@@ -207,12 +213,12 @@ const api_authenticator = async (apiKey, event) => {
         }
         requestBody.options.api_accessed = true;
         requestBody.options.rateLimit = apiData.rateLimit;
-        console.log("Current User: ", currentUser);
+        logger.debug("Current User: ", currentUser);
         // Return the validated user and additional data
         return {user: currentUser, body: requestBody, accessToken: apiKey, apiKeyId: apiData.api_owner_id}; 
 
     } catch (error) {
-        console.error("Error during DynamoDB operation:", error);
+        logger.error("Error during DynamoDB operation:", error);
         return {
             statusCode: 500,
             body: JSON.stringify({ message: "Internal server error occurred." })
@@ -234,7 +240,7 @@ const determine_api_user = (data) => {
         case 'system':
             return data.systemId;
         default:
-            console.error("Unknown or missing key type in api_owner_id:", keyType);
+            logger.error("Unknown or missing key type in api_owner_id:", keyType);
             return {
                 statusCode: 400,
                 body: JSON.stringify({ message: "Invalid or unrecognized key type." })

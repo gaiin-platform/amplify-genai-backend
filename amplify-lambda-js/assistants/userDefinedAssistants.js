@@ -3,7 +3,7 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 
-import {getDataSourcesByUse, isImage} from "../datasource/datasources.js";
+import {getDataSourcesByUse, isImage, generateImageDescriptions} from "../datasource/datasources.js";
 import { DynamoDBClient, GetItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import {fillInTemplate} from "./instructions/templating.js";
@@ -11,8 +11,12 @@ import {PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
 import {addAllReferences, DATASOURCE_TYPE, getReferences, getReferencesByType} from "./instructions/references.js";
 import {opsLanguages} from "./opsLanguages.js";
 import {newStatus} from "../common/status.js";
+import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {invokeAgent, constructTools, getTools} from "./agent.js";
+import {getLogger} from "../common/logging.js";
 // import AWSXRay from "aws-xray-sdk";
+
+const logger = getLogger("user-defined-assistants");
 
 const s3Client = new S3Client();
 const dynamodbClient = new DynamoDBClient({ });
@@ -31,11 +35,11 @@ async function getAssistantByAlias(user, assistantId) {
         if (response.Item) {
             return unmarshall(response.Item);
         } else {
-            console.log("No item retrieved in getAssistantByAlias")
+            logger.debug("No item retrieved in getAssistantByAlias")
             return null;
         }
     } catch (error) {
-        console.error('Error getting assistant alias:', error);
+        logger.error('Error getting assistant alias:', error);
         return null;
     }
 }
@@ -54,53 +58,19 @@ async function getAssistantByAssistantDatabaseId(id) {
         if (response.Item) {
             return unmarshall(response.Item);
         } else {
-            console.log("No item retrieved in getAssistantByAssistantDatabaseId")
+            logger.debug("No item retrieved in getAssistantByAssistantDatabaseId")
             return null;
         }
     } catch (error) {
-        console.error('Error getting assistant alias:', error);
+        logger.error('Error getting assistant by database id:', error);
         return null;
-    }
-}
-
-const saveChatToS3 = async (assistant, currentUser, chatBody, metadata) => {
-    console.log("saveChatToS3 function")
-    // Define the parameters for the putObject operation
-
-    if(!process.env.ASSISTANT_LOGS_BUCKET_NAME) {
-        console.error("ASSISTANT_LOGS_BUCKET_NAME environment variable is not set");
-        console.log("Will not log assistant chat");
-        return null;
-    }
-
-    // date string in format 2023-12-29/
-    const date = new Date().toISOString().split('T')[0];
-    const requestId = chatBody.options.requestId;
-
-    const key = `${assistant.assistantId}/${date}/${currentUser}/${requestId}.json`;
-
-    const putObjectParams = {
-        Bucket: process.env.ASSISTANT_LOGS_BUCKET_NAME,
-        Key: key,
-        Body: JSON.stringify({request:chatBody, currentUser, metadata}),
-    };
-
-    try {
-        // Upload the object to S3
-        const data = await s3Client.send(new PutObjectCommand(putObjectParams));
-        console.log("Object uploaded successfully. Location:", resultKey);
-        return data;
-    } catch (error) {
-        console.error("Error uploading object:", error);
-        throw error;
     }
 }
 
 const isMemberOfGroup = async (current_user, ast_owner, token) => {
-
     try {
         const params = {
-            TableName: process.env.GROUPS_DYNAMO_TABLE,
+            TableName: process.env.ASSISTANT_GROUPS_DYNAMO_TABLE,
             Key: {
                 group_id: { S: ast_owner }
             }
@@ -117,23 +87,23 @@ const isMemberOfGroup = async (current_user, ast_owner, token) => {
                 userInAmplifyGroup(item.amplifyGroups ?? [], token)) {
                 return true;
             } 
-            console.error( `User is not a member of groupId: ${ast_owner}`);
+            logger.error(`User is not a member of groupId: ${ast_owner}`);
         } else {
-            console.error(`No group entry found for groupId: ${ast_owner}`);
+            logger.error(`No group entry found for groupId: ${ast_owner}`);
         }
     
     } catch (error) {
-        console.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
+        logger.error(`An error occurred while processing groupId ${ast_owner}:`, error);   
     }
 }
 
 const userInAmplifyGroup = async (amplifyGroups, token) => {
     if (amplifyGroups.length === 0) return false;
-    console.log("Checking if user is in amplify groups: ", amplifyGroups)
+    logger.debug("Checking if user is in amplify groups:", amplifyGroups)
 
     const apiBaseUrl = process.env.API_BASE_URL;
     if (!apiBaseUrl) {
-        console.error("API_BASE_URL environment variable is not set");
+        logger.error("API_BASE_URL environment variable is not set");
         return false;
     }
 
@@ -150,21 +120,64 @@ const userInAmplifyGroup = async (amplifyGroups, token) => {
         const responseContent = await response.json();
 
         if (response.status !== 200 || !responseContent.success) {
-            console.error(`Error verifying amp group membership: ${responseContent}`);
+            logger.error(`Error verifying amp group membership: ${responseContent}`);
             return false;
         } else if (response.status === 200 && responseContent.success) {
             return responseContent.isMember || false;
         }
     } catch (e) {
-        console.error(`Error verifying amp group membership: ${e}`);
+        logger.error(`Error verifying amp group membership: ${e}`);
         
     }
     return false;
 
 }
 
+const getStandaloneAst = async (assistantPublicId, current_user, token) => {
+    const ast = await getLatestAssistant(assistantPublicId);
+    if (!ast || ! ast.data?.astPath) return null;
+
+    const params = {
+        TableName: process.env.ASSISTANT_LOOKUP_DYNAMODB_TABLE,
+        Key: {
+            astPath: { S: ast.data.astPath }
+        }
+    };
+    
+    try {
+        const response = await dynamodbClient.send(new GetItemCommand(params));
+        
+        if (!response.Item) {
+            return null;
+        }
+        
+        const item = unmarshall(response.Item);
+        
+        const accessTo = item.accessTo || {};
+        
+        if (!item.public) {
+            if (current_user !== item.createdBy && 
+                !accessTo.users?.includes(current_user) &&
+                !await userInAmplifyGroup(accessTo.amplifyGroups || [], token)) {
+                return null;
+            }
+        }
+        
+        return ast;
+        
+    } catch (error) {
+        logger.error('Error looking up standalone assistant:', error);
+        return null;
+    }
+}
+
 
 export const getAstgGroupId = async (assistantPublicId) => {
+    const ast = await getLatestAssistant(assistantPublicId);
+    return ast?.data?.groupId;
+}
+
+const getLatestAssistant = async (assistantPublicId) => {
     /**
      * Retrieves the most recent version of an assistant from the DynamoDB table.
      *
@@ -197,39 +210,69 @@ export const getAstgGroupId = async (assistantPublicId) => {
                     const maxVersion = max.version || 1;
                     return itemVersion > maxVersion ? item : max;
                 });
-                return astRecord.data?.groupId;
+                return astRecord;
             }
         } catch (error) {
-            console.error('Error querying assistant:', error);
+            logger.error('Error querying assistant:', error);
             return null;
         }
     }
 
     return null;
+
 }
 
 export const getUserDefinedAssistant = async (current_user, assistantBase, assistantPublicId, token) => {
+    // ⚡ CACHE OPTIMIZATION: Check cache first
+    const { CacheManager } = await import('../common/cache.js');
+    const cached = await CacheManager.getCachedUserDefinedAssistant(current_user, assistantPublicId, token);
+    if (cached) {
+        logger.debug(`Using cached assistant: ${assistantPublicId}`);
+        return fillInAssistant(cached, assistantBase);
+    }
+    
     const ast_owner = assistantPublicId.startsWith("astgp") ? await getAstgGroupId(assistantPublicId) : current_user;
     
     if (!ast_owner) return null;
 
-    // verify the user has access to the group since this is a group assistant
+    // ⚡ CACHE OPTIMIZATION: Check cached group membership
     if (assistantPublicId.startsWith("astgp") && current_user !== ast_owner) {
-        console.log( `Checking if ${current_user} is a member of group: ${ast_owner}`);
-        if (!isMemberOfGroup(current_user, ast_owner, token)) return null;
+        logger.debug(`Checking if ${current_user} is a member of group: ${ast_owner}`);
+        
+        // Check cache first
+        const cachedMembership = await CacheManager.getCachedGroupMembership(current_user, ast_owner, token);
+        let isMember = cachedMembership;
+        
+        if (cachedMembership === null) {
+            // Not in cache, check actual membership
+            isMember = await isMemberOfGroup(current_user, ast_owner, token);
+            // Cache the result
+            CacheManager.setCachedGroupMembership(current_user, ast_owner, token, isMember);
+        }
+        
+        if (!isMember) return null;
     }
-
+    
+    let assistantData = null;
     const assistantAlias = await getAssistantByAlias(ast_owner, assistantPublicId);
 
     if (assistantAlias) {
-        const assistant = await getAssistantByAssistantDatabaseId(
+        assistantData = await getAssistantByAssistantDatabaseId(
             assistantAlias.data.id
         );
+        logger.debug("Assistant found by alias:", assistantData);
+    } else {
+        //check if ast is standalone
+        assistantData = await getStandaloneAst(assistantPublicId, current_user, token);
+        logger.debug("Assistant found by standalone ast:", assistantData);
+    }
 
-        console.log("Assistant found by alias: ", assistant);
-
-        const userDefinedAssistant =  fillInAssistant(assistant, assistantBase)
-        console.log(`Client Selected Assistant: `, userDefinedAssistant.displayName)
+    if (assistantData) {
+        // ⚡ CACHE: Store assistant data for future requests
+        CacheManager.setCachedUserDefinedAssistant(current_user, assistantPublicId, token, assistantData);
+        
+        const userDefinedAssistant =  fillInAssistant(assistantData, assistantBase)
+        logger.info(`Client Selected Assistant: ${userDefinedAssistant.displayName}`);
         return userDefinedAssistant;
     }
 
@@ -251,7 +294,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
         disclaimer: assistant.disclaimer ?? '',
 
-        handler: async (llm, params, body, ds, responseStream) => {
+        handler: async (params, body, ds, responseStream) => {
+            // 🚀 BREAKTHROUGH: No longer need LLM parameter - uses direct stream functions
 
                 const references = {};
 
@@ -275,7 +319,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
             const suffixMessages = [];
             const extraMessages = [];
 
-            if(params && params.options){
+            if (params && params.options){
                 if(params.options.timeZone) {
                     extraMessages.push({
                         role: "user",
@@ -290,11 +334,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             }
 
-            if (assistant.data && assistant.data.trackConversations) {
-                body.options.trackConversations = true;
-            }
 
-            if(assistant.data && assistant.data.messageOptions) {
+            if (assistant.data && assistant.data.messageOptions) {
                 if(assistant.data.messageOptions.includeMessageIds){
 
                     const messageIdMapping = {};
@@ -309,7 +350,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         };
                     });
 
-                    llm.sendStateEventToStream({
+                    sendStateEventToStream(responseStream, {
                        messageIdMapping
                     });
 
@@ -425,6 +466,57 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
                 const sessionId = params.options.conversationId;
 
+                // 🚀 AUTOMATION + IMAGES: Convert images to descriptions for agent compatibility
+                
+                // Check if model supports images (with fallback for known vision models)
+                const modelSupportsVision = params.model.supportsImages;
+                
+                logger.debug('🔍 Image processing check:', {
+                    hasImageSources: !!(body.imageSources && body.imageSources.length > 0),
+                    imageSourcesCount: body.imageSources?.length || 0,
+                    modelSupportsImages: !!params.model.supportsImages,
+                    modelSupportsVision: modelSupportsVision,
+                    modelId: params.model.id,
+                    willProcess: !!(body.imageSources && body.imageSources.length > 0 && modelSupportsVision)
+                });
+                
+                if (body.imageSources && body.imageSources.length > 0 && modelSupportsVision) {
+                    try {
+                        logger.debug(`Generating descriptions for ${body.imageSources.length} images for automation assistant`);
+                        
+                        const imageDescriptions = await generateImageDescriptions(
+                            body.imageSources, 
+                            params.model, 
+                            params
+                        );
+
+                        if (imageDescriptions.length > 0) {
+                            // Create a consolidated message with all image descriptions
+                            const imageDescriptionText = imageDescriptions.map(desc => 
+                                `**${desc.imageName}** (${desc.imageType}): ${desc.description}`
+                            ).join('\n\n');
+
+                            // Add image descriptions as a system message before invoking agent
+                            const imageContextMessage = {
+                                role: 'user',
+                                content: `📎 **Attached Images Analysis:**\n\n${imageDescriptionText}\n\n` +
+                                        `Note: The above descriptions represent ${imageDescriptions.length} image(s) that were attached to this conversation. ` +
+                                        `Use this visual information to better understand the context and answer the user's request.`
+                            };
+
+                            body.messages.push(imageContextMessage);
+                            
+                            // Clear image sources to prevent conflicts with agent processing
+                            body.imageSources = [];
+                            
+                            logger.debug(`Added descriptions for ${imageDescriptions.length} images to automation assistant context`);
+                        }
+                    } catch (error) {
+                        logger.error('Error generating image descriptions for automation assistant:', error);
+                        // Continue with agent invocation even if image description fails
+                    }
+                }
+
                 invokeAgent(
                     params.account.accessToken,
                     sessionId,
@@ -434,14 +526,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
                      builtInOperations, operations}
                 );
 
-                llm.sendStatus(statusInfo);
-                llm.forceFlush();
-                llm.forceFlush();
+                sendStatusEventToStream(responseStream, statusInfo);
+                forceFlush(responseStream);
 
-                llm.sendStateEventToStream({ agentRun: { startTime: new Date(), sessionId } });
-                llm.forceFlush();
-                llm.forceFlush();
-                llm.endStream();
+                sendStateEventToStream(responseStream, { agentRun: { startTime: new Date(), sessionId } });
+                forceFlush(responseStream);
+                responseStream.end();
 
                 return;
 
@@ -482,12 +572,6 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 (message) => message.role !== "system"
             );
 
-            if (assistant.data?.integrationDriveData) {
-                const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
-                // console.log("Drive datasources: ", driveDatasources);
-                assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
-            }
-
             const groupType = body.options.groupType;
             if (groupType) {
                 const groupTypeData = assistant.data.groupTypeData[groupType];
@@ -501,8 +585,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 body.options.analysisCategories = assistant.data?.analysisCategories ?? [];
             }
 
+            if (assistant.data && assistant.data.trackConversations) {
+                body.options.trackConversations = true;
+            }
+
             const instructions = await fillInTemplate(
-                llm,
+                responseStream,
                 params,
                 body,
                 ds,
@@ -513,7 +601,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                 }
             );
 
-                llm.sendStateEventToStream({
+                sendStateEventToStream(responseStream, {
                     references: getReferences(references),
                     opsConfig: {
                         opFormat: {
@@ -535,7 +623,7 @@ export const fillInAssistant = (assistant, assistantBase) => {
                             content: "Pay close attention to any provided information. Unless told otherwise, " +
                                 "cite the information you are provided with quotations supporting your analysis " +
                                 "the [Page X, Slide Y, Paragraph Q, etc.] of the quotation.",
-                            data: {dataSources: assistant.dataSources}
+                            data: {dataSources: extractAssistantDatasources(assistant)}
                         },
                         {
                             role: 'system',
@@ -557,32 +645,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
             // for now we will include the ds in the current message
             if (assistant.dataSources && !dataSourceOptions.disableDataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
+            // 🚀 FIXED: defaultAssistant no longer needs llm parameter
             await assistantBase.handler(
-                llm,
                 {...params, blockTerminator: blockTerminator || params.blockTerminator},
                 updatedBody,
                 ds,
                 responseStream);
-
-            try {
-                if (assistant.data && assistant.data.logChats) {
-                    const user = assistant.data.logAnonymously ?
-                        "anonymous" : params.account.user;
-
-                    await saveChatToS3(
-                        assistant,
-                        user,
-                        body,
-                        {
-                            user: params.account.user,
-                            assistant: assistant,
-                            dataSources: ds,
-                        }
-                    );
-                }
-            } catch (e) {
-                console.error('Error logging assistant chat to S3:', e);
-            }
         }
     };
 
@@ -605,4 +673,23 @@ function extractDriveDatasources(data) {
         ])
         .map(fileMetadata => fileMetadata.datasource)
         .filter(datasource => datasource && datasource.id);
+}
+
+function extractAssistantDatasources(assistant) {
+    if (!assistant) return [];
+
+    if (assistant.data?.integrationDriveData) {
+        const driveDatasources = extractDriveDatasources(assistant.data.integrationDriveData);
+        // logger.debug("Drive datasources:", driveDatasources);
+        assistant.dataSources = [...assistant.dataSources, ...driveDatasources];
+    }
+
+    // update ds with astp for dual embedding object access check 
+    if (assistant.data?.astPath) {
+        assistant.dataSources.forEach(ds => {
+            ds.ast = assistant.assistantId;
+        });
+    }
+
+    return assistant.dataSources || [];
 }

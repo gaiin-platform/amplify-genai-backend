@@ -36,7 +36,7 @@ register_ops_schema = {
                             }
                         },
                         "required": ["type", "properties"],
-                        "additionalProperties": False
+                        "additionalProperties": True
                     },
                     "tags": {
                         "type": "array",

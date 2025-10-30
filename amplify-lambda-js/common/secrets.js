@@ -5,6 +5,9 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { getLogger } from './logging.js';
+
+const logger = getLogger("secrets");
 
 // Since __dirname is not available in ES module scope, you have to construct the path differently.
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +38,7 @@ export const getSecret = async (secretName) => {
         }
         return secret;
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         throw error;
     }
 }
@@ -43,7 +46,7 @@ export const getSecret = async (secretName) => {
 // The get_endpoint_data function converted to JavaScript
 const getEndpointData = (parsed_data, model_name) => {
     // Find the model in the list of models
-    console.log("Get endpoint data model_name: ", model_name);
+    logger.debug("Get endpoint data model_name: ", model_name);
     if(model_name === "gpt-4-1106-Preview" || model_name === "gpt-4-1106-preview"){
         model_name = "gpt-4-turbo";
     } else if(model_name === "gpt-35-1106") {
@@ -69,20 +72,21 @@ const parsed_secret = JSON.parse(secret_data);
 // The get_llm_config function converted to JavaScript
 export const getLLMConfig = async (model_name, model_provider) => {
     if (model_provider === "OpenAI") {
-        const url = "https://api.openai.com/v1/chat/completions";
-        const key = await getOpenAIApiKey();
+        const url = "https://api.openai.com/v1/responses";
+        const key = await getSecretApiKey("OPENAI_API_KEY");
         return {url, key};
     }
     return getEndpointData(parsed_secret, model_name);
 };
 
-const getOpenAIApiKey = async () => {
+
+export const getSecretApiKey = async (secretName) => {
     const secret = await getSecret(process.env.SECRETS_ARN_NAME);
     try {
-        const apiKey = JSON.parse(secret).OPENAI_API_KEY;
-        return apiKey;
+        const apiKey = JSON.parse(secret);
+        return apiKey[secretName];
     } catch (error) {
-        logger.error("Error getting OpenAI API key:", error);
+        logger.error("Error getting secret API key: ", secretName, "\n", error);
         return null;
     }
 }

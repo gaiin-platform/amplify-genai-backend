@@ -1,178 +1,251 @@
-from integrations.oauth import MissingCredentialsError
-
-from integrations.o365.onedrive import (
-    list_drive_items,
-    upload_file,
-    download_file,
-    delete_item,
-    get_drive_item,
-    create_folder,
-    update_drive_item,
-    copy_drive_item,
-    move_drive_item,
-    create_sharing_link,
-    invite_to_drive_item,
-)
-from integrations.o365.excel import (
-    list_worksheets,
-    list_tables,
-    add_row_to_table,
-    read_range,
-    update_range,
-    get_worksheet,
-    create_worksheet,
-    delete_worksheet,
-    create_table as create_table_excel,
-    delete_table,
-    get_table_range,
-    list_charts,
-    get_chart,
-    create_chart,
-    delete_chart,
-)
-from integrations.o365.outlook import (
-    list_messages,
-    get_message_details,
-    send_mail,
-    delete_message,
-    get_attachments,
-    update_message,
-    create_draft,
-    send_draft,
-    reply_to_message,
-    reply_all_message,
-    forward_message,
-    move_message,
-    list_folders,
-    get_folder_details,
-    add_attachment,
-    delete_attachment,
-    search_messages,
-)
-
-from integrations.o365.planner import (
-    list_plans_in_group,
-    list_buckets_in_plan,
-    list_tasks_in_plan,
-    create_task,
-    update_task,
-    delete_task,
-)
-
-from integrations.o365.sharepoint import (
-    list_sites,
-    get_site_by_path,
-    list_site_lists,
-    get_list_items,
-    create_list_item,
-    update_list_item,
-    delete_list_item,
-)
-
-from integrations.o365.teams import (
-    list_teams,
-    list_channels,
-    create_channel,
-    send_channel_message,
-    get_chat_messages,
-    schedule_meeting,
-)
-
-from integrations.o365.user_groups import (
-    list_users,
-    get_user_details,
-    list_groups,
-    get_group_details,
-    create_group,
-    delete_group,
-)
-
-from integrations.o365.onenote import (
-    list_notebooks,
-    list_sections_in_notebook,
-    list_pages_in_section,
-    create_page_in_section,
-    get_page_content,
-    create_page_with_image_and_attachment,
-)
-
-from integrations.o365.contacts import (
-    list_contacts,
-    get_contact_details,
-    create_contact,
-    delete_contact,
-)
+import copy
+import re
 
 from integrations.o365.calendar import (
+    add_attachment,
+    check_event_conflicts,
+    create_calendar,
     create_event,
-    update_event,
+    create_recurring_event,
+    delete_attachment,
+    delete_calendar,
     delete_event,
+    find_meeting_times,
+    get_calendar_permissions,
     get_event_details,
     get_events_between_dates,
     list_calendar_events,
     list_calendars,
-    create_calendar,
-    delete_calendar,
-    respond_to_event,
-    find_meeting_times,
-    create_recurring_event,
-    update_recurring_event,
-    add_attachment,
-    get_attachments,
-    delete_attachment,
-    get_calendar_permissions,
-    share_calendar,
     remove_calendar_sharing,
-    check_event_conflicts,
+    respond_to_event,
+    share_calendar,
+    update_event,
+    update_recurring_event,
 )
-
+from integrations.o365.calendar import get_attachments as get_attachments_calendar
+from integrations.o365.contacts import (
+    create_contact,
+    delete_contact,
+    get_contact_details,
+    list_contacts,
+)
+from integrations.o365.excel import (
+    add_row_to_table,
+    create_chart,
+    create_worksheet,
+    delete_chart,
+    delete_table,
+    delete_worksheet,
+    get_chart,
+    get_table_range,
+    get_worksheet,
+    list_charts,
+    list_tables,
+    list_worksheets,
+    read_range,
+    update_range,
+)
+from integrations.o365.excel import create_table as create_table_excel
+from integrations.o365.onedrive import (
+    copy_drive_item,
+    create_folder,
+    create_sharing_link,
+    delete_item,
+    download_file,
+    get_drive_item,
+    invite_to_drive_item,
+    list_drive_items,
+    move_drive_item,
+    update_drive_item,
+    upload_file,
+)
+from integrations.o365.onenote import (
+    create_page_in_section,
+    create_page_with_attachment,
+    get_page_content,
+    list_notebooks,
+    list_pages_in_section,
+    list_sections_in_notebook,
+)
+from integrations.o365.outlook import (
+    add_attachment,
+    create_draft,
+    delete_attachment,
+    delete_message,
+    download_attachment,
+    forward_message,
+    get_folder_details,
+    get_message_details,
+    list_folders,
+    list_messages,
+    move_message,
+    reply_all_message,
+    reply_to_message,
+    search_messages,
+    send_draft,
+    send_mail,
+    update_message,
+)
+from integrations.o365.outlook import get_attachments as get_attachments_outlook
+from integrations.o365.planner import (
+    create_task,
+    delete_task,
+    list_buckets_in_plan,
+    list_plans_in_group,
+    list_tasks_in_plan,
+    update_task,
+)
+from integrations.o365.sharepoint import (
+    create_list_item,
+    delete_list_item,
+    get_list_items,
+    get_site_by_path,
+    list_site_lists,
+    list_sites,
+    update_list_item,
+)
+from integrations.o365.teams import (
+    create_channel,
+    get_chat_messages,
+    list_channels,
+    list_teams,
+    schedule_meeting,
+    send_channel_message,
+)
+from integrations.o365.user_groups import (
+    create_group,
+    delete_group,
+    get_group_details,
+    get_user_details,
+    list_groups,
+    list_users,
+)
 from integrations.o365.word_doc import (
     add_comment,
-    get_document_statistics,
-    search_document,
     apply_formatting,
-    get_document_sections,
-    insert_section,
-    replace_text,
-    create_table as create_table_word,
-    update_table_cell,
-    create_list,
-    insert_page_break,
-    set_header_footer,
-    insert_image,
-    get_document_versions,
-    restore_version,
-    delete_document,
-    list_documents,
-    share_document,
-    get_document_permissions,
-    remove_permission,
-    get_document_content,
-    update_document_content,
     create_document,
+    create_list,
+    delete_document,
+    get_document_content,
+    get_document_permissions,
+    get_document_sections,
+    get_document_statistics,
+    get_document_versions,
+    insert_image,
+    insert_page_break,
+    insert_section,
+    list_documents,
+    remove_permission,
+    replace_text,
+    restore_version,
+    search_document,
+    set_header_footer,
+    share_document,
+    update_document_content,
+    update_table_cell,
 )
-
-from service.routes import route_data
-import re
+from integrations.o365.word_doc import create_table as create_table_word
+from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
-
+from pycommon.api.ops import api_tool, set_op_type, set_route_data
 from service.routes import route_data
-from pycommon.api.ops import api_tool, set_route_data, set_op_type
 
 set_route_data(route_data)
 set_op_type("integration")
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SecretsManagerOperation
+)
 from pycommon.authz import validated
 
+from pycommon.logger import getLogger
+logger = getLogger("office365")
 
 def camel_to_snake(name):
     snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
     return snake
 
 
+def fix_data_types(data, func_schema):
+    """
+    Attempts to fix data types to match the expected schema.
+    Returns a copy of the data with type corrections applied.
+    """
+    
+    fixed_data = copy.deepcopy(data)
+    
+    if not func_schema or "properties" not in func_schema:
+        return fixed_data
+        
+    if "data" not in fixed_data or not isinstance(fixed_data["data"], dict):
+        return fixed_data
+    
+    properties = func_schema["properties"]
+    
+    for field_name, field_value in fixed_data["data"].items():
+        if field_name not in properties:
+            continue
+            
+        expected_type = properties[field_name].get("type")
+        if not expected_type:
+            continue
+            
+        try:
+            # Skip if already correct type
+            if expected_type == "string" and isinstance(field_value, str):
+                continue
+            elif expected_type == "integer" and isinstance(field_value, int):
+                continue
+            elif expected_type == "number" and isinstance(field_value, (int, float)):
+                continue
+            elif expected_type == "boolean" and isinstance(field_value, bool):
+                continue
+            elif expected_type in ["array", "object"]:
+                continue  # Don't attempt to fix complex types
+                
+            # Attempt type conversion
+            if expected_type == "integer":
+                if isinstance(field_value, str):
+                    try:
+                        # Handle negative numbers and standard integer strings
+                        if field_value.lstrip('-').isdigit():
+                            fixed_data["data"][field_name] = int(field_value)
+                    except ValueError:
+                        pass
+                elif isinstance(field_value, float) and field_value.is_integer():
+                    fixed_data["data"][field_name] = int(field_value)
+                    
+            elif expected_type == "number":
+                if isinstance(field_value, str):
+                    try:
+                        fixed_data["data"][field_name] = float(field_value)
+                    except ValueError:
+                        pass
+                        
+            elif expected_type == "boolean":
+                if isinstance(field_value, str):
+                    if field_value.lower() in ["true", "1", "yes", "on"]:
+                        fixed_data["data"][field_name] = True
+                    elif field_value.lower() in ["false", "0", "no", "off"]:
+                        fixed_data["data"][field_name] = False
+                elif isinstance(field_value, (int, float)):
+                    fixed_data["data"][field_name] = bool(field_value)
+                    
+            elif expected_type == "string":
+                if not isinstance(field_value, str):
+                    fixed_data["data"][field_name] = str(field_value)
+                    
+        except (ValueError, TypeError, AttributeError):
+            # If conversion fails, leave the original value
+            continue
+    
+    return fixed_data
+
+
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
-        print("Input Data: ", data["data"])
+        logger.debug("Input Data: %s", data["data"])
         try:
             params = {
                 camel_to_snake(param): data["data"][param] for param in required_params
@@ -184,24 +257,28 @@ def common_handler(operation, *required_params, **optional_params):
 
             params["access_token"] = data["access_token"]
             response = operation(current_user, **params)
-            print("Integration Response: ", response)
+            logger.debug("Integration Response: %s", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
-            print("Missing Credentials Error: ", str(me))
+            logger.error("Missing Credentials Error: %s", str(me))
             return {"success": False, "error": str(me)}
         except Exception as e:
-            print("Error: ", str(e))
+            logger.error("Error: %s", str(e))
             return {"success": False, "error": str(e)}
 
     return handler
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "OAUTH_ENCRYPTION_PARAMETER": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated("route", False)
 def route_request(event, context, current_user, name, data):
     try:
         # First try to use path-based routing if available
         target_path_string = event.get("path", event.get("rawPath", ""))
-        print(f"Route path: {target_path_string}")
+        logger.debug("Route path: %s", target_path_string)
 
         # Check if we have a direct path match in our route_data
         route_info = route_data.get(target_path_string, None)
@@ -217,13 +294,22 @@ def route_request(event, context, current_user, name, data):
             "required": ["data"],
         }
 
-        print("Validating request")
+        logger.debug("Validating request")
         try:
             validate(data, wrapper_schema)
-            print("Request data validated")
+            logger.debug("Request data validated")
         except ValidationError as e:
-            print("Validation error: ", str(e))
-            raise ValueError(f"Invalid request: {str(e)}")
+            logger.warning("Validation error: %s", str(e))
+            logger.info("Attempting to fix data types...")
+            
+            try:
+                fixed_data = fix_data_types(data, func_schema)
+                validate(fixed_data, wrapper_schema)
+                logger.info("Data types fixed and validation successful")
+                data = fixed_data
+            except (ValidationError, ValueError, TypeError) as fix_error:
+                logger.warning("Type fixing failed: %s", str(fix_error))
+                raise ValueError(f"Invalid request: {str(e)}")
 
         service = "/microsoft/integrations/"
         # If no op parameter, try to extract from the path
@@ -233,7 +319,7 @@ def route_request(event, context, current_user, name, data):
         else:
             return {"success": False, "message": "Invalid path"}
 
-        print("Operation to execute: ", op)
+        logger.debug("Operation to execute: %s", op)
 
         # Dynamically look up the handler function based on the operation name
         handler_name = f"{op}_handler"
@@ -245,7 +331,7 @@ def route_request(event, context, current_user, name, data):
                 "message": f"Invalid operation: {op}. No handler function found for {handler_name}",
             }
 
-        print("Executing handler function...")
+        logger.debug("Executing handler function...")
         return handler_func(current_user, data)
 
     except Exception as e:
@@ -823,7 +909,25 @@ def delete_message_handler(current_user, data):
     },
 )
 def get_attachments_handler(current_user, data):
-    return common_handler(get_attachments, message_id=None)(current_user, data)
+    return common_handler(get_attachments_outlook, message_id=None)(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/download_attachment",
+    tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
+    name="microsoftDownloadAttachment",
+    description="Downloads a specific attachment from a message. Files under 7MB return base64 content directly. Larger files return download URLs to avoid API Gateway limits.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "message_id": {"type": "string", "description": "Message ID"},
+            "attachment_id": {"type": "string", "description": "Attachment ID"}
+        },
+        "required": ["message_id", "attachment_id"],
+    },
+)
+def download_attachment_handler(current_user, data):
+    return common_handler(download_attachment, message_id=None, attachment_id=None)(current_user, data)
 
 
 @api_tool(
@@ -1643,56 +1747,46 @@ def get_page_content_handler(current_user, data):
 
 
 @api_tool(
-    path="/microsoft/integrations/create_page_with_image_and_attachment",
+    path="/microsoft/integrations/create_page_with_attachment",
     tags=["default", "integration", "microsoft_onenote", "microsoft_onenote_write"],
-    name="microsoftCreatePageWithImageAndAttachment",
-    description="Creates a page with embedded image and file attachment.",
+    name="microsoftCreatePageWithAttachment",
+    description="Creates a page with a file attachment.",
     parameters={
         "type": "object",
         "properties": {
             "section_id": {"type": "string", "description": "Section ID"},
             "title": {"type": "string", "description": "Page title"},
-            "html_body": {"type": "string", "description": "HTML content"},
-            "image_name": {"type": "string", "description": "Name of the image file"},
-            "image_content": {
-                "type": "string",
-                "description": "Base64 encoded image content",
-            },
-            "image_content_type": {"type": "string", "description": "Image MIME type"},
+            "html_body": {"type": "string", "description": "HTML content for the page"},
             "file_name": {"type": "string", "description": "Name of the attachment"},
             "file_content": {
                 "type": "string",
-                "description": "Base64 encoded file content",
+                "description": "File content as base64 encoded string",
             },
-            "file_content_type": {"type": "string", "description": "File MIME type"},
+            "file_content_type": {
+                "type": "string",
+                "description": "File MIME type (e.g. 'application/pdf')",
+            },
         },
         "required": [
             "section_id",
             "title",
             "html_body",
-            "image_name",
-            "image_content",
-            "image_content_type",
             "file_name",
             "file_content",
             "file_content_type",
         ],
     },
 )
-def create_page_with_attachments_handler(current_user, data):
+def create_page_with_attachment_handler(current_user, data):
     return common_handler(
-        create_page_with_image_and_attachment,
+        create_page_with_attachment,
         section_id=None,
         title=None,
         html_body=None,
-        image_name=None,
-        image_content=None,
-        image_content_type=None,
         file_name=None,
         file_content=None,
         file_content_type=None,
     )(current_user, data)
-
 
 ### contacts ###
 
@@ -2216,7 +2310,7 @@ def delete_attachment_handler(current_user, data):
     path="/microsoft/integrations/search_messages",
     tags=["default", "integration", "microsoft_outlook", "microsoft_outlook_read"],
     name="microsoftSearchMessages",
-    description="Searches messages for a given query string.",
+    description="Searches messages for a given query string. Note: Pagination with skip is not supported in search queries.",
     parameters={
         "type": "object",
         "properties": {
@@ -2226,20 +2320,14 @@ def delete_attachment_handler(current_user, data):
                 "minimum": 1,
                 "maximum": 100,
                 "default": 10,
-                "description": "Maximum messages",
-            },
-            "skip": {
-                "type": "integer",
-                "minimum": 0,
-                "default": 0,
-                "description": "Pagination offset",
+                "description": "Maximum messages to return",
             },
         },
         "required": ["search_query"],
     },
 )
 def search_messages_handler(current_user, data):
-    return common_handler(search_messages, search_query=None, top=10, skip=0)(
+    return common_handler(search_messages, search_query=None, top=10)(
         current_user, data
     )
 
@@ -2546,7 +2634,7 @@ def calendar_add_attachment_handler(current_user, data):
     },
 )
 def get_event_attachments_handler(current_user, data):
-    return common_handler(get_attachments, event_id=None)(current_user, data)
+    return common_handler(get_attachments_calendar, event_id=None)(current_user, data)
 
 
 @api_tool(
@@ -2590,7 +2678,7 @@ def get_calendar_permissions_handler(current_user, data):
     path="/microsoft/integrations/share_calendar",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_write"],
     name="microsoftShareCalendar",
-    description="Shares a calendar with another user.",
+    description="Shares a calendar with another user. Uses Microsoft Graph API calendar permission roles.",
     parameters={
         "type": "object",
         "properties": {
@@ -2598,9 +2686,9 @@ def get_calendar_permissions_handler(current_user, data):
             "user_email": {"type": "string", "description": "User email"},
             "role": {
                 "type": "string",
-                "description": "Role",
+                "description": "Permission level: freeBusyRead (free/busy only), limitedRead (free/busy + subject/location), read (all event details)",
                 "default": "read",
-                "enum": ["read", "write", "owner"],
+                "enum": ["freeBusyRead", "limitedRead", "read"],
             },
         },
         "required": ["calendar_id", "user_email"],
@@ -2696,13 +2784,13 @@ def check_event_conflicts_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
         },
-        "required": ["item_id", "worksheet_id"],
+        "required": ["item_id", "worksheet_name"],
     },
 )
 def get_worksheet_handler(current_user, data):
-    return common_handler(get_worksheet, item_id=None, worksheet_id=None)(
+    return common_handler(get_worksheet, item_id=None, worksheet_name=None)(
         current_user, data
     )
 
@@ -2740,13 +2828,13 @@ def create_worksheet_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
         },
-        "required": ["item_id", "worksheet_id"],
+        "required": ["item_id", "worksheet_name"],
     },
 )
 def delete_worksheet_handler(current_user, data):
-    return common_handler(delete_worksheet, item_id=None, worksheet_id=None)(
+    return common_handler(delete_worksheet, item_id=None, worksheet_name=None)(
         current_user, data
     )
 
@@ -2763,7 +2851,7 @@ def delete_worksheet_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
             "address": {
                 "type": "string",
                 "description": "Range address for the table (e.g., 'A1:D4')",
@@ -2774,14 +2862,14 @@ def delete_worksheet_handler(current_user, data):
                 "description": "Specifies if the table has headers",
             },
         },
-        "required": ["item_id", "worksheet_id", "address"],
+        "required": ["item_id", "worksheet_name", "address"],
     },
 )
 def create_table_excel_handler(current_user, data):
     return common_handler(
         create_table_excel,
         item_id=None,
-        worksheet_id=None,
+        worksheet_name=None,
         address=None,
         has_headers=True,
     )(current_user, data)
@@ -2843,13 +2931,13 @@ def get_table_range_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
         },
-        "required": ["item_id", "worksheet_id"],
+        "required": ["item_id", "worksheet_name"],
     },
 )
 def list_charts_handler(current_user, data):
-    return common_handler(list_charts, item_id=None, worksheet_id=None)(
+    return common_handler(list_charts, item_id=None, worksheet_name=None)(
         current_user, data
     )
 
@@ -2866,14 +2954,14 @@ def list_charts_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
-            "chart_id": {"type": "string", "description": "Chart identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
+            "chart_name": {"type": "string", "description": "Chart name"},
         },
-        "required": ["item_id", "worksheet_id", "chart_id"],
+        "required": ["item_id", "worksheet_name", "chart_name"],
     },
 )
 def get_chart_handler(current_user, data):
-    return common_handler(get_chart, item_id=None, worksheet_id=None, chart_id=None)(
+    return common_handler(get_chart, item_id=None, worksheet_name=None, chart_name=None)(
         current_user, data
     )
 
@@ -2890,7 +2978,7 @@ def get_chart_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
             "chart_type": {"type": "string", "description": "Chart type"},
             "source_range": {
                 "type": "string",
@@ -2905,7 +2993,7 @@ def get_chart_handler(current_user, data):
         },
         "required": [
             "item_id",
-            "worksheet_id",
+            "worksheet_name",
             "chart_type",
             "source_range",
             "series_by",
@@ -2916,10 +3004,10 @@ def create_chart_handler(current_user, data):
     return common_handler(
         create_chart,
         item_id=None,
-        worksheet_id=None,
+        worksheet_name=None,
         chart_type=None,
         source_range=None,
-        seriesBy=None,
+        series_by=None,
         title="",
     )(current_user, data)
 
@@ -2936,14 +3024,14 @@ def create_chart_handler(current_user, data):
                 "type": "string",
                 "description": "OneDrive item ID of the workbook",
             },
-            "worksheet_id": {"type": "string", "description": "Worksheet identifier"},
-            "chart_id": {"type": "string", "description": "Chart identifier"},
+            "worksheet_name": {"type": "string", "description": "Worksheet name"},
+            "chart_name": {"type": "string", "description": "Chart name"},
         },
-        "required": ["item_id", "worksheet_id", "chart_id"],
+        "required": ["item_id", "worksheet_name", "chart_name"],
     },
 )
 def delete_chart_handler(current_user, data):
-    return common_handler(delete_chart, item_id=None, worksheet_id=None, chart_id=None)(
+    return common_handler(delete_chart, item_id=None, worksheet_name=None, chart_name=None)(
         current_user, data
     )
 

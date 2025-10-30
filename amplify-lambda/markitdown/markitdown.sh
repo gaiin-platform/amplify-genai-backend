@@ -18,7 +18,7 @@ rm -rf python/joblib* || true
 echo "Downloading pycommon source code..."
 # Clone to a local temporary directory instead of inside Docker
 rm -rf ./tmp_pycommon
-git clone --depth 1 --branch pre-release/v0.0.1 https://github.com/gaiin-platform/pycommon.git ./tmp_pycommon
+git clone --depth 1 --branch v0.1.0 https://github.com/gaiin-platform/pycommon.git ./tmp_pycommon
 
 # Create pycommon package structure in python directory
 echo "Extracting minimal pycommon modules..."
@@ -32,6 +32,7 @@ if [ -d "./tmp_pycommon/pycommon/api" ]; then
     cp ./tmp_pycommon/pycommon/api/secrets.py python/pycommon/api/ 2>/dev/null || echo "secrets.py not found"
     cp ./tmp_pycommon/pycommon/api/models.py python/pycommon/api/ 2>/dev/null || echo "models.py not found"
     cp ./tmp_pycommon/pycommon/api/get_endpoint.py python/pycommon/api/ 2>/dev/null || echo "get_endpoint.py not found"
+    cp ./tmp_pycommon/pycommon/api/data_sources.py python/pycommon/api/ 2>/dev/null || echo "data_sources.py not found"
     
     # Create minimal __init__.py for api module (overwrite the one from GitHub)
     cat > python/pycommon/api/__init__.py << 'EOF'
@@ -47,6 +48,7 @@ from .secrets import (
 # Import other copied modules
 from . import models
 from . import get_endpoint
+from . import data_sources
 
 __all__ = [
     "get_secret_parameter",
@@ -54,6 +56,7 @@ __all__ = [
     "delete_secret_parameter",
     "models",
     "get_endpoint",
+    "data_sources",
 ]
 EOF
     echo "API modules copied with minimal __init__.py"
@@ -75,6 +78,20 @@ if [ -f "./tmp_pycommon/pycommon/encoders.py" ]; then
     echo "Encoders module copied"
 fi
 
+# Copy const.py as a single file
+if [ -f "./tmp_pycommon/pycommon/const.py" ]; then
+    echo "Copying const.py..."
+    cp ./tmp_pycommon/pycommon/const.py python/pycommon/ 2>/dev/null || echo "const.py not found"
+    echo "Const module copied"
+fi
+
+# Copy logger.py as a single file
+if [ -f "./tmp_pycommon/pycommon/logger.py" ]; then
+    echo "Copying logger.py..."
+    cp ./tmp_pycommon/pycommon/logger.py python/pycommon/ 2>/dev/null || echo "logger.py not found"
+    echo "Logger module copied"
+fi
+
 # Create minimal main __init__.py (overwrite the one from GitHub)
 cat > python/pycommon/__init__.py << 'EOF'
 # Minimal pycommon module exports for RAG functionality
@@ -83,11 +100,13 @@ cat > python/pycommon/__init__.py << 'EOF'
 from . import api
 from . import llm
 from . import encoders
+from . import const
 
 __all__ = [
     "api",
     "llm",
     "encoders",
+    "const",
 ]
 EOF
 

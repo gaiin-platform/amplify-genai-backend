@@ -16,3 +16,10 @@ python-pptx
 nltk==3.8.1
 python-docx
 tiktoken
+psycopg2-binary
+pymysql
+pyodbc
+duckdb
+snowflake-connector-python
+google-cloud-bigquery
+cx_Oracle

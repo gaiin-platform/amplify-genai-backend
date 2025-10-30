@@ -7,6 +7,8 @@ from integrations.oauth import get_ms_graph_session
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
+from pycommon.logger import getLogger
+logger = getLogger(integration_name)
 
 class OutlookError(Exception):
     """Base exception for Outlook operations"""
@@ -81,16 +83,23 @@ def list_messages(
         session = get_ms_graph_session(current_user, integration_name, access_token)
         url = f"{GRAPH_ENDPOINT}/me/mailFolders/{folder_id}/messages"
 
-        params = {
-            "$top": top, 
-            "$skip": skip, 
-            "$orderby": "receivedDateTime desc",
-            "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
-            "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
-        }
-
+        # Add filter if provided, but keep query VERY simple to avoid Graph API complexity limits
         if filter_query:
-            params["$filter"] = filter_query
+            # When filtering, use minimal parameters to avoid complexity error
+            params = {
+                "$filter": filter_query,
+                "$top": top
+                # Skip $skip, $select, $orderby, and $expand to avoid "too complex" error
+            }
+        else:
+            # When not filtering, use full parameter set
+            params = {
+                "$top": top, 
+                "$skip": skip,
+                "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
+                "$orderby": "receivedDateTime desc",
+                "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"
+            }
 
         response = session.get(url, params=params)
 
@@ -270,7 +279,7 @@ def delete_message(current_user: str, message_id: str, access_token: str) -> Dic
 
 
 def get_attachments(
-    current_user: str, message_id: str, access_token: str
+    current_user: str, message_id: str, access_token: str = None
 ) -> List[Dict]:
     """
     Gets attachments for a specific message.
@@ -301,6 +310,116 @@ def get_attachments(
         raise OutlookError(f"Network error while getting attachments: {str(e)}")
 
 
+def download_attachment(
+    current_user: str, message_id: str, attachment_id: str, access_token: str = None
+) -> Dict:
+    """
+    Downloads an attachment from a specific message.
+    
+    For files under 7MB, returns base64-encoded content directly.
+    For larger files, returns a temporary download URL to avoid API Gateway limits.
+
+    Args:
+        current_user: User identifier
+        message_id: Message ID
+        attachment_id: Attachment ID
+        access_token: Optional OAuth token
+
+    Returns:
+        Dict with attachment content/URL and metadata
+
+    Raises:
+        MessageNotFoundError: If message doesn't exist
+        AttachmentError: If attachment doesn't exist or download fails
+        OutlookError: For other failures
+    
+    Notes:
+        - API Gateway has 10MB response limit, base64 adds ~33% overhead
+        - Files >7MB return download URLs instead of content
+        - Supports fileAttachment types only
+        - itemAttachment and referenceAttachment return appropriate guidance
+    """
+    try:
+        session = get_ms_graph_session(current_user, integration_name, access_token)
+        
+        # Get attachment metadata
+        metadata_url = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}"
+        metadata_response = session.get(metadata_url)
+
+        if not metadata_response.ok:
+            if metadata_response.status_code == 404:
+                raise AttachmentError("Attachment not found")
+            handle_graph_error(metadata_response)
+
+        attachment_metadata = metadata_response.json()
+        attachment_type = attachment_metadata.get("@odata.type")
+        file_size = attachment_metadata.get("size", 0)
+        
+        # API Gateway limit consideration: 10MB response limit
+        # Base64 adds ~33% overhead, so 7MB is safe limit
+        SIZE_LIMIT_BYTES = 7 * 1024 * 1024  # 7MB
+        
+        if attachment_type == "#microsoft.graph.fileAttachment":
+            result = {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": attachment_metadata.get("contentType"),
+                "size": file_size,
+                "isInline": attachment_metadata.get("isInline", False),
+                "lastModifiedDateTime": attachment_metadata.get("lastModifiedDateTime")
+            }
+            
+            if file_size <= SIZE_LIMIT_BYTES:
+                # Small file - return base64 content directly
+                content_url = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}/$value"
+                content_response = session.get(content_url)
+                
+                if content_response.ok:
+                    import base64
+                    result["contentBytes"] = base64.b64encode(content_response.content).decode('utf-8')
+                    result["deliveryMethod"] = "direct_content"
+                else:
+                    # Fallback to contentBytes from metadata
+                    result["contentBytes"] = attachment_metadata.get("contentBytes")
+                    result["deliveryMethod"] = "metadata_content"
+            else:
+                # Large file - return download URL to avoid API Gateway limits
+                result["downloadUrl"] = f"{GRAPH_ENDPOINT}/me/messages/{message_id}/attachments/{attachment_id}/$value"
+                result["deliveryMethod"] = "download_url"
+                result["note"] = f"File too large ({file_size:,} bytes) for direct API response. Use downloadUrl with authentication headers."
+                
+            return result
+            
+        elif attachment_type == "#microsoft.graph.itemAttachment":
+            return {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": "application/outlook-item",
+                "size": file_size,
+                "isInline": False,
+                "lastModifiedDateTime": attachment_metadata.get("lastModifiedDateTime"),
+                "deliveryMethod": "unsupported",
+                "error": "Item attachments (embedded Outlook items) require special handling"
+            }
+            
+        elif attachment_type == "#microsoft.graph.referenceAttachment":
+            return {
+                "id": attachment_metadata.get("id"),
+                "name": attachment_metadata.get("name"),
+                "contentType": "reference/link",
+                "isInline": False,
+                "sourceUrl": attachment_metadata.get("sourceUrl"),
+                "providerType": attachment_metadata.get("providerType"),
+                "deliveryMethod": "external_link",
+                "note": "Reference attachment - use sourceUrl to access the cloud-stored file"
+            }
+        else:
+            raise AttachmentError(f"Unsupported attachment type: {attachment_type}")
+
+    except requests.RequestException as e:
+        raise OutlookError(f"Network error while downloading attachment: {str(e)}")
+
+
 def parse_msip_label(extended_properties: List[Dict]) -> Dict:
     """
     Parse Microsoft Information Protection label from extended properties
@@ -320,14 +439,14 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
     if not extended_properties:
         return sensitivity_info
     
-    # print(f"DEBUG: Extended properties found: {len(extended_properties)}")
+    # logger.debug(f"DEBUG: Extended properties found: {len(extended_properties)}")
     
     # Check for MSIP labels property
     for prop in extended_properties:
         prop_id = prop.get("id", "")
         prop_value = prop.get("value", "")
         
-        # print(f"DEBUG: Property ID: {prop_id}, Value: {prop_value}")
+        # logger.debug(f"DEBUG: Property ID: {prop_id}, Value: {prop_value}")
         
         # Check for MSIP labels property
         if "msip_labels" in prop_id.lower():
@@ -359,7 +478,7 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "confidential",
                             "is_sensitive": True
                         })
-                        print(f"DEBUG: Detected level 4 sensitivity from MSIP label name")
+                        logger.debug("Detected level 4 sensitivity from MSIP label name")
                     
                     # Level 3 (Private/Internal) - check for level 3 or internal keywords
                     elif any(keyword in label_lower for keyword in [
@@ -370,7 +489,7 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "private",
                             "is_sensitive": False
                         })
-                        print(f"DEBUG: Detected level 3 sensitivity from MSIP label name")
+                        logger.debug("Detected level 3 sensitivity from MSIP label name")
                     
                     # Level 2 (Personal) - check for level 2 or personal keywords
                     elif any(keyword in label_lower for keyword in [
@@ -381,7 +500,7 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "personal",
                             "is_sensitive": False
                         })
-                        print(f"DEBUG: Detected level 2 sensitivity from MSIP label name")
+                        logger.debug("Detected level 2 sensitivity from MSIP label name")
                     
                     # Level 1 (Public/Normal) - check for level 1 or public keywords
                     elif any(keyword in label_lower for keyword in [
@@ -392,17 +511,17 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "normal",
                             "is_sensitive": False
                         })
-                        print(f"DEBUG: Detected level 1 (public) sensitivity from MSIP label name")
+                        logger.debug("Detected level 1 (public) sensitivity from MSIP label name")
                     
                     else:
-                        print(f"DEBUG: MSIP label name found but no sensitivity keywords matched: {name_match}")
+                        logger.debug("MSIP label name found but no sensitivity keywords matched: %s", name_match)
                     
                     # Store both the extracted name and the full metadata
                     sensitivity_info["displayName"] = name_match
                     sensitivity_info["fullMetadata"] = prop_value
                     
                 else:
-                    # print(f"DEBUG: Could not extract Name field from MSIP label metadata")
+                    # logger.debug(f"DEBUG: Could not extract Name field from MSIP label metadata")
                     # Fallback to searching the entire metadata string for patterns
                     metadata_lower = prop_value.lower()
                     if any(keyword in metadata_lower for keyword in ["level 4", "critical", "confidential"]):
@@ -411,21 +530,21 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "confidential", 
                             "is_sensitive": True
                         })
-                        print(f"DEBUG: Detected level 4 sensitivity from full metadata fallback")
+                        logger.debug("Detected level 4 sensitivity from full metadata fallback")
                     elif any(keyword in metadata_lower for keyword in ["level 3", "internal", "private"]):
                         sensitivity_info.update({
                             "level": 3,
                             "label": "private",
                             "is_sensitive": False
                         })
-                        print(f"DEBUG: Detected level 3 sensitivity from full metadata fallback")
+                        logger.debug("Detected level 3 sensitivity from full metadata fallback")
                     elif any(keyword in metadata_lower for keyword in ["level 2", "personal"]):
                         sensitivity_info.update({
                             "level": 2,
                             "label": "personal",
                             "is_sensitive": False
                         })
-                        print(f"DEBUG: Detected level 2 sensitivity from full metadata fallback")
+                        logger.debug("Detected level 2 sensitivity from full metadata fallback")
                     else:
                         # If we have MSIP metadata but can't parse it, check if this is a known sensitive GUID
                         # The GUID 123ebcca-f57c-4bc1-a7cd-943e207777a8 appears to be your Level 4 label
@@ -435,16 +554,16 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                                 "label": "confidential",
                                 "is_sensitive": True
                             })
-                            print(f"DEBUG: Detected level 4 sensitivity from known GUID pattern")
+                            logger.debug("Detected level 4 sensitivity from known GUID pattern")
                         else:
-                            print(f"DEBUG: MSIP metadata found but could not determine sensitivity level")
+                            logger.debug("MSIP metadata found but could not determine sensitivity level")
                     
                     # Store the metadata we have
                     sensitivity_info["fullMetadata"] = prop_value
                 
                 break
     
-    # print(f"DEBUG: Final sensitivity info: {sensitivity_info}")
+    # logger.debug(f"DEBUG: Final sensitivity info: {sensitivity_info}")
     return sensitivity_info
 
 
@@ -931,17 +1050,17 @@ def search_messages(
     current_user: str,
     search_query: str,
     top: int = 10,
-    skip: int = 0,
     access_token: str = None,
 ) -> List[Dict]:
     """
     Searches messages for a given query string using the Microsoft Graph API's $search parameter.
+    
+    Note: Microsoft Graph API does not support pagination (skip) with search queries.
 
     Args:
         current_user: User identifier
         search_query: A string search query (e.g., "meeting")
-        top: Maximum number of messages to return
-        skip: Number of messages to skip for pagination
+        top: Maximum number of messages to return (1-100)
         access_token: Optional access token
 
     Returns:
@@ -955,7 +1074,6 @@ def search_messages(
         url = f"{GRAPH_ENDPOINT}/me/messages"
         params = {
             "$top": top, 
-            "$skip": skip, 
             "$search": f'"{search_query}"',
             "$select": "id,subject,from,receivedDateTime,hasAttachments,importance,isDraft,isRead,categories",
             "$expand": "singleValueExtendedProperties($filter=id eq 'String {00020386-0000-0000-C000-000000000046} Name msip_labels')"

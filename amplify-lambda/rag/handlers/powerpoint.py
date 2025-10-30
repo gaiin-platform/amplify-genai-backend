@@ -17,6 +17,8 @@ from pptx.dml.color import RGBColor
 
 PNG = "image/png"
 
+from pycommon.logger import getLogger
+logger = getLogger("rag_powerpoint")
 
 class VisualType(Enum):
     """Enum for visual content types we extract from PowerPoint"""
@@ -166,19 +168,19 @@ class PPTXHandler(TextExtractionHandler):
             
             if parent is not None:
                 parent.remove(shape_element)
-                print(f"Successfully removed shape: {getattr(shape, 'name', 'unnamed')}")
+                logger.debug("Successfully removed shape: %s", getattr(shape, 'name', 'unnamed'))
             else:
-                print(f"Warning: Could not find parent for shape: {getattr(shape, 'name', 'unnamed')}")
+                logger.warning("Could not find parent for shape: %s", getattr(shape, 'name', 'unnamed'))
                 
         except Exception as e:
-            print(f"Error removing shape: {e}")
+            logger.error("Error removing shape: %s", e)
             # Try alternative removal method
             try:
                 # Alternative approach: remove from spTree directly
                 slide._slide.spTree.remove(shape._element)
-                print(f"Successfully removed shape using alternative method")
+                logger.debug("Successfully removed shape using alternative method")
             except Exception as e2:
-                print(f"Alternative removal also failed: {e2}")
+                logger.error("Alternative removal also failed: %s", e2)
 
     def _add_marker_text_box(self, slide, marker_info):
         """
@@ -203,7 +205,7 @@ class PPTXHandler(TextExtractionHandler):
             paragraph.font.color.rgb = RGBColor(128, 128, 128)  # Gray color
             
         except Exception as e:
-            print(f"Warning: Could not add marker text box: {e}")
+            logger.warning("Could not add marker text box: %s", e)
 
     def _presentation_to_bytes(self, presentation):
         """
@@ -334,13 +336,13 @@ class PPTXHandler(TextExtractionHandler):
                     visual_data['shape_index'] = shape_index
                     visuals[marker] = visual_data
                 else:
-                    print(f"Skipping visual {marker} due to extraction failure")
+                    logger.warning("Skipping visual %s due to extraction failure", marker)
 
         return visuals
 
     def extract_visual_data(self, shape, visual_type, slide_number):
         """Extract the actual visual data from a shape"""
-        print(f"Extracting visual data for {visual_type} on slide {slide_number}")
+        logger.debug("Extracting visual data for %s on slide %d", visual_type, slide_number)
 
         if visual_type == VisualType.IMAGE.value:
             return self.extract_image_data(shape, slide_number)
@@ -365,11 +367,11 @@ class PPTXHandler(TextExtractionHandler):
                 image_bytes = image_part.blob
                 original_format = image_part.content_type
             else:
-                print(f"Could not find image relationship {rId} on slide {slide_number}" )
+                logger.warning("Could not find image relationship %s on slide %d", rId, slide_number)
                 return None
 
         except Exception as e:
-            print(f"Image extraction failed on slide {slide_number}: {e}")
+            logger.error("Image extraction failed on slide %d: %s", slide_number, e)
             return None
 
         # Convert format if necessary
@@ -449,7 +451,7 @@ class PPTXHandler(TextExtractionHandler):
                 pass
 
         except Exception as e:
-            print(f"Error extracting image metadata: {e}")
+            logger.error("Error extracting image metadata: %s", e)
 
         return metadata
 
@@ -503,7 +505,7 @@ class PPTXHandler(TextExtractionHandler):
             return img_bytes.getvalue()
 
         except Exception as e:
-            print(f"Error rendering shape as image: {e}")
+            logger.error("Error rendering shape as image: %s", e)
             # Create minimal fallback image
             img = Image.new("RGB", (200, 150), color="lightgray")
             draw = ImageDraw.Draw(img)
@@ -603,7 +605,7 @@ class PPTXHandler(TextExtractionHandler):
                 pass
 
         except Exception as e:
-            print(f"Error extracting shape metadata: {e}")
+            logger.error("Error extracting shape metadata: %s", e)
 
         return metadata
 

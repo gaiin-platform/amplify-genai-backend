@@ -1,10 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {chat} from "../azure/openai.js";
-import {chat as geminiChat} from "../gemini/gemini.js";
-import { chatBedrock } from "../bedrock/bedrock.js";
-import {getLLMConfig} from "../common/secrets.js";
+// Removed chatFn imports - now using LiteLLM unified interface
 
 export const getRequestId = (params) => {
     return params.requestId;
@@ -54,10 +51,29 @@ export const getMaxTokens = (params) => {
     return params.options.maxTokens;
 }
 
+export const getBudgetTokens = (params, maxTokens) => {
+    const reasoning_effort = params.options.reasoningLevel ?? "low";
+    let budget_tokens = 1024;
+    switch (reasoning_effort) {
+        case "medium":
+            budget_tokens = 2048;
+            break;
+        case "high":
+            budget_tokens = 4096;
+            break;
+    }
+    if (budget_tokens > maxTokens) {
+        budget_tokens = Math.max(maxTokens / 2, 1024);
+    }
+    return budget_tokens;
+
+}
+
+
 export const getChatFn = (model, body, writable, context) => {
 
     if (isOpenAIModel(model.id)) {
-        return chat(getLLMConfig, body, writable, context);
+        return openaiChat(getLLMConfig, body, writable, context);
     } else if (model.provider === 'Bedrock') {
         return chatBedrock(body, writable, context);
     } else if (isGeminiModel(model.id)) {
@@ -67,7 +83,6 @@ export const getChatFn = (model, body, writable, context) => {
         return null;
     }
 }
-
 
 export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));

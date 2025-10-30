@@ -2,6 +2,9 @@
 
 import { DynamoDBClient, UpdateItemCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { config } from 'dotenv';
+import { getLogger } from "./common/logging.js";
+
+const logger = getLogger("backfill-record-type");
 
 // Load environment variables
 config();
@@ -10,11 +13,11 @@ const client = new DynamoDBClient({});
 const tableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 
 if (!tableName) {
-    console.error("COST_CALCULATIONS_DYNAMO_TABLE environment variable is required");
+    logger.error("COST_CALCULATIONS_DYNAMO_TABLE environment variable is required");
     process.exit(1);
 }
 
-console.log(`Starting backfill for table: ${tableName}`);
+logger.info(`Starting backfill for table: ${tableName}`);
 
 async function backfillRecordType() {
     let processedCount = 0;
@@ -35,15 +38,15 @@ async function backfillRecordType() {
                 scanParams.ExclusiveStartKey = lastEvaluatedKey;
             }
 
-            console.log(`Scanning for records without record_type...`);
+            logger.info(`Scanning for records without record_type...`);
             const scanResult = await client.send(new ScanCommand(scanParams));
 
             if (!scanResult.Items || scanResult.Items.length === 0) {
-                console.log("No more records to process");
+                logger.info("No more records to process");
                 break;
             }
 
-            console.log(`Found ${scanResult.Items.length} records to update`);
+            logger.info(`Found ${scanResult.Items.length} records to update`);
 
             // Update each record
             for (const item of scanResult.Items) {
@@ -65,14 +68,14 @@ async function backfillRecordType() {
                     updatedCount++;
                     
                     if (updatedCount % 10 === 0) {
-                        console.log(`Updated ${updatedCount} records...`);
+                        logger.info(`Updated ${updatedCount} records...`);
                     }
                 } catch (updateError) {
                     if (updateError.name === 'ConditionalCheckFailedException') {
                         // Record already has record_type, skip
-                        console.log(`Skipping record ${item.id.S}#${item.accountInfo.S} - already has record_type`);
+                        logger.debug(`Skipping record ${item.id.S}#${item.accountInfo.S} - already has record_type`);
                     } else {
-                        console.error(`Error updating record ${item.id.S}#${item.accountInfo.S}:`, updateError.message);
+                        logger.error(`Error updating record ${item.id.S}#${item.accountInfo.S}:`, updateError.message);
                         errorCount++;
                     }
                 }
@@ -88,25 +91,25 @@ async function backfillRecordType() {
             }
 
         } catch (scanError) {
-            console.error("Error during scan:", scanError);
+            logger.error("Error during scan:", scanError);
             break;
         }
 
     } while (lastEvaluatedKey);
 
-    console.log("\n=== Backfill Complete ===");
-    console.log(`Total records processed: ${processedCount}`);
-    console.log(`Records updated: ${updatedCount}`);
-    console.log(`Errors: ${errorCount}`);
+    logger.info("\n=== Backfill Complete ===");
+    logger.info(`Total records processed: ${processedCount}`);
+    logger.info(`Records updated: ${updatedCount}`);
+    logger.info(`Errors: ${errorCount}`);
 }
 
 // Run the backfill
 backfillRecordType()
     .then(() => {
-        console.log("Backfill script completed successfully");
+        logger.info("Backfill script completed successfully");
         process.exit(0);
     })
     .catch((error) => {
-        console.error("Backfill script failed:", error);
+        logger.error("Backfill script failed:", error);
         process.exit(1);
     });

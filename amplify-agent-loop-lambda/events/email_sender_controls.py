@@ -7,6 +7,9 @@ import traceback
 
 import boto3
 from botocore.exceptions import ClientError
+from pycommon.logger import getLogger
+logger = getLogger("agent_email_events")
+
 
 # Initialize AWS resources
 dynamodb = boto3.resource("dynamodb")
@@ -61,8 +64,7 @@ def add_allowed_sender(user_email: str, tag: str, sender: str):
         }
 
     except ClientError as e:
-        print(f"Error adding allowed sender: {e}")
-        traceback.print_exc()
+        logger.error("Error adding allowed sender: %s", e, exc_info=True)
         return {
             "success": False,
             "message": "Server error: Unable to add the allowed sender. Please try again later.",
@@ -113,8 +115,7 @@ def remove_allowed_sender(user_email: str, tag: str, sender: str):
         }
 
     except ClientError as e:
-        print(f"Error removing allowed sender: {e}")
-        traceback.print_exc()
+        logger.error("Error removing allowed sender: %s", e, exc_info=True)
         return {
             "success": False,
             "message": "Server error: Unable to remove the allowed sender. Please try again later.",
@@ -135,8 +136,8 @@ def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
         bool: True if the sender is allowed, False otherwise.
     """
     try:
-        print(
-            f"Checking allowed sender for user '{owner_email}', tag '{tag}', sender '{sender}'"
+        logger.info(
+            "Checking allowed sender for user '%s', tag '%s', sender '%s'", owner_email, tag, sender
         )
 
         if sender == owner_email:
@@ -159,13 +160,12 @@ def is_allowed_sender(owner_email: str, tag: str, sender: str) -> bool:
                 if pattern.match(sender):
                     return True  # Matches regex pattern
             except re.error as e:
-                print(f"Invalid regex pattern '{pattern_str}': {e}")
+                logger.error("Invalid regex pattern '%s': %s", pattern_str, e)
 
         return False  # Not allowed
 
     except ClientError as e:
-        print(f"Error checking allowed sender: {e}")
-        traceback.print_exc()
+        logger.error("Error checking allowed sender: %s", e, exc_info=True)
         return False
 
 
@@ -193,8 +193,7 @@ def list_allowed_senders(user_email: str, tag: str):
         }
 
     except ClientError as e:
-        print(f"Error listing allowed senders: {e}")
-        traceback.print_exc()
+        logger.error("Error listing allowed senders: %s", e, exc_info=True)
         return {
             "success": False,
             "data": [],

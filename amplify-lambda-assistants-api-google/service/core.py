@@ -110,23 +110,106 @@ from integrations.oauth import MissingCredentialsError
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 import re
+import copy
 
 from service.routes import route_data
 from pycommon.api.ops import api_tool, set_route_data, set_op_type
 
 set_route_data(route_data)
 set_op_type("integration")
+from pycommon.decorators import required_env_vars
+from pycommon.dal.providers.aws.resource_perms import (
+    DynamoDBOperation, SecretsManagerOperation
+)
 from pycommon.authz import validated
 
+from pycommon.logger import getLogger
+logger = getLogger("google")
 
 def camel_to_snake(name):
     snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
     return snake
 
 
+def fix_data_types(data, func_schema):
+    """
+    Attempts to fix data types to match the expected schema.
+    Returns a copy of the data with type corrections applied.
+    """
+    
+    fixed_data = copy.deepcopy(data)
+    
+    if not func_schema or "properties" not in func_schema:
+        return fixed_data
+        
+    if "data" not in fixed_data or not isinstance(fixed_data["data"], dict):
+        return fixed_data
+    
+    properties = func_schema["properties"]
+    
+    for field_name, field_value in fixed_data["data"].items():
+        if field_name not in properties:
+            continue
+            
+        expected_type = properties[field_name].get("type")
+        if not expected_type:
+            continue
+            
+        try:
+            # Skip if already correct type
+            if expected_type == "string" and isinstance(field_value, str):
+                continue
+            elif expected_type == "integer" and isinstance(field_value, int):
+                continue
+            elif expected_type == "number" and isinstance(field_value, (int, float)):
+                continue
+            elif expected_type == "boolean" and isinstance(field_value, bool):
+                continue
+            elif expected_type in ["array", "object"]:
+                continue  # Don't attempt to fix complex types
+                
+            # Attempt type conversion
+            if expected_type == "integer":
+                if isinstance(field_value, str):
+                    try:
+                        # Handle negative numbers and standard integer strings
+                        if field_value.lstrip('-').isdigit():
+                            fixed_data["data"][field_name] = int(field_value)
+                    except ValueError:
+                        pass
+                elif isinstance(field_value, float) and field_value.is_integer():
+                    fixed_data["data"][field_name] = int(field_value)
+                    
+            elif expected_type == "number":
+                if isinstance(field_value, str):
+                    try:
+                        fixed_data["data"][field_name] = float(field_value)
+                    except ValueError:
+                        pass
+                        
+            elif expected_type == "boolean":
+                if isinstance(field_value, str):
+                    if field_value.lower() in ["true", "1", "yes", "on"]:
+                        fixed_data["data"][field_name] = True
+                    elif field_value.lower() in ["false", "0", "no", "off"]:
+                        fixed_data["data"][field_name] = False
+                elif isinstance(field_value, (int, float)):
+                    fixed_data["data"][field_name] = bool(field_value)
+                    
+            elif expected_type == "string":
+                if not isinstance(field_value, str):
+                    fixed_data["data"][field_name] = str(field_value)
+                    
+        except (ValueError, TypeError, AttributeError):
+            # If conversion fails, leave the original value
+            continue
+    
+    return fixed_data
+
+
 def common_handler(operation, *required_params, **optional_params):
     def handler(current_user, data):
-        print("Input Data: ", data["data"])
+        logger.debug("Input Data: %s", data["data"])
         try:
             params = {
                 camel_to_snake(param): data["data"][param] for param in required_params
@@ -137,24 +220,28 @@ def common_handler(operation, *required_params, **optional_params):
                     params[snake_param] = data["data"][param]
             params["access_token"] = data["access_token"]
             response = operation(current_user, **params)
-            print("Integration Response: ", response)
+            logger.debug("Integration Response: %s", response)
             return {"success": True, "data": response}
         except MissingCredentialsError as me:
-            print("Missing Credentials Error: ", str(me))
+            logger.warning("Missing Credentials Error: %s", str(me))
             return {"success": False, "error": str(me)}
         except Exception as e:
-            print("Error: ", str(e))
+            logger.error("Error: %s", str(e))
             return {"success": False, "error": str(e)}
 
     return handler
 
 
+@required_env_vars({
+    "OAUTH_USER_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM],
+    "OAUTH_ENCRYPTION_PARAMETER": [SecretsManagerOperation.GET_SECRET_VALUE],
+})
 @validated("route", False)
 def route_request(event, context, current_user, name, data):
     try:
         # First try to use path-based routing if available
         target_path_string = event.get("path", event.get("rawPath", ""))
-        print(f"Route path: {target_path_string}")
+        logger.debug("Route path: %s", target_path_string)
 
         # Check if we have a direct path match in our route_data
         route_info = route_data.get(target_path_string, None)
@@ -170,13 +257,22 @@ def route_request(event, context, current_user, name, data):
             "required": ["data"],
         }
 
-        print("Validating request")
+        logger.debug("Validating request")
         try:
             validate(data, wrapper_schema)
-            print("Request data validated")
+            logger.info("Request data validated")
         except ValidationError as e:
-            print("Validation error: ", str(e))
-            raise ValueError(f"Invalid request: {str(e)}")
+            logger.error("Validation error: %s", str(e))
+            logger.debug("Attempting to fix data types...")
+            
+            try:
+                fixed_data = fix_data_types(data, func_schema)
+                validate(fixed_data, wrapper_schema)
+                logger.info("Data types fixed and validation successful")
+                data = fixed_data
+            except (ValidationError, ValueError, TypeError) as fix_error:
+                logger.error("Type fixing failed: %s", str(fix_error))
+                raise ValueError(f"Invalid request: {str(e)}")
 
         service = "/google/integrations/"
         # If no op parameter, try to extract from the path
@@ -186,7 +282,7 @@ def route_request(event, context, current_user, name, data):
         else:
             return {"success": False, "message": "Invalid path"}
 
-        print("Operation to execute: ", op)
+        logger.debug("Operation to execute: %s", op)
 
         # Dynamically look up the handler function based on the operation name
         handler_name = f"{op}_handler"
@@ -198,7 +294,7 @@ def route_request(event, context, current_user, name, data):
                 "message": f"Invalid operation: {op}. No handler function found for {handler_name}",
             }
 
-        print("Executing handler function...")
+        logger.debug("Executing handler function...")
         return handler_func(current_user, data)
 
     except Exception as e:

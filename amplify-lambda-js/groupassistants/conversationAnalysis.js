@@ -1,57 +1,83 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { getLogger } from "../common/logging.js";
-import { getDefaultLLM } from "../common/llm.js";
 import { StreamResultCollector } from "../common/streams.js";
-import { transform as fnTransformer } from "../common/chat/events/openaifn.js";
 import { createHash } from 'crypto';
-import { getChatFn } from "../common/params.js";
+import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 
 const logger = getLogger("conversationAnalysis");
 
 const dynamodbClient = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(dynamodbClient);
 const s3Client = new S3Client({ region: "us-east-1" });
+const sqsClient = new SQSClient({ region: process.env.DEP_REGION || "us-east-1" });
 
 function calculateMD5(content) {
     return createHash('md5').update(content).digest('base64');
 }
 
 async function uploadToS3(assistantId, conversationId, content) {
-    const bucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME;
-    const key = `${assistantId}/${conversationId}.txt`;
+    const consolidationBucketName = process.env.S3_CONSOLIDATION_BUCKET_NAME;
+    const legacyBucketName = process.env.S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME; // Marked for deletion
+    const consolidationKey = `agentConversations/${assistantId}/${conversationId}.txt`;
+    const legacyKey = `${assistantId}/${conversationId}.txt`;
+
 
     try {
-        // Check if the file already exists
+        let existingContent = null;
+        let foundInConsolidation = false;
+
+        // Check consolidation bucket first for existing content
         try {
             const existingObject = await s3Client.send(new GetObjectCommand({
-                Bucket: bucketName,
-                Key: key,
+                Bucket: consolidationBucketName,
+                Key: consolidationKey,
             }));
-
-            // If file exists, append new content
-            const existingContent = await existingObject.Body.transformToString();
-            content = existingContent + '\n' + content;
+            existingContent = await existingObject.Body.transformToString();
+            foundInConsolidation = true;
         } catch (error) {
-            // If file doesn't exist, we'll create a new one
             if (error.name !== 'NoSuchKey') {
                 throw error;
             }
         }
 
+        // If not found in consolidation bucket, check legacy bucket
+        if (!foundInConsolidation && legacyBucketName) {
+            try {
+                const existingObject = await s3Client.send(new GetObjectCommand({
+                    Bucket: legacyBucketName,
+                    Key: legacyKey,
+                }));
+                existingContent = await existingObject.Body.transformToString();
+            } catch (error) {
+                if (error.name !== 'NoSuchKey') {
+                    throw error;
+                }
+            }
+        }
+
+        // If existing content found, append new content
+        if (existingContent) {
+            content = existingContent + '\n' + content;
+        }
+
+        // Always upload to consolidation bucket (for new or updated content)
         await s3Client.send(new PutObjectCommand({
-            Bucket: bucketName,
-            Key: key,
+            Bucket: consolidationBucketName,
+            Key: consolidationKey,
             Body: content,
             ContentType: 'text/plain',
             ContentMD5: calculateMD5(content)
         }));
 
-        logger.debug(`Successfully uploaded conversation to S3: ${key}`);
-        return `s3://${bucketName}/${key}`;
+        logger.debug(`Successfully uploaded conversation to consolidation S3: ${consolidationKey}`);
+        
+        // Return just the key path (without s3:// prefix) to indicate migrated record
+        return consolidationKey;
     } catch (error) {
-        console.error(`Error uploading to S3: ${error}`);
+        logger.error(`Error uploading to S3: ${error}`);
         throw error;
     }
 }
@@ -113,7 +139,8 @@ const defaultAnalysisSchema = {
     required: ["category", "systemRating"] // , "reasoning"
 };
 
-export async function analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, user, performCategoryAnalysis = true) {
+export async function analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    const user = account.user
     const data = chatRequest.options;
     const conversationId = data.conversationId;
     const assistantId = data.assistantId;
@@ -121,7 +148,7 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     const modelUsed = data.model.id;
     const advancedModel = data.advancedModel;
     const numberPrompts = data.numberPrompts || 0; // Use the numberPrompts from options, default to 0 if not set
-    console.log(`!!!!!! Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
+    logger.debug(`Received numberPrompts in conversation analysis: ${numberPrompts} (from options: ${JSON.stringify(data.numberPrompts)})`);
     const employeeType = data.groupType;
     const entryPoint = data.source || "Amplify";
 
@@ -166,24 +193,14 @@ export async function analyzeAndRecordGroupAssistantConversation(chatRequest, ll
     if (performCategoryAnalysis) {
         logger.debug("Peforming AI Analysis on conversation");
 
-        const resultCollector = new StreamResultCollector();
-        resultCollector.addTransformer(fnTransformer);
-
         const model = advancedModel;
-
-        // set up llm 
-        let llm = await getDefaultLLM(model, resultCollector, user);
-        //we need to ensure the chatFn is adjusted according to the model 
-        const chatFn = async (body, writable, context) => {
-            return await getChatFn(model, body, writable, context);
-        }
-        llm = llm.clone(chatFn);
 
         const analysisPrompt = performCategoryAnalysis
             ? `Analyze the following conversation and determine its ${hasCategories ? "category and " : ""}system rating:
 Prompt: ${userPrompt}
 AI Response: ${llmResponse}
-Provide ${hasCategories ? "a category from the predefined list, " : ""}a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`
+${hasCategories ? `Available categories: ${categories.join(', ')}
+Choose the most appropriate category from this list. ` : ""}Provide ${hasCategories ? "a category from the available categories and " : ""}a system rating (1-5) based on the AI response quality, relevance, and effectiveness.`
             : `Analyze the following conversation and determine its system rating:
 Prompt: ${userPrompt}
 AI Response: ${llmResponse}
@@ -194,7 +211,7 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                 {
                     role: "system",
                     content: performCategoryAnalysis
-                        ? `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to ${hasCategories ? "categorize the conversation and " : ""}rate the quality of the AI response.`
+                        ? `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to ${hasCategories ? "categorize the conversation and " : ""}rate the quality of the AI response.${hasCategories ? ` When categorizing, you must choose from the provided list of categories only.` : ""}`
                         : `You are an AI assistant tasked with analyzing conversations. You will be given a user prompt and an AI response. Your job is to rate the quality of the AI response.`
                 },
                 {
@@ -203,17 +220,86 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
                 }
             ],
             options: {
-                model: model
+                model: model,
+                rateLimit: chatRequest.options?.rateLimit,
+                ...account
             }
         };
 
         try {
-            const analysis = await llm.promptForJson(
-                updatedChatBody,
-                analysisSchema,
-                [],
-                resultCollector
+            const analysisResult = await promptUnifiedLLMForData(
+                {
+                    account,
+                    options: {
+                        model,
+                        requestId: `analysis_${conversationId}_${Date.now()}`
+                    }
+                },
+                updatedChatBody.messages,
+                performCategoryAnalysis ? {
+                    type: "object",
+                    properties: {
+                        category: {
+                            type: "string",
+                            description: "String category from the predefined list"
+                        },
+                        systemRating: {
+                            type: "integer",
+                            minimum: 1,
+                            maximum: 5,
+                            description: "Integer rating from 1-5 based on AI response quality"
+                        }
+                    },
+                    required: ["category", "systemRating"]
+                } : {
+                    type: "object",
+                    properties: {
+                        systemRating: {
+                            type: "integer",
+                            minimum: 1,
+                            maximum: 5,
+                            description: "Integer rating from 1-5 based on AI response quality"
+                        }
+                    },
+                    required: ["systemRating"]
+                },
+                null // No streaming
             );
+            
+            // Validate and parse the response
+            let analysis = null;
+            if (analysisResult && analysisResult.systemRating) {
+                try {
+                    const systemRating = parseInt(analysisResult.systemRating);
+                    if (!isNaN(systemRating) && systemRating >= 1 && systemRating <= 5) {
+                        analysis = { systemRating };
+                        
+                        // Only validate category if category analysis is enabled
+                        if (performCategoryAnalysis) {
+                            if (analysisResult.category) {
+                                // Validate category against allowed values if we have them
+                                if (!hasCategories || categories.includes(analysisResult.category)) {
+                                    analysis.category = analysisResult.category;
+                                } else {
+                                    logger.error("Invalid category:", analysisResult.category);
+                                }
+                            } else {
+                                logger.error("Missing category in analysis result");
+                            }
+                        }
+                    } else {
+                        logger.error("Invalid system rating:", analysisResult.systemRating);
+                    }
+                } catch (e) {
+                    logger.error("Error parsing analysis result:", e);
+                }
+            }
+
+            // Handle case where analysis failed
+            if (!analysis) {
+                logger.error("Error analyzing conversation, skipping analysis..");
+                return;
+            }
 
             // Extract relevant values from analysis
             const systemRating = analysis.systemRating;
@@ -256,3 +342,159 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
         }
     }
 }
+
+// ✅ CRITICAL SPEED OPTIMIZATION: Async Queue Functions
+
+/**
+ * ✅ SPEED OPTIMIZATION: Queue conversation analysis instead of processing synchronously
+ */
+export async function queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    try {
+        logger.info("Conversation analysis with async queueing initiated");
+
+        const queueUrl = process.env.CONVERSATION_ANALYSIS_QUEUE_URL;
+        
+        if (!queueUrl) {
+            logger.error("CONVERSATION_ANALYSIS_QUEUE_URL environment variable not set");
+            return false;
+        }
+        
+        const messageBody = {
+            chatRequest,
+            llmResponse,
+            account,
+            performCategoryAnalysis,
+            queuedAt: new Date().toISOString()
+        };
+        
+        const command = new SendMessageCommand({
+            QueueUrl: queueUrl,
+            MessageBody: JSON.stringify(messageBody),
+            MessageAttributes: {
+                conversationId: {
+                    DataType: "String",
+                    StringValue: chatRequest?.options?.conversationId || "unknown"
+                },
+                assistantId: {
+                    DataType: "String", 
+                    StringValue: chatRequest?.options?.assistantId || "unknown"
+                },
+                user: {
+                    DataType: "String",
+                    StringValue: account?.user || "unknown"
+                }
+            }
+        });
+        
+        const result = await sqsClient.send(command);
+        
+        logger.debug('Successfully queued conversation analysis', {
+            messageId: result.MessageId,
+            conversationId: chatRequest?.options?.conversationId,
+            assistantId: chatRequest?.options?.assistantId,
+            user: account?.user
+        });
+        
+        return true;
+        
+    } catch (error) {
+        logger.error('Failed to queue conversation analysis', {
+            error: error.message,
+            conversationId: chatRequest?.options?.conversationId,
+            user: account?.user
+        });
+        return false;
+    }
+}
+
+/**
+ * ✅ BACKWARD COMPATIBILITY: Fallback to synchronous processing if queue fails
+ */
+export async function queueConversationAnalysisWithFallback(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
+    const queueSuccess = await queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis);
+    
+    if (!queueSuccess) {
+        logger.warn('Queue failed, falling back to synchronous analysis', {
+            conversationId: chatRequest?.options?.conversationId,
+            user: account?.user
+        });
+        
+        try {
+            await analyzeAndRecordGroupAssistantConversation(chatRequest, llmResponse, account, performCategoryAnalysis);
+        } catch (fallbackError) {
+            logger.error('Fallback synchronous analysis also failed', {
+                error: fallbackError.message,
+                conversationId: chatRequest?.options?.conversationId,
+                user: account?.user
+            });
+        }
+    }
+}
+
+/**
+ * ✅ SQS PROCESSOR: Handler for async conversation analysis processing
+ */
+export const sqsProcessorHandler = async (event) => {
+    logger.debug('Processing conversation analysis from SQS', { recordCount: event.Records?.length });
+
+    const results = [];
+    
+    for (const record of event.Records || []) {
+        try {
+            const messageBody = JSON.parse(record.body);
+            
+            const {
+                chatRequest,
+                llmResponse, 
+                account,
+                performCategoryAnalysis = true
+            } = messageBody;
+            
+            logger.debug('Processing conversation analysis for request', {
+                conversationId: chatRequest?.options?.conversationId,
+                assistantId: chatRequest?.options?.assistantId,
+                user: account?.user
+            });
+            
+            await analyzeAndRecordGroupAssistantConversation(
+                chatRequest,
+                llmResponse,
+                account,
+                performCategoryAnalysis
+            );
+            
+            results.push({
+                messageId: record.messageId,
+                status: 'success'
+            });
+            
+            logger.debug('Successfully processed conversation analysis', {
+                messageId: record.messageId,
+                conversationId: chatRequest?.options?.conversationId
+            });
+            
+        } catch (error) {
+            logger.error('Failed to process conversation analysis', {
+                messageId: record.messageId,
+                error: error.message,
+                stack: error.stack
+            });
+            
+            results.push({
+                messageId: record.messageId,
+                status: 'error',
+                error: error.message
+            });
+            
+            throw error;
+        }
+    }
+    
+    return {
+        statusCode: 200,
+        body: JSON.stringify({
+            processed: results.length,
+            results
+        })
+    };
+};
