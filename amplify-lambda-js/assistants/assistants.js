@@ -5,7 +5,7 @@ import {newStatus} from "../common/status.js";
 import {sendStateEventToStream, sendStatusEventToStream, forceFlush} from "../common/streams.js";
 import {csvAssistant} from "./csv.js";
 import {getLogger} from "../common/logging.js";
-import { callLiteLLM } from "../litellm/litellmClient.js";
+import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import { getTokenCount } from "../datasource/datasources.js";
 // import {mapReduceAssistant} from "./mapReduceAssistant.js";
 import { codeInterpreterAssistant } from "./codeInterpreter.js";
@@ -53,12 +53,28 @@ const defaultAssistant = {
             body = {...body, options: {...body.options, blockTerminator: params.blockTerminator}};
         }
 
+        // 🚀 SMART ROUTING: Use pre-resolved data sources from router to make routing decision
+        const preResolvedSources = params.preResolvedDataSourcesByUse;
+        const needsDataProcessingDecision = preResolvedSources && (
+            (preResolvedSources.ragDataSources && preResolvedSources.ragDataSources.length > 0) ||
+            (preResolvedSources.dataSources && preResolvedSources.dataSources.length > 0) ||
+            (preResolvedSources.conversationDataSources && preResolvedSources.conversationDataSources.length > 0) ||
+            (preResolvedSources.attachedDataSources && preResolvedSources.attachedDataSources.length > 0)
+        );
+
         logger.debug("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
             aboveLimit,
             dataSources_length: dataSources.length,
+            preResolvedSources: preResolvedSources ? {
+                ragDataSources: preResolvedSources.ragDataSources?.length || 0,
+                dataSources: preResolvedSources.dataSources?.length || 0,
+                conversationDataSources: preResolvedSources.conversationDataSources?.length || 0,
+                attachedDataSources: preResolvedSources.attachedDataSources?.length || 0
+            } : null,
+            needsDataProcessing: needsDataProcessingDecision,
             route: !body.options.ragOnly && aboveLimit ? "mapReduce" : 
-                   !body.options.ragOnly ? "chatWithData" : "directLLM"
+                   needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
         
         if (!body.options.ragOnly && aboveLimit){
@@ -77,15 +93,36 @@ const defaultAssistant = {
             
             
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
-        } else if (!body.options.ragOnly) {
-            // ✅ Always use chatWithData for potential conversation document discovery
-            logger.info("→ Using chatWithDataStateless (discover conversation documents)");
-            const {chatWithDataStateless} = await import("../common/chatWithData.js");
-            return chatWithDataStateless(params, model, body, dataSources, responseStream);
         } else {
-            // ✅ Direct LiteLLM call only when ragOnly mode
-            logger.info("→ Using direct callLiteLLM (ragOnly mode)");
-            return await callLiteLLM(body, model, params.account, responseStream, [], true);
+            if (needsDataProcessingDecision && !body.options.ragOnly) {
+                // Use chatWithDataStateless for RAG, document processing, conversation discovery
+                logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
+                const {chatWithDataStateless} = await import("../common/chatWithData.js");
+                
+                // 🚀 PERFORMANCE: Use pre-resolved data sources if available to avoid duplicate getDataSourcesByUse() calls
+                const enhancedParams = params.preResolvedDataSourcesByUse ? {
+                    ...params,
+                    preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse
+                } : params;
+                
+                return chatWithDataStateless(enhancedParams, model, body, dataSources, responseStream);
+            } else {
+                // Direct LLM call for simple conversations
+                logger.info("→ Using direct native provider (no data sources needed)");
+                return await callUnifiedLLM(
+                    { 
+                        account: params.account, 
+                        options: { 
+                            ...body.options,  // Include all options from body (including trackConversations)
+                            model, 
+                            requestId: params.options?.requestId 
+                        } 
+                    },
+                    body.messages,
+                    responseStream,
+                    { max_tokens: body.max_tokens || 2000 }
+                );
+            }
         }
     }
 };
@@ -139,7 +176,7 @@ export const buildAssistantDescriptionMessages = (assistants) => {
 
 
 
-export const chooseAssistantForRequest = async (account, model, body, dataSources, responseStream) => {
+export const chooseAssistantForRequest = async (account, _model, body, _dataSources, responseStream) => {
     // 🚀 BREAKTHROUGH: Direct streaming without LLM dependency
     logger.info(`Choose Assistant for Request `);
 

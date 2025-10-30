@@ -6,7 +6,7 @@ import {getAccessToken, setModel} from "../../params.js";
 import {getLogger} from "../../logging.js";
 import {extractKey} from "../../../datasource/datasources.js";
 import {getModelByType, ModelTypes} from "../../params.js";
-import { promptLiteLLMForData } from "../../../litellm/litellmClient.js";
+import { promptUnifiedLLMForData } from "../../../llm/UnifiedLLMClient.js";
 import Bottleneck from "bottleneck";
 import {trace} from "../../trace.js";
 
@@ -137,12 +137,13 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
             keyLookup[key] = ds;
         });
         
-        logger.debug("🔍 RAG: About to call promptLiteLLMForData with", dataSources.length, "dataSources");
+        logger.debug("🔍 RAG: About to call promptUnifiedLLMForData with", dataSources.length, "dataSources");
         
-        const searches = await promptLiteLLMForData(
-            chatBody.messages,
-            model,
-            `
+        const promptMessages = [
+            ...chatBody.messages,
+            {
+                role: "user",
+                content: `
             Imagine that you are looking through a frequently asked questions (FAQ) page on a website.
             The FAQ is based on the documents in this conversation.
 
@@ -152,21 +153,41 @@ export const getContextMessagesWithLLM = async (model, params, chatBody, dataSou
             ${search}
 
             Please explain what questions you need to look for in the FAQ.
-            `,
-            {
-                "firstQuestion": "First specific FAQ question to look for.",
-                "secondQuestion": "Second specific FAQ question to look for.",
-                "thirdQuestion": "Third specific FAQ question to look for.",
-            },
-            params.account, // 🚨 CRITICAL FIX: Add account for usage tracking
-            params.requestId, // 🚨 CRITICAL FIX: Add requestId for usage tracking
-            {
-                maxTokens: 500,
-                temperature: 0.1
+            `
             }
+        ];
+        
+        const searches = await promptUnifiedLLMForData(
+            {
+                account: params.account,
+                options: {
+                    model,
+                    requestId: params.requestId
+                }
+            },
+            promptMessages,
+            {
+                type: "object",
+                properties: {
+                    firstQuestion: {
+                        type: "string",
+                        description: "First specific FAQ question to look for."
+                    },
+                    secondQuestion: {
+                        type: "string",
+                        description: "Second specific FAQ question to look for."
+                    },
+                    thirdQuestion: {
+                        type: "string",
+                        description: "Third specific FAQ question to look for."
+                    }
+                },
+                required: ["firstQuestion", "secondQuestion", "thirdQuestion"]
+            },
+            null // No streaming
         );
         
-        logger.debug("✅ RAG: promptLiteLLMForData completed, result:", searches ? Object.keys(searches) : "null");
+        logger.debug("✅ RAG: promptUnifiedLLMForData completed, result:", searches ? Object.keys(searches) : "null");
 
         const result = {
             ideas: [

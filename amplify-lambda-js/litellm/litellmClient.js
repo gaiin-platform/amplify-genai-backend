@@ -9,6 +9,7 @@ import {recordUsage} from '../common/accounting.js';
 import {getSecret} from '../common/secrets.js';
 import {getLogger} from '../common/logging.js';
 import {trace} from '../common/trace.js';
+import {isKilled} from '../requests/requestState.js';
 import {spawn} from 'child_process';
 import {fileURLToPath} from 'url';
 import {dirname, join} from 'path';
@@ -270,6 +271,24 @@ async function routeMessage(message) {
             logger.debug("Stream already ended, ignoring message:", parsed.type);
             activeRequests.delete(requestId);
             return;
+        }
+        
+        // Periodic killswitch check during streaming (every 10th chunk)
+        if (request.killswitchUser && request.killswitchRequestId) {
+            request.killswitchCheckCount++;
+            if (request.killswitchCheckCount % 10 === 0) {
+                try {
+                    const killed = await isKilled(request.killswitchUser, responseStream, {options: {requestId: request.killswitchRequestId}});
+                    if (killed) {
+                        logger.info(`Killswitch triggered during streaming for request ${requestId}`);
+                        activeRequests.delete(requestId);
+                        request.reject(new Error('Request cancelled by user'));
+                        return;
+                    }
+                } catch (e) {
+                    logger.debug(`Killswitch check error for request ${requestId}:`, e.message);
+                }
+            }
         }
         
         switch (parsed.type) {
@@ -710,6 +729,10 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
                 // statusTimer removed - only tracked locally, not sent to Python
             };
             
+            // Extract killswitch info
+            const killswitchUser = account.user;
+            const killswitchRequestId = chatRequest.options?.requestId;
+            
             // Register this request
             activeRequests.set(requestId, {
                 responseStream,
@@ -728,7 +751,11 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
                 account,
                 model,
                 requestId,
-                statusTimer // Track timer for cleanup
+                statusTimer, // Track timer for cleanup
+                // Killswitch info
+                killswitchUser,
+                killswitchRequestId,
+                killswitchCheckCount: 0
             });
             
             // Send request to persistent Python server or queue if not ready

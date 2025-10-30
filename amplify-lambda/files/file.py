@@ -602,6 +602,15 @@ def get_presigned_url(event, context, current_user, name, data):
     name = data["name"]
     name = re.sub(r"[_\s]+", "_", name)
     file_type = data["type"]
+    
+    # VALIDATION: Ensure type is not empty (DynamoDB GSI constraint)
+    if not file_type or file_type.strip() == "":
+        logger.error("File type cannot be empty for file: %s", name)
+        return {
+            "success": False,
+            "error": "File type is required and cannot be empty. Please provide a valid MIME type (e.g., 'text/markdown', 'application/pdf')."
+        }
+    
     tags = data["tags"]
     props = data["data"]
     knowledge_base = data["knowledgeBase"]

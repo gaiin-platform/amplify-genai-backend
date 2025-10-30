@@ -5,7 +5,7 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { getLogger } from "../common/logging.js";
 import { StreamResultCollector } from "../common/streams.js";
 import { createHash } from 'crypto';
-import { promptLiteLLMForData } from "../litellm/litellmClient.js";
+import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 
 const logger = getLogger("conversationAnalysis");
 
@@ -227,22 +227,43 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
         };
 
         try {
-            const analysisResult = await promptLiteLLMForData(
-                updatedChatBody.messages,
-                model,
-                '', // prompt already in messages
-                performCategoryAnalysis ? {
-                    "category": "String category from the predefined list",
-                    "systemRating": "Integer rating from 1-5 based on AI response quality"
-                } : {
-                    "systemRating": "Integer rating from 1-5 based on AI response quality"
-                },
-                account, // 🚨 CRITICAL FIX: Add account for usage tracking
-                `analysis_${conversationId}_${Date.now()}`, // 🚨 CRITICAL FIX: Generate requestId for usage tracking
+            const analysisResult = await promptUnifiedLLMForData(
                 {
-                    maxTokens: 300,
-                    temperature: 0.1
-                }
+                    account,
+                    options: {
+                        model,
+                        requestId: `analysis_${conversationId}_${Date.now()}`
+                    }
+                },
+                updatedChatBody.messages,
+                performCategoryAnalysis ? {
+                    type: "object",
+                    properties: {
+                        category: {
+                            type: "string",
+                            description: "String category from the predefined list"
+                        },
+                        systemRating: {
+                            type: "integer",
+                            minimum: 1,
+                            maximum: 5,
+                            description: "Integer rating from 1-5 based on AI response quality"
+                        }
+                    },
+                    required: ["category", "systemRating"]
+                } : {
+                    type: "object",
+                    properties: {
+                        systemRating: {
+                            type: "integer",
+                            minimum: 1,
+                            maximum: 5,
+                            description: "Integer rating from 1-5 based on AI response quality"
+                        }
+                    },
+                    required: ["systemRating"]
+                },
+                null // No streaming
             );
             
             // Validate and parse the response
@@ -329,6 +350,8 @@ Provide a system rating (1-5) based on the AI response quality, relevance, and e
  */
 export async function queueConversationAnalysis(chatRequest, llmResponse, account, performCategoryAnalysis = true) {
     try {
+        logger.info("Conversation analysis with async queueing initiated");
+
         const queueUrl = process.env.CONVERSATION_ANALYSIS_QUEUE_URL;
         
         if (!queueUrl) {
@@ -475,5 +498,3 @@ export const sqsProcessorHandler = async (event) => {
         })
     };
 };
-
-logger.info("Conversation analysis with async queue support initialized - major speed optimization active");

@@ -4,8 +4,9 @@ import {
     PromptAction, StateBasedAssistant
 } from "./statemachine/states.js";
 import {sendStateEventToStream} from "../common/streams.js";
-import {getInternalLLM} from "../common/internalLLM.js";
+import {getInternalLLM} from "../llm/InternalLLM.js";
 import {getLogger} from "../common/logging.js";
+import {isKilled} from "../requests/requestState.js";
 
 const logger = getLogger("assistants.ArtifactModeAssistant");
 
@@ -193,6 +194,13 @@ const handleTruncatedMode = async (originalLLM, context, dataSources) => {
     }
     
     while (!isComplete && retryCount < MAX_RETRIES) {
+        // Check killswitch before each retry
+        if (await isKilled(llm.params?.account?.user, context.responseStream, llm.params)) {
+            logger.info("🛑 Killswitch activated, stopping artifact generation");
+            sendStateEventToStream(context.responseStream, {artifactCompletion: false, reason: "cancelled"});
+            return false;
+        }
+        
         logger.info(`🚀 Artifact generation attempt ${retryCount + 1}/${MAX_RETRIES}`);
         
         // Create custom stream handler

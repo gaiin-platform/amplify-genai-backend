@@ -5,6 +5,7 @@
 import {sendDeltaToStream, sendStatusEventToStream, sendStateEventToStream, forceFlush} from "../common/streams.js";
 import {newStatus} from "../common/status.js";
 import {getLogger} from "../common/logging.js";
+import {isKilled} from "../requests/requestState.js";
 
 const logger = getLogger("Code-Interpreter");
 
@@ -147,6 +148,9 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             const userPrompt = messages.at(-1)['content'];
             // The conversation currently does not have an assistantID in our database 
             if (assistantId === null) {
+                
+                // Check killswitch before long-running assistant creation
+                if (await isKilled(account.user, responseStream, body)) return;
 
                 const createData = {
                     access_token: token,
@@ -172,6 +176,10 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             }
             //ensure that assistant_id is not null (in case assistant creation was necessary and failed)
             if (assistantId) {
+                
+                // Check killswitch before long-running chat execution
+                if (await isKilled(account.user, responseStream, body)) return;
+                
                 // messages.at(-1)['content'];
                 const chat_data = {
                     assistantId: assistantId,
@@ -232,6 +240,9 @@ export const codeInterpreterAssistant = async (assistantBase) => {
             // unless we support with user defined assistants, we dont need this for now
             // for now we will include the ds in the current message
             // if (assistant.dataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
+
+            // Check killswitch before final base handler call
+            if (await isKilled(account.user, responseStream, body)) return;
 
             await assistantBase.handler(
                 params,

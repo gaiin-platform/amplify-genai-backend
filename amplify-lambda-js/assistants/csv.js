@@ -14,7 +14,7 @@ import Bottleneck from "bottleneck";
 import {isKilled} from "../requests/requestState.js";
 import {getUser} from "../common/params.js";
 import {getLogger} from "../common/logging.js";
-import {getInternalLLM} from "../common/internalLLM.js";
+import {getInternalLLM} from "../llm/InternalLLM.js";
 
 const logger = getLogger("csvAssitant");
 
@@ -66,7 +66,11 @@ export const csvAssistant = {
         // 🚀 BREAKTHROUGH: Use InternalLLM for massive performance gains on CSV processing
         // Each row processing is a simple JSON extraction that doesn't need RAG
         const llm = getInternalLLM(params.options.model, params.account, responseStream);
-        llm.params = { ...params }; // Copy params for compatibility
+        // Merge params with body.options to include trackConversations and other flags
+        llm.params = { 
+            ...params, 
+            options: { ...params.options, ...body.options } 
+        };
         
         logger.info("🚀 CSV Assistant using InternalLLM for batch processing");
 
