@@ -9,7 +9,7 @@ import {canReadDataSources} from "../common/permissions.js";
 import {lru} from "tiny-lru";
 import getDatasourceHandler from "./external.js";
 import { getModelByType, ModelTypes, isOpenAIModel} from "../common/params.js";
-import { promptLiteLLMForData } from "../litellm/litellmClient.js";
+import { promptUnifiedLLMForData } from "../llm/UnifiedLLMClient.js";
 
 const logger = getLogger("datasources");
 
@@ -244,13 +244,15 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
         (acc, ds) => (acc[ds.id] = ds, acc), {})
     );
 
-    if(params.options?.skipRag) {
+    // Only check chatRequestOrig.options?.skipRag, not params.options?.skipRag
+    // The router pre-resolves data sources and shouldn't override RAG detection
+    if(chatRequestOrig.options?.skipRag) {
         ragDataSources = [];
     }
 
     logger.debug("🔍 Final RAG decision:", {
         ragDataSources_length: ragDataSources.length,
-        skipRag: params.options?.skipRag,
+        skipRag: chatRequestOrig.options?.skipRag,
         ragDataSources_ids: ragDataSources.map(ds => ds.id?.substring(0, 50))
     });
 
@@ -722,6 +724,15 @@ export const getContent = async (chatRequest, params, dataSource) => {
     logger.debug("Fetching data from: " + dataSource.id + " (" + sourceType + ")");
 
     if (sourceType === 's3://') {
+        // Try to get cached document content first
+        const { CacheManager } = await import('../common/cache.js');
+        const cacheKey = `doc:${dataSource.id}`;
+        const cached = await CacheManager.getCachedDocumentContent(cacheKey);
+        
+        if (cached) {
+            logger.debug("Using cached document content for:", dataSource.id);
+            return cached;
+        }
 
         logger.debug("Fetching data from S3");
         const result = await getFileText(dataSource.id.slice(sourceType.length));
@@ -730,6 +741,9 @@ export const getContent = async (chatRequest, params, dataSource) => {
         if (result == null) {
             throw new Error("Could not fetch data from S3");
         }
+        
+        // Cache the raw document content for future use
+        await CacheManager.setCachedDocumentContent(cacheKey, result);
 
         return result;
 
@@ -876,19 +890,28 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
         }
     };
 
-    // Use direct LiteLLM call for document analysis
-    const extraction = await promptLiteLLMForData(
-        updatedBody.messages,
-        model,
-        '', // prompt already in messages
+    // Use direct native provider call for document analysis
+    const extraction = await promptUnifiedLLMForData(
         {
-            "relevantIndexes": "Array of integer indexes indicating relevant document fragments",
+            account: resolutionEnv.params.account,
+            options: {
+                model,
+                requestId: resolutionEnv.params.requestId
+            }
         },
-        resolutionEnv.params.account, // 🚨 CRITICAL FIX: Add account for usage tracking
-        resolutionEnv.params.requestId, // 🚨 CRITICAL FIX: Add requestId for usage tracking
+        updatedBody.messages,
         {
-            maxTokens: 300 // Lower token limit, we only need the array
-        }
+            type: "object",
+            properties: {
+                relevantIndexes: {
+                    type: "array",
+                    items: { type: "integer" },
+                    description: "Array of integer indexes indicating relevant document fragments"
+                }
+            },
+            required: ["relevantIndexes"]
+        },
+        null // No streaming
     );
  
     // Parse and validate the extraction result
@@ -1193,19 +1216,27 @@ Be thorough and precise so someone could understand the image content without se
                 ]
             }];
 
-            // Generate description using LiteLLM
-            const descriptionResult = await promptLiteLLMForData(
-                visionMessages,
-                model,
-                '', // prompt already in messages
+            // Generate description using native provider
+            const descriptionResult = await promptUnifiedLLMForData(
                 {
-                    "description": "Detailed description of the image content"
+                    account: params.account,
+                    options: {
+                        model,
+                        requestId: params.requestId
+                    }
                 },
-                params.account,
-                params.requestId,
+                visionMessages,
                 {
-                    maxTokens: 500 // Sufficient for detailed description
-                }
+                    type: "object",
+                    properties: {
+                        description: {
+                            type: "string",
+                            description: "Detailed description of the image content"
+                        }
+                    },
+                    required: ["description"]
+                },
+                null // No streaming
             );
 
             const description = descriptionResult.description || 'Unable to generate image description.';

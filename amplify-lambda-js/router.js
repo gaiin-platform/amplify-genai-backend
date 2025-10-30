@@ -3,9 +3,9 @@
 
 import {getLogger} from "./common/logging.js";
 import {ModelTypes, getModelByType} from "./common/params.js"
-import {createRequestState, deleteRequestState, updateKillswitch} from "./requests/requestState.js";
+import {createRequestState, deleteRequestState, updateKillswitch, localKill} from "./requests/requestState.js";
 import {sendStateEventToStream, TraceStream} from "./common/streams.js";
-import {resolveDataSources} from "./datasource/datasources.js";
+import {resolveDataSources, getDataSourcesByUse} from "./datasource/datasources.js";
 import {handleDatasourceRequest} from "./datasource/datasourceEndpoint.js";
 import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
@@ -13,10 +13,9 @@ import {getUserAvailableModels} from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
 import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
 import {CacheManager} from "./common/cache.js";
-// LiteLLM integration - use litellmClient for all LLM calls
+// Native LLM integration - use UnifiedLLMClient for all LLM calls
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
 import {StateBasedAssistant} from "./assistants/statemachine/states.js";
-import {initPythonProcess} from "./litellm/litellmClient.js";
 // ⚡ COMPREHENSIVE PARALLEL SETUP OPTIMIZATION
 
 // 🛡️ DEFENSIVE ROUTING
@@ -36,10 +35,8 @@ function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
 }
 
-const routeRequestCore = async (params, returnResponse, responseStream, pythonProcessPromise = null) => {
-    // 🚀 ULTIMATE OPTIMIZATION: Python process already started in index.js before authentication!
-    // If not provided, fallback to starting it here (shouldn't happen in normal flow)
-    const actualPythonProcessPromise = pythonProcessPromise || initPythonProcess();
+const routeRequestCore = async (params, returnResponse, responseStream) => {
+    // 🚀 NATIVE JS PROVIDERS: No Python process needed - direct JS execution
 
     try {
 
@@ -73,6 +70,7 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 }
 
                 await updateKillswitch(params.user, requestId, value);
+                if (value) localKill(params.user, requestId);
                 returnResponse(responseStream, {
                     statusCode: 200,
                     body: {status: "OK"}
@@ -109,7 +107,7 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 userModelData,
                 resolvedDataSources,
                 requestId,
-                preloadedSecrets
+                preResolvedDataSourcesByUse
             ] = await Promise.all([
                 // 1. Rate limiting check
                 isRateLimited(params),
@@ -159,16 +157,34 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 // 4. Generate request ID
                 Promise.resolve(getRequestId(params)),
                 
-                // 5. Placeholder for future optimizations
-                Promise.resolve(null),
+                // 5. 🚀 PERFORMANCE: Pre-resolve data sources for smart routing
+                (async () => {
+                    try {
+                        // Only resolve if we have potential data sources or conversation context
+                        if ((params.body.dataSources && params.body.dataSources.length > 0) || 
+                            params.body.options?.conversationId) {
+                            logger.debug("🔍 ROUTER: Pre-resolving data sources for smart routing");
+                            const resolved = await getDataSourcesByUse(params, params.body, params.body.dataSources || []);
+                            logger.debug("✅ ROUTER: Data sources pre-resolved", {
+                                categorizedCount: resolved.categorizedDataSources?.length || 0,
+                                ragCount: resolved.ragDataSources?.length || 0,
+                                conversationCount: resolved.conversationDataSources?.length || 0
+                            });
+                            return resolved;
+                        }
+                        return null;
+                    } catch (error) {
+                        logger.warn("⚠️ ROUTER: Data source pre-resolution failed, will fallback:", error.message);
+                        return null;
+                    }
+                })(),
                 
             ]);
             
             logger.info(`⚡ Parallel setup completed in ${Date.now() - parallelStartTime}ms`);
             
-            // 🚀 ULTIMATE PYTHON OPTIMIZATION: Ensure Python process is ready (started in index.js!)
-            await actualPythonProcessPromise;
-            logger.info(`✅ Python LiteLLM server pre-spawned during parallel setup`);
+            // 🚀 NATIVE JS PROVIDERS: Direct execution without Python subprocess
+            logger.info(`✅ Using native JS providers for optimal performance`);
             
             // Check rate limit result first (early exit if rate limited)
             if (rateLimitResult) {
@@ -298,7 +314,7 @@ const routeRequestCore = async (params, returnResponse, responseStream, pythonPr
                 model,
                 requestId,
                 options,
-                preloadedSecrets  // Pass prefetched secrets to avoid duplicate fetching
+                preResolvedDataSourcesByUse  // Pass pre-resolved data sources for performance optimization
             };
 
             // Removed X-Ray tracing for performance
@@ -398,9 +414,9 @@ const routeRequestWrapper = requiredEnvVars({
     "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
 })(routeRequestCore);
 
-// Main export that accepts pythonProcessPromise from index.js
-export const routeRequest = (params, returnResponse, responseStream, pythonProcessPromise = null) => {
-    return routeRequestWrapper(params, returnResponse, responseStream, pythonProcessPromise);
+// Main export
+export const routeRequest = (params, returnResponse, responseStream) => {
+    return routeRequestWrapper(params, returnResponse, responseStream);
 };
 
 

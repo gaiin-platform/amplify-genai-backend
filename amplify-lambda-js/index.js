@@ -8,7 +8,7 @@ import { extractParams } from "./common/handlers.js";
 import { routeRequest } from "./router.js";
 import { getLogger } from "./common/logging.js";
 // Removed AWS X-Ray for performance optimization
-import {initPythonProcess} from "./litellm/litellmClient.js";
+// Removed Python LiteLLM - now using native JS providers
 // 🛡️ COST PROTECTION
 import { withCircuitBreaker, withTimeout } from "./common/circuitBreaker.js";
 import { withCostMonitoring } from "./common/defensiveRouting.js";
@@ -91,9 +91,7 @@ const returnResponse = async (responseStream, response) => {
 
 // 🛡️ PER-USER COST PROTECTION: Extract params first, then apply per-user circuit breaker
 const protectedHandler = withCostMonitoring(async (event, responseStream, context) => {
-    // 🚀 ULTIMATE OPTIMIZATION: Start Python process IMMEDIATELY - before authentication!
-    // This saves 1-8 seconds since Python starts in parallel with auth
-    const pythonProcessPromise = initPythonProcess();
+    // 🚀 NATIVE JS PROVIDERS: No Python process needed - direct JS execution
 
     const effectiveStream = streamEnabled ? responseStream : new AggregatorStream();
 
@@ -121,7 +119,7 @@ const protectedHandler = withCostMonitoring(async (event, responseStream, contex
             cooldownPeriod: 300  // 5-minute cooldown
         })(async (_event, _context, params) => {
             // 🛡️ TIMEOUT PROTECTION: Main routing with 3-minute timeout (down from 15 min)
-            return await withTimeout(180000)(routeRequest(params, returnResponse, effectiveStream, pythonProcessPromise));
+            return await withTimeout(180000)(routeRequest(params, returnResponse, effectiveStream));
         });
         
         // Execute the protected routing with user context

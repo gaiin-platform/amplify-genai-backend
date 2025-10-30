@@ -1,10 +1,10 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {extractProtocol, getContexts, getDataSourcesByUse, isDocument} from "../datasource/datasources.js";
+import {extractProtocol, getContexts, isDocument} from "../datasource/datasources.js";
 import {getSourceMetadata, aliasContexts} from "./chat/controllers/meta.js";
 import {addContextMessage} from "./chat/controllers/common.js";
-import { callLiteLLM } from "../litellm/litellmClient.js";
+import { callUnifiedLLM } from "../llm/UnifiedLLMClient.js";
 import {defaultSource} from "./sources.js";
 import {getLogger} from "./logging.js";
 import {createTokenCounter} from "../azure/tokens.js";
@@ -12,6 +12,7 @@ import {countChatTokens} from "../azure/tokens.js";
 import {getContextMessages} from "./chat/rag/rag.js";
 import {forceFlush, sendStateEventToStream, sendStatusEventToStream} from "./streams.js";
 import {newStatus} from "./status.js";
+import {isKilled} from "../requests/requestState.js";
 
 const logger = getLogger("chatWithData");
 
@@ -52,7 +53,7 @@ const fitMessagesInTokenLimit = (messages, tokenLimit) => {
  * - Parallel context fetching
  * - Parallel RAG processing
  * - Streamlined token management
- * - Direct LiteLLM integration (no middleware)
+ * - Direct native provider integration (no Python subprocess)
  */
 export const chatWithDataStateless = async (params, model, chatRequestOrig, dataSources, responseStream) => {
     if(!chatRequestOrig.messages){
@@ -72,22 +73,22 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         ragOnly: params.options?.ragOnly
     });
     
-    // ⚡ PARALLEL PHASE 1: Initialize all independent operations
-    const [
-        tokenCounter,
-        dataSourcesByUse
-    ] = await Promise.all([
-        // Token counter initialization
-        Promise.resolve(createTokenCounter()),
-        
-        // Categorize data sources
-        getDataSourcesByUse(params, chatRequestOrig, dataSources)
-    ]);
+    // 🚀 PERFORMANCE BREAKTHROUGH: Use pre-resolved data sources directly - NO duplicate calls!
+    const tokenCounter = createTokenCounter();
+    
+    // If we're routed here, router should ALWAYS provide pre-resolved sources
+    if (!params.preResolvedDataSourcesByUse) {
+        logger.error("❌ CRITICAL: chatWithDataStateless called without pre-resolved data sources - this should never happen!");
+        throw new Error("Pre-resolved data sources required but not provided");
+    }
+    
+    logger.debug("✅ Using pre-resolved data sources from router (ZERO duplicate calls)");
+    const dataSourcesByUse = params.preResolvedDataSourcesByUse;
 
     logger.debug("All datasources for chatWithData: ", dataSourcesByUse);
     
     // 🔍 DEBUG: Log RAG decision factors
-    logger.info("RAG Decision Debug:", {
+    logger.debug("RAG Decision Debug:", {
         skipRag: params.options?.skipRag,
         ragOnly: params.options?.ragOnly,
         skipDocumentCache: params.options?.skipDocumentCache,
@@ -135,7 +136,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             message: "I am searching for relevant information...",
             icon: "aperture",
         });
-        if (responseStream && !responseStream.destroyed && responseStream.writable) {
+        if (responseStream && !responseStream.destroyed) {
             sendStatusEventToStream(responseStream, ragStatus);
             forceFlush(responseStream);
         }
@@ -161,7 +162,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             logger.error("❌ RAG Query Failed:", error.message);
             ragStatus.message = "RAG search failed, continuing without additional context";
             ragStatus.inProgress = false;
-            if (responseStream && !responseStream.destroyed && responseStream.writable) {
+            if (responseStream && !responseStream.destroyed) {
                 sendStatusEventToStream(responseStream, ragStatus);
                 forceFlush(responseStream);
             }
@@ -249,7 +250,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             icon: "aperture",
         }));
         
-        if (responseStream && !responseStream.destroyed && responseStream.writable) {
+        if (responseStream && !responseStream.destroyed) {
             statuses.forEach(status => {
                 sendStatusEventToStream(responseStream, status);
                 forceFlush(responseStream); // Force flush each status
@@ -276,20 +277,12 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 return (results || []).map(r => ({...r, type: "documentContext", dataSourceId: ds.id}));
             }),
             ...conversationDataSources.map(async ds => {
-                // Check cache first
-                const cacheOptions = {...options, isConversation: true};
-                const cached = await CacheManager.getCachedContexts(account.user, ds, maxTokens, cacheOptions);
-                if (cached && Array.isArray(cached) && cached.length > 0) {
-                    logger.debug(`Using cached conversation contexts for datasource ${ds.id}`);
-                    return cached.map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
-                }
+                // ⚠️ CRITICAL: Never cache conversation contexts because getExtractedRelevantContext 
+                // depends on the user's current message! Each query needs fresh extraction.
+                // Only the raw document content should be cached (inside getContent).
                 
-                // Not cached, fetch and cache
+                // Always fetch fresh - extraction depends on current user message
                 const results = await getContexts(contextResolverEnv, ds, maxTokens, options, true);
-                // Only cache successful results, not null/empty
-                if (results && Array.isArray(results) && results.length > 0) {
-                    CacheManager.setCachedContexts(account.user, ds, maxTokens, cacheOptions, results);
-                }
                 return (results || []).map(r => ({...r, type: "documentCacheContext", dataSourceId: ds.id}));
             })
         ]);
@@ -300,7 +293,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             .map(context => ({...context, id: srcPrefix + "#" + context.id}));
 
         // Clear all statuses
-        if (responseStream && !responseStream.destroyed && responseStream.writable) {
+        if (responseStream && !responseStream.destroyed) {
             statuses.forEach(status => {
                 status.inProgress = false;
                 sendStatusEventToStream(responseStream, status);
@@ -349,7 +342,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 return acc;
             }, {});
 
-            if (responseStream && !responseStream.destroyed && responseStream.writable) {
+            if (responseStream && !responseStream.destroyed) {
                 logger.debug("📡 Document: Sending regular document sources:", Object.keys(byType), "types");
                 sendStateEventToStream(responseStream, { sources: byType });
                 logger.debug("✅ Document: Regular sources sent to stream");
@@ -391,7 +384,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }];
     }
 
-    // ✅ DIRECT LITELLM INTEGRATION: Eliminated sequentialChat middleman
+    // ✅ DIRECT NATIVE PROVIDER INTEGRATION: Eliminated Python subprocess
     // Send source metadata directly to stream
     const srcList = Array.from(Object.keys(metaData.sources)).reduce((arr, key) => ((arr[metaData.sources[key]] = key), arr), []);
     sendStateEventToStream(responseStream, { 
@@ -433,8 +426,16 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 );
             }
             
-            // ✅ Direct LiteLLM call for each context
-            await callLiteLLM(requestWithContext, model, account, responseStream, [], true);
+            // Check killswitch before LLM call
+            if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
+            
+            // ✅ Direct native provider call for each context
+            await callUnifiedLLM(
+                { account, options: { ...options, model } },  // Pass all options including trackConversations
+                requestWithContext.messages,
+                responseStream,
+                { max_tokens: requestWithContext.max_tokens || 2000 }
+            );
         }
         
         // Final status
@@ -461,11 +462,17 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             messages: messagesWithContext
         };
         
-        // ✅ Direct LiteLLM call
-        await callLiteLLM(requestWithContext, model, account, responseStream, [], true);
+        // Check killswitch before LLM call
+        if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
+        
+        // ✅ Direct native provider call
+        await callUnifiedLLM(
+            { account, options: { ...options, model } },  // Pass all options including trackConversations
+            requestWithContext.messages,
+            responseStream,
+            { max_tokens: requestWithContext.max_tokens || 2000 }
+        );
     }
 
-    logger.debug("Chat function finished, ending responseStream");
-    responseStream.end();
-    logger.debug("Response stream ended");
+    logger.debug("Chat function finished, stream management handled by caller");
 };

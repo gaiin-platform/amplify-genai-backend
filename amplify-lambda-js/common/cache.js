@@ -318,6 +318,38 @@ export class CacheManager {
     }
     
     // ============================================
+    // DOCUMENT CONTENT CACHING
+    // ============================================
+    
+    static async getCachedDocumentContent(documentKey) {
+        try {
+            // Use global cache for documents (not user-specific)
+            const cached = globalCache.get('global', 'documentContent', documentKey);
+            
+            if (cached) {
+                logger.debug(`Cache HIT: Document content for ${documentKey.substring(0, 50)}...`);
+                return cached;
+            }
+            
+            logger.debug(`Cache MISS: Document content for ${documentKey.substring(0, 50)}...`);
+            return null;
+        } catch (error) {
+            logger.error(`Error getting cached document content:`, error);
+            return null;
+        }
+    }
+    
+    static async setCachedDocumentContent(documentKey, content) {
+        try {
+            // Cache with 1 hour TTL for documents
+            globalCache.set('global', 'documentContent', documentKey, content, 60 * 60 * 1000);
+            logger.debug(`Cached document content for ${documentKey.substring(0, 50)}...`);
+        } catch (error) {
+            logger.error(`Error caching document content:`, error);
+        }
+    }
+    
+    // ============================================
     // USER-DEFINED ASSISTANT CACHING
     // ============================================
     

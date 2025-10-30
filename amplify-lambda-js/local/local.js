@@ -7,7 +7,7 @@ import {chat} from "../azure/openai.js";
 import {getLLMConfig} from "./common/secrets.js";
 import {getSecret} from "../common/secrets.js";
 import * as fs from "fs";
-import {getInternalLLM} from "../common/internalLLM.js";
+import {getInternalLLM} from "../llm/InternalLLM.js";
 import {workflowSchema} from "../workflow/workflow.js";
 import {getLogger} from "../common/logging.js";
 

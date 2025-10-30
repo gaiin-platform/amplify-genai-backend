@@ -16,7 +16,7 @@ import {getContextMessagesWithLLM} from "../../common/chat/rag/rag.js";
 import {isKilled} from "../../requests/requestState.js";
 import {getUser, getModel} from "../../common/params.js";
 import {getDataSourcesInConversation, translateUserDataSourcesToHashDataSources} from "../../datasource/datasources.js";
-import {getInternalLLM} from "../../common/internalLLM.js";
+import {getInternalLLM} from "../../llm/InternalLLM.js";
 import {getLogger} from "../../common/logging.js";
 
 const logger = getLogger("assistants.statemachine.states");
@@ -1105,7 +1105,11 @@ export class StateBasedAssistant {
         // This bypasses the expensive chatWithDataStateless pipeline for internal operations
         // Keep original LLM for any operations that might need the full RAG pipeline
         const internalLLM = getInternalLLM(params.options.model, params.account, responseStream);
-        internalLLM.params = { ...params }; // Copy params for compatibility
+        // Merge params with body.options to include trackConversations and other flags
+        internalLLM.params = { 
+            ...params, 
+            options: { ...params.options, ...body.options } 
+        };
         
         logger.info(`🚀 StateBasedAssistant using InternalLLM for ${this.displayName}`);
 

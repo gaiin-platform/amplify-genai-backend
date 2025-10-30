@@ -6,15 +6,6 @@ plugins:
   - serverless-prune-plugin
   - serverless-cloudformation-changesets
 
-layers:
-  pythonLiteLLM:
-    path: litellm-layer/python
-    name: ${self:service}-${sls:stage}-python-litellm
-    description: Python 3.11 runtime with LiteLLM (python-build-standalone) for Node.js Lambda
-    compatibleRuntimes:
-      - nodejs22.x
-    allowedAccounts: ['*']
-
 custom:
   stageVars: ${file(../var/${self:provider.stage}-var.yml)}
   depName: ${self:custom.stageVars.DEP_NAME}
@@ -58,8 +49,6 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
 
   environment:
-    PYTHONHOME: /opt
-    PYTHONPATH: /opt
     NODE_OPTIONS: "--enable-source-maps"
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
@@ -122,8 +111,6 @@ functions:
     memorySize: 1024
     timeout: 900
     tracing: Active
-    layers:
-      - !Ref PythonLiteLLMLambdaLayer
     url:
       cors: true
       invokeMode: RESPONSE_STREAM
@@ -198,8 +185,6 @@ functions:
     handler: groupassistants/conversationAnalysis.sqsProcessorHandler
     memorySize: 512
     timeout: 300
-    layers:
-      - !Ref PythonLiteLLMLambdaLayer
     events:
       - sqs:
           arn: !GetAtt ConversationAnalysisQueue.Arn
