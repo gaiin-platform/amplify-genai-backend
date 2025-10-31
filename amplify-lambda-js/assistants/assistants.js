@@ -85,11 +85,17 @@ const defaultAssistant = {
             bodyImageSources_length: body.imageSources?.length || 0,
             paramsBodyImageSources_length: params.body?.imageSources?.length || 0,
             needsDataProcessing: needsDataProcessingDecision,
-            route: !body.options.ragOnly && aboveLimit ? "mapReduce" : 
+            // Updated routing logic
+            isUserDefinedAssistant: !!body.options?.assistantId,
+            assistantId: body.options?.assistantId || "default",
+            route: !body.options.ragOnly && !body.options?.assistantId && aboveLimit ? "mapReduce" : 
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
         });
         
-        if (!body.options.ragOnly && aboveLimit){
+        // 🚨 CRITICAL: User-defined assistants NEVER use mapReduce - always RAG for source visibility
+        const isUserDefinedAssistant = !!body.options?.assistantId;
+        
+        if (!body.options.ragOnly && !isUserDefinedAssistant && aboveLimit){
             logger.info("→ Using mapReduceAssistant (token limit exceeded)");
             
             
