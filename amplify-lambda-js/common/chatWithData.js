@@ -81,7 +81,8 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     
 
     // Extract categorized data sources
-    const categorizedDataSources = dataSourcesByUse.dataSources || [];
+    // 🚨 CRITICAL: For user-defined assistants with skipDocumentCache=true, skip attached documents too
+    const categorizedDataSources = !params.options.skipDocumentCache ? (dataSourcesByUse.dataSources || []) : [];
     const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
     const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
         (dataSourcesByUse.conversationDataSources || []) : [];
