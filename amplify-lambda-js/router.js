@@ -307,9 +307,6 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             let processingError = false;
 
             try {
-                // ✅ OPTIMIZED PATH: LiteLLM Integration with all optimizations
-                logger.info(`Using LiteLLM optimized path for user ${params.user}`);
-                
                
                 // 🚀 BREAKTHROUGH: Direct assistant execution without LLM dependency
                 // Assistants now create their own InternalLLM internally for massive performance gains
