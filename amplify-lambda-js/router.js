@@ -11,7 +11,7 @@ import {saveTrace, trace} from "./common/trace.js";
 import {isRateLimited, formatRateLimit, formatCurrentSpent, recordErrorViolation} from "./rateLimit/rateLimiter.js";
 import {getUserAvailableModels} from "./models/models.js";
 // Removed AWS X-Ray for performance optimization
-import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
+// import {requiredEnvVars, DynamoDBOperation, S3Operation, SecretsManagerOperation, SQSOperation} from "./common/envVarsTracking.js";
 import {CacheManager} from "./common/cache.js";
 // Native LLM integration - use UnifiedLLMClient for all LLM calls
 import {chooseAssistantForRequest} from "./assistants/assistants.js";
@@ -35,7 +35,7 @@ function getRequestId(params) {
     return (params.body.options && params.body.options.requestId) || params.user;
 }
 
-const routeRequestCore = async (params, returnResponse, responseStream) => {
+export const routeRequest = async (params, returnResponse, responseStream) => {
     // 🚀 NATIVE JS PROVIDERS: No Python process needed - direct JS execution
 
     try {
@@ -387,36 +387,36 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
     } 
 }
 
-// Environment variables tracking wrapper for router
-const routeRequestWrapper = requiredEnvVars({
-    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
-    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
-    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
-    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.QUERY],
-    "MODEL_RATE_TABLE": [DynamoDBOperation.QUERY],
-    "CHAT_USAGE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "REQUEST_STATE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.DELETE_ITEM],
-    "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
-    "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
-    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "DATASOURCE_REGISTRY_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-    "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], //Marked for future deletion
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
-    "LLM_ENDPOINTS_SECRETS_NAME_ARN": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
-    "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
-    "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
-})(routeRequestCore);
+// // Environment variables tracking wrapper for router
+// const routeRequestWrapper = requiredEnvVars({
+//     "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+//     "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.QUERY],
+//     "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.UPDATE_ITEM],
+//     "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.QUERY],
+//     "MODEL_RATE_TABLE": [DynamoDBOperation.QUERY],
+//     "CHAT_USAGE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
+//     "REQUEST_STATE_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM, DynamoDBOperation.DELETE_ITEM],
+//     "ASSISTANTS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+//     "ASSISTANTS_ALIASES_DYNAMODB_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
+//     "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+//     "DATASOURCE_REGISTRY_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+//     "HASH_FILES_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+//     "S3_FILE_TEXT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+//     "S3_IMAGE_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+//     "S3_RAG_INPUT_BUCKET_NAME": [S3Operation.GET_OBJECT],
+//     "TRACE_BUCKET_NAME": [S3Operation.PUT_OBJECT],
+//     "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT], //Marked for future deletion
+//     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT, S3Operation.PUT_OBJECT],
+//     "LLM_ENDPOINTS_SECRETS_NAME_ARN": [SecretsManagerOperation.GET_SECRET_VALUE],
+//     "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+//     "LLM_ENDPOINTS_SECRETS_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+//     "SECRETS_ARN_NAME": [SecretsManagerOperation.GET_SECRET_VALUE],
+//     "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
+// })(routeRequestCore);
 
 // Main export
-export const routeRequest = (params, returnResponse, responseStream) => {
-    return routeRequestWrapper(params, returnResponse, responseStream);
-};
+// export const routeRequest = (params, returnResponse, responseStream) => {
+//     return routeRequestWrapper(params, returnResponse, responseStream);
+// };
 
 

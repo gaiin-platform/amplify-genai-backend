@@ -7,10 +7,7 @@
 
 import { DynamoDBClient, ScanCommand, UpdateItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { 
-    withEnvVarsTracking, 
-    DynamoDBOperation 
-} from '../common/envVarsTracking.js';
+// Removed env vars tracking imports
 import { getLogger } from '../common/logging.js';
 
 const logger = getLogger("billing-reset");
@@ -146,10 +143,5 @@ const billingResetHandler = async (event) => {
     }
 };
 
-// Export handler with environment variable tracking (using original name)
-export const handler = withEnvVarsTracking({
-    // Environment variables used in billing reset operations
-    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.SCAN, DynamoDBOperation.UPDATE_ITEM],
-    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
-}, billingResetHandler);
+// Export handler directly (env vars tracking removed)
+export const handler = billingResetHandler;

@@ -2,10 +2,7 @@ import { DynamoDBClient, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { extractParams } from "../common/handlers.js";
 import { getLogger } from "../common/logging.js";
-import { 
-    withEnvVarsTracking, 
-    DynamoDBOperation 
-} from '../common/envVarsTracking.js';
+// Removed env vars tracking imports
 
 const logger = getLogger("mtd");
 const client = new DynamoDBClient({});
@@ -1428,23 +1425,11 @@ const internalListUserMtdCostsHandler = async (event, context, callback) => {
         };
     }
 };
-// Environment variable configuration for billing handlers
-const billingEnvConfig = {
-    // DynamoDB tables - require IAM permissions
-    "COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
-    "HISTORY_COST_CALCULATIONS_DYNAMO_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.SCAN],
-    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.QUERY], // Used for resolving API key details
-    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM], // Used for admin privilege checks
-    "ENV_VARS_TRACKING_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM]
-    
-    // Configuration-only variables (no AWS permissions needed):
-    // "SERVICE_NAME": [], // Tracking metadata only
-    // "STAGE": [], // Tracking metadata only
-};
+// Environment variable tracking removed - direct handler exports
 
-// Export all handlers with environment variable tracking (using original names)
-export const handler = withEnvVarsTracking(billingEnvConfig, mtdHandler);
-export const apiKeyUserCostHandler = withEnvVarsTracking(billingEnvConfig, internalApiKeyUserCostHandler);
-export const listAllUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListAllUserMtdCostsHandler);
-export const billingGroupsCostsHandler = withEnvVarsTracking(billingEnvConfig, internalBillingGroupsCostsHandler);
-export const listUserMtdCostsHandler = withEnvVarsTracking(billingEnvConfig, internalListUserMtdCostsHandler);
+// Export all handlers directly (env vars tracking removed)
+export const handler = mtdHandler;
+export const apiKeyUserCostHandler = internalApiKeyUserCostHandler;
+export const listAllUserMtdCostsHandler = internalListAllUserMtdCostsHandler;
+export const billingGroupsCostsHandler = internalBillingGroupsCostsHandler;
+export const listUserMtdCostsHandler = internalListUserMtdCostsHandler;
