@@ -646,11 +646,42 @@ export const fillInAssistant = (assistant, assistantBase) => {
             // for now we will include the ds in the current message
             if (assistant.dataSources && !dataSourceOptions.disableDataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
 
+            
+            // 🚨Combine user data sources (ds) + assistant data sources for RAG processing
+            const allDataSources = [...(ds || []), ...(assistant.dataSources || [])];
+            
+            logger.error("🎯 User-defined assistant: FINAL data sources being passed to base assistant:", {
+                allDataSources_length: allDataSources.length,
+                allDataSources_preview: allDataSources.map(d => ({id: d.id?.substring(0, 50), type: d.type}))
+            });
+
+            // 🚨 Pre-resolve data sources for chatWithDataStateless compatibility
+            let preResolvedDataSourcesByUse = null;
+            if (allDataSources.length > 0) {
+                logger.debug("🔄 User-defined assistant: Pre-resolving data sources for base assistant compatibility");
+                try {
+                    preResolvedDataSourcesByUse = await getDataSourcesByUse(params, updatedBody, allDataSources);
+                    logger.debug("✅ User-defined assistant: Pre-resolved data sources:", {
+                        ragDataSources_length: preResolvedDataSourcesByUse.ragDataSources?.length || 0,
+                        dataSources_length: preResolvedDataSourcesByUse.dataSources?.length || 0,
+                        conversationDataSources_length: preResolvedDataSourcesByUse.conversationDataSources?.length || 0,
+                        attachedDataSources_length: preResolvedDataSourcesByUse.attachedDataSources?.length || 0
+                    });
+                } catch (error) {
+                    logger.error("❌ User-defined assistant: Failed to pre-resolve data sources:", error.message);
+                }
+            }
+
             // 🚀 FIXED: defaultAssistant no longer needs llm parameter
             await assistantBase.handler(
-                {...params, blockTerminator: blockTerminator || params.blockTerminator},
+                {
+                    ...params, 
+                    blockTerminator: blockTerminator || params.blockTerminator,
+                    // ✅ PROVIDE PRE-RESOLVED DATA SOURCES: Required for chatWithDataStateless
+                    preResolvedDataSourcesByUse
+                },
                 updatedBody,
-                ds,
+                allDataSources,  // ✅ PASS ALL DATA SOURCES: user + assistant configured
                 responseStream);
         }
     };

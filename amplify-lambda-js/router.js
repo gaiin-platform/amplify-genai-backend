@@ -129,14 +129,6 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 (async () => {
                     const dataSources = [...(params.body.dataSources || [])];
                     
-                    // 🔍 DEBUG: Log initial dataSources from request
-                    logger.debug("🔍 ROUTER DEBUG - Initial dataSources from params.body:", {
-                        dataSources_raw: params.body.dataSources,
-                        dataSources_length: dataSources.length,
-                        body_keys: Object.keys(params.body),
-                        hasMessages: !!params.body.messages,
-                        messagesLength: params.body.messages?.length || 0
-                    });
                     
                     if (dataSources.length === 0) return [];
                     
@@ -164,16 +156,20 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                         if ((params.body.dataSources && params.body.dataSources.length > 0) || 
                             params.body.options?.conversationId) {
                             logger.debug("🔍 ROUTER: Pre-resolving data sources for smart routing");
-                            const resolved = await getDataSourcesByUse(params, params.body, params.body.dataSources || []);
-                            logger.debug("✅ ROUTER: Data sources pre-resolved", {
-                                categorizedCount: resolved.categorizedDataSources?.length || 0,
-                                ragCount: resolved.ragDataSources?.length || 0,
-                                conversationCount: resolved.conversationDataSources?.length || 0
-                            });
+                            // First resolve data sources (including image extraction)
+                            const resolvedSources = await resolveDataSources(params, params.body, params.body.dataSources || []);
+                            // Then categorize them by use  
+                            const resolved = await getDataSourcesByUse(params, params.body, resolvedSources);
                             return resolved;
                         }
                         return null;
                     } catch (error) {
+                        // 🚨 CRITICAL: Permission errors should kill the entire request
+                        if (error.message?.includes("Unauthorized") || error.message?.includes("permission") || error.message?.includes("access")) {
+                            logger.error("🚨 ROUTER: Permission/access error - terminating request:", error.message);
+                            throw error; // Re-throw permission errors to kill the request
+                        }
+                        
                         logger.warn("⚠️ ROUTER: Data source pre-resolution failed, will fallback:", error.message);
                         return null;
                     }
@@ -205,16 +201,6 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             const user_model_data = userModelData;
             let dataSources = resolvedDataSources;
             
-            // 🔍 DEBUG: Log final resolved dataSources
-            logger.debug("🔍 ROUTER DEBUG - Final resolved dataSources:", {
-                resolvedDataSources_length: resolvedDataSources.length,
-                dataSources_length: dataSources.length,
-                dataSources_preview: dataSources.slice(0, 2).map(ds => ({
-                    id: ds?.id || "NO_ID",
-                    type: ds?.type || "NO_TYPE",
-                    hasContent: !!ds?.content
-                }))
-            });
             
             const models = user_model_data.models;
             if (!models) {
@@ -289,10 +275,6 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             // ⚡ Create request state 
             await createRequestState(params.user, requestId);
             
-            logger.debug("🎯 Router: Passing raw datasources to assistant:", {
-                dataSources_length: dataSources.length,
-                dataSources_ids: dataSources.map(ds => ds.id?.substring(0, 50))
-            });
             
             for (const ds of [...dataSources, ...(body.imageSources ?? [])]) {
                 logger.debug("Resolved data source: ", ds.id, "\n", ds);
@@ -314,7 +296,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                 model,
                 requestId,
                 options,
-                preResolvedDataSourcesByUse  // Pass pre-resolved data sources for performance optimization
+                preResolvedDataSourcesByUse,  // Pass pre-resolved data sources for performance optimization
+                body: params.body  // ✅ INCLUDE MODIFIED BODY: Contains imageSources from resolveDataSources()
             };
 
             // Removed X-Ray tracing for performance
