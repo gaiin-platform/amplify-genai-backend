@@ -64,14 +64,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const options = params.options || {};
     const srcPrefix = options.source || defaultSource;
     
-    // 🔍 DEBUG: Log incoming datasources
-    logger.debug("📥 chatWithDataStateless: Incoming datasources:", {
-        dataSources_length: dataSources?.length || 0,
-        dataSources_ids: dataSources?.map(ds => ds.id?.substring(0, 50)),
-        dataSources_types: dataSources?.map(ds => ds.type),
-        skipRag: params.options?.skipRag,
-        ragOnly: params.options?.ragOnly
-    });
     
     // 🚀 PERFORMANCE BREAKTHROUGH: Use pre-resolved data sources directly - NO duplicate calls!
     const tokenCounter = createTokenCounter();
@@ -87,15 +79,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
     logger.debug("All datasources for chatWithData: ", dataSourcesByUse);
     
-    // 🔍 DEBUG: Log RAG decision factors
-    logger.debug("RAG Decision Debug:", {
-        skipRag: params.options?.skipRag,
-        ragOnly: params.options?.ragOnly,
-        skipDocumentCache: params.options?.skipDocumentCache,
-        dataSourcesByUse_ragDataSources_length: dataSourcesByUse.ragDataSources?.length || 0,
-        dataSourcesByUse_dataSources_length: dataSourcesByUse.dataSources?.length || 0,
-        raw_dataSources_length: dataSources?.length || 0
-    });
 
     // Extract categorized data sources
     const categorizedDataSources = dataSourcesByUse.dataSources || [];
@@ -103,13 +86,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
         (dataSourcesByUse.conversationDataSources || []) : [];
     
-    // 🔍 DEBUG: Log extracted data sources
-    logger.info("Extracted DataSources:", {
-        categorizedDataSources_length: categorizedDataSources.length,
-        ragDataSources_length: ragDataSources.length,
-        ragDataSources_ids: ragDataSources.map(ds => ds.id),
-        conversationDataSources_length: conversationDataSources.length
-    });
     
 
     // Build lookup table for data source details
@@ -143,11 +119,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         
         // Perform RAG query with error handling
         logger.info(`🔍 RAG Query: Calling getContextMessages with ${ragDataSources.length} sources`);
-        logger.debug("📋 RAG DataSources being searched:", ragDataSources.map(ds => ({
-            id: ds.id?.substring(0, 50),
-            type: ds.type,
-            name: ds.name
-        })));
         
         try {
             ragResults = await getContextMessages(params, chatRequestOrig, ragDataSources);
@@ -170,12 +141,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
         
         // ✅ IMMEDIATELY send RAG sources following original pattern
-        logger.debug("🔍 RAG: About to send sources - Debug info:", {
-            ragResults_sources_length: ragResults.sources?.length || 0,
-            responseStream_exists: !!responseStream,
-            responseStream_destroyed: responseStream?.destroyed,
-            responseStream_writable: responseStream?.writable
-        });
         
         if (responseStream && !responseStream.destroyed) {
             ragStatus.inProgress = false;
@@ -183,9 +148,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 "Found relevant information" : "No relevant information found";
             sendStatusEventToStream(responseStream, ragStatus);
             
-            logger.debug("🔍 RAG: Stream is valid, checking sources length:", ragResults.sources.length);
             if (ragResults.sources.length > 0) {
-                logger.debug("📡 RAG: Sending sources to frontend (original pattern):", ragResults.sources.length, "sources");
                 sendStateEventToStream(responseStream, {
                     sources: {
                         rag: {
@@ -193,9 +156,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                         }
                     }
                 });
-                logger.debug("✅ RAG: Sources sent to stream using original pattern");
-            } else {
-                logger.debug("❌ RAG: No sources to send to frontend");
             }
             
             forceFlush(responseStream);
@@ -303,34 +263,75 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
 
         // Process and send sources
         if (contexts.length > 0) {
-            const sources = contexts.map(ctx => {
+            const sources = contexts.flatMap(ctx => {
                 const dataSource = ctx.dataSource || dataSourceDetailsLookup[ctx.dataSourceId];
-                if (!dataSource) return null;
+                if (!dataSource) return [];
 
-                if (isDocument(dataSource)) {
-                    const name = dataSource.name || `Attached Document (${dataSource.type})`;
-                    return {
-                        type: ctx.type,
-                        source: {
-                            key: dataSource.id,
-                            name,
-                            type: dataSource.type,
-                            locations: ctx.locations,
-                            contentKey: dataSource.metadata?.userDataSourceId
+                // Check if this context has extracted content groups (from combineNeighboringLocations)
+                if (ctx.type === "documentCacheContext" && ctx.content && Array.isArray(ctx.content)) {
+                    
+                    // Check if this is actually combined properly
+                    if (ctx.content.length > 20) {
+                        // SAFEGUARD: Limit to top 10 most relevant groups to prevent UI overload
+                        logger.warn("🛡️ SAFEGUARD: Limiting to top 10 content groups to prevent UI overload");
+                        ctx.content = ctx.content.slice(0, 10);
+                    }
+                    
+                    // Create multiple sources - one per combined group
+                    return ctx.content.map((contentGroup, groupIndex) => {
+                        if (isDocument(dataSource)) {
+                            const name = dataSource.name || `Attached Document (${dataSource.type})`;
+                            return {
+                                type: ctx.type,
+                                source: {
+                                    key: `${dataSource.id}#group${groupIndex}`,
+                                    name,
+                                    type: dataSource.type,
+                                    locations: contentGroup.locations || (contentGroup.location ? [contentGroup.location] : []),
+                                    content: contentGroup.content,
+                                    contentKey: dataSource.metadata?.userDataSourceId
+                                }
+                            };
+                        } else {
+                            const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
+                            return {
+                                type,
+                                source: {
+                                    key: `${dataSource.id}#group${groupIndex}`,
+                                    name: dataSource.name || dataSource.id,
+                                    locations: contentGroup.locations || (contentGroup.location ? [contentGroup.location] : []),
+                                    content: contentGroup.content
+                                }
+                            };
                         }
-                    };
+                    });
                 } else {
-                    const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
-                    return {
-                        type,
-                        source: {
-                            key: dataSource.id,
-                            name: dataSource.name || dataSource.id,
-                            locations: ctx.locations
-                        }
-                    };
+                    // Regular context - single source (existing behavior)
+                    if (isDocument(dataSource)) {
+                        const name = dataSource.name || `Attached Document (${dataSource.type})`;
+                        return [{
+                            type: ctx.type,
+                            source: {
+                                key: dataSource.id,
+                                name,
+                                type: dataSource.type,
+                                locations: ctx.locations,
+                                contentKey: dataSource.metadata?.userDataSourceId
+                            }
+                        }];
+                    } else {
+                        const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
+                        return [{
+                            type,
+                            source: {
+                                key: dataSource.id,
+                                name: dataSource.name || dataSource.id,
+                                locations: ctx.locations
+                            }
+                        }];
+                    }
                 }
-            }).filter(s => s);
+            });
 
             // Group sources by type
             const byType = sources.reduce((acc, source) => {
@@ -434,7 +435,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 { account, options: { ...options, model } },  // Pass all options including trackConversations
                 requestWithContext.messages,
                 responseStream,
-                { max_tokens: requestWithContext.max_tokens || 2000 }
+                { 
+                    max_tokens: requestWithContext.max_tokens || 2000,
+                    imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
+                }
             );
         }
         
@@ -470,7 +474,10 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             { account, options: { ...options, model } },  // Pass all options including trackConversations
             requestWithContext.messages,
             responseStream,
-            { max_tokens: requestWithContext.max_tokens || 2000 }
+            { 
+                max_tokens: requestWithContext.max_tokens || 2000,
+                imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
+            }
         );
     }
 

@@ -138,20 +138,26 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                         try {
                             const event = JSON.parse(data);
                             
-                            // Transform event
-                            const transformed = transform(event, responseStream);
-                            if (transformed) {
-                                sendDeltaToStream(responseStream, 'answer', transformed);
-                                // Capture content for conversation analysis if requested
-                                if (capturedContent) {
-                                    capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                            // ✅ SMART ROUTING: Detect our events vs LLM events
+                            if (event.s === "meta") {
+                                // This is our internal event (status/state/mode) - send directly, bypass transformer
+                                responseStream.write(line + '\n\n');
+                            } else {
+                                // This is LLM response data - apply provider transformer
+                                const transformed = transform(event, responseStream);
+                                if (transformed) {
+                                    sendDeltaToStream(responseStream, 'answer', transformed);
+                                    // Capture content for conversation analysis if requested
+                                    if (capturedContent) {
+                                        capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                                    }
                                 }
-                            }
-                            
-                            // Extract usage
-                            const usage = usageTransform(event);
-                            if (usage) {
-                                requestState.totalUsage = { ...requestState.totalUsage, ...usage };
+                                
+                                // Extract usage from LLM events only
+                                const usage = usageTransform(event);
+                                if (usage) {
+                                    requestState.totalUsage = { ...requestState.totalUsage, ...usage };
+                                }
                             }
                         } catch (e) {
                             // Only log if it's not an empty line or whitespace
@@ -175,20 +181,26 @@ function createStreamInterceptor(responseStream, transform, usageTransform, requ
                     try {
                         const event = JSON.parse(data);
                         
-                        // Transform event
-                        const transformed = transform(event, responseStream);
-                        if (transformed) {
-                            sendDeltaToStream(responseStream, 'answer', transformed);
-                            // Capture content for conversation analysis if requested
-                            if (capturedContent) {
-                                capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                        // ✅ SMART ROUTING: Detect our events vs LLM events (buffered data)
+                        if (event.s === "meta") {
+                            // This is our internal event (status/state/mode) - send directly, bypass transformer
+                            responseStream.write(buffer + '\n\n');
+                        } else {
+                            // This is LLM response data - apply provider transformer
+                            const transformed = transform(event, responseStream);
+                            if (transformed) {
+                                sendDeltaToStream(responseStream, 'answer', transformed);
+                                // Capture content for conversation analysis if requested
+                                if (capturedContent) {
+                                    capturedContent.fullResponse += typeof transformed === 'string' ? transformed : (transformed.d || '');
+                                }
                             }
-                        }
-                        
-                        // Extract usage
-                        const usage = usageTransform(event);
-                        if (usage) {
-                            requestState.totalUsage = { ...requestState.totalUsage, ...usage };
+                            
+                            // Extract usage from LLM events only
+                            const usage = usageTransform(event);
+                            if (usage) {
+                                requestState.totalUsage = { ...requestState.totalUsage, ...usage };
+                            }
                         }
                     } catch (e) {
                         // Buffer had incomplete data at end
@@ -275,6 +287,11 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
                 requestId
             }
         };
+
+        // ✅ FIX: Pass imageSources from options to chatBody for provider compatibility
+        if (options.imageSources) {
+            chatBody.imageSources = options.imageSources;
+        }
 
         // Handle tools/functions
         if (options.tools) {
