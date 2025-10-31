@@ -301,7 +301,12 @@ export const fillInAssistant = (assistant, assistantBase) => {
 
             params = {
                 ...params,
-            options:{...params.options, skipRag: assistant.skipRag}
+                // 🚨 CRITICAL: User-defined assistants configuration for optimal processing
+                options:{
+                    ...params.options, 
+                    skipRag: false,  // Force RAG processing for configured assistant data sources
+                    skipDocumentCache: true  // Skip general document caching, focus on assistant's configured sources
+                }
             }
 
             if(assistant.ragOnly) {
@@ -643,12 +648,47 @@ export const fillInAssistant = (assistant, assistantBase) => {
                     }
                 };
             
-            // for now we will include the ds in the current message
-            if (assistant.dataSources && !dataSourceOptions.disableDataSources) updatedBody.imageSources =  [...(updatedBody.imageSources || []), ...assistant.dataSources.filter(ds => isImage(ds))];
+            // 🚨 CRITICAL: SEPARATE IMAGES from assistant dataSources 
+            // Assistant dataSources may contain mixed content - images AND documents
+            // Images must go to body.imageSources, documents stay for RAG processing
+            const assistantImages = (assistant.dataSources || []).filter(ds => isImage(ds));
+            const assistantNonImageDataSources = (assistant.dataSources || []).filter(ds => !isImage(ds));
+            
+            // ✅ CAPTURE ORIGINAL: Before combining, capture router image count for debug
+            const routerImageCount = (params.body?.imageSources || []).length;
+            
+            // ✅ COMBINE ALL IMAGES: Router images + Assistant configured images
+            const allImages = [
+                ...(params.body?.imageSources || []),  // Router-resolved images
+                ...assistantImages  // Assistant-configured images
+            ];
+            
+            // ✅ PUT IMAGES WHERE EXPECTED: BOTH updatedBody AND params.body for base assistant
+            if (allImages.length > 0) {
+                updatedBody.imageSources = allImages;
+                // 🚨 CRITICAL: Base assistant expects images in params.body.imageSources
+                // Update params.body with the combined images (router + assistant)
+                params.body = {
+                    ...params.body,
+                    imageSources: allImages
+                };
+            }
+            
+            // ✅ IMAGES: Debug combined image flow to base assistant
+            logger.debug("🖼️ USER-DEFINED ASSISTANT: Combined image flow:", {
+                routerImageSources: routerImageCount,
+                assistantImages: assistantImages.length,
+                totalImages: allImages.length,
+                imagePreview: allImages.slice(0, 2).map(img => ({
+                    id: img.id?.substring(0, 30),
+                    type: img.type,
+                    source: routerImageCount > 0 ? 'router+assistant' : 'assistant-only'
+                }))
+            });
 
             
-            // 🚨Combine user data sources (ds) + assistant data sources for RAG processing
-            const allDataSources = [...(ds || []), ...(assistant.dataSources || [])];
+            // 🚨 COMBINE NON-IMAGE DATA SOURCES: user + assistant (excluding images)
+            const allDataSources = [...(ds || []), ...assistantNonImageDataSources];
             
             logger.error("🎯 User-defined assistant: FINAL data sources being passed to base assistant:", {
                 allDataSources_length: allDataSources.length,
@@ -656,30 +696,44 @@ export const fillInAssistant = (assistant, assistantBase) => {
             });
 
             // 🚨 Pre-resolve data sources for chatWithDataStateless compatibility
+            // ALWAYS provide preResolvedDataSourcesByUse (even if empty) because base assistant
+            // routes to chatWithDataStateless when images exist, and chatWithDataStateless requires it
             let preResolvedDataSourcesByUse = null;
-            if (allDataSources.length > 0) {
-                logger.debug("🔄 User-defined assistant: Pre-resolving data sources for base assistant compatibility");
-                try {
-                    preResolvedDataSourcesByUse = await getDataSourcesByUse(params, updatedBody, allDataSources);
-                    logger.debug("✅ User-defined assistant: Pre-resolved data sources:", {
-                        ragDataSources_length: preResolvedDataSourcesByUse.ragDataSources?.length || 0,
-                        dataSources_length: preResolvedDataSourcesByUse.dataSources?.length || 0,
-                        conversationDataSources_length: preResolvedDataSourcesByUse.conversationDataSources?.length || 0,
-                        attachedDataSources_length: preResolvedDataSourcesByUse.attachedDataSources?.length || 0
-                    });
-                } catch (error) {
-                    logger.error("❌ User-defined assistant: Failed to pre-resolve data sources:", error.message);
-                }
+            
+            logger.debug("🔄 User-defined assistant: Pre-resolving data sources for base assistant compatibility");
+            try {
+                preResolvedDataSourcesByUse = await getDataSourcesByUse(params, updatedBody, allDataSources);
+                logger.debug("✅ User-defined assistant: Pre-resolved data sources:", {
+                    ragDataSources_length: preResolvedDataSourcesByUse.ragDataSources?.length || 0,
+                    dataSources_length: preResolvedDataSourcesByUse.dataSources?.length || 0,
+                    conversationDataSources_length: preResolvedDataSourcesByUse.conversationDataSources?.length || 0,
+                    attachedDataSources_length: preResolvedDataSourcesByUse.attachedDataSources?.length || 0
+                });
+            } catch (error) {
+                logger.error("❌ User-defined assistant: Failed to pre-resolve data sources:", error.message);
+                // 🚨 FALLBACK: Provide empty but valid structure
+                preResolvedDataSourcesByUse = {
+                    ragDataSources: [],
+                    dataSources: [],
+                    conversationDataSources: [],
+                    attachedDataSources: [],
+                    allDataSources: []
+                };
             }
 
-            // 🚀 FIXED: defaultAssistant no longer needs llm parameter
+            // ✅ PREPARE ENHANCED PARAMS: Include all required data for base assistant
+            const enhancedParams = {
+                ...params, 
+                blockTerminator: blockTerminator || params.blockTerminator,
+                // ✅ PROVIDE PRE-RESOLVED DATA SOURCES: Required for chatWithDataStateless
+                preResolvedDataSourcesByUse: preResolvedDataSourcesByUse || null
+            };
+            
+
+
+            // 🚀 FIXED: defaultAssistant no longer needs llm parameter  
             await assistantBase.handler(
-                {
-                    ...params, 
-                    blockTerminator: blockTerminator || params.blockTerminator,
-                    // ✅ PROVIDE PRE-RESOLVED DATA SOURCES: Required for chatWithDataStateless
-                    preResolvedDataSourcesByUse
-                },
+                enhancedParams,
                 updatedBody,
                 allDataSources,  // ✅ PASS ALL DATA SOURCES: user + assistant configured
                 responseStream);
