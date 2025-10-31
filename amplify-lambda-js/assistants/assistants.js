@@ -55,23 +55,35 @@ const defaultAssistant = {
 
         // 🚀 SMART ROUTING: Use pre-resolved data sources from router to make routing decision
         const preResolvedSources = params.preResolvedDataSourcesByUse;
-        const needsDataProcessingDecision = preResolvedSources && (
+        const hasPreResolvedData = preResolvedSources && (
             (preResolvedSources.ragDataSources && preResolvedSources.ragDataSources.length > 0) ||
             (preResolvedSources.dataSources && preResolvedSources.dataSources.length > 0) ||
             (preResolvedSources.conversationDataSources && preResolvedSources.conversationDataSources.length > 0) ||
             (preResolvedSources.attachedDataSources && preResolvedSources.attachedDataSources.length > 0)
         );
+        
+        // 🚨 CRITICAL: ALWAYS use RAG pipeline if ANY data sources exist (pre-resolved OR raw)
+        // This fixes user-defined assistants that don't provide preResolvedSources
+        const needsDataProcessingDecision = hasPreResolvedData || 
+            (dataSources && dataSources.length > 0) ||
+            (body.imageSources && body.imageSources.length > 0) ||
+            (params.body?.imageSources && params.body.imageSources.length > 0);
 
         logger.debug("🎯 Assistant decision logic:", {
             ragOnly: body.options.ragOnly,
             aboveLimit,
             dataSources_length: dataSources.length,
+            hasPreResolvedData,
             preResolvedSources: preResolvedSources ? {
                 ragDataSources: preResolvedSources.ragDataSources?.length || 0,
                 dataSources: preResolvedSources.dataSources?.length || 0,
                 conversationDataSources: preResolvedSources.conversationDataSources?.length || 0,
                 attachedDataSources: preResolvedSources.attachedDataSources?.length || 0
-            } : null,
+            } : "NULL_OR_MISSING",
+            // Show fallback checks
+            rawDataSources_length: dataSources?.length || 0,
+            bodyImageSources_length: body.imageSources?.length || 0,
+            paramsBodyImageSources_length: params.body?.imageSources?.length || 0,
             needsDataProcessing: needsDataProcessingDecision,
             route: !body.options.ragOnly && aboveLimit ? "mapReduce" : 
                    needsDataProcessingDecision && !body.options.ragOnly ? "chatWithData" : "directLLM"
@@ -80,16 +92,6 @@ const defaultAssistant = {
         if (!body.options.ragOnly && aboveLimit){
             logger.info("→ Using mapReduceAssistant (token limit exceeded)");
             
-            // 🔍 DEBUG: Log dataSources before passing to mapReduce
-            logger.info("🔍 DEBUG - Passing to mapReduce:", {
-                dataSources_length: dataSources?.length || 0,
-                dataSources_preview: dataSources?.slice(0, 2)?.map(ds => ({
-                    id: ds?.id?.substring(0, 50) || "NO_ID",
-                    type: ds?.type || "NO_TYPE",
-                    hasContent: !!ds?.content,
-                    contentPreview: ds?.content?.substring(0, 100) || "NO_CONTENT"
-                })) || []
-            });
             
             
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
@@ -105,22 +107,29 @@ const defaultAssistant = {
                     preResolvedDataSourcesByUse: params.preResolvedDataSourcesByUse
                 } : params;
                 
-                return chatWithDataStateless(enhancedParams, model, body, dataSources, responseStream);
+                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
+                const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
+                return chatWithDataStateless(enhancedParams, model, bodyWithImages, dataSources, responseStream);
             } else {
                 // Direct LLM call for simple conversations
                 logger.info("→ Using direct native provider (no data sources needed)");
+                // ✅ USE ROUTER'S MODIFIED BODY: params.body contains imageSources from resolveDataSources()
+                const bodyWithImages = {...body, imageSources: params.body?.imageSources || undefined};
                 return await callUnifiedLLM(
                     { 
                         account: params.account, 
                         options: { 
-                            ...body.options,  // Include all options from body (including trackConversations)
+                            ...bodyWithImages.options,  // Include all options from body (including trackConversations)
                             model, 
                             requestId: params.options?.requestId 
                         } 
                     },
-                    body.messages,
+                    bodyWithImages.messages,
                     responseStream,
-                    { max_tokens: body.max_tokens || 2000 }
+                    { 
+                        max_tokens: bodyWithImages.max_tokens || 2000,
+                        imageSources: bodyWithImages.imageSources  // ✅ FIX: Pass imageSources through options
+                    }
                 );
             }
         }
