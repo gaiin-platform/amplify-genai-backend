@@ -98,7 +98,6 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-image-input
     S3_RAG_CHUNKS_BUCKET_NAME: ${self:service}-${sls:stage}-rag-chunks
     S3_RAG_INPUT_BUCKET_NAME: ${self:service}-${sls:stage}-rag-input
-    S3_ZIP_FILE_BUCKET_NAME: ${self:service}-${sls:stage}-zip-files
     S3_CONSOLIDATION_BUCKET_NAME: ${self:service}-${sls:stage}-consolidation
     SHARES_DYNAMODB_TABLE: ${self:service}-${sls:stage} #Marked for future deletion
     SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE: ${self:service}-${sls:stage}-rag-document-chunk-queue
@@ -624,8 +623,6 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}/*"
                 - "arn:aws:s3:::${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}/*"
                 - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}"
-                - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/"
-                - "arn:aws:s3:::${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_ACCESS_LOGS_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
@@ -1080,21 +1077,6 @@ resources:
           CorsRules:
             - AllowedOrigins: ['*']
               AllowedMethods: ['PUT', 'DELETE', 'GET']
-              AllowedHeaders: ['*']
-              MaxAge: 3000
-        LoggingConfiguration:
-          DestinationBucketName:
-            Ref: AccessLogsBucket
-          LogFilePrefix: S3AccessLogs/
-    
-    ZipFileBucket:
-      Type: 'AWS::S3::Bucket'
-      Properties:
-        BucketName: ${self:provider.environment.S3_ZIP_FILE_BUCKET_NAME}
-        CorsConfiguration:
-          CorsRules:
-            - AllowedOrigins: ['*']
-              AllowedMethods: ['GET','PUT','POST']
               AllowedHeaders: ['*']
               MaxAge: 3000
         LoggingConfiguration:
