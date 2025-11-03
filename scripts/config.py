@@ -67,7 +67,6 @@ def get_config(dep_name: str = DEP_NAME, stage: str = STAGE) -> dict:
         "S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME": f"amplify-{dep_name}-assistants-{stage}-group-conversations-content",  # Migrates to: agentConversations/
         "S3_CONVERSION_INPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-document-conversion-input",  # Migrates to: documentConversionInput/
         "S3_CONVERSION_OUTPUT_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-document-conversion-output",  # Migrates to: documentConversionOutput/ (keep templates/)
-        "S3_ZIP_FILE_BUCKET_NAME": f"amplify-{dep_name}-lambda-{stage}-zip-files",  # Migrates to: zipFiles/
         
         # === NON-USER RELATED BUCKETS (migrate to S3_CONSOLIDATION_BUCKET) ===
         "DATA_DISCLOSURE_STORAGE_BUCKET": f"amplify-{dep_name}-data-disclosure-{stage}-storage",  # Migrates to: dataDisclosure/
