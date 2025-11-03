@@ -642,8 +642,9 @@ export const fillInAssistant = (assistant, assistantBase) => {
                         ...body.options,
                         ...dataSourceOptions,
                         prompt: instructions,
-                        skipDocumentCache: true, // always rag documents for now
-                        skipRag: assistant.skipRag,
+                        skipDocumentCache: true, // 🚨 CRITICAL: No document caching for assistants
+                        skipRag: false,          // 🚨 CRITICAL: ALWAYS use RAG for user-defined assistants  
+                        ragOnly: true,           // 🚨 CRITICAL: ONLY RAG, no attached documents ever
                         groupType: groupType // Preserve groupType for conversation analysis
                     }
                 };
@@ -652,7 +653,15 @@ export const fillInAssistant = (assistant, assistantBase) => {
             // Assistant dataSources may contain mixed content - images AND documents
             // Images must go to body.imageSources, documents stay for RAG processing
             const assistantImages = (assistant.dataSources || []).filter(ds => isImage(ds));
-            const assistantNonImageDataSources = (assistant.dataSources || []).filter(ds => !isImage(ds));
+            const assistantNonImageDataSources = (assistant.dataSources || [])
+                .filter(ds => !isImage(ds))
+                .map(ds => ({
+                    ...ds,
+                    metadata: {
+                        ...ds.metadata,
+                        ragOnly: true  // 🚨 CRITICAL: Mark assistant data sources as RAG-only to prevent double processing
+                    }
+                }));
             
             // ✅ CAPTURE ORIGINAL: Before combining, capture router image count for debug
             const routerImageCount = (params.body?.imageSources || []).length;
@@ -700,15 +709,8 @@ export const fillInAssistant = (assistant, assistantBase) => {
             // routes to chatWithDataStateless when images exist, and chatWithDataStateless requires it
             let preResolvedDataSourcesByUse = null;
             
-            logger.debug("🔄 User-defined assistant: Pre-resolving data sources for base assistant compatibility");
             try {
                 preResolvedDataSourcesByUse = await getDataSourcesByUse(params, updatedBody, allDataSources);
-                logger.debug("✅ User-defined assistant: Pre-resolved data sources:", {
-                    ragDataSources_length: preResolvedDataSourcesByUse.ragDataSources?.length || 0,
-                    dataSources_length: preResolvedDataSourcesByUse.dataSources?.length || 0,
-                    conversationDataSources_length: preResolvedDataSourcesByUse.conversationDataSources?.length || 0,
-                    attachedDataSources_length: preResolvedDataSourcesByUse.attachedDataSources?.length || 0
-                });
             } catch (error) {
                 logger.error("❌ User-defined assistant: Failed to pre-resolve data sources:", error.message);
                 // 🚨 FALLBACK: Provide empty but valid structure

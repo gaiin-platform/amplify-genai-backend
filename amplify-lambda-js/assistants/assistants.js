@@ -102,8 +102,8 @@ const defaultAssistant = {
             
             return mapReduceAssistant.handler(params, body, dataSources, responseStream);
         } else {
-            if (needsDataProcessingDecision && !body.options.ragOnly) {
-                // Use chatWithDataStateless for RAG, document processing, conversation discovery
+            if (needsDataProcessingDecision) {
+                // Use chatWithDataStateless for RAG, document processing, conversation discovery  
                 logger.info("→ Using chatWithDataStateless (has data sources or conversation discovery)");
                 const {chatWithDataStateless} = await import("../common/chatWithData.js");
                 
