@@ -17,6 +17,31 @@ import {isKilled} from "../requests/requestState.js";
 const logger = getLogger("chatWithData");
 
 /**
+ * Truncate content for UI display while preserving readability
+ * @param {string} content - The full content
+ * @param {number} maxChars - Maximum characters to show (default 500)
+ * @returns {string} Truncated content with "..." if needed
+ */
+const truncateContentForDisplay = (content, maxChars = 500) => {
+    if (!content || content.length <= maxChars) {
+        return content;
+    }
+    
+    // Find a good break point (end of sentence or paragraph)
+    let truncated = content.substring(0, maxChars);
+    const lastPeriod = truncated.lastIndexOf('.');
+    const lastNewline = truncated.lastIndexOf('\n');
+    
+    // Use the latest good break point
+    const breakPoint = Math.max(lastPeriod, lastNewline);
+    if (breakPoint > maxChars * 0.7) { // If we found a good break point
+        truncated = content.substring(0, breakPoint + 1);
+    }
+    
+    return truncated + "...";
+};
+
+/**
  * ✅ OPTIMIZED: Fit messages within token limit efficiently
  */
 const fitMessagesInTokenLimit = (messages, tokenLimit) => {
@@ -81,13 +106,11 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     
 
     // Extract categorized data sources
-    // 🚨 CRITICAL: For user-defined assistants with skipDocumentCache=true, skip attached documents too
-    const categorizedDataSources = !params.options.skipDocumentCache ? (dataSourcesByUse.dataSources || []) : [];
+    const categorizedDataSources = dataSourcesByUse.dataSources || [];
     const ragDataSources = !params.options.skipRag ? (dataSourcesByUse.ragDataSources || []) : [];
     const conversationDataSources = params.options.skipRag && !params.options.skipDocumentCache ? 
         (dataSourcesByUse.conversationDataSources || []) : [];
-    
-    
+
 
     // Build lookup table for data source details
     const dataSourceDetailsLookup = {};
@@ -142,7 +165,6 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
         }
         
         // ✅ IMMEDIATELY send RAG sources following original pattern
-        
         if (responseStream && !responseStream.destroyed) {
             ragStatus.inProgress = false;
             ragStatus.message = ragResults.sources.length > 0 ? 
@@ -158,24 +180,12 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                     }
                 });
             }
-            
             forceFlush(responseStream);
-        } else {
-            logger.debug("❌ RAG: Cannot send sources - stream invalid:", {
-                responseStream_exists: !!responseStream,
-                responseStream_destroyed: responseStream?.destroyed,
-                responseStream_writable: responseStream?.writable
-            });
         }
-    } else {
-        logger.warn("⚠️ RAG Query: No RAG data sources found, skipping RAG search");
     }
 
-    // ✅ STEP 2: Process messages for token fitting
-    const msgTokens = tokenCounter.countMessageTokens(chatRequestOrig.messages);
-    const fittedMessages = msgTokens > maxTokensForMessages ? 
-        fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages) : 
-        chatRequestOrig.messages;
+    // Calculate max tokens for context document processing
+    const fittedMessages = fitMessagesInTokenLimit(chatRequestOrig.messages, maxTokensForMessages);
 
     // Build safe messages and insert RAG context
     const safeMessages = fittedMessages.map(m => ({role: m.role, content: m.content}));
@@ -268,209 +278,182 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                 const dataSource = ctx.dataSource || dataSourceDetailsLookup[ctx.dataSourceId];
                 if (!dataSource) return [];
 
-                // Check if this context has extracted content groups (from combineNeighboringLocations)
-                if (ctx.type === "documentCacheContext" && ctx.content && Array.isArray(ctx.content)) {
-                    
-                    // Check if this is actually combined properly
-                    if (ctx.content.length > 20) {
-                        // SAFEGUARD: Limit to top 10 most relevant groups to prevent UI overload
-                        logger.warn("🛡️ SAFEGUARD: Limiting to top 10 content groups to prevent UI overload");
-                        ctx.content = ctx.content.slice(0, 10);
-                    }
-                    
-                    // Create multiple sources - one per combined group
-                    return ctx.content.map((contentGroup, groupIndex) => {
-                        if (isDocument(dataSource)) {
-                            const name = dataSource.name || `Attached Document (${dataSource.type})`;
-                            return {
-                                type: ctx.type,
-                                source: {
-                                    key: `${dataSource.id}#group${groupIndex}`,
-                                    name,
-                                    type: dataSource.type,
-                                    locations: contentGroup.locations || (contentGroup.location ? [contentGroup.location] : []),
-                                    content: contentGroup.content,
-                                    contentKey: dataSource.metadata?.userDataSourceId
-                                }
-                            };
-                        } else {
-                            const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
-                            return {
-                                type,
-                                source: {
-                                    key: `${dataSource.id}#group${groupIndex}`,
-                                    name: dataSource.name || dataSource.id,
-                                    locations: contentGroup.locations || (contentGroup.location ? [contentGroup.location] : []),
-                                    content: contentGroup.content
-                                }
-                            };
-                        }
-                    });
-                } else {
-                    // Regular context - single source (existing behavior)
-                    if (isDocument(dataSource)) {
-                        const name = dataSource.name || `Attached Document (${dataSource.type})`;
+                // 🚨 CRITICAL: Only apply document logic if it's actually a document (like original code)
+                if (dataSource && isDocument(dataSource)) {
+                    const name = dataSourceDetailsLookup[dataSource.id]?.name || `Attached Document (${dataSource.type})`;
+
+                    // ✅ ATTACHED DOCUMENTS: Flat structure for frontend
+                    if (ctx.type === "documentContext") {
                         return [{
                             type: ctx.type,
-                            source: {
-                                key: dataSource.id,
-                                name,
-                                type: dataSource.type,
-                                locations: ctx.locations,
-                                contentKey: dataSource.metadata?.userDataSourceId
-                            }
-                        }];
-                    } else {
-                        const type = (extractProtocol(dataSource.id) || "data://").split("://")[0];
-                        return [{
-                            type,
-                            source: {
-                                key: dataSource.id,
-                                name: dataSource.name || dataSource.id,
-                                locations: ctx.locations
-                            }
+                            key: dataSource.id,
+                            name: name,
+                            dataType: dataSource.type,
+                            locations: ctx.locations || [],
+                            contentKey: dataSource.metadata?.userDataSourceId
                         }];
                     }
+                    
+                    // Handle cases where content is missing (fallback)
+                    if (!ctx.content) {
+                        return [{
+                            type: ctx.type,
+                            key: dataSource.id,
+                            name: name,
+                            dataType: dataSource.type,
+                            locations: ctx.locations || [],
+                            contentKey: dataSource.metadata?.userDataSourceId
+                        }];
+                    }
+                    
+                    if (ctx.type === "documentCacheContext") {
+                        // Check if this context has extracted content groups (from combineNeighboringLocations)
+                        if (ctx.content && Array.isArray(ctx.content)) {
+                            // SAFEGUARD: Limit to top 10 most relevant groups to prevent UI overload
+                            if (ctx.content.length > 20) {
+                                logger.warn("🛡️ SAFEGUARD: Limiting to top 10 content groups to prevent UI overload");
+                                ctx.content = ctx.content.slice(0, 10);
+                            }
+                            
+                            // Return list of sources from the combined neighboring locations (original pattern)
+                            return ctx.content.map(i => {
+                                return {
+                                    type: ctx.type,
+                                    key: dataSource.id,
+                                    name: name,
+                                    dataType: dataSource.type,
+                                    locations: i.locations || [],
+                                    contentKey: dataSource.metadata?.userDataSourceId,
+                                    content: truncateContentForDisplay(i.content)  // Truncate for UI display
+                                };
+                            });
+                        } else {
+                            return [{
+                                type: ctx.type,
+                                key: dataSource.id,
+                                name: name,
+                                dataType: dataSource.type,
+                                locations: ctx.locations || [],
+                                contentKey: dataSource.metadata?.userDataSourceId
+                            }];
+                        }
+                    }
+                    return [];
+                } else if (dataSource) {
+                    // Non-document sources (from original code)  
+                    const sourceType = (extractProtocol(dataSource.id) || "data://").split("://")[0];
+                    return [{
+                        type: sourceType,
+                        key: dataSource.id, 
+                        name: dataSource.name || dataSource.id, 
+                        locations: ctx.locations || []
+                    }];
+                } else {
+                    return [];
                 }
-            });
+            }).filter(source => source);
 
-            // Group sources by type
-            const byType = sources.reduce((acc, source) => {
-                if(!acc[source.type]){
-                    acc[source.type] = {sources: [], data: {chunkCount: 0}};
+            if (sources.length > 0) {
+                // Send document sources with proper categorization
+                const contextSources = {};
+                let hasAttachedDocuments = false;
+                let hasDocumentCache = false;
+
+                sources.forEach(source => {
+                    const categoryKey = source.type === "documentCacheContext" ? "documentCacheContext" : "documentContext";
+                    
+                    if (source.type === "documentCacheContext") {
+                        hasDocumentCache = true;
+                    } else {
+                        hasAttachedDocuments = true;
+                    }
+                    
+                    if (!contextSources[categoryKey]) {
+                        contextSources[categoryKey] = { sources: [] };
+                    }
+                    contextSources[categoryKey].sources.push(source);
+                });
+
+                if (responseStream && !responseStream.destroyed) {
+                    sendStateEventToStream(responseStream, {
+                        sources: contextSources
+                    });
+                    forceFlush(responseStream);
                 }
-                acc[source.type].sources.push(source.source);
-                acc[source.type].data.chunkCount++;
-                return acc;
-            }, {});
-
-            if (responseStream && !responseStream.destroyed) {
-                logger.debug("📡 Document: Sending regular document sources:", Object.keys(byType), "types");
-                sendStateEventToStream(responseStream, { sources: byType });
-                logger.debug("✅ Document: Regular sources sent to stream");
             }
         }
     }
 
-    // Default context if none found
-    if(contexts.length === 0){
-        logger.debug("No data sources, using default context");
-        contexts = [{id: srcPrefix}];
-    }
-
-    // ⚡ PARALLEL PHASE 4: Metadata generation and context optimization
-    const [metaData, shouldMergeContexts] = await Promise.all([
-        // Generate source metadata
-        Promise.resolve(getSourceMetadata({contexts})),
-        
-        // Check if contexts can be merged
-        Promise.resolve((() => {
-            if (contexts.length <= 1) return false;
-            const totalTokens = contexts.reduce((acc, ctx) => acc + (ctx.tokens || 1000), 0);
-            return totalTokens <= maxTokens;
-        })())
-    ]);
-
-    let updatedContexts = aliasContexts(metaData, contexts);
-
-    // Merge contexts if they fit within token limit
-    if (shouldMergeContexts) {
-        logger.debug("Merging contexts into one for efficiency");
-        const mergedContext = contexts
-            .map((c, index) => `DataSource ${index + 1}: \n\n${c.context}`)
-            .join("\n\n");
-        updatedContexts = [{
-            id: 0, 
-            context: mergedContext, 
-            contexts: updatedContexts
-        }];
-    }
-
-    // ✅ DIRECT NATIVE PROVIDER INTEGRATION: Eliminated Python subprocess
-    // Send source metadata directly to stream
-    const srcList = Array.from(Object.keys(metaData.sources)).reduce((arr, key) => ((arr[metaData.sources[key]] = key), arr), []);
-    sendStateEventToStream(responseStream, { 
-        metadata: { sources: srcList } 
-    });
+    // ✅ Final message construction with all contexts
+    const contextMessages = contexts.map(ctx => addContextMessage(ctx, tokenCounter.countTokens));
     
-    // Handle multiple contexts if needed
-    if (updatedContexts.length > 1) {
-        // Multiple contexts - need to iterate
-        sendStatusEventToStream(
-            responseStream,
-            newStatus({
-                inProgress: false,
-                message: `I will need to send ${updatedContexts.length} prompts for this request`,
-                icon: "bolt",
-                sticky: true
-            })
-        );
-        
-        for (const [index, context] of updatedContexts.entries()) {
-            // Add context to messages
-            const messagesWithContext = addContextMessage([...chatRequest.messages], context);
-            const requestWithContext = {
-                ...chatRequest,
-                messages: messagesWithContext
-            };
-            
-            // Send status for this context
-            if (updatedContexts.length > 1) {
-                sendStatusEventToStream(
-                    responseStream,
-                    newStatus({
-                        inProgress: true,
-                        message: `Sending prompt ${index + 1} of ${updatedContexts.length}`,
-                        dataSource: context.id,
-                        icon: "bolt",
-                        sticky: false
-                    })
-                );
-            }
-            
-            // Check killswitch before LLM call
-            if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
-            
-            // ✅ Direct native provider call for each context
-            await callUnifiedLLM(
-                { account, options: { ...options, model } },  // Pass all options including trackConversations
-                requestWithContext.messages,
-                responseStream,
-                { 
-                    max_tokens: requestWithContext.max_tokens || 2000,
-                    imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
-                }
-            );
-        }
-        
-        // Final status
-        if (updatedContexts.length > 1) {
-            sendStatusEventToStream(
-                responseStream,
-                newStatus({
-                    inProgress: false,
-                    message: `Completed ${updatedContexts.length} of ${updatedContexts.length} prompts`,
-                    icon: "bolt",
-                    sticky: false
-                })
-            );
-        }
-    } else {
-        // Single context - direct call
-        const context = updatedContexts[0];
-        const messagesWithContext = context.context ? 
-            addContextMessage([...chatRequest.messages], context) : 
-            chatRequest.messages;
-        
-        const requestWithContext = {
-            ...chatRequest,
-            messages: messagesWithContext
-        };
+    // 🔍 DEBUG: Log context being passed to LLM
+    if (contextMessages.length > 0) {
+        logger.debug("🔍 CONTEXT PASSED TO LLM:", {
+            contextCount: contextMessages.length,
+            contextTypes: contexts.map(ctx => ctx.type),
+            contextPreview: contextMessages.map(msg => ({
+                role: msg.role,
+                contentLength: typeof msg.content === 'string' ? msg.content.length : 'not-string',
+                contentPreview: typeof msg.content === 'string' ? 
+                    msg.content.substring(0, 100) + "..." : 
+                    `[${typeof msg.content}] ${JSON.stringify(msg.content).substring(0, 100)}...`
+            }))
+        });
+    }
+    
+    const rawMessages = [
+        ...chatRequest.messages.slice(0, -1),
+        ...contextMessages,
+        ...chatRequest.messages.slice(-1)
+    ];
+
+    // 🧹 CLEAN MESSAGES: Remove Location info and undefined messages before LLM call
+    const cleanedMessages = rawMessages
+        .filter(msg => msg && msg.role && msg.content !== undefined) // Remove undefined messages
+        .map(msg => ({
+            role: msg.role,
+            content: typeof msg.content === 'string' ? 
+                msg.content.replace(/Location:\s*\{[^}]*\}\s*/g, '').trim() : // Remove Location: {...}
+                msg.content
+        }))
+        .filter(msg => msg.content && msg.content.length > 0); // Remove empty content
+
+    const requestWithContext = {
+        ...chatRequest,
+        messages: cleanedMessages
+    };
+
+    // Check killswitch before making final request
+    if (await isKilled(account.user, responseStream, requestWithContext)) return;
+
+    // Process the final request based on context types
+    const hasRAGSources = ragResults.sources.length > 0;
+    const hasContexts = contexts.length > 0;
+
+    if (hasRAGSources || hasContexts) {
+        logger.info(`🎯 Final request with contexts: RAG sources: ${ragResults.sources.length}, Context documents: ${contexts.length}`);
         
         // Check killswitch before LLM call
         if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
         
-        // ✅ Direct native provider call
+        // ✅ Direct native provider call for each context
+        await callUnifiedLLM(
+            { account, options: { ...options, model } },  // Pass all options including trackConversations
+            requestWithContext.messages,
+            responseStream,
+            { 
+                max_tokens: requestWithContext.max_tokens || 2000,
+                imageSources: chatRequestOrig.imageSources  // ✅ FIX: Pass imageSources through options
+            }
+        );
+    } else if(!params.options.ragOnly) {
+        // No context, direct LLM call
+        logger.info("🎯 No relevant contexts found, making direct LLM call");
+        
+        // Check killswitch before LLM call
+        if (await isKilled(account.user, responseStream, chatRequestOrig)) return;
+        
         await callUnifiedLLM(
             { account, options: { ...options, model } },  // Pass all options including trackConversations
             requestWithContext.messages,
@@ -481,6 +464,4 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
             }
         );
     }
-
-    logger.debug("Chat function finished, stream management handled by caller");
 };

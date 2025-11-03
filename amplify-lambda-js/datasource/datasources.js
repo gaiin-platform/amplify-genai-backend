@@ -196,10 +196,10 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     dataSources = await translateUserDataSourcesToHashDataSources(params, chatRequestOrig, dataSources);
 
     const getRagOnly = sources => sources.filter(ds =>
-        chatRequestOrig.options?.ragOnly || (ds.metadata && ds.metadata.ragOnly));
+        chatRequestOrig.options?.ragOnly || (ds.metadata?.ragOnly));
 
     const getInsertOnly = sources => sources.filter(ds =>
-        !chatRequestOrig.options?.ragOnly && (!ds.metadata || !ds.metadata.ragOnly));
+        !chatRequestOrig.options?.ragOnly && !ds.metadata?.ragOnly);
 
     const getDocumentDataSources = sources => sources.filter(isDocument);
 
@@ -210,8 +210,9 @@ export const getDataSourcesByUse = async (params, chatRequestOrig, dataSources) 
     )];}
 
     const attachedDataSources = [
-        ...dataSources,
-        ...msgDataSources];
+        ...dataSources.filter(ds => !ds.metadata?.ragOnly),  // ✅ Exclude ragOnly sources from attached
+        ...msgDataSources.filter(ds => !ds.metadata?.ragOnly)  // ✅ Exclude ragOnly sources from attached
+    ];
 
     logger.debug("🔍 RAG datasource calculation:", {
         getRagOnly_dataSources: getRagOnly(dataSources).length,
@@ -673,8 +674,9 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                 key = extractKey(key);
             }
 
-            // Check the hash keys cache
-            const cached = hashDataSourcesCache.get(key);
+            // Include ragOnly in cache key to prevent metadata conflicts
+            const cacheKey = ds.metadata?.ragOnly ? `${key}:ragOnly` : key;
+            const cached = hashDataSourcesCache.get(cacheKey);
             if (cached) {
                 return cached;
             }
@@ -696,10 +698,10 @@ export const translateUserDataSourcesToHashDataSources = async (params, body, da
                     ...ds,
                     metadata: {...ds.metadata, userDataSourceId: ds.id},
                     id: "s3://" + item.textLocationKey};
-                hashDataSourcesCache.set(key, result);
+                hashDataSourcesCache.set(cacheKey, result);
                 return result;
             } else {
-                hashDataSourcesCache.set(key, ds);
+                hashDataSourcesCache.set(cacheKey, ds);
                 return ds; // No item found with the given ID
             }
             return ds;
@@ -810,8 +812,18 @@ export const getContexts = async (resolutionEnv, dataSource, maxTokens, options,
             const formattedContext = formatAndChunkDataSource(tokenCounter, dataSource, filteredContent, maxTokens, options);
             const originalTotalTokens = dataSource?.metadata?.totalTokens;
             const filteredTotalTokens = filteredContent.totalTokens;
-            logger.debug(`Original document total tokens: ${originalTotalTokens} \nFiltered document tokens: ${filteredTotalTokens}\n${Math.round(filteredTotalTokens/originalTotalTokens*100)}% of original`);
+            const percentageOfOriginal = originalTotalTokens ? 
+                Math.round(filteredTotalTokens/originalTotalTokens*100) + '%' : 
+                'unknown (no original token count)';
+            logger.debug(`Original document total tokens: ${originalTotalTokens || 'not available'} \nFiltered document tokens: ${filteredTotalTokens}\n${percentageOfOriginal} of original`);
             formattedContext[0].content = combineNeighboringLocations(filteredContent.content);
+            
+            // 🚨 CRITICAL: Preserve noRelevantContent flag for LLM messaging
+            if (filteredContent.noRelevantContent) {
+                formattedContext.forEach(chunk => {
+                    chunk.noRelevantContent = true;
+                });
+            }
   
             return formattedContext;
         } catch (error) {
@@ -934,8 +946,14 @@ Expected format: [0, 1, 5] or [] if nothing is relevant.`
     
     // Handle case where no relevant content was found
     if (!indexes || indexes.length === 0) {
-        logger.debug("No datasource content was relevant to the query");
-        return null;
+        logger.debug("No datasource content was relevant to the query - providing full context with relevance flag");
+        
+        // Instead of returning null, provide full context with a flag for LLM to handle gracefully
+        return {
+            ...context,
+            noRelevantContent: true, // Flag to indicate LLM should mention no relevant info found
+            totalTokens: context.content.reduce((acc, item) => acc + (item.tokens || 0), 0)
+        };
     }
     // Filter the content to only include relevant items
     const filteredContent = indexes.map(idx => contentByIndex[idx]).filter(Boolean);
