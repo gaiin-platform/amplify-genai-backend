@@ -448,4 +448,3 @@ def format_page(page: Dict) -> Dict:
         "contentUrl": page.get("contentUrl", ""),
         "links": page.get("links", {}),
     }
-    }

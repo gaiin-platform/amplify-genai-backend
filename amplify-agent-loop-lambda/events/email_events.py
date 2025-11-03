@@ -56,7 +56,25 @@ def lookup_username_from_cognito_table(email_address):
         cognito_user_table = dynamodb.Table(table_name)
         email_lower = email_address.lower()
         
-        # Strategy 1: Look for users where email field matches
+        # Strategy 1: Look for users where user_id itself matches the email
+        # (for cases where user_id is the email)
+        try:
+            response = cognito_user_table.get_item(
+                Key={"user_id": email_lower}
+            )
+            
+            if response.get("Item"):
+                # Found match where user_id is the email
+                item = response["Item"]
+                username = item.get("user_id")
+                if username:
+                    logger.info("Cognito user_id field match: %s -> %s", email_address, username)
+                    return username
+        except ClientError:
+            # Item not found, continue to next strategy
+            pass
+        
+        # Strategy 2: Look for users where email field matches
         response = cognito_user_table.scan(
             ProjectionExpression="user_id, email",
             FilterExpression="email = :target_email",
@@ -71,24 +89,6 @@ def lookup_username_from_cognito_table(email_address):
             username = item.get("user_id")
             if username:
                 logger.info("Cognito email field match: %s -> %s", email_address, username)
-                return username
-        
-        # Strategy 2: Look for users where user_id itself matches the email
-        # (for cases where user_id is the email and email field is missing)
-        response = cognito_user_table.scan(
-            ProjectionExpression="user_id, email", 
-            FilterExpression="user_id = :target_email",
-            ExpressionAttributeValues={
-                ":target_email": email_lower
-            }
-        )
-        
-        if response.get("Items"):
-            # Found match where user_id is the email
-            item = response["Items"][0]
-            username = item.get("user_id")
-            if username:
-                logger.info("Cognito user_id field match: %s -> %s", email_address, username)
                 return username
                 
         logger.info("No Cognito table match found for email: %s", email_address)
