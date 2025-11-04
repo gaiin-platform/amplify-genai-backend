@@ -11,7 +11,7 @@ dynamodb = boto3.resource("dynamodb")
 from pycommon.logger import getLogger
 logger = getLogger("models_csv_updates")
 
-def load_model_rate_table(model_data):
+def load_model_rate_table(model_data=None):
     # Retrieve the environment variable for the table name
     table_name = os.environ["MODEL_RATE_TABLE"]
 
@@ -30,42 +30,78 @@ def load_model_rate_table(model_data):
                 csv_item = parse_csv_row(row)
                 model_id = csv_item["ModelID"]
 
-                existing_item = model_data.get(model_id, {})
-                if check_old_data_by_col(existing_item.keys()):
-                    logger.info(f"ModelID {model_id} is outdated/missing, adding new row")
-                    response = table.put_item(Item=csv_item)
+                # Check if model already exists and update accordingly
+                try:
+                    existing_response = table.get_item(Key={"ModelID": model_id})
+                    existing_item = existing_response.get("Item", {})
+                except:
+                    existing_item = {}
+                
+                if not existing_item:
+                    # New model - full insert
+                    logger.info(f"ModelID {model_id} is new, adding complete record")
+                    table.put_item(Item=csv_item)
                 else:
-                    logger.info(
-                        f"ModelID {model_id} is up to date, updating existing col if missing"
-                    )
-                    updated_item = dict(existing_item)
-                    for key, value in csv_item.items():
-                        if key not in existing_item:
-                            logger.debug("Updating column: %s", key)
-                            # Only add the column if it doesn't exist in the existing item
-                            updated_item[key] = value
-
-                    table.put_item(Item=updated_item)
+                    # Existing model - check if outdated and update only if needed
+                    is_outdated = check_old_data_by_col(existing_item.keys())
+                    if is_outdated:
+                        # Add missing new columns only
+                        missing_attributes = {}
+                        for key, value in csv_item.items():
+                            if key not in existing_item:
+                                missing_attributes[key] = value
+                        
+                        if missing_attributes:
+                            logger.info(f"ModelID {model_id} - adding missing columns: {list(missing_attributes.keys())}")
+                            
+                            update_expression_parts = []
+                            expression_attribute_values = {}
+                            
+                            for attr, value in missing_attributes.items():
+                                update_expression_parts.append(f"#{attr} = :{attr}")
+                                expression_attribute_values[f":{attr}"] = value
+                            
+                            update_expression = "SET " + ", ".join(update_expression_parts)
+                            expression_attribute_names = {f"#{attr}": attr for attr in missing_attributes.keys()}
+                            
+                            table.update_item(
+                                Key={"ModelID": model_id},
+                                UpdateExpression=update_expression,
+                                ExpressionAttributeNames=expression_attribute_names,
+                                ExpressionAttributeValues=expression_attribute_values
+                            )
+                    else:
+                        logger.info(f"ModelID {model_id} is already up to date, no changes needed")
 
             except ClientError as e:
                 logger.error(e.response["Error"]["Message"])
                 return False
 
-    # Return a success response after updating the table with all entries
     return True
 
 
 old_cols = [
     "ModelID",
-    "InputCostPerThousandTokens",
+    "InputCostPerThousandTokens", 
     "ModelName",
     "OutputCostPerThousandTokens",
     "Provider",
 ]
 
+# Required columns that indicate a model has the new schema
+required_new_cols = [
+    "InputCachedCostPerThousandTokens",
+    "OutputCachedCostPerThousandTokens"
+]
 
 def check_old_data_by_col(model_cols):
-    return not model_cols or sorted(model_cols) == sorted(old_cols)
+    # Consider a model "old" if it's missing the new cached cost columns
+    if not model_cols:
+        return True
+    
+    # Check if it has the new cached cost columns
+    has_new_columns = all(col in model_cols for col in required_new_cols)
+    return not has_new_columns
 
 
 def parse_csv_row(row_dict):
@@ -91,7 +127,8 @@ def parse_csv_row(row_dict):
             if k in {
                 "InputCostPerThousandTokens",
                 "OutputCostPerThousandTokens",
-                "CachedCostPerThousandTokens",
+                "InputCachedCostPerThousandTokens",
+                "OutputCachedCostPerThousandTokens",
                 "InputContextWindow",
                 "OutputTokenLimit",
             }:
