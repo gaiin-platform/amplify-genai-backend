@@ -3455,7 +3455,23 @@ if __name__ == "__main__":
                     log(f"")
                     log(f"Or if you already have backups:")
                     log(f"  python scripts/id_migration.py --dont-backup {' --dry-run' if args.dry_run else ''}")
-                    sys.exit(1)
+                    log(f"")
+                    
+                    # Auto-continue in debug mode or --no-confirmation for automation
+                    if sys.gettrace() is not None:
+                        log(f"⚠️  Debug mode detected - continuing despite backup verification failure...")
+                    elif args.no_confirmation:
+                        log(f"⚠️  No confirmation mode - continuing despite backup verification failure...")
+                        log(f"⚠️  WARNING: Proceeding without verified backups!")
+                    else:
+                        response = input("\nDo you want to continue anyway? (WARNING: No verified backups!) (yes/no): ").lower().strip()
+                        if response not in ['yes', 'y']:
+                            log(f"Migration cancelled by user.")
+                            sys.exit(0)
+                        log(f"⚠️  User confirmed: continuing despite backup verification failure...")
+                    
+                    log(f"⚠️  PROCEEDING WITHOUT VERIFIED BACKUPS - USE AT YOUR OWN RISK!")
+                    log(f"")
                 else:
                     log(f"✅ Backup verification passed! Proceeding with migration...")
                     

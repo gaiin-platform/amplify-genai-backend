@@ -412,24 +412,6 @@ serverless amplify-lambda-js:deploy --stage dev
 # ... continue for all other services (except basic-ops which is removed)
 ```
 
-## Verification
-
-### Test Service Functionality
-After migration, verify that all services are functioning correctly:
-
-1. Check service health endpoints
-2. Verify database connectivity
-3. Test core functionality
-4. Monitor CloudWatch logs for any missing environment variables
-
-### Rollback Plan
-
-If issues occur:
-
-1. **Keep Parameter Store intact** (it doesn't interfere with existing deployments)
-2. **Redeploy services** from the previous branch/commit
-3. **Investigate issues** before attempting migration again
-
 ## Benefits of This Migration
 
 1. **Centralized Configuration**: All environment variables in one location
@@ -465,8 +447,9 @@ After Parameter Store population and service deployments, run the user ID migrat
 - `--dry-run`: Do not make any changes, just show what would happen
 - `--csv-file`: Path to the CSV file containing migration data (default: migration_users.csv)
 - `--no-id-change`: Generate migration_users.csv with same old_id and new_id for S3 consolidation only (no username changes)
-- `--dont-backup`: **NEW** - Skip both backup creation and verification (for users who already have backups)
-- `--region`: **NEW** - AWS region for DynamoDB and S3 operations (default: us-east-1)
+- `--dont-backup`: Skip both backup creation and verification (for users who already have backups)
+- `--no-confirmation`: Skip all interactive prompts (useful for automation/CI/CD)
+- `--region`: AWS region for DynamoDB and S3 operations (default: us-east-1)
 - `--log`: Log output to the specified file (auto-generated if not provided)
 
 **⚠️ All table and bucket names come exclusively from `config.py` - no command-line overrides allowed for consistency.**
@@ -568,7 +551,6 @@ This is useful when:
 - You want to ensure all users are included in the migration
 
 #### Automatic Configuration Loading
-**✅ NEW: No manual environment variables needed!**
 
 The migration scripts now automatically load all bucket and table names from `config.py`. 
 
@@ -594,6 +576,9 @@ export S3_CONSOLIDATION_BUCKET_NAME="custom-consolidation-bucket"  # Optional ov
 # 1. Dry run ID migration (shows what tables/data would be migrated)
 python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
 
+# 1a. Dry run with no prompts (for automation):
+python3 scripts/id_migration.py --dry-run --no-confirmation --csv-file migration_users.csv --log migration_dryrun.log
+
 # 3. Dry run S3-only migration (standalone buckets)  
 python3 scripts/s3_data_migration.py --dry-run --bucket all --log s3_dryrun.log
 
@@ -610,6 +595,9 @@ python3 scripts/id_migration.py --csv-file migration_users.csv --log migration_f
 
 # 1a. If you already have backups, skip backup verification:
 python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv --log migration_full.log
+
+# 1b. For automation/CI/CD (skip all prompts):
+python3 scripts/id_migration.py --no-confirmation --csv-file migration_users.csv --log migration_full.log
 
 # 2. Optional: Execute standalone S3 bucket migrations manually
 python3 scripts/s3_data_migration.py --bucket all --log s3_migration.log
@@ -629,7 +617,7 @@ tail -f migration_full.log
 
 #### Automatic Resource Detection
 
-**NEW**: The migration script automatically detects which resources exist and adapts the migration plan accordingly:
+The migration script automatically detects which resources exist and adapts the migration plan accordingly:
 
 - ✅ **Tables/Buckets that exist**: Will be migrated
 - ⏭️ **Missing resources**: Automatically skipped with clear logging
@@ -688,10 +676,10 @@ aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage \
   --expression-attribute-values '{":uid":{"S":"NEW_USER_ID"}}'
 ```
 
-**Replace in commands above**:
-- `v6` with your `DEP_NAME` from config.py
-- `dev` with your `STAGE` from config.py  
-- `NEW_USER_ID` with actual user ID from your migration CSV
+**Replace in commands**:
+- Replace `v6` → your `DEP_NAME`
+- Replace `dev` → your `STAGE` 
+- Replace `NEW_USER_ID` → actual migrated user ID
 
 #### Migration Rollback
 If issues occur during migration:
@@ -724,10 +712,6 @@ aws dynamodb scan --table-name amplify-v6-lambda-dev-user-data-storage \
   --projection-expression "PK,SK,entityType"
 ```
 
-**Command Customization**:
-- Replace `v6` → your `DEP_NAME`
-- Replace `dev` → your `STAGE` 
-- Replace `NEW_USER_ID` → actual migrated user ID
 
 #### Migration Rollback
 If issues occur:
