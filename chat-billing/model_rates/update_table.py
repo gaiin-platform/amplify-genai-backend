@@ -91,7 +91,7 @@ old_cols = [
 # Required columns that indicate a model has the new schema
 required_new_cols = [
     "InputCachedCostPerThousandTokens",
-    "OutputCachedCostPerThousandTokens"
+    "InputWriteCachedCostPerThousandTokens"
 ]
 
 def check_old_data_by_col(model_cols):
@@ -128,7 +128,7 @@ def parse_csv_row(row_dict):
                 "InputCostPerThousandTokens",
                 "OutputCostPerThousandTokens",
                 "InputCachedCostPerThousandTokens",
-                "OutputCachedCostPerThousandTokens",
+                "InputWriteCachedCostPerThousandTokens",
                 "InputContextWindow",
                 "OutputTokenLimit",
             }:

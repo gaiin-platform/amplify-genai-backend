@@ -60,10 +60,19 @@ export const openaiUsageTransform = (event) => {
             usage.completion_tokens = usage.output_tokens;
             // Add reasoning tokens if present
             usage.completion_tokens += usage.output_tokens_details?.reasoning_tokens ?? 0;
+            // Extract reasoning tokens for separate tracking
+            usage.reasoning_tokens = usage.output_tokens_details?.reasoning_tokens ?? 0;
         } else {
             // Handle legacy completions endpoint format
-            usage.completion_tokens += usage.completion_tokens_details?.reasoning_tokens ?? 0;
+            const reasoningTokens = usage.reasoning_tokens ?? 0;
+            usage.completion_tokens += reasoningTokens;
+            // Extract reasoning tokens for separate tracking
+            usage.reasoning_tokens = reasoningTokens;
         }
+        
+        // Extract cached tokens from OpenAI format
+        // Input cached tokens: from prompt_tokens_details.cached_tokens
+        usage.inputCachedTokens = (usage.inputCachedTokens ?? usage.prompt_tokens_details?.cached_tokens) ?? 0;
         
         return usage;
     } else {

@@ -13,7 +13,7 @@ const dynamoTableName = process.env.CHAT_USAGE_DYNAMO_TABLE;
 const costDynamoTableName = process.env.COST_CALCULATIONS_DYNAMO_TABLE;
 const modelRateDynamoTable = process.env.MODEL_RATE_TABLE;
 
-export const recordUsage = async (account, requestId, model, inputTokens, outputTokens, cachedTokens, details) => {
+export const recordUsage = async (account, requestId, model, inputTokens, outputTokens, inputCachedTokens, inputWriteCachedTokens, details) => {
 
     if (!dynamoTableName) {
         logger.error("CHAT_USAGE_DYNAMO_TABLE table is not provided in the environment variables.");
@@ -35,8 +35,15 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
 
     try {
         const accountId = account.accountId || 'general_account';
+        
+        // Validate that account.user is not undefined
+        if (!account.user) {
+            logger.error("Missing account.user in recordUsage call");
+            return false;
+        }
 
         if (apiKeyId) details = {...details, api_key_id: apiKeyId};
+
 
         const item = {
             id: { S: `${uuidv4()}` },
@@ -55,9 +62,10 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
             Item: item
         });
 
-        const response = await dynamodbClient.send(command);
+        await dynamodbClient.send(command);
 
     } catch (e) {
+        logger.error("Error recording usage:", e);
         return false;
     }
 
@@ -78,12 +86,38 @@ export const recordUsage = async (account, requestId, model, inputTokens, output
         const modelRate = modelRateResponse.Items[0];
         const inputCostPerThousandTokens = parseFloat(modelRate.InputCostPerThousandTokens.N);
         const outputCostPerThousandTokens = parseFloat(modelRate.OutputCostPerThousandTokens.N);
-        const cachedCostPerThousandTokens = parseFloat(modelRate.CachedCostPerThousandTokens.N);
+        
+        // Handle new cached token cost fields with backward compatibility
+        let inputCachedCostPerThousandTokens = 0;
+        let inputWriteCachedCostPerThousandTokens = 0;
+        
+        // Try new fields first
+        if (modelRate.InputCachedCostPerThousandTokens?.N !== undefined) {
+            inputCachedCostPerThousandTokens = parseFloat(modelRate.InputCachedCostPerThousandTokens.N);
+        }
+        if (modelRate.InputWriteCachedCostPerThousandTokens?.N !== undefined) {
+            inputWriteCachedCostPerThousandTokens = parseFloat(modelRate.InputWriteCachedCostPerThousandTokens.N);
+        }
+        
+        // Backward compatibility: if old field exists and new fields are missing, use old field
+        if (modelRate.CachedCostPerThousandTokens?.N !== undefined) {
+            const legacyCachedCost = parseFloat(modelRate.CachedCostPerThousandTokens.N);
+            // Only use legacy if new fields weren't explicitly set
+            if (modelRate.InputCachedCostPerThousandTokens?.N === undefined) {
+                inputCachedCostPerThousandTokens = legacyCachedCost;
+            }
+        }
 
         const inputCost = (inputTokens / 1000) * inputCostPerThousandTokens;
         const outputCost = (outputTokens / 1000) * outputCostPerThousandTokens;
-        const cachedCost = (cachedTokens / 1000) * cachedCostPerThousandTokens;
-        const totalCost = inputCost + outputCost + cachedCost;
+        
+        // Calculate cached token costs separately for precision
+        const inputCachedCost = (inputCachedTokens / 1000) * inputCachedCostPerThousandTokens;
+        const inputWriteCachedCost = (inputWriteCachedTokens / 1000) * inputWriteCachedCostPerThousandTokens;
+        
+        // Note: inputWriteCachedCostPerThousandTokens is ready for future use when providers support output caching
+        
+        const totalCost = inputCost + outputCost + inputCachedCost + inputWriteCachedCost;
 
         // adds the totalCost to the dailyCost field
         // gets the current hour (0-23), add the totalCost to the hourlyCost field (saves it to the correct index in hourlyCost's 24 index list)
