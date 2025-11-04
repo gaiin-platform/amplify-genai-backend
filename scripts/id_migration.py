@@ -155,6 +155,59 @@ def log(*messages):
         print(f"[{datetime.now()}]", message)
 
 
+def confirm_step_execution(step_num: int, step_name: str, step_description: str, args) -> bool:
+    """
+    Ask for confirmation before executing a migration step.
+    
+    Args:
+        step_num: Step number (1, 2, 3, etc.)
+        step_name: Short name of the step
+        step_description: Detailed description of what the step does
+        args: Command line arguments (to check no_confirmation flag)
+        
+    Returns:
+        bool: True if should continue, False if should skip
+    """
+    import sys
+    
+    log(f"\n🔄 STEP {step_num} CONFIRMATION")
+    log(f"About to execute: {step_name}")
+    log(f"Description: {step_description}")
+    log(f"")
+    
+    # Auto-continue in debug mode or --no-confirmation for automation
+    if sys.gettrace() is not None:
+        log(f"Debug mode detected - automatically continuing with Step {step_num}...")
+        return True
+    elif args.no_confirmation:
+        log(f"No confirmation mode - automatically continuing with Step {step_num}...")
+        return True
+    else:
+        # Temporarily restore stdout for user input
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        
+        print(f"\n🔄 STEP {step_num} CONFIRMATION")
+        print(f"About to execute: {step_name}")
+        print(f"Description: {step_description}")
+        print("")
+        
+        response = input(f"Continue with Step {step_num}? (yes/no): ").lower().strip()
+        
+        # Restore file logging
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        
+        if response in ['yes', 'y']:
+            log(f"User confirmed: proceeding with Step {step_num}")
+            return True
+        else:
+            log(f"User cancelled: skipping Step {step_num}")
+            return False
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Migrate user IDs from one format to another."
@@ -3589,11 +3642,20 @@ if __name__ == "__main__":
         
         if steps_needed["user_data_storage_id_migration"]:
             if ids_changing:
-                log(f"Migrating all existing IDs in USER_DATA_STORAGE table...")
-                if not migrate_all_user_data_storage_ids(users_map, args.dry_run):
-                    log(f"USER_DATA_STORAGE ID migration failed. Continuing...")
+                # Confirmation for Step 1
+                if not confirm_step_execution(
+                    1, 
+                    "USER_DATA_STORAGE ID Migration",
+                    f"Update user IDs in existing USER_DATA_STORAGE table entries. Will process {len(users_map)} user ID mappings and update PK/SK fields, appId fields, and data.key fields for shares.",
+                    args
+                ):
+                    log(f"⏭️  Step 1 skipped by user - USER_DATA_STORAGE ID migration cancelled")
                 else:
-                    log(f"USER_DATA_STORAGE ID migration completed successfully.")
+                    log(f"Migrating all existing IDs in USER_DATA_STORAGE table...")
+                    if not migrate_all_user_data_storage_ids(users_map, args.dry_run):
+                        log(f"USER_DATA_STORAGE ID migration failed. Continuing...")
+                    else:
+                        log(f"USER_DATA_STORAGE ID migration completed successfully.")
             else:
                 log(f"⏭️  Skipping USER_DATA_STORAGE ID migration - no user IDs are changing (--no-id-change mode)")
         else:
@@ -3621,11 +3683,20 @@ if __name__ == "__main__":
             elif not validation_results["tables"]["USER_DATA_STORAGE_TABLE"]:
                 log(f"   Reason: New table ({new_table}) does not exist (DEPLOY AMPLIFY-LAMBDA FIRST)")
         else:
-            log(f"Migrating from {old_table} to {new_table} with ID translation...")
-            if not migrate_user_storage_to_user_data_storage(users_map, args.dry_run, old_table, new_table):
-                log(f"User storage migration failed. Continuing...")
+            # Confirmation for Step 2
+            if not confirm_step_execution(
+                2,
+                "USER_STORAGE to USER_DATA_STORAGE Migration", 
+                f"Migrate all data from {old_table} (basic-ops) to {new_table} with user ID translation. This consolidates user storage data from the old table format to the new consolidated table.",
+                args
+            ):
+                log(f"⏭️  Step 2 skipped by user - USER_STORAGE to USER_DATA_STORAGE migration cancelled")
             else:
-                log(f"User storage migration completed successfully.")
+                log(f"Migrating from {old_table} to {new_table} with ID translation...")
+                if not migrate_user_storage_to_user_data_storage(users_map, args.dry_run, old_table, new_table):
+                    log(f"User storage migration failed. Continuing...")
+                else:
+                    log(f"User storage migration completed successfully.")
 
         # Step 3: Process each user for remaining table updates
         log(f"\n=== STEP 3: PER-USER TABLE UPDATES ===")
@@ -3633,22 +3704,31 @@ if __name__ == "__main__":
             log(f"⏭️  Skipping per-user table updates - COGNITO_USERS_DYNAMODB_TABLE does not exist")
             log(f"Cannot proceed without user lookup capability")
         else:
-            # loop through our users
-            for u in users_map.items():
-                log(f"\n\nProcessing user: old: {u[0]} new: {u[1]}")
-                old_user_id = u[0]
-                new_user_id = u[1]
-                
-                # this is a sanity check to make user exists
-                user = get_user(old_user_id)
+            # Confirmation for Step 3
+            if not confirm_step_execution(
+                3,
+                "Per-User Table Updates",
+                f"Process {len(users_map)} users and update their records across all DynamoDB tables and S3 buckets. This includes user ID updates in 40+ tables and S3 data migration/consolidation.",
+                args
+            ):
+                log(f"⏭️  Step 3 skipped by user - Per-user table updates cancelled")
+            else:
+                # loop through our users
+                for u in users_map.items():
+                    log(f"\n\nProcessing user: old: {u[0]} new: {u[1]}")
+                    old_user_id = u[0]
+                    new_user_id = u[1]
+                    
+                    # this is a sanity check to make user exists
+                    user = get_user(old_user_id)
 
-                if not user:
-                    log(f"\tUser with old ID {old_user_id} not found. Skipping.")
-                    continue
+                    if not user:
+                        log(f"\tUser with old ID {old_user_id} not found. Skipping.")
+                        continue
 
-                if not update_user_id(old_user_id, new_user_id, args.dry_run):
-                    log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
-                    continue
+                    if not update_user_id(old_user_id, new_user_id, args.dry_run):
+                        log(f"Unable to update user ID for {old_user_id}. Skipping - Manual intervention required.")
+                        continue
                 
                 ### ONLY RUN IF USER ID MIGRATION IS REQUIRED ###
                 if old_user_id != new_user_id:

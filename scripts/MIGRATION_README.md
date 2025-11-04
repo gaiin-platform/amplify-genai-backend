@@ -561,11 +561,6 @@ The migration scripts now automatically load all bucket and table names from `co
 # No need to set environment variables manually!
 ```
 
-**Optional Override**: If you need to use different bucket names than those in config.py, 
-you can still set environment variables which will take precedence:
-```bash
-export S3_CONSOLIDATION_BUCKET_NAME="custom-consolidation-bucket"  # Optional override
-```
 
 ### Running the Migration Scripts
 
