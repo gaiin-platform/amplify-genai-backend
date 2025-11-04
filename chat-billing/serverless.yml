@@ -99,7 +99,7 @@ functions:
     handler: service/core.get_user_available_models
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /available_models
@@ -111,7 +111,7 @@ functions:
     handler: service/core.update_supported_models
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /supported_models/update
@@ -122,7 +122,7 @@ functions:
     handler: service/core.get_supported_models_as_admin
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /supported_models/get
@@ -133,7 +133,7 @@ functions:
     handler: service/core.get_default_models
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /default_models

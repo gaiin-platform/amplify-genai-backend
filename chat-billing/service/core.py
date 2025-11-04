@@ -23,7 +23,8 @@ dynamodb = boto3.resource("dynamodb")
 COST_FIELDS = [
     "OutputCostPerThousandTokens",
     "InputCostPerThousandTokens",
-    "CachedCostPerThousandTokens",
+    "InputCachedCostPerThousandTokens",
+    "OutputCachedCostPerThousandTokens",
 ]
 DEFAULT_MODELS = "defaultModels"
 
@@ -334,7 +335,8 @@ def extract_data(model_id, model_data):
         "systemPrompt": model_data.get("systemPrompt", ""),
         "inputTokenCost": model_data.get("inputTokenCost", 0),
         "outputTokenCost": model_data.get("outputTokenCost", 0),
-        "cachedTokenCost": model_data.get("cachedTokenCost", 0),
+        "inputCachedTokenCost": model_data.get("inputCachedTokenCost", 0),
+        "outputCachedTokenCost": model_data.get("outputCachedTokenCost", 0),
     }
 
 
@@ -363,13 +365,7 @@ def get_supported_models_as_admin(event, context, current_user, name, data):
         return model_result
 
     logger.info("Models are not popluated or are outdated")
-    if current_model_data:
-        current_model_data = {
-            model["id"]: adjust_data_to_decimal(model_transform_internal_to_db(model))
-            for model in model_result.get("data", {}).values()
-        }
-
-    load_model_rate_table(current_model_data)
+    load_model_rate_table({})
     return get_supported_models()
 
 
@@ -526,7 +522,7 @@ def update_supported_models(event, context, current_user, name, data):
     logger.debug("update: %s", models_to_update)
 
     try:
-        # Batch Write Operations
+        # Batch operations for deletions and additions (full records)
         with model_rate_table.batch_writer() as batch:
             for model_id in models_to_delete:
                 batch.delete_item(Key={"ModelID": model_id})
@@ -534,7 +530,7 @@ def update_supported_models(event, context, current_user, name, data):
             for model_id in models_to_add:
                 updated_model = adjust_data_to_decimal(new_models_dict[model_id])
                 batch.put_item(Item=updated_model)
-
+        
             for model_id in models_to_update:
                 # if Data has changed, update the model
                 if not models_are_equal(
@@ -543,6 +539,7 @@ def update_supported_models(event, context, current_user, name, data):
                     logger.debug("updating model: %s", model_id)
                     updated_model = adjust_data_to_decimal(new_models_dict[model_id])
                     batch.put_item(Item=updated_model)
+                
     except Exception as e:
         logger.error(f"Error batch writing models: {str(e)}")
         return {"success": False, "message": f"Error batch writing models: {str(e)}"}
@@ -559,7 +556,8 @@ dynamodb_to_internal_field_map = {
     "OutputTokenLimit": "outputTokenLimit",
     "OutputCostPerThousandTokens": "outputTokenCost",
     "InputCostPerThousandTokens": "inputTokenCost",
-    "CachedCostPerThousandTokens": "cachedTokenCost",
+    "InputCachedCostPerThousandTokens": "inputCachedTokenCost",
+    "OutputCachedCostPerThousandTokens": "outputCachedTokenCost",
     "Description": "description",
     "ExclusiveGroupAvailability": "exclusiveGroupAvailability",
     "SupportsImages": "supportsImages",
