@@ -1156,8 +1156,14 @@ export function getTokenCount(dataSource, model) {
     if (dataSource.metadata && dataSource.metadata.totalTokens) {
         const totalTokens = dataSource.metadata.totalTokens;
         if (isImage(dataSource)) {
-            tokenCount = isOpenAIModel(model.id) ? totalTokens.gpt : 
-                 model.id.includes("anthropic") ? totalTokens.claude : 1000;
+            // Image token counting depends on the actual model type, regardless of provider
+            if (isOpenAIModel(model.id) || model.provider === 'OpenAI' || model.provider === 'Azure') {
+                tokenCount = totalTokens.gpt || 1000;
+            } else if (model.id.includes("anthropic") || model.id.includes("claude")) {
+                tokenCount = totalTokens.claude || 1000;
+            } else {
+                tokenCount = 1000; // Default fallback
+            }
         } else if (!dataSource.metadata.ragOnly) {
             tokenCount = totalTokens;
         } else {

@@ -47,34 +47,51 @@ const isBedrockModel = (modelId) => {
 
 /**
  * Get the appropriate chat function and transformer for a model
+ * Uses model.provider instead of model ID patterns since providers like Bedrock can serve OpenAI models
  */
 const getProviderConfig = (model) => {
+    const provider = model?.provider;
     const modelId = model?.id || model;
     
-    if (isOpenAIModel(modelId)) {
-        return {
-            chatFn: openaiChat,
-            needsEndpointProvider: true, // OpenAI needs getLLMConfig
-            transform: openAiTransform,
-            usageTransform: openaiUsageTransform
-        };
-    } else if (isGeminiModel(modelId)) {
-        return {
+    if (!provider) {
+        throw new Error(`Model provider not specified for model: ${modelId}`);
+    }
+    
+    // OpenAI and Azure use the same configuration (OpenAI-compatible API)
+    const openAIConfig = () => ({
+        chatFn: openaiChat,
+        needsEndpointProvider: true, // OpenAI needs getLLMConfig
+        transform: openAiTransform,
+        usageTransform: openaiUsageTransform
+    });
+    
+    const providerConfigs = {
+        'OpenAI': openAIConfig,
+        'Azure': openAIConfig,  // Same as OpenAI (OpenAI-compatible)
+        'Gemini': () => ({
             chatFn: geminiChat,
             needsEndpointProvider: false,
             transform: geminiTransform,
             usageTransform: geminiUsageTransform
-        };
-    } else if (isBedrockModel(modelId)) {
-        return {
+        }),
+        'Bedrock': () => ({
             chatFn: chatBedrock,
             needsEndpointProvider: false,
             transform: bedrockConverseTransform,
             usageTransform: bedrockTokenUsageTransform
-        };
-    } else {
-        throw new Error(`Unsupported model: ${modelId}`);
+        })
+    };
+    
+    // Get config by provider name, with case-insensitive fallback
+    const config = providerConfigs[provider] || 
+                  providerConfigs[Object.keys(providerConfigs).find(key => 
+                      key.toLowerCase() === provider.toLowerCase())];
+    
+    if (!config) {
+        throw new Error(`Unsupported provider: ${provider} for model: ${modelId}`);
     }
+    
+    return config();
 };
 
 /**
@@ -456,8 +473,12 @@ export async function promptUnifiedLLMForData(
         parameters: outputFormat
     };
 
-    // Determine if model supports function calling
-    const supportsFunctions = isOpenAIModel(model.id) || isGeminiModel(model.id);
+    // Determine if model supports function calling based on provider and model type
+    // OpenAI and Gemini models support functions, regardless of which provider serves them
+    const supportsFunctions = model.provider === 'OpenAI' || 
+                            model.provider === 'Azure' || 
+                            model.provider === 'Gemini' || 
+                            (model.provider === 'Bedrock' && (isOpenAIModel(model.id) || isGeminiModel(model.id)));
     
     if (supportsFunctions) {
         // Use function calling
