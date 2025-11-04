@@ -403,9 +403,9 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
     }
     
     const rawMessages = [
-        ...chatRequest.messages.slice(0, -1),
-        ...contextMessages,
-        ...chatRequest.messages.slice(-1)
+        ...chatRequest.messages.slice(0, -1),  // Includes original messages + RAG context
+        ...contextMessages,                    // Add document contexts
+        ...chatRequest.messages.slice(-1)     // Last message
     ];
 
     // 🧹 CLEAN MESSAGES: Remove Location info and undefined messages before LLM call

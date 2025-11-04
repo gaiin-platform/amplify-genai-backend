@@ -24,7 +24,7 @@ COST_FIELDS = [
     "OutputCostPerThousandTokens",
     "InputCostPerThousandTokens",
     "InputCachedCostPerThousandTokens",
-    "OutputCachedCostPerThousandTokens",
+    "InputWriteCachedCostPerThousandTokens",
 ]
 DEFAULT_MODELS = "defaultModels"
 
@@ -336,7 +336,7 @@ def extract_data(model_id, model_data):
         "inputTokenCost": model_data.get("inputTokenCost", 0),
         "outputTokenCost": model_data.get("outputTokenCost", 0),
         "inputCachedTokenCost": model_data.get("inputCachedTokenCost", 0),
-        "outputCachedTokenCost": model_data.get("outputCachedTokenCost", 0),
+        "inputWriteCachedTokenCost": model_data.get("inputWriteCachedTokenCost", 0),
     }
 
 
@@ -557,7 +557,7 @@ dynamodb_to_internal_field_map = {
     "OutputCostPerThousandTokens": "outputTokenCost",
     "InputCostPerThousandTokens": "inputTokenCost",
     "InputCachedCostPerThousandTokens": "inputCachedTokenCost",
-    "OutputCachedCostPerThousandTokens": "outputCachedTokenCost",
+    "InputWriteCachedCostPerThousandTokens": "inputWriteCachedTokenCost",
     "Description": "description",
     "ExclusiveGroupAvailability": "exclusiveGroupAvailability",
     "SupportsImages": "supportsImages",

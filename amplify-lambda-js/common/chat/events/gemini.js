@@ -67,11 +67,17 @@ export const geminiTransform = (event, _responseStream = null) => {
 export const geminiUsageTransform = (event) => {
     // Handle Gemini usage format directly
     if (event && event.usage) {
-        return {
+        const usage = {
             prompt_tokens: event.usage.prompt_tokens || 0,
             completion_tokens: event.usage.completion_tokens || 0,
             total_tokens: event.usage.total_tokens || 0
         };
+        
+        // Extract Gemini cached tokens (OpenAI compatibility format)
+        // Use inputCachedTokens if already present, otherwise extract from prompt_tokens_details.cached_tokens
+        usage.inputCachedTokens = event.usage.inputCachedTokens ?? 
+                                 event.usage.prompt_tokens_details?.cached_tokens ?? 0;
+        return usage;
     }
     
     return null;

@@ -22,7 +22,7 @@ update_models_schema = {
                         "inputTokenCost": {"type": "number"},
                         "outputTokenCost": {"type": "number"},
                         "inputCachedTokenCost" : {"type": "number" },
-                        "outputCachedTokenCost" : {"type": "number"},
+                        "inputWriteCachedTokenCost" : {"type": "number"},
                         "exclusiveGroupAvailability": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -41,7 +41,7 @@ update_models_schema = {
                         "inputTokenCost",
                         "outputTokenCost",
                         "inputCachedTokenCost",
-                        "outputCachedTokenCost",
+                        "inputWriteCachedTokenCost",
                         "exclusiveGroupAvailability",
                         "systemPrompt",
                         "supportsSystemPrompts",

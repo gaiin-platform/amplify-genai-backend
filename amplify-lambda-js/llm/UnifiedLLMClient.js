@@ -268,7 +268,9 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             prompt_tokens: 0,
             completion_tokens: 0,
             cached_tokens: 0,
-            reasoning_tokens: 0
+            reasoning_tokens: 0,
+            inputCachedTokens: 0,
+            inputWriteCachedTokens: 0
         }
     };
     activeRequests.set(requestId, requestState);
@@ -410,16 +412,22 @@ export async function callUnifiedLLM(params, messages, responseStream = null, op
             };
         }
 
-        // Record usage if we have it
-        if (requestState.totalUsage.prompt_tokens > 0 || requestState.totalUsage.completion_tokens > 0) {
+        // Record usage if we have ANY tokens (regular OR cached)
+        const promptTokens = requestState.totalUsage.prompt_tokens || 0;
+        const completionTokens = requestState.totalUsage.completion_tokens || 0;
+        const inputCachedTokens = requestState.totalUsage?.inputCachedTokens || 0;
+        const inputWriteCachedTokens = requestState.totalUsage?.inputWriteCachedTokens || 0;
+        
+        if (promptTokens > 0 || completionTokens > 0 || inputCachedTokens > 0 || inputWriteCachedTokens > 0) {
             await recordUsage(
-                params,
-                messages,
+                params.account,
+                requestId,
                 model,
-                requestState.totalUsage.prompt_tokens,
-                requestState.totalUsage.completion_tokens,
-                requestState.totalUsage.cached_tokens || 0,
-                requestState.totalUsage.reasoning_tokens || 0
+                promptTokens,
+                completionTokens,
+                inputCachedTokens,
+                inputWriteCachedTokens,
+                { reasoning_tokens: requestState.totalUsage.reasoning_tokens || 0 }
             );
         }
 
