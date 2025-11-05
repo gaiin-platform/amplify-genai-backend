@@ -15,6 +15,21 @@ from pycommon.logger import getLogger
 logger = getLogger("object_access_users")
 
 
+def _get_user_identifier(token_payload: dict) -> tuple[str, str]:
+    """Get user identifier and type from token payload.
+    Returns: (identifier_value, identifier_type)
+    """
+    immutable_id = token_payload.get("immutable_id")
+    if immutable_id and immutable_id.strip():
+        return immutable_id, "immutable_id"
+    
+    email = token_payload.get("email")
+    if email and email.strip():
+        return email, "email"
+    
+    raise ValueError("No valid user identifier found in token")
+
+
 def _find_user_by_property(properties: dict) -> tuple[UserABC, str] | None:
     """Helper to find a user by one of several properties.
     properties: dict of {property_name: property_value}
@@ -32,13 +47,20 @@ def _find_user_by_property(properties: dict) -> tuple[UserABC, str] | None:
 
 def _create_user(token_payload: dict) -> UserABC:
     """Helper to create a user from token payload."""
+    user_id, id_type = _get_user_identifier(token_payload)
+    
+    # Get groups from either saml_groups or vu_groups (deployment-agnostic)
+    groups_value = (
+        token_payload.get("custom:saml_groups", "") or 
+        token_payload.get("custom:vu_groups", "")
+    )
+    
     user: UserABC = dal.User(
-        user_id=token_payload.get("immutable_id"),
+        user_id=user_id,
         email=token_payload.get("email"),
         family_name=token_payload.get("family_name"),
         given_name=token_payload.get("given_name"),
-        cust_vu_groups=token_payload.get("custom:vu_groups", ""),
-        cust_saml_groups=token_payload.get("custom:saml_groups", ""),
+        cust_saml_groups=groups_value,
     )
     user.save()
     return user
@@ -52,10 +74,15 @@ def _update_attributes(token_payload: dict, user: UserABC) -> UserABC:
         user.family_name = token_payload.get("family_name")
     if token_payload.get("given_name"):
         user.given_name = token_payload.get("given_name")
-    if token_payload.get("custom:vu_groups"):
-        user.cust_vu_groups = token_payload.get("custom:vu_groups")
-    if token_payload.get("custom:saml_groups"):
-        user.cust_saml_groups = token_payload.get("custom:saml_groups")
+    
+    # Update groups from either saml_groups or vu_groups (deployment-agnostic)
+    groups_value = (
+        token_payload.get("custom:saml_groups", "") or 
+        token_payload.get("custom:vu_groups", "")
+    )
+    if groups_value:
+        user.cust_saml_groups = groups_value
+    
     user.save()
     return user
 
@@ -168,11 +195,15 @@ def create_or_update_user(event, context):
         )
 
         # get the payload to search in the DAL
-        # while immutable_id is the primary key, we also want to check email due to
-        # previous system versions that did not enforce immutable_id as primary key.
-        user, prop_name = _find_user_by_property(
-            {"immutable_id": payload.get("immutable_id"), "email": payload.get("email")}
-        )
+        # support both immutable_id and email-based systems
+        user_id, id_type = _get_user_identifier(payload)
+        
+        # Try to find existing user by the identified user_id
+        user, prop_name = _find_user_by_property({id_type: user_id})
+        
+        # If not found by primary identifier, also try email for backwards compatibility
+        if not user and id_type == "immutable_id":
+            user, prop_name = _find_user_by_property({"email": payload.get("email")})
         # A user has not been found; need to create one
         if not user:
             _create_user(payload)
