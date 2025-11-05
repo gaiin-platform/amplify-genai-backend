@@ -1,10 +1,36 @@
 # Migration Guide 
 
-This guide outlines the migration process for eliminating the `amplify-lambda-basic-ops` service and transitioning all environment variables to AWS Parameter Store.
+🚨 **Change sets and backups are HIGHLY recommended before starting any migration process.**
 
-## 📝 **STEP 0: Configure Deployment Variables**
+This guide outlines the migration process for eliminating the `amplify-lambda-basic-ops` service, transitioning all environment variables to AWS Parameter Store, and consolidating S3 data storage.
 
-⚠️ **REQUIRED BEFORE RUNNING ANY MIGRATION SCRIPTS**
+## 📋 **WHAT'S IN THIS DOCUMENT - READ ONLY WHAT APPLIES TO YOU**
+
+### 🟢 **EVERYONE MUST DO** (No Exceptions)
+- [**Step 1: Environment Variables Setup**](#-step-1-configure-deployment-variables-mandatory) - Configure deployment variables
+- [**Step 2: Parameter Store Population**](#-step-2-parameter-store-setup-mandatory) - Populate AWS Parameter Store
+
+### 🟡 **CONDITIONAL SECTIONS** (Read Based on Your Situation)
+- [**Step 3a: IF YOU HAVE Basic Ops Service**](#-step-3a-if-you-have-basic-ops-service) - Special deployment sequence
+- [**Step 3b: IF YOU DON'T HAVE Basic Ops**](#-step-3b-if-you-dont-have-basic-ops-service) - Standard deployment
+- [**Step 4a: IF YOU NEED User ID Migration**](#-step-4a-if-you-need-user-id-migration) - Email → Username migration
+- [**Step 4b: IF YOU ONLY NEED S3 Consolidation**](#-step-4b-if-you-only-need-s3-consolidation-highly-recommended) - Same IDs, consolidate buckets
+
+### 🔵 **OPTIONAL BUT RECOMMENDED**
+- [**Backup Strategy**](#-backup-strategy-recommended) - How backups work vs migration verification
+- [**Advanced Troubleshooting**](#troubleshooting) - For when things go wrong
+
+### 🎯 **MIGRATION GOALS**
+1. **Immediate**: Remove dependency on `amplify-lambda-basic-ops` service
+2. **Data Safety**: Migrate user data to consolidated, immutable ID system  
+3. **Future Cleanup**: Eventually delete old S3 buckets and tables (code remains backward compatible until then)
+4. **⚠️ Important**: If you skip consolidation and we later delete old buckets/tables, you may lose data when pulling in changes
+
+---
+
+## 🚨 **STEP 1: Configure Deployment Variables (MANDATORY)**
+
+### ⚠️ **REQUIRED BEFORE RUNNING ANY MIGRATION SCRIPTS - NO EXCEPTIONS**
 
 1. **Edit `scripts/config.py`** and update the deployment variables at the top:
    ```python
@@ -26,20 +52,23 @@ These variables will be used to generate correct table and bucket names for your
 3. **Validate your configuration** (recommended):
    ```bash
    # Verify config.py generates correct resource names for your deployment
-   python3 -c "from scripts.config import get_config; config = get_config(); print('✓ S3 Consolidation Bucket:', config['S3_CONSOLIDATION_BUCKET_NAME']); print('✓ User Data Storage Table:', config['USER_DATA_STORAGE_TABLE'])"
+   cd scripts && python3 -c "from config import get_config; config = get_config(); print('✓ S3 Consolidation Bucket:', config['S3_CONSOLIDATION_BUCKET_NAME']); print('✓ User Data Storage Table:', config['USER_DATA_STORAGE_TABLE']); print('✓ Accounts Table:', config['ACCOUNTS_DYNAMO_TABLE'])"
    ```
    
-   **Expected output format**:
+   **Expected output format** (for DEP_NAME="v6", STAGE="dev"):
    ```
    ✓ S3 Consolidation Bucket: amplify-v6-lambda-dev-consolidation
    ✓ User Data Storage Table: amplify-v6-lambda-dev-user-data-storage
+   ✓ Accounts Table: amplify-v6-lambda-dev-accounts
    ```
    
    If the resource names don't match your actual AWS deployment, **update `DEP_NAME` and `STAGE` in config.py**.
 
-## 🚨 **CRITICAL: Parameter Store Dependency**
+---
 
-⚠️ **ALL Lambda services now depend on AWS Parameter Store for shared configuration variables.**
+## 🚨 **STEP 2: Parameter Store Setup (MANDATORY)**
+
+### ⚠️ **ALL Lambda services now depend on AWS Parameter Store for shared configuration variables.**
 
 ### **Before Any Deployments**
 
@@ -87,6 +116,242 @@ shared_var_names = [
 3. **AFTER**: Successful deployment, var files can eventually be deprecated
 
 **⚠️ Services WILL FAIL to deploy if Parameter Store is not populated first!**
+
+---
+
+## 🟠 **STEP 3: Deploy Services** 
+
+### 🟡 **STEP 3a: IF YOU HAVE Basic Ops Service**
+
+**How to check if you have Basic Ops service:**
+```bash
+# Check if basic-ops CloudFormation stack exists
+aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}
+
+# Example for DEP_NAME="v6", STAGE="dev":
+aws cloudformation describe-stacks --stack-name amplify-v6-lambda-basic-ops-dev
+```
+
+**If the stack exists, follow these steps:**
+
+#### 3a.1: Check for User Storage Data Migration Need
+```bash
+# Check if user storage table has data
+aws dynamodb scan --table-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}-user-storage --select COUNT
+
+# Example:
+aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --select COUNT
+```
+
+**Decision Tree:**
+- **If COUNT = 0 or table doesn't exist**: ➡️ Go to [3a.2a: No Data Path](#3a2a-no-data-path)
+- **If COUNT > 0**: ➡️ Go to [3a.2b: Has Data Path](#3a2b-has-data-path) 
+
+#### 3a.2a: No Data Path (Safe to Remove Basic Ops)
+**Since you have no user storage data, you can completely remove basic-ops:**
+
+```bash
+# Remove basic-ops service completely (frees /user-data endpoint)
+serverless amplify-lambda-basic-ops:remove --stage dev
+
+# Now deploy amplify-lambda (endpoint is free)
+serverless amplify-lambda:deploy --stage dev
+
+# 🚨 CRITICAL: After deployment, run the markitdown script
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..  
+```
+
+**➡️ Skip to [3a.3: Deploy Other Services](#3a3-deploy-other-services)**
+
+#### 3a.2b: Has Data Path (Must Keep Basic Ops Until Migration)
+**Since you have user storage data, you must keep basic-ops until Step 4 migration:**
+
+**🚨 Problem:** Both basic-ops and amplify-lambda try to use `/user-data` endpoint
+
+**✅ Solution:** Temporarily disable basic-ops `/user-data` endpoint:
+
+```bash
+# Option 1: Comment out the user-data endpoint in basic-ops serverless.yml
+# Edit amplify-lambda-basic-ops/serverless.yml and comment out:
+#   - http:
+#       path: /user-data
+#       method: post
+
+# Then redeploy basic-ops without the endpoint
+serverless amplify-lambda-basic-ops:deploy --stage dev
+
+# Now deploy amplify-lambda (endpoint is free) 
+serverless amplify-lambda:deploy --stage dev
+
+# 🚨 CRITICAL: After deployment, run the markitdown script
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..  
+```
+
+**Alternative Options to Free Endpoint:**
+- **Option 2**: Temporarily remove basic-ops stack (`serverless amplify-lambda-basic-ops:remove`) but **BACKUP FIRST**
+- **Option 3**: Manually delete API Gateway resource in AWS Console
+- **Goal**: Ensure amplify-lambda can claim `/user-data` endpoint
+
+**⚠️ Important:** Keep basic-ops data accessible until Step 4 migration completes
+
+#### 3a.3: Deploy Other Services
+```bash  
+# Deploy remaining services
+serverless amplify-assistants:deploy --stage dev
+serverless amplify-lambda-js:deploy --stage dev
+# Continue for other services...
+
+# Note: If you have user storage data, basic-ops will be fully removed AFTER Step 4 migration
+```
+
+**➡️ Continue to [Step 4: Data Migration](#step-4-data-migration)**
+
+---
+
+### 🟢 **STEP 3b: IF YOU DON'T HAVE Basic Ops Service**
+
+**This is the simpler path!**
+
+#### 3b.1: Standard Service Deployment
+```bash
+# Deploy services in dependency order from repository root
+# amplify-lambda is the BASE DEPENDENCY - deploy it FIRST
+serverless amplify-lambda:deploy --stage dev
+
+# 🚨 CRITICAL: After amplify-lambda deployment, run the markitdown script
+cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+
+# Now deploy other services that depend on amplify-lambda
+serverless amplify-assistants:deploy --stage dev
+serverless amplify-lambda-js:deploy --stage dev
+# Continue for other services...
+```
+
+**➡️ Continue to [Step 4: Data Migration](#step-4-data-migration)**
+
+---
+
+## 🔄 **STEP 4: Data Migration**
+
+### 🟡 **STEP 4a: IF YOU NEED User ID Migration** 
+
+**Use this if:** Your users currently authenticate with a mutable field, but you want immutable usernames.
+
+**What this does:** Migrates all user data from email-based keys to username-based keys + consolidates S3 storage.
+
+#### 4a.1: Create Migration CSV
+Create `migration_users.csv` with **different** values in each column:
+```csv
+old_id,new_id
+karely.rodriguez@vanderbilt.edu,rodrikm1
+allen.karns@vanderbilt.edu,karnsab
+```
+
+#### 4a.2: Run Migration
+
+**🚨 IMPORTANT: Choose the right command for your situation:**
+
+```bash
+# 1. ALWAYS start with dry run to see what will happen
+python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
+
+# 2. STANDARD migration (script will handle backups automatically)
+python3 scripts/id_migration.py --csv-file migration_users.csv --log migration_full.log
+
+# 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
+python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv --log migration_full.log
+
+# 4. FOR AUTOMATION/CI-CD (no interactive prompts)
+python3 scripts/id_migration.py --no-confirmation --csv-file migration_users.csv --log migration_full.log
+
+# 5. IF NOT IN us-east-1 region
+python3 scripts/id_migration.py --region us-west-2 --csv-file migration_users.csv --log migration_full.log
+```
+
+**📚 Need more options?** See [ID Migration Scripts Technical Details](#id-migration-scripts-technical-details) for all command-line options.
+
+**✅ Result:** All user data migrated from email-based keys to username-based keys + S3 consolidation completed.
+
+---
+
+### 🟠 **STEP 4b: IF YOU ONLY NEED S3 Consolidation (HIGHLY RECOMMENDED)**
+
+**Use this if:** Your user IDs are already immutable, but you need S3 bucket consolidation.
+
+**⚠️ Why this is highly recommended:** 
+- **Goal**: Eventually delete old S3 buckets and tables to clean up resources
+- **Backward Compatibility**: Code currently works with old buckets, but if they're deleted and you pull in changes, you may lose data
+- **Future-Proofing**: Ensures your data is in the correct consolidated location
+
+#### 4b.1: Auto-Generated Migration CSV (Same IDs)
+```bash
+# Migration automatically creates migration_users.csv with same old_id and new_id
+python3 scripts/id_migration.py --no-id-change --dry-run --log migration_setup.log
+```
+
+This creates:
+```csv
+old_id,new_id
+rodrikm1,rodrikm1
+karnsab,karnsab
+```
+
+#### 4b.2: Run Consolidation Migration
+
+**🚨 IMPORTANT: Choose the right command for your situation:**
+
+```bash
+# 1. ALWAYS start with dry run to see what will happen (no ID changes, just consolidation)
+python3 scripts/id_migration.py --no-id-change --dry-run --log consolidation_dryrun.log
+
+# 2. STANDARD consolidation (script will handle backups automatically)  
+python3 scripts/id_migration.py --no-id-change --log migration_consolidation.log
+
+# 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
+python3 scripts/id_migration.py --no-id-change --dont-backup --log migration_consolidation.log
+
+# 4. FOR AUTOMATION/CI-CD (no interactive prompts)
+python3 scripts/id_migration.py --no-id-change --no-confirmation --log migration_consolidation.log
+
+# 5. IF NOT IN us-east-1 region
+python3 scripts/id_migration.py --no-id-change --region us-west-2 --log migration_consolidation.log
+```
+
+**📚 Need more options?** See [ID Migration Scripts Technical Details](#id-migration-scripts-technical-details) for all command-line options.
+
+**✅ Result:** User IDs remain unchanged, but S3 data gets consolidated and organized for future cleanup.
+
+---
+
+## 🧹 **STEP 5: Final Cleanup (For Basic Ops Users Only)**
+
+### 🟡 **IF YOU HAD Basic Ops Service with Data (Step 3a.2b path)**
+
+**After Step 4 migration completes successfully, you can now safely remove basic-ops:**
+
+```bash
+# Verify migration completed successfully first
+# Check that your data is in the new amplify-lambda user-data-storage table
+aws dynamodb scan --table-name amplify-{DEP_NAME}-lambda-{STAGE}-user-data-storage --select COUNT
+
+# If migration was successful, remove basic-ops completely
+serverless amplify-lambda-basic-ops:remove --stage dev
+```
+
+**🎉 Congratulations!** Your migration is now complete:
+- ✅ Basic-ops service removed
+- ✅ User data migrated to consolidated storage  
+- ✅ S3 buckets consolidated
+- ✅ Environment variables in Parameter Store
+- ✅ Clean, modern infrastructure setup
+
+### 🟢 **IF YOU DIDN'T HAVE Basic Ops Service (Step 3b path)**
+
+**No cleanup needed!** Your migration is already complete.
+
+---
+
+## 🔧 **Advanced Technical Details**
 
 ### **🔧 Environment Variable Tracking System**
 
@@ -140,66 +405,58 @@ def my_lambda_function(event, context):
 - **Error Prevention**: Early failure if required variables are missing
 - **Compliance**: Detailed logging of AWS resource access patterns
 
-## 🚨 **CRITICAL: User ID Migration Requirements**
+## 📊 **BACKUP STRATEGY (RECOMMENDED)**
 
-### **Who Needs This Migration?**
+### **Understanding Backups vs Migration Verification**
 
-This migration serves **TWO PURPOSES**:
+**Two different things:**
+1. **Backups**: Creating snapshots of your data BEFORE migration (for recovery if something goes wrong)
+2. **Migration Verification**: Checking that backups exist before starting migration (safety check)
 
-1. **🔄 User ID Format Change**: Updating user identifiers from **mutable email addresses** to **immutable usernames**
-2. **📦 S3 Consolidation**: Migrating scattered S3 bucket data to centralized storage (required for ALL deployments)
+### **How It Works:**
 
-### **Migration Scenarios**
-
-#### **Scenario A: Email → Immutable ID Migration** 
-**Use Case**: Your users currently authenticate with email addresses, but you want immutable usernames.
-
-**CSV Format**: Different values in each column
-```csv
-old_id,new_id
-karely.rodriguez@vanderbilt.edu,rodrikm1
-allen.karns@vanderbilt.edu,karnsab
+#### **Option 1: Automatic Backup Verification (Recommended)**
+```bash
+# Migration script automatically checks for recent backups before proceeding
+python3 scripts/id_migration.py --csv-file migration_users.csv
+# ✓ Script will verify backups exist or offer to create them
 ```
-**Result**: All user data migrated from email-based keys to username-based keys.
 
----
+#### **Option 2: Manual Backup Creation** 
+```bash
+# Create backups manually before migration
+python3 scripts/backup_prereq.py --backup-name "pre-migration-$(date +%Y%m%d-%H%M%S)"
 
-#### **Scenario B: Same ID + S3 Consolidation Only**
-**Use Case**: Your user IDs are already immutable, but you need S3 bucket consolidation.
-
-**CSV Format**: Same value in both columns  
-```csv
-old_id,new_id
-rodrikm1,rodrikm1
-karnsab,karnsab
+# Then run migration with backup verification skip
+python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv
 ```
-**Result**: User IDs remain unchanged, but S3 data gets consolidated and organized.
+
+**🚨 Why Backups Are Critical:**
+- Migration **automatically deletes old data** after successful copying
+- **No separate cleanup step** - cleanup happens during migration
+- Backups are your **only recovery option** if something goes wrong
 
 ---
 
-### **⚠️ Important Notes**
+## 📝 **Migration Steps Overview**
 
-- **ALL deployments must run this migration** - even if user IDs don't change
-- **S3 consolidation is mandatory** for eliminating extra bucket resources
-- **Automatic cleanup included** - migration deletes old data after successful copying (backup before running!)
-- **Scripts are idempotent** - safe to re-run if needed
+The migration eliminates the `amplify-lambda-basic-ops` service and transitions all environment variables to AWS Parameter Store while consolidating S3 data storage.
+
+### **Previously Covered Steps:**
+- ✅ **Step 1**: Configure deployment variables 
+- ✅ **Step 2**: Populate Parameter Store
+- ✅ **Step 3**: Deploy services (with Basic Ops considerations)
+- ✅ **Step 4**: Run data migration
 
 ---
 
-## Overview
+## 🔧 **Advanced: Parameter Store Technical Details**
 
-The biggest change in this migration is:
-- **Eliminating** the `amplify-lambda-basic-ops` service
-- **Migrating** all locally defined environment variables to AWS Parameter Store
-- **Updating** all serverless.yml files to reference Parameter Store instead of hardcoded values
+### Step 1: Populate AWS Parameter Store (Technical Reference)
 
-## Migration Steps
+**This step is already covered in Step 2 above, but here are technical details:**
 
-### Step 1: Populate AWS Parameter Store
-
-**CRITICAL**: This step must be completed BEFORE deleting the basic-ops service.
-
-#### Prerequisites
+#### Technical Prerequisites
 1. Ensure you are at the **root** of the amplify-genai-backend repository
 2. **Configure AWS credentials** using one of these methods:
 
@@ -239,6 +496,54 @@ python3 scripts/populate_parameter_store.py --stage staging --dep-name v6
 python3 scripts/populate_parameter_store.py --stage prod --dep-name v6
 ```
 
+#### Expected Output Example
+When you run the populate script, you should see output like this:
+
+```
+Populating Parameter Store for stage: dev, dep_name: v6
+Region: us-east-1
+================================================================================
+Found serverless.yml in: amplify-assistants
+Found serverless.yml in: amplify-lambda
+Found serverless.yml in: amplify-lambda-js
+... (other services)
+
+Found 15 serverless.yml files
+
+Processing: amplify-lambda
+==================================================
+Service: amplify-v6-lambda
+Found 24 locally defined variables:
+  ACCOUNTS_DYNAMO_TABLE: amplify-v6-lambda-dev-accounts
+  CONVERSATION_METADATA_TABLE: amplify-v6-lambda-dev-conversation-metadata
+  ... (other variables)
+Successfully processed 24/24 parameters
+
+Processing: amplify-assistants  
+==================================================
+Service: amplify-v6-assistants
+Found 8 locally defined variables:
+  ... (variables for this service)
+Successfully processed 8/8 parameters
+
+... (other services)
+
+================================================================================
+SUMMARY
+================================================================================
+Total services processed: 15
+Successful: 15
+Failed: 0
+
+Details:
+✓ amplify-v6-lambda: 24/24 parameters
+✓ amplify-v6-assistants: 8/8 parameters  
+✓ amplify-v6-artifacts: 3/3 parameters
+... (other services)
+
+✓ All services processed successfully!
+```
+
 #### What This Script Does
 
 The `scripts/populate_parameter_store.py` script:
@@ -259,10 +564,9 @@ The `scripts/populate_parameter_store.py` script:
 ... (15 services total, 84 parameters)
 ```
 
-### Step 2: Verify Parameter Store Population
+#### Technical Verification Commands
 
-After running the script, verify parameters were created:
-
+**Verify Parameter Store Population:**
 ```bash
 # List all parameters for your deployment
 aws ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Values=/amplify/dev/"
@@ -271,165 +575,39 @@ aws ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Valu
 aws ssm get-parameter --name "/amplify/dev/amplify-v6-lambda/ACCOUNTS_DYNAMO_TABLE"
 ```
 
-### Step 3: Update Service Dependencies
-
-The serverless.yml files have been updated to reference Parameter Store instead of basic-ops outputs. Variables now use the format:
-
+**Updated serverless.yml Format:**
+Variables now use Parameter Store format:
 ```yaml
 environment:
   ACCOUNTS_DYNAMO_TABLE: ${ssm:/amplify/${sls:stage}/${self:service}/ACCOUNTS_DYNAMO_TABLE}
 ```
 
-### Step 4: Handle User Storage Table Migration and API Gateway Conflicts
-
-## 🚨 **IMPORTANT PREREQUISITES** 
-
-### **📊 User Storage Data Migration**
-**ONLY REQUIRED IF**: You have data in the `amplify-v6-lambda-basic-ops-dev-user-storage` table.
-
-**Check if you need this**:
-```bash
-# Check if user storage table exists and has data (replace with your deployment config)
-aws dynamodb scan --table-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}-user-storage --select COUNT
-
-# Example for DEP_NAME="v6", STAGE="dev":
-aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --select COUNT
-```
-- **If table doesn't exist or COUNT = 0**: Skip user storage migration steps
-- **If COUNT > 0**: Follow user storage migration steps below
-
-### **🛠️ API Gateway Endpoint Conflict** 
-**ONLY REQUIRED IF**: You have previously deployed `amplify-lambda-basic-ops` service.
-
-**Check if you need this**:
-```bash
-# Check if basic-ops CloudFormation stack exists (replace with your deployment config)
-aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}
-
-# Example for DEP_NAME="v6", STAGE="dev":
-aws cloudformation describe-stacks --stack-name amplify-v6-lambda-basic-ops-dev
-```
-- **If stack doesn't exist**: No conflict resolution needed
-- **If stack exists**: Must free `/user-data` endpoint before deploying amplify-lambda
-
 ---
 
-#### Background (If Migration Required)
-- **Old table**: `amplify-{dep-name}-lambda-basic-ops-{stage}-user-storage` (in basic-ops service)
-- **New table**: `amplify-{dep-name}-lambda-{stage}-user-data-storage` (in amplify-lambda service) 
-- **API Conflict**: Both services try to use `/user-data` endpoint, causing deployment failures
-- **Error**: `CREATE_FAILED: ApiGatewayResourceUserDashdata - Another resource with the same parent already has this name: user-data`
+## 📚 **Detailed Migration Scripts Reference**
 
-**Table Name Examples** (using DEP_NAME="v6", STAGE="dev"):
-- Old: `amplify-v6-lambda-basic-ops-dev-user-storage`
-- New: `amplify-v6-lambda-dev-user-data-storage`
+**This section provides detailed technical reference for the migration scripts mentioned in Step 4 above.**
 
-#### Required Deployment Sequence (If Both Prerequisites Apply)
-
-**⚠️ CRITICAL**: Follow this exact order to avoid API Gateway conflicts:
-
-##### Step 4a: Backup User Storage Data (If Table Has Data)
-
-**IMPORTANT**: The user storage data backup is **automatically handled** by the ID migration script in Step 6. No separate backup script is needed.
-
-**What happens during ID migration**:
-- The migration script detects existing user storage data in the old table
-- Automatically migrates all data to the new `USER_DATA_STORAGE_TABLE` 
-- Preserves all user data during the transition
-- No manual backup/restore process required
-
-**Manual backup option** (if you want extra safety):
-```bash
-# Optional: Create manual DynamoDB backup before migration
-python3 scripts/backup_prereq.py --backup-name "user-storage-backup-$(date +%Y%m%d-%H%M%S)"
-```
-
-##### Step 4b: Free the `/user-data` API Gateway Endpoint
-**REQUIREMENT**: The `/user-data` endpoint must be freed before deploying amplify-lambda.
-
-**How to accomplish this**: Use any method to remove or disable the basic-ops service that currently owns this endpoint:
-- Remove the CloudFormation stack
-- Disable the serverless service
-- Delete the API Gateway resource manually
-- Any other method that frees the `/user-data` path
-
-**The goal**: Ensure no service currently claims the `/user-data` endpoint path.
-
-##### Step 4c: Deploy Amplify Lambda with New Table
-```bash
-# Deploy amplify-lambda (now /user-data endpoint is available)
-serverless amplify-lambda:deploy --stage dev
-```
-
-##### Step 4d: User Storage Data Migration
-The user storage data migration is **fully automated** during the ID migration script (Step 6):
-
-**What the migration script does**:
-1. **Detects** existing data in old basic-ops user storage table
-2. **Migrates** all user data to new amplify-lambda user-data-storage table
-3. **Translates** user IDs during the migration process
-4. **Preserves** all existing user data and structure
-
-**No manual intervention required** - the migration handles the entire user storage transition seamlessly.
-
-**✅ This sequence resolves the API Gateway `/user-data` endpoint conflict by ensuring only one service owns the endpoint at any time.**
-
-#### **🔄 Complete Migration Flow Summary**
-
-**The complete migration process integrates several components**:
-
-1. **Parameter Store Setup** (Steps 1-3): Establishes shared configuration infrastructure
-2. **Service Deployment** (Steps 4-5): Deploys amplify-lambda and other services with new configuration
-3. **User Data Migration** (Step 6): Comprehensive data migration including:
-   - User ID translation across 40+ DynamoDB tables
-   - User storage table migration: old basic-ops table → new amplify-lambda table
-   - S3 consolidation: scattered buckets → centralized consolidation bucket
-   - Data format migration: S3 files → DynamoDB entries where appropriate
-
-**Key Integration Points**:
-- User storage data is **automatically migrated** during Step 6 (no separate backup/restore needed)
-- S3 consolidation happens **as part of** user ID migration
-- All migration is **coordinated** through the id_migration.py script
-- **No manual data movement** required between services
-
----
-
-#### Alternative: Skip User Storage Migration Entirely
-**If your user storage table is empty or doesn't exist**:
-1. Skip all backup steps
-2. Free the `/user-data` endpoint (if needed)  
-3. Deploy amplify-lambda directly
-4. Proceed to Step 5
-
-### Step 5: Deploy Other Services with New Configuration
-
-Deploy remaining services with the updated Parameter Store configuration:
-
-```bash
-# Deploy from repository root (REQUIRED for proper variable resolution)
-serverless amplify-assistants:deploy --stage dev
-serverless amplify-lambda-js:deploy --stage dev
-# ... continue for all other services (except basic-ops which is removed)
-```
-
-## Benefits of This Migration
+### **Migration Benefits**
 
 1. **Centralized Configuration**: All environment variables in one location
-2. **Better Security**: Parameter Store provides encryption and access control
+2. **Better Security**: Parameter Store provides encryption and access control  
 3. **Simplified Dependencies**: Eliminates cross-service CloudFormation dependencies
 4. **Easier Management**: Update configurations without redeploying services
+5. **Data Consolidation**: Eliminates scattered S3 buckets for cleaner architecture
 
-## Important Notes
+### **Important Migration Notes**
 
 - **Deploy Order**: Always deploy from repository root for proper variable resolution
 - **AWS Credentials**: Ensure proper IAM permissions for Parameter Store access
-- **Stage Consistency**: Use consistent stage names across all services
+- **Stage Consistency**: Use consistent stage names across all services  
 - **Backup**: Parameter Store maintains version history automatically
 - **Monitoring**: Watch CloudWatch logs during the migration for any issues
+- **User Storage**: Data migration happens automatically during ID migration - no manual steps needed
 
-## Step 6: Run ID Migration Scripts
+### **ID Migration Scripts Technical Details**
 
-After Parameter Store population and service deployments, run the user ID migration scripts to migrate all user data across DynamoDB tables and S3 buckets.
+**Detailed technical reference for the migration scripts used in Step 4:**
 
 ### Script Overview
 
@@ -795,3 +973,71 @@ python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
 #### Required Permissions
 Ensure Lambda execution roles have Parameter Store access:
 - `ssm:GetParameter`, `ssm:GetParameters`, `ssm:GetParametersByPath`
+
+---
+
+## 🎯 **QUICK REFERENCE - WHAT DO I ACTUALLY NEED TO DO?**
+
+### 🚨 **EVERYONE MUST DO (No Skipping)**
+1. **Update `scripts/config.py`** with your `DEP_NAME` and `STAGE`
+2. **Validate config**: `cd scripts && python3 -c "from config import get_config; config = get_config(); print('✓ Bucket:', config['S3_CONSOLIDATION_BUCKET_NAME'])"`
+3. **Add `LOG_LEVEL` to your `/var/{stage}-var.yml`** files  
+4. **Run**: `python3 scripts/populate_parameter_store.py --stage dev --dep-name v6`
+
+### **DO I HAVE BASIC OPS SERVICE?**
+```bash
+# Check if this returns a stack:
+aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}
+```
+- **YES**: Follow [Step 3a](#-step-3a-if-you-have-basic-ops-service)
+- **NO**: Follow [Step 3b](#-step-3b-if-you-dont-have-basic-ops-service)
+
+### **DO I NEED ID MIGRATION OR JUST CONSOLIDATION?**
+- **ID Migration** (Email → Username): Follow [Step 4a](#-step-4a-if-you-need-user-id-migration)  
+- **S3 Consolidation Only** (Highly Recommended): Follow [Step 4b](#-step-4b-if-you-only-need-s3-consolidation-highly-recommended)
+
+### ⚡ **QUICK MIGRATION COMMANDS**
+
+**For ID Migration (Step 4a):**
+```bash
+# ALWAYS START WITH DRY RUN
+python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv
+
+# STANDARD MIGRATION (auto-backup handling)
+python3 scripts/id_migration.py --csv-file migration_users.csv --log migration.log
+```
+
+**For S3 Consolidation Only (Step 4b):**
+```bash
+# ALWAYS START WITH DRY RUN (consolidation only)
+python3 scripts/id_migration.py --no-id-change --dry-run
+
+# STANDARD CONSOLIDATION (auto-backup handling)
+python3 scripts/id_migration.py --no-id-change --log consolidation.log
+```
+
+**Common Flags for Both:**
+```bash
+# SKIP BACKUP VERIFICATION (if you already have backups)
+--dont-backup
+
+# NO PROMPTS (for automation)  
+--no-confirmation
+
+# DIFFERENT REGION
+--region us-west-2
+```
+
+### 🎯 **CRITICAL REMINDERS**
+- 🥇 **Deploy amplify-lambda FIRST**: It's the base dependency all other services need
+- 🚨 **After deploying amplify-lambda**: Run `cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..`
+- 🔒 **Backups are critical**: Migration deletes old data after copying
+- 🏗️ **Future cleanup**: S3 consolidation prepares for eventual bucket deletion
+- 🧹 **Basic-ops cleanup**: Remove basic-ops service AFTER migration completes (Step 5)
+- ⚡ **Scripts are idempotent**: Safe to re-run if needed
+
+### 🆘 **COMMON ISSUES**
+- **"Parameter not found"** → Re-run populate_parameter_store.py  
+- **"S3 bucket doesn't exist"** → Deploy amplify-lambda first
+- **"API Gateway conflict"** → Remove basic-ops service first
+- **"Permission denied"** → Check AWS credentials and IAM permissions
