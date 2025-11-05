@@ -69,12 +69,12 @@ provider:
     STAGE: ${sls:stage}
 
     # Locally Defined Variables
-    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.depName}-js-${sls:stage}-cost-calculations
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.depName}-lambda-${sls:stage}-cost-calculations
     DATASOURCE_REGISTRY_DYNAMO_TABLE: ${self:service}-${sls:stage}-datasource-registry
-    HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.depName}-js-${sls:stage}-history-cost-calculations
+    HISTORY_COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.depName}-lambda-${sls:stage}-history-cost-calculations
     LAMBDA_JS_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
     REQUEST_STATE_DYNAMO_TABLE: ${self:service}-${sls:stage}-request-state
-    TRACE_BUCKET_NAME: amplify-${self:custom.depName}-js-${sls:stage}-chat-traces
+    TRACE_BUCKET_NAME: amplify-${self:custom.depName}-lambda-${sls:stage}-chat-traces
     CONVERSATION_ANALYSIS_QUEUE_URL: ${self:service}-${sls:stage}-conversation-analysis-queue
   
     # Imported Variables from Parameter Store
