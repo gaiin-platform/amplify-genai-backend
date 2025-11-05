@@ -73,15 +73,19 @@ export const getBudgetTokens = (params, maxTokens) => {
 }
 
 export const getChatFn = (model, body, writable, context) => {
-    const chatFunctions = {
-        'Bedrock': () => chatBedrock(body, writable, context),
-        'OpenAI': () => openaiChat(getLLMConfig, body, writable, context),
-        'Gemini': () => geminiChat(body, writable, context)
-    };
-    
-    return chatFunctions[model.provider]?.() ?? 
-        (console.log(`Error: Model ${model} does not have a corresponding chatFn`), null);
+
+    if (isOpenAIModel(model.id)) {
+        return openaiChat(getLLMConfig, body, writable, context);
+    } else if (model.provider === 'Bedrock') {
+        return chatBedrock(body, writable, context);
+    } else if (isGeminiModel(model.id)) {
+        return geminiChat(body, writable, context);
+    } else {
+        console.log(`Error: Model ${model} does not have a corresponding chatFn`)
+        return null;
+    }
 }
+
 
 export const isOpenAIModel = (modelId) => {
     return modelId && (modelId.includes("gpt") || /^o\d/.test(modelId));
