@@ -108,7 +108,7 @@ provider:
     ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
     ASSISTANT_LOOKUP_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-assistants/ASSISTANT_LOOKUP_DYNAMODB_TABLE}
     CHAT_USAGE_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/CHAT_USAGE_DYNAMO_TABLE}
-    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
     MODEL_RATE_TABLE: ${ssm:${self:custom.ssmBasePath}-chat-billing/MODEL_RATE_TABLE}

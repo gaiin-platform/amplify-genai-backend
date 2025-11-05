@@ -91,7 +91,7 @@ provider:
     ASSISTANT_GROUPS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/ASSISTANT_GROUPS_DYNAMO_TABLE}
     COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
-    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-js/COST_CALCULATIONS_DYNAMO_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     HASH_FILES_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/HASH_FILES_DYNAMO_TABLE}
     OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
