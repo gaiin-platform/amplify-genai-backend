@@ -53,7 +53,7 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
-    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT}
+    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT, ''}
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
     BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_ID, ''}
     BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_VERSION, ''}
