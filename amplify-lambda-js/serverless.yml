@@ -181,7 +181,7 @@ functions:
           method: post
           cors: true
 
-  conversation_analysis_processor:
+  convo_analysis:
     handler: groupassistants/conversationAnalysis.sqsProcessorHandler
     memorySize: 512
     timeout: 300
