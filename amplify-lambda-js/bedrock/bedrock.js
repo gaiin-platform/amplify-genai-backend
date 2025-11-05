@@ -66,6 +66,7 @@ export const chatBedrock = async (chatBody, writable) => {
                         }
 
         if (process.env.BEDROCK_GUARDRAIL_ID && process.env.BEDROCK_GUARDRAIL_VERSION) {
+            logger.info("Using Bedrock Guardrail with ID:", process.env.BEDROCK_GUARDRAIL_ID);
             // Using guardrail
             input.guardrailConfig = {
                 guardrailIdentifier: process.env.BEDROCK_GUARDRAIL_ID,
