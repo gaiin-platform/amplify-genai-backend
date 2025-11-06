@@ -30,8 +30,8 @@ custom:
     dockerizePip: true
     layer: true
     # uncomment in case of issues with pythonRequirement layers not uploading to aws
-    useStaticCache: false
-    useDownloadCache: false
+    # useStaticCache: false
+    # useDownloadCache: false
 
   prune:
     automatic: true
@@ -629,6 +629,8 @@ resources:
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-queue"
                 - "arn:aws:sqs:${aws:region}:*:${self:service}-${sls:stage}-embedding-chunks-index-dlq"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}-dlq"
+                - "arn:aws:sqs:${aws:region}:*:${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}-dlq"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
@@ -1040,6 +1042,18 @@ resources:
       Properties:
         QueueName: ${self:service}-${sls:stage}-embedding-chunks-index-dlq
 
+    RagDocumentIndexDLQ:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}-dlq
+        MessageRetentionPeriod: 1209600
+
+    RagChunkDocumentDLQ:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}-dlq
+        MessageRetentionPeriod: 1209600
+
     RagDocumentIndexQueuePolicy:
       Type: AWS::SQS::QueuePolicy
       Properties:
@@ -1062,12 +1076,22 @@ resources:
       Properties:
         VisibilityTimeout: 300
         QueueName: ${self:provider.environment.SQS_RAG_DOCUMENT_INDEX_QUEUE}
+        MessageRetentionPeriod: 86400
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [RagDocumentIndexDLQ, Arn]
+          maxReceiveCount: 5
 
     RagChunkDocumentQueue:
       Type: "AWS::SQS::Queue"
       Properties:
         VisibilityTimeout: 300
         QueueName: ${self:provider.environment.SQS_RAG_CHUNK_DOCUMENT_INDEX_QUEUE}
+        MessageRetentionPeriod: 86400
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [RagChunkDocumentDLQ, Arn]
+          maxReceiveCount: 5
     
     remoteConversationsBucket: #Marked for future deletion
       Type: AWS::S3::Bucket

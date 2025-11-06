@@ -24,6 +24,9 @@ def store_ds_secrets_for_rag(ds_key, user_details):
     
     Returns:
         dict: Dictionary with success status
+        
+    Raises:
+        Exception: If storing secrets fails, terminates Lambda execution
     """
     try:
         # Create a safe parameter name from the S3 key
@@ -40,12 +43,15 @@ def store_ds_secrets_for_rag(ds_key, user_details):
         if response:
             logger.info("Successfully stored RAG secrets for document: %s", ds_key)
             return {"success": True}
+        else:
+            error_msg = f"Failed to store RAG secrets for document: {ds_key} - store_secret_parameter returned False"
+            logger.error("Failed to store RAG secrets for document: %s - store_secret_parameter returned False", ds_key)
+            raise Exception(error_msg)
             
     except Exception as e:
-        logger.error("Error storing RAG secrets for document %s: %s", ds_key, str(e))
-
-    logger.error("Failed to store RAG secrets for document: %s", ds_key)    
-    return {"success": False}
+        error_msg = f"Critical error storing RAG secrets for document {ds_key}: {str(e)}"
+        logger.error("Critical error storing RAG secrets for document %s: %s", ds_key, str(e))
+        raise Exception(error_msg)
 
 
 def get_rag_secrets_for_document(ds_key):
@@ -57,6 +63,9 @@ def get_rag_secrets_for_document(ds_key):
     
     Returns:
         dict: Dictionary containing user details, or success status if not found
+        
+    Raises:
+        Exception: If retrieving secrets fails, terminates Lambda execution
     """
     try:
         parameter_name = get_parameter_name(ds_key)
@@ -71,14 +80,19 @@ def get_rag_secrets_for_document(ds_key):
             user_details = json.loads(secrets_json)
             logger.debug("Successfully retrieved RAG secrets for document: %s", ds_key)
             return {"success": True, "data": user_details}
-        logger.debug("No RAG secrets found for document: %s", ds_key)
+        else:
+            error_msg = f"No RAG secrets found for document: {ds_key} - document processing cannot continue without credentials"
+            logger.error("No RAG secrets found for document: %s - document processing cannot continue without credentials", ds_key)
+            raise Exception(error_msg)
             
     except json.JSONDecodeError as e:
-        logger.error("Error parsing RAG secrets JSON for document %s: %s", ds_key, str(e))
+        error_msg = f"Critical error parsing RAG secrets JSON for document {ds_key}: {str(e)}"
+        logger.error("Critical error parsing RAG secrets JSON for document %s: %s", ds_key, str(e))
+        raise Exception(error_msg)
     except Exception as e:
-        logger.error("Error retrieving RAG secrets for document %s: %s", ds_key, str(e))
-
-    return {"success": False}
+        error_msg = f"Critical error retrieving RAG secrets for document {ds_key}: {str(e)}"
+        logger.error("Critical error retrieving RAG secrets for document %s: %s", ds_key, str(e))
+        raise Exception(error_msg)
 
 
 def delete_rag_secrets_for_document(ds_key):
@@ -89,7 +103,10 @@ def delete_rag_secrets_for_document(ds_key):
         ds_key (str): The S3 key/document identifier (e.g., "user@example.com/2024/document.pdf")
     
     Returns:
-        bool: True if successful, False otherwise
+        dict: Dictionary with success status
+        
+    Raises:
+        Exception: If deleting secrets fails, terminates Lambda execution
     """
     try:
         parameter_name = get_parameter_name(ds_key)
@@ -99,11 +116,18 @@ def delete_rag_secrets_for_document(ds_key):
         # Delete the secrets using the existing delete_secret_parameter function
         success = delete_secret_parameter(parameter_name)
         logger.debug("Rag secret deleted: %s", success)
-        return {"success": success}
+        
+        if success:
+            return {"success": True}
+        else:
+            error_msg = f"Failed to delete RAG secrets for document: {ds_key} - delete_secret_parameter returned False"
+            logger.error("Failed to delete RAG secrets for document: %s - delete_secret_parameter returned False", ds_key)
+            raise Exception(error_msg)
             
     except Exception as e:
-        logger.error("Error deleting RAG secrets for document %s: %s", ds_key, str(e))
-    return {"success": False}
+        error_msg = f"Critical error deleting RAG secrets for document {ds_key}: {str(e)}"
+        logger.error("Critical error deleting RAG secrets for document %s: %s", ds_key, str(e))
+        raise Exception(error_msg)
 
 
 def cleanup_missed_rag_secrets():
