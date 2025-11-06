@@ -16,30 +16,6 @@ import {isKilled} from "../requests/requestState.js";
 
 const logger = getLogger("chatWithData");
 
-/**
- * Truncate content for UI display while preserving readability
- * @param {string} content - The full content
- * @param {number} maxChars - Maximum characters to show (default 500)
- * @returns {string} Truncated content with "..." if needed
- */
-const truncateContentForDisplay = (content, maxChars = 500) => {
-    if (!content || content.length <= maxChars) {
-        return content;
-    }
-    
-    // Find a good break point (end of sentence or paragraph)
-    let truncated = content.substring(0, maxChars);
-    const lastPeriod = truncated.lastIndexOf('.');
-    const lastNewline = truncated.lastIndexOf('\n');
-    
-    // Use the latest good break point
-    const breakPoint = Math.max(lastPeriod, lastNewline);
-    if (breakPoint > maxChars * 0.7) { // If we found a good break point
-        truncated = content.substring(0, breakPoint + 1);
-    }
-    
-    return truncated + "...";
-};
 
 /**
  * ✅ OPTIMIZED: Fit messages within token limit efficiently
@@ -324,7 +300,7 @@ export const chatWithDataStateless = async (params, model, chatRequestOrig, data
                                     dataType: dataSource.type,
                                     locations: i.locations || [],
                                     contentKey: dataSource.metadata?.userDataSourceId,
-                                    content: truncateContentForDisplay(i.content)  // Truncate for UI display
+                                    content: i.content  // Full content for frontend sources
                                 };
                             });
                         } else {
