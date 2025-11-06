@@ -154,12 +154,24 @@ function cleanupTokenCache() {
 // ============================================
 
 export class CacheManager {
+    static cleanupCounter = 0;
+    
+    // 🧹 LAZY CLEANUP: Periodically clean up expired cache entries
+    static maybeTriggerCleanup() {
+        this.cleanupCounter++;
+        // Clean up every 20 cache operations to avoid overhead
+        if (this.cleanupCounter % 20 === 0) {
+            logger.debug("🧹 Triggering lazy cache cleanup");
+            cleanupTokenCache();
+        }
+    }
     
     // ============================================
     // USER MODEL CACHING
     // ============================================
     
     static async getCachedUserModels(userId, accessToken) {
+        this.maybeTriggerCleanup(); // Lazy cleanup trigger
         try {
             // Create hash of access token for cache key (don't store raw token)
             const tokenHash = crypto.createHash('sha256').update(accessToken).digest('hex').slice(0, 16);
@@ -470,7 +482,5 @@ export class CacheManager {
     }
 }
 
-// Auto-cleanup every 10 minutes
-setInterval(cleanupTokenCache, 10 * 60 * 1000);
 
 logger.info("Consolidated cache system initialized");
