@@ -249,6 +249,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     }
                 });
             }
+            
+            logger.info(`✅ Model validation passed: ${modelId}`);
 
             // override model in params/options so its from our backend end 
             params.model = model;
@@ -344,6 +346,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     error: processingError,
                 });
                 
+                // 🛡️ DEFENSIVE CLEANUP: Ensure stream is closed in all cases
+                ensureStreamClosed(responseStream, "finally-block");
             }
             
 
@@ -357,11 +361,7 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             }
 
             // Response is streamed directly by the assistant handler
-            // ✅ EXPLICIT RETURN to ensure Lambda completion
-            
-            // 🔧 CLEANUP: Force stream closure using returnResponse (handles both local and AWS)
-            returnResponse(responseStream, { statusCode: 200, body: "" });
-
+            // ✅ Assistant handlers manage their own stream closure
             return;
 
         }
@@ -383,7 +383,10 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             // Strategy 1: Force stream closure using returnResponse (handles both local and AWS)
             returnResponse(responseStream, { statusCode: 500, body: { error: "Lambda terminated" } });
             
-            // Strategy 2: Re-throw the critical error to propagate up
+            // Strategy 2: Defensive cleanup as backup
+            ensureStreamClosed(responseStream, "lambda-termination");
+            
+            // Strategy 3: Re-throw the critical error to propagate up
             throw new Error(`LAMBDA_TERMINATION_REQUIRED: ${e.message}`);
         }
         
@@ -395,6 +398,9 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             statusCode: 400,
             body: {error: e.message}
         });
+        
+        // 🛡️ DEFENSIVE CLEANUP: Backup stream closure for error cases
+        ensureStreamClosed(responseStream, "error-handling");
         
         // ✅ EXPLICIT RETURN to ensure Lambda completion after error handling
         return;
@@ -435,3 +441,37 @@ export const routeRequest = (params, returnResponse, responseStream) => {
 };
 
 
+// 🛡️ DEFENSIVE STREAM CLEANUP: Handles both local and AWS environments
+function ensureStreamClosed(responseStream, context = "cleanup") {
+    try {
+        // Check if this is local development environment
+        const isLocal = process.env.LOCAL_DEVELOPMENT === 'true';
+        
+        if (isLocal) {
+            // Local SSEWrapper - check if already ended
+            if (responseStream && typeof responseStream.end === 'function') {
+                if (!responseStream.res?.writableEnded) {
+                    logger.debug(`🔒 ${context}: Local stream cleanup - ending SSEWrapper`);
+                    responseStream.end();
+                } else {
+                    logger.debug(`🔒 ${context}: Local stream already ended`);
+                }
+            }
+        } else {
+            // AWS Lambda - manually force stream closure
+            if (responseStream && typeof responseStream.end === 'function') {
+                try {
+                    logger.debug(`🔒 ${context}: AWS stream cleanup - manually ending stream`);
+                    responseStream.end();
+                } catch (error) {
+                    logger.debug(`🔒 ${context}: AWS stream end error (safe to ignore):`, error.message);
+                }
+            } else {
+                logger.debug(`🔒 ${context}: AWS stream - no .end() method available`);
+            }
+        }
+    } catch (error) {
+        logger.debug(`🔒 ${context}: Stream cleanup error (safe to ignore):`, error.message);
+        // Errors here are safe to ignore - stream might already be closed
+    }
+}

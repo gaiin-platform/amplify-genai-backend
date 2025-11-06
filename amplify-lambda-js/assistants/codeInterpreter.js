@@ -75,8 +75,19 @@ async function fetchRequest(token, data, url) {
 const fetchWithTimeout = (responseStream, token, chat_data, endpoint, timeout = 12000) => {
     return new Promise((resolve, reject) => {
         let timer;
+        let statusCount = 0;
+        const maxStatusMessages = 20; // 🚨 LAMBDA SAFETY: Prevent infinite status loop
 
         const handleSendStatusMessage = () => {
+            statusCount++;
+            
+            // 🚨 CRITICAL: Prevent infinite timer chain in Lambda
+            if (statusCount > maxStatusMessages) {
+                clearTimeout(timer);
+                reject(new Error("Code interpreter timeout - too many status messages"));
+                return;
+            }
+            
             sendStatusMessage(responseStream, "Code interpreter needs a few more moments...");
             timer = setTimeout(handleSendStatusMessage, timeout);
         };
