@@ -611,6 +611,17 @@ def get_presigned_url(event, context, current_user, name, data):
             "error": "File type is required and cannot be empty. Please provide a valid MIME type (e.g., 'text/markdown', 'application/pdf')."
         }
     
+    # VALIDATION: Check for zip files (not supported)
+    zip_mime_types = ["application/zip", "application/x-zip-compressed", "application/x-zip"]
+    if (name.lower().endswith('.zip') or 
+        file_type.lower() in zip_mime_types or 
+        'zip' in file_type.lower()):
+        logger.warning("Zip file upload attempted: %s (type: %s)", name, file_type)
+        return {
+            "success": False,
+            "error": "ZIP files are not supported. Please upload individual files or extract the contents of the ZIP file and upload them separately."
+        }
+    
     tags = data["tags"]
     props = data["data"]
     knowledge_base = data["knowledgeBase"]
