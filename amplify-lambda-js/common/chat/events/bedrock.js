@@ -50,7 +50,17 @@ export const bedrockConverseTransform = (event, responseStream = null) => {
 export const bedrockTokenUsageTransform = (event) => {
     // Bedrock sends raw event without 'd' wrapper
     if (event && event.usage) {
-        return event.usage;
+        const usage = event.usage;
+        
+        // Extract cached tokens from Claude/Anthropic format
+        usage.inputCachedTokens = usage.cache_read_input_tokens || 0;
+        usage.inputWriteCachedTokens = usage.cache_creation_input_tokens || 0;
+        
+        // Convert Bedrock snake_case to standard format  
+        usage.prompt_tokens = usage.input_tokens || 0;
+        usage.completion_tokens = usage.output_tokens || 0;
+        
+        return usage;
     } else {
         return null;
     }

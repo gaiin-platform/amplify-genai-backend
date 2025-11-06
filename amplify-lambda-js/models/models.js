@@ -17,8 +17,9 @@ const ensureNumericProperties = (model) => {
         'inputContextWindow',
         'outputTokenLimit',
         'inputTokenCost',
-        'outputTokenCost', 
-        'cachedTokenCost'
+        'outputTokenCost',
+        "inputCachedTokenCost",
+        "inputWriteCachedTokenCost"
     ];
     
     const sanitizedModel = { ...model };

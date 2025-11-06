@@ -82,7 +82,7 @@ provider:
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
     AMPLIFY_ADMIN_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-admin/AMPLIFY_ADMIN_DYNAMODB_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
-    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/COST_CALCULATIONS_DYNAMO_TABLE}
+    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
 
@@ -99,7 +99,7 @@ functions:
     handler: service/core.get_user_available_models
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /available_models
@@ -111,7 +111,7 @@ functions:
     handler: service/core.update_supported_models
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /supported_models/update
@@ -122,7 +122,7 @@ functions:
     handler: service/core.get_supported_models_as_admin
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /supported_models/get
@@ -133,7 +133,7 @@ functions:
     handler: service/core.get_default_models
     layers:
       - Ref: PythonRequirementsLambdaLayer
-    timeout: 10
+    timeout: 30
     events:
       - http:
           path: /default_models

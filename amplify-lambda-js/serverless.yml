@@ -53,7 +53,7 @@ provider:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
     LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
     
-    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT}
+    AGENT_ENDPOINT: ${ssm:/amplify/${sls:stage}/AGENT_ENDPOINT, ''}
     API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
     BEDROCK_GUARDRAIL_ID: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_ID, ''}
     BEDROCK_GUARDRAIL_VERSION: ${ssm:/amplify/${sls:stage}/BEDROCK_GUARDRAIL_VERSION, ''}
@@ -181,7 +181,7 @@ functions:
           method: post
           cors: true
 
-  conversation_analysis_processor:
+  convo_analysis:
     handler: groupassistants/conversationAnalysis.sqsProcessorHandler
     memorySize: 512
     timeout: 300
@@ -248,6 +248,7 @@ resources:
                 - "arn:aws:bedrock:*:${aws:accountId}:inference-profile/*"
                 # - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 # - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
+                - "arn:aws:sqs:${aws:region}:${aws:accountId}:${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

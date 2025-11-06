@@ -144,15 +144,6 @@ python id_migration.py --dry-run  # Should show no old data
 # aws dynamodb delete-backup --backup-arn "OLD-BACKUP-ARN"
 ```
 
----
-
-## **📞 Emergency Contacts**
-
-- **AWS Support**: Console → Support Center
-- **Point-in-Time Recovery Docs**: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery.html
-- **DynamoDB Backup/Restore**: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/BackupRestore.html
-
----
 
 ## **⚠️ Important Notes**
 
