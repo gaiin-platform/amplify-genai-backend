@@ -359,8 +359,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             // Response is streamed directly by the assistant handler
             // ✅ EXPLICIT RETURN to ensure Lambda completion
             
-            // 🔧 CLEANUP: Force stream closure to prevent Lambda hanging
-            closeResponseStream(responseStream);
+            // 🔧 CLEANUP: Force stream closure using returnResponse (handles both local and AWS)
+            returnResponse(responseStream, { statusCode: 200, body: "" });
 
             return;
 
@@ -380,8 +380,8 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
         if (isLambdaTermination) {
             logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to critical failure");
             
-            // Strategy 1: Force stream closure to prevent Lambda hanging
-            closeResponseStream(responseStream);
+            // Strategy 1: Force stream closure using returnResponse (handles both local and AWS)
+            returnResponse(responseStream, { statusCode: 500, body: { error: "Lambda terminated" } });
             
             // Strategy 2: Re-throw the critical error to propagate up
             throw new Error(`LAMBDA_TERMINATION_REQUIRED: ${e.message}`);
@@ -428,44 +428,6 @@ const routeRequestWrapper = requiredEnvVars({
     "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
 })(routeRequestCore);
 
-/**
- * Cleanly close response stream for both local development and AWS Lambda
- * @param {Object} responseStream - The response stream object
- */
-function closeResponseStream(responseStream) {
-    if (!responseStream) return;
-    
-    try {
-        // Detect local vs AWS Lambda using environment variable
-        if (process.env.LOCAL_DEVELOPMENT === 'true') {
-            // Local SSEWrapper - use .end() method
-            if (typeof responseStream.end === 'function') {
-                responseStream.end();
-                logger.info("🔒 Local stream ended");
-            }
-        } else {
-            // AWS Lambda stream - try available methods
-            if (typeof responseStream.end === 'function') {
-                responseStream.end();
-                logger.info("🔒 AWS Lambda stream ended");
-            } else if (typeof responseStream.close === 'function') {
-                responseStream.close();
-                logger.info("🔒 AWS Lambda stream closed");
-            } else if (typeof responseStream.destroy === 'function') {
-                responseStream.destroy();
-                logger.info("🔒 AWS Lambda stream destroyed");
-            } else {
-                logger.debug("AWS Lambda stream methods:", Object.getOwnPropertyNames(responseStream));
-                logger.warn("No known closure method found on AWS Lambda stream");
-            }
-        }
-    } catch (streamError) {
-        // Only log unexpected errors, not normal "already ended" errors
-        if (!streamError.message?.includes('after end') && !streamError.message?.includes('already finished')) {
-            logger.error("Unexpected error closing stream:", streamError);
-        }
-    }
-}
 
 // Main export
 export const routeRequest = (params, returnResponse, responseStream) => {
