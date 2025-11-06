@@ -351,14 +351,43 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
 
         }
     } catch (e) {
-        logger.error("Error processing request:", e.message);
-        logger.error("Full error:", e);
-
         // 🚨 Record error violation for user (if we have user info)
         if (params && params.user) {
             const errorViolation = recordErrorViolation(params.user);
             logger.debug(`Recorded error violation for ${params.user}: ${errorViolation.count} errors`);
         }
+        // Check if this is a critical secrets/endpoints error that should terminate the Lambda
+        const isLambdaTermination = e.isLambdaTermination || 
+                                  (e.message && (
+                                      e.message.includes("LAMBDA_TERMINATION_REQUIRED") ||
+                                      e.message.includes("Critical error") ));
+        
+        if (isLambdaTermination) {
+            logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to critical failure");
+            
+            // Strategy 1: Close the writing stream first to prevent incomplete responses
+            try {
+                if (responseStream && typeof responseStream.end === 'function') {
+                    responseStream.end();
+                    logger.info("[LAMBDA_TERMINATION] 🔒 Writing stream closed");
+                } else if (responseStream && typeof responseStream.destroy === 'function') {
+                    responseStream.destroy();
+                    logger.info("[LAMBDA_TERMINATION] 🔒 Writing stream destroyed");
+                }
+            } catch (streamError) {
+                logger.error("[LAMBDA_TERMINATION] ❌ Error closing stream:", streamError);
+            }
+            
+            // Strategy 2: Re-throw the critical error to propagate up
+            throw new Error(`LAMBDA_TERMINATION_REQUIRED: ${e.message}`);
+            
+            // Strategy 3: If somehow re-throw fails, force process exit (this line should never execute)
+            process.exit(1);
+        }
+        
+        logger.error("Error processing request:", e.message);
+        logger.error("Full error:", e);
+
 
         returnResponse(responseStream, {
             statusCode: 400,
