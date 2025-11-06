@@ -19,10 +19,17 @@ def _get_user_identifier(token_payload: dict) -> tuple[str, str]:
     """Get user identifier and type from token payload.
     Returns: (identifier_value, identifier_type)
     """
+    # Try identifiers in priority order
     immutable_id = token_payload.get("immutable_id")
     if immutable_id and immutable_id.strip():
         return immutable_id, "immutable_id"
     
+    # Check username field (Cognito's actual username, often email)
+    username = token_payload.get("username")
+    if username and username.strip():
+        return username, "username"
+    
+    # Fall back to email field if present
     email = token_payload.get("email")
     if email and email.strip():
         return email, "email"
@@ -201,9 +208,14 @@ def create_or_update_user(event, context):
         # Try to find existing user by the identified user_id
         user, prop_name = _find_user_by_property({id_type: user_id})
         
-        # If not found by primary identifier, also try email for backwards compatibility
-        if not user and id_type == "immutable_id":
-            user, prop_name = _find_user_by_property({"email": payload.get("email")})
+        # If not found by primary identifier, try other common fields for backwards compatibility
+        if not user:
+            # Try email if we used username or immutable_id
+            if id_type in ["username", "immutable_id"] and payload.get("email"):
+                user, prop_name = _find_user_by_property({"email": payload.get("email")})
+            # Try username if we used email or immutable_id  
+            if not user and id_type in ["email", "immutable_id"] and payload.get("username"):
+                user, prop_name = _find_user_by_property({"username": payload.get("username")})
         # A user has not been found; need to create one
         if not user:
             _create_user(payload)
