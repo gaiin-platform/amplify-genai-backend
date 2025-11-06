@@ -748,6 +748,28 @@ def process_document_for_rag(event, context):
                 )
 
         except Exception as e:
+            # Check if this is a critical RAG secrets error that should terminate the Lambda
+            error_message = str(e)
+            if ("RAG secrets" in error_message or 
+                "store_secret_parameter" in error_message or 
+                "get_secret_parameter" in error_message or
+                "delete_secret_parameter" in error_message or
+                "Critical error storing RAG secrets" in error_message or
+                "Critical error retrieving RAG secrets" in error_message or
+                "Critical error deleting RAG secrets" in error_message):
+                logger.error(
+                    f"[CRITICAL_RAG_ERROR] 🔥 RAG secrets error detected - TERMINATING LAMBDA IMMEDIATELY: {error_message}"
+                )
+                # Multiple termination strategies to ensure Lambda stops
+                logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to RAG secrets failure")
+                
+                # Strategy 1: Re-raise the exception
+                raise Exception(f"LAMBDA_TERMINATION_REQUIRED: {error_message}")
+                
+                # Strategy 2: If somehow re-raise fails, force exit (this line should never execute)
+                import sys
+                sys.exit(1)
+            
             logger.error("Error processing SQS message: %s", str(e))
 
     return {"statusCode": 200, "body": json.dumps("SQS Text Extraction Complete!")}
@@ -947,6 +969,28 @@ def chunk_document_for_rag(event, context):
             update_embedding_status(original_creator, key, chunks_created, "starting")
 
         except Exception as e:
+            # Check if this is a critical RAG secrets error that should terminate the Lambda
+            error_message = str(e)
+            if ("RAG secrets" in error_message or 
+                "store_secret_parameter" in error_message or 
+                "get_secret_parameter" in error_message or
+                "delete_secret_parameter" in error_message or
+                "Critical error storing RAG secrets" in error_message or
+                "Critical error retrieving RAG secrets" in error_message or
+                "Critical error deleting RAG secrets" in error_message):
+                logger.error(
+                    f"[CRITICAL_RAG_ERROR] 🔥 RAG secrets error detected - TERMINATING LAMBDA IMMEDIATELY: {error_message}"
+                )
+                # Multiple termination strategies to ensure Lambda stops
+                logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to RAG secrets failure")
+                
+                # Strategy 1: Re-raise the exception
+                raise Exception(f"LAMBDA_TERMINATION_REQUIRED: {error_message}")
+                
+                # Strategy 2: If somehow re-raise fails, force exit (this line should never execute)
+                import sys
+                sys.exit(1)
+            
             logger.error("Error processing SQS message: %s", str(e))
 
     return {"statusCode": 200, "body": json.dumps("SQS Text Extraction Complete!")}

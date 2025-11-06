@@ -249,6 +249,8 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                     }
                 });
             }
+            
+            logger.info(`✅ Model validation passed: ${modelId}`);
 
             // override model in params/options so its from our backend end 
             params.model = model;
@@ -326,7 +328,13 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             } catch (error) {
                 processingError = true;
                 logger.error(`Request processing failed for user ${params.user}:`, error);
-                throw error;
+                
+                // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang
+                // Return error response instead of throwing
+                return returnResponse(responseStream, {
+                    statusCode: 500,
+                    body: { error: error.message || "Internal server error" }
+                });
             } finally {
                 // Simple request completion logging
                 const processingTime = Date.now() - requestStartTime;
@@ -336,18 +344,25 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
                     requestId,
                     processingTime,
                     error: processingError,
-                    litellm: true
                 });
+                
+                // 🛡️ DEFENSIVE CLEANUP: Ensure stream is closed in all cases
+                ensureStreamClosed(responseStream, "finally-block");
             }
             
 
-            if(doTrace) {
-                trace(requestId, ["response"], {stream: responseStream.trace})
-                await saveTrace(params.user, requestId);
+            if (doTrace) {
+                try {
+                    trace(requestId, ["response"], {stream: responseStream.trace})
+                    await saveTrace(params.user, requestId);
+                } catch (traceError) {
+                    logger.error("Error in tracing:", traceError);
+                }
             }
 
             // Response is streamed directly by the assistant handler
-            // No additional response handling needed 
+            // ✅ Assistant handlers manage their own stream closure
+            return;
 
         }
     } catch (e) {
@@ -365,24 +380,14 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
         if (isLambdaTermination) {
             logger.error("[LAMBDA_TERMINATION] 💀 Forcing Lambda termination due to critical failure");
             
-            // Strategy 1: Close the writing stream first to prevent incomplete responses
-            try {
-                if (responseStream && typeof responseStream.end === 'function') {
-                    responseStream.end();
-                    logger.info("[LAMBDA_TERMINATION] 🔒 Writing stream closed");
-                } else if (responseStream && typeof responseStream.destroy === 'function') {
-                    responseStream.destroy();
-                    logger.info("[LAMBDA_TERMINATION] 🔒 Writing stream destroyed");
-                }
-            } catch (streamError) {
-                logger.error("[LAMBDA_TERMINATION] ❌ Error closing stream:", streamError);
-            }
+            // Strategy 1: Force stream closure using returnResponse (handles both local and AWS)
+            returnResponse(responseStream, { statusCode: 500, body: { error: "Lambda terminated" } });
             
-            // Strategy 2: Re-throw the critical error to propagate up
+            // Strategy 2: Defensive cleanup as backup
+            ensureStreamClosed(responseStream, "lambda-termination");
+            
+            // Strategy 3: Re-throw the critical error to propagate up
             throw new Error(`LAMBDA_TERMINATION_REQUIRED: ${e.message}`);
-            
-            // Strategy 3: If somehow re-throw fails, force process exit (this line should never execute)
-            process.exit(1);
         }
         
         logger.error("Error processing request:", e.message);
@@ -393,6 +398,12 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
             statusCode: 400,
             body: {error: e.message}
         });
+        
+        // 🛡️ DEFENSIVE CLEANUP: Backup stream closure for error cases
+        ensureStreamClosed(responseStream, "error-handling");
+        
+        // ✅ EXPLICIT RETURN to ensure Lambda completion after error handling
+        return;
     } 
 }
 
@@ -423,9 +434,44 @@ export const routeRequest = async (params, returnResponse, responseStream) => {
 //     "CONVERSATION_ANALYSIS_QUEUE_URL": [SQSOperation.SEND_MESSAGE] 
 // })(routeRequestCore);
 
+
 // Main export
 // export const routeRequest = (params, returnResponse, responseStream) => {
 //     return routeRequestWrapper(params, returnResponse, responseStream);
 // };
 
 
+// 🛡️ DEFENSIVE STREAM CLEANUP: Handles both local and AWS environments
+function ensureStreamClosed(responseStream, context = "cleanup") {
+    try {
+        // Check if this is local development environment
+        const isLocal = process.env.LOCAL_DEVELOPMENT === 'true';
+        
+        if (isLocal) {
+            // Local SSEWrapper - check if already ended
+            if (responseStream && typeof responseStream.end === 'function') {
+                if (!responseStream.res?.writableEnded) {
+                    logger.debug(`🔒 ${context}: Local stream cleanup - ending SSEWrapper`);
+                    responseStream.end();
+                } else {
+                    logger.debug(`🔒 ${context}: Local stream already ended`);
+                }
+            }
+        } else {
+            // AWS Lambda - manually force stream closure
+            if (responseStream && typeof responseStream.end === 'function') {
+                try {
+                    logger.debug(`🔒 ${context}: AWS stream cleanup - manually ending stream`);
+                    responseStream.end();
+                } catch (error) {
+                    logger.debug(`🔒 ${context}: AWS stream end error (safe to ignore):`, error.message);
+                }
+            } else {
+                logger.debug(`🔒 ${context}: AWS stream - no .end() method available`);
+            }
+        }
+    } catch (error) {
+        logger.debug(`🔒 ${context}: Stream cleanup error (safe to ignore):`, error.message);
+        // Errors here are safe to ignore - stream might already be closed
+    }
+}

@@ -670,33 +670,46 @@ export async function callLiteLLM(chatRequest, model, account, responseStream, d
             
             // 6. Set up status message timer for long-running requests
             let statusTimer = null;
+            let statusCount = 0;
+            const maxStatusMessages = 30; // 🚨 LAMBDA SAFETY: Prevent infinite status loop
             const statusInterval = getStatusInterval(model);
             
-            const sendStatusMessage = () => {
-                const statusInfo = newStatus({
-                    animated: true,
-                    inProgress: true,
-                    sticky: true,
-                    message: getThinkingMessage ? getThinkingMessage() : "Thinking..."
-                });
-                // Only send status if stream is still writable
-                if (responseStream && !responseStream.destroyed && responseStream.writable) {
-                    sendStatusEventToStream(responseStream, statusInfo);
-                } else {
-                    // Stream is closed, clear the timer
-                    if (statusTimer) {
-                        clearTimeout(statusTimer);
-                        statusTimer = null;
-                    }
-                    return;
-                }
+            // const sendStatusMessage = () => {
+            //     statusCount++;
                 
-                // Schedule next status message
-                statusTimer = setTimeout(sendStatusMessage, statusInterval);
-            };
+            //     // 🚨 CRITICAL: Prevent infinite timer chain in Lambda
+            //     if (statusCount > maxStatusMessages) {
+            //         if (statusTimer) {
+            //             clearTimeout(statusTimer);
+            //             statusTimer = null;
+            //         }
+            //         logger.warn(`🚨 Status timer stopped after ${maxStatusMessages} messages for request ${requestId}`);
+            //         return;
+            //     }
+            //     const statusInfo = newStatus({
+            //         animated: true,
+            //         inProgress: true,
+            //         sticky: true,
+            //         message: getThinkingMessage ? getThinkingMessage() : "Thinking..."
+            //     });
+            //     // Only send status if stream is still writable
+            //     if (responseStream && !responseStream.destroyed && responseStream.writable) {
+            //         sendStatusEventToStream(responseStream, statusInfo);
+            //     } else {
+            //         // Stream is closed, clear the timer
+            //         if (statusTimer) {
+            //             clearTimeout(statusTimer);
+            //             statusTimer = null;
+            //         }
+            //         return;
+            //     }
+                
+            //     // Schedule next status message
+            //     statusTimer = setTimeout(sendStatusMessage, statusInterval);
+            // };
             
-            // Start status timer
-            statusTimer = setTimeout(sendStatusMessage, statusInterval);
+            // // Start status timer
+            // statusTimer = setTimeout(sendStatusMessage, statusInterval);
             
             // Prepare enhanced chat request
             const enhancedChatRequest = {
