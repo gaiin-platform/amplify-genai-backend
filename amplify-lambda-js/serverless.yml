@@ -248,7 +248,7 @@ resources:
                 - "arn:aws:bedrock:*:${aws:accountId}:inference-profile/*"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
                 - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
-                - "arn:aws:sqs:${aws:region}:${aws:accountId}: ${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
+                - "arn:aws:sqs:${aws:region}:${aws:accountId}:${self:provider.environment.CONVERSATION_ANALYSIS_QUEUE_URL}"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
