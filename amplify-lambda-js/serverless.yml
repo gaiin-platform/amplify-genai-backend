@@ -189,7 +189,7 @@ functions:
       - sqs:
           arn: !GetAtt ConversationAnalysisQueue.Arn
           batchSize: 1
-          maximumBatchingWindowInSeconds: 5
+          maximumBatchingWindow: 5
 
 
 resources:
