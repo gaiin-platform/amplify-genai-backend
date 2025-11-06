@@ -326,7 +326,13 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             } catch (error) {
                 processingError = true;
                 logger.error(`Request processing failed for user ${params.user}:`, error);
-                throw error;
+                
+                // ❌ DON'T RE-THROW - Handle error gracefully to prevent Lambda hang
+                // Return error response instead of throwing
+                return returnResponse(responseStream, {
+                    statusCode: 500,
+                    body: { error: error.message || "Internal server error" }
+                });
             } finally {
                 // Simple request completion logging
                 const processingTime = Date.now() - requestStartTime;
@@ -336,18 +342,38 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
                     requestId,
                     processingTime,
                     error: processingError,
-                    litellm: true
                 });
+                
             }
             
 
-            if(doTrace) {
-                trace(requestId, ["response"], {stream: responseStream.trace})
-                await saveTrace(params.user, requestId);
+            if (doTrace) {
+                try {
+                    trace(requestId, ["response"], {stream: responseStream.trace})
+                    await saveTrace(params.user, requestId);
+                } catch (traceError) {
+                    logger.error("Error in tracing:", traceError);
+                }
             }
 
             // Response is streamed directly by the assistant handler
-            // No additional response handling needed 
+            // ✅ EXPLICIT RETURN to ensure Lambda completion
+             // 🔧 CLEANUP: Ensure streams are closed gracefully
+            try {
+                if (responseStream && typeof responseStream.end === 'function') {
+                    // Check if stream is still writable before trying to end it
+                    if (responseStream.writable !== false && !responseStream.destroyed) {
+                        responseStream.end();
+                    }
+                }
+            } catch (streamError) {
+                // Only log if it's not an expected "already ended" error
+                if (!streamError.message?.includes('after end') && !streamError.message?.includes('already finished')) {
+                    logger.error("Unexpected error closing stream:", streamError);
+                }
+            }
+
+            return;
 
         }
     } catch (e) {
@@ -393,6 +419,9 @@ const routeRequestCore = async (params, returnResponse, responseStream) => {
             statusCode: 400,
             body: {error: e.message}
         });
+        
+        // ✅ EXPLICIT RETURN to ensure Lambda completion after error handling
+        return;
     } 
 }
 
