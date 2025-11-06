@@ -414,22 +414,16 @@ export const withCostMonitoring = (handler) => {
  * Memory leak prevention for EventEmitter listeners
  */
 export const safeEventListener = (emitter, event, listener, options = {}) => {
-    const { once = false, timeout = 60000 } = options;
+    const { once = false } = options;
+    // 🚫 REMOVED: setTimeout cleanup to prevent Lambda hanging
     
     if (once) {
         emitter.once(event, listener);
     } else {
         emitter.on(event, listener);
-        
-        // Auto-cleanup after timeout to prevent memory leaks
-        const cleanup = () => {
-            emitter.removeListener(event, listener);
-            logger.debug(`Auto-removed event listener for ${event} after ${timeout}ms`);
-        };
-        
-        setTimeout(cleanup, timeout);
+        // 🚫 NO AUTO-CLEANUP TIMERS: Let Lambda garbage collection handle it
     }
     
-    // Return cleanup function
+    // Return cleanup function for manual cleanup if needed
     return () => emitter.removeListener(event, listener);
 };

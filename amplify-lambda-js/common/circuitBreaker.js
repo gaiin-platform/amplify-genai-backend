@@ -238,11 +238,19 @@ export const withCircuitBreaker = (functionName, options = {}) => {
  */
 export const withTimeout = (timeoutMs = 30000) => {
     return async (asyncOperation) => {
+        let timeoutId;
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
+            timeoutId = setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
         });
 
-        return Promise.race([asyncOperation, timeoutPromise]);
+        try {
+            const result = await Promise.race([asyncOperation, timeoutPromise]);
+            clearTimeout(timeoutId); // 🚨 CRITICAL: Clear timer to prevent Lambda hanging
+            return result;
+        } catch (error) {
+            clearTimeout(timeoutId); // 🚨 CRITICAL: Clear timer on error too
+            throw error;
+        }
     };
 };
 
