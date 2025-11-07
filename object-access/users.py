@@ -24,15 +24,27 @@ def _get_user_identifier(token_payload: dict) -> tuple[str, str]:
     if immutable_id and immutable_id.strip():
         return immutable_id, "immutable_id"
     
-    # Check username field (Cognito's actual username, often email)
+    # Check username field with IDP prefix stripping
     username = token_payload.get("username")
     if username and username.strip():
-        return username, "username"
+        # IDP_PREFIX logic
+        idp_prefix: str = (os.getenv("IDP_PREFIX") or "").lower()
+        logger.debug(f"IDP_PREFIX from env: {idp_prefix}")
+        logger.debug(f"Original username: {username}")
+        
+        user = username
+        if len(idp_prefix) > 0 and user.startswith(idp_prefix + "_"):
+            user = user.split(idp_prefix + "_", 1)[1]
+            logger.debug(f"User matched pattern, updated to: {user}")
+        logger.debug(f"Final user value: {user}")
+        
+        return user, "username"
     
-    # Fall back to email field if present
-    email = token_payload.get("email")
-    if email and email.strip():
-        return email, "email"
+    # Fall back to email field if present - COMMENTED OUT
+    # No code in our codebase relies on email for auth
+    # email = token_payload.get("email")
+    # if email and email.strip():
+    #     return email, "email"
     
     raise ValueError("No valid user identifier found in token")
 
@@ -216,7 +228,6 @@ def create_or_update_user(event, context):
             # Try username if we used email or immutable_id  
             if not user and id_type in ["email", "immutable_id"] and payload.get("username"):
                 user, prop_name = _find_user_by_property({"username": payload.get("username")})
-        # A user has not been found; need to create one
         if not user:
             _create_user(payload)
             return {"statusCode": 201, "body": json.dumps({"message": "User created"})}

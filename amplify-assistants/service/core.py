@@ -8,13 +8,13 @@ import time
 import boto3
 import json
 import uuid
-import requests
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from decimal import Decimal
 from pycommon.const import APIAccessType
 from pycommon.api.amplify_users import are_valid_amplify_users
 from pycommon.api.files import delete_file
+from pycommon.api.user_data import save_user_data
 
 # Initialize AWS services
 dynamodb = boto3.resource("dynamodb")
@@ -1073,39 +1073,18 @@ def assistant_share_save(access_token, current_user, shared_with, note, assistan
             "key": consolidation_key,  # Full S3 key WITH shares/ prefix for consistency
         }
 
-        # Make HTTP request to user-data API (cross-service call)
-        api_base_url = os.environ.get("API_BASE_URL", "http://localhost:3015")  # Default for local dev
-        
-        user_data_payload = {
-            "data": {
-                "appId": "amplify-shares",
-                "entityType": "received", 
-                "itemId": share_id,
-                "data": share_data
-            }
-        }
-        
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}"  # Use the access token from function parameter
-        }
-        
+        # Store share data using PyCommon utility function
         try:
-            response = requests.post(
-                f"{api_base_url}/user-data/put",
-                json=user_data_payload,
-                headers=headers,
-                timeout=30
-            )
+            save_result = save_user_data(access_token, "amplify-shares", "received", share_id, share_data)
             
-            if response.status_code == 200:
+            if save_result:
                 logger.info("Successfully stored share in USER_STORAGE_TABLE")
             else:
-                logger.error("Failed to store share in USER_STORAGE_TABLE: %s - %s", response.status_code, response.text)
+                logger.error("Failed to store share in USER_STORAGE_TABLE")
                 return {"success": False}
                 
         except Exception as e:
-            logger.error("Error making cross-service call to user-data API: %s", e)
+            logger.error("Error storing share data: %s", e)
             return {"success": False}
             
         logger.debug("Added to USER_STORAGE_TABLE")
