@@ -1,23 +1,44 @@
 # Migration Guide 
 
-🚨 **Change sets and backups are HIGHLY recommended before starting any migration process.**
+## ✨ **FRESH DEPLOYMENT? YOU'RE IN LUCK!**
+
+**If this is a brand new deployment with no existing data:**
+
+✅ **You ONLY need to do Step 1 & 2 (Environment Variables + Parameter Store)**  
+❌ **Skip Steps 3-5 entirely** - no migration needed!
+
+```bash
+# For fresh deployments, just do this:
+1. Update scripts/config.py with your DEP_NAME and STAGE
+2. Add LOG_LEVEL to your /var/{stage}-var.yml files
+3. Run: python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
+4. Deploy services normally: serverless amplify-lambda:deploy --stage dev
+   # Don't forget: cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+5. Done! 🎉
+```
+
+**Continue reading only if you have existing deployments with data to migrate.**
+
+---
+
+🚨 **For existing deployments: Change sets and backups are HIGHLY recommended before starting any migration process.**
 
 This guide outlines the migration process for eliminating the `amplify-lambda-basic-ops` service, transitioning all environment variables to AWS Parameter Store, and consolidating S3 data storage.
 
 ## 📋 **WHAT'S IN THIS DOCUMENT - READ ONLY WHAT APPLIES TO YOU**
 
 ### 🟢 **EVERYONE MUST DO** (No Exceptions)
-- [**Step 1: Environment Variables Setup**](#-step-1-configure-deployment-variables-mandatory) - Configure deployment variables
-- [**Step 2: Parameter Store Population**](#-step-2-parameter-store-setup-mandatory) - Populate AWS Parameter Store
+- [**Step 1: Environment Variables Setup**](#step-1-configure-deployment-variables-mandatory) - Configure deployment variables
+- [**Step 2: Parameter Store Population**](#step-2-parameter-store-setup-mandatory) - Populate AWS Parameter Store
 
 ### 🟡 **CONDITIONAL SECTIONS** (Read Based on Your Situation)
-- [**Step 3a: IF YOU HAVE Basic Ops Service**](#-step-3a-if-you-have-basic-ops-service) - Special deployment sequence
-- [**Step 3b: IF YOU DON'T HAVE Basic Ops**](#-step-3b-if-you-dont-have-basic-ops-service) - Standard deployment
-- [**Step 4a: IF YOU NEED User ID Migration**](#-step-4a-if-you-need-user-id-migration) - Email → Username migration
-- [**Step 4b: IF YOU ONLY NEED S3 Consolidation**](#-step-4b-if-you-only-need-s3-consolidation-highly-recommended) - Same IDs, consolidate buckets
+- [**Step 3a: IF YOU HAVE Basic Ops Service**](#step-3a-if-you-have-basic-ops-service) - Special deployment sequence
+- [**Step 3b: IF YOU DON'T HAVE Basic Ops**](#step-3b-if-you-dont-have-basic-ops-service) - Standard deployment
+- [**Step 4a: IF YOU NEED User ID Migration**](#step-4a-if-you-need-user-id-migration) - Email → Username migration
+- [**Step 4b: IF YOU ONLY NEED S3 Consolidation**](#step-4b-if-you-only-need-s3-consolidation-highly-recommended) - Same IDs, consolidate buckets
 
 ### 🔵 **OPTIONAL BUT RECOMMENDED**
-- [**Backup Strategy**](#-backup-strategy-recommended) - How backups work vs migration verification
+- [**Backup Strategy**](#backup-strategy-recommended) - How backups work vs migration verification
 - [**Advanced Troubleshooting**](#troubleshooting) - For when things go wrong
 
 ### 🎯 **MIGRATION GOALS**
@@ -978,7 +999,18 @@ Ensure Lambda execution roles have Parameter Store access:
 
 ## 🎯 **QUICK REFERENCE - WHAT DO I ACTUALLY NEED TO DO?**
 
-### 🚨 **EVERYONE MUST DO (No Skipping)**
+### 🆕 **FRESH DEPLOYMENT (No existing data)**
+```bash
+# Steps 1 & 2 only - no migration needed!
+1. Update scripts/config.py (DEP_NAME and STAGE)
+2. Add LOG_LEVEL to /var/{stage}-var.yml files  
+3. Run: python3 scripts/populate_parameter_store.py --stage dev --dep-name v6
+4. Deploy: serverless amplify-lambda:deploy --stage dev
+5. Run: cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
+# You're done! 🎉
+```
+
+### 🚨 **EXISTING DEPLOYMENT (Has data to migrate)**
 1. **Update `scripts/config.py`** with your `DEP_NAME` and `STAGE`
 2. **Validate config**: `cd scripts && python3 -c "from config import get_config; config = get_config(); print('✓ Bucket:', config['S3_CONSOLIDATION_BUCKET_NAME'])"`
 3. **Add `LOG_LEVEL` to your `/var/{stage}-var.yml`** files  
@@ -989,12 +1021,12 @@ Ensure Lambda execution roles have Parameter Store access:
 # Check if this returns a stack:
 aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-ops-{STAGE}
 ```
-- **YES**: Follow [Step 3a](#-step-3a-if-you-have-basic-ops-service)
-- **NO**: Follow [Step 3b](#-step-3b-if-you-dont-have-basic-ops-service)
+- **YES**: Follow [Step 3a](#step-3a-if-you-have-basic-ops-service)
+- **NO**: Follow [Step 3b](#step-3b-if-you-dont-have-basic-ops-service)
 
 ### **DO I NEED ID MIGRATION OR JUST CONSOLIDATION?**
-- **ID Migration** (Email → Username): Follow [Step 4a](#-step-4a-if-you-need-user-id-migration)  
-- **S3 Consolidation Only** (Highly Recommended): Follow [Step 4b](#-step-4b-if-you-only-need-s3-consolidation-highly-recommended)
+- **ID Migration** (Email → Username): Follow [Step 4a](#step-4a-if-you-need-user-id-migration)  
+- **S3 Consolidation Only** (Highly Recommended): Follow [Step 4b](#step-4b-if-you-only-need-s3-consolidation-highly-recommended)
 
 ### ⚡ **QUICK MIGRATION COMMANDS**
 
