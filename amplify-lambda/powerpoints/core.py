@@ -51,12 +51,31 @@ def handle_pptx_upload(event, context):
             else []
         )
 
-        # Retrieve existing templates
-        config_item = admin_table.get_item(Key={"config_id": PPTX_TEMPLATES})
-        if "Item" in config_item:
-            existing_templates = config_item["Item"]["data"]
-        else:
-            # If not present, initialize as empty
+        # Retrieve existing templates and check for idempotency
+        try:
+            config_item = admin_table.get_item(Key={"config_id": PPTX_TEMPLATES})
+            if "Item" in config_item:
+                existing_templates = config_item["Item"]["data"]
+                
+                # Check if template already exists with same metadata (idempotency check)
+                for existing_template in existing_templates:
+                    if (existing_template["name"] == template_name and
+                        existing_template["isAvailable"] == is_available and
+                        existing_template["amplifyGroups"] == amplify_groups):
+                        logger.info(f"Template {template_name} already processed with same metadata, skipping")
+                        skip_record = True
+                        break
+                else:
+                    skip_record = False
+                
+                if skip_record:
+                    continue
+            else:
+                # If not present, initialize as empty
+                existing_templates = []
+                
+        except Exception as e:
+            logger.warning(f"Could not check for existing template {template_name}: {e}. Proceeding with processing.")
             existing_templates = []
 
         # Convert list to dict for easy update
