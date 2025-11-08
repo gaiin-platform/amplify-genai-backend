@@ -28,7 +28,9 @@ from s3_data_migration import (
     migrate_agent_state_bucket_for_user,
     migrate_group_assistant_conversations_bucket_for_user,
     cleanup_orphaned_workflow_templates_for_user,
-    main as s3_migration_main
+    migrate_api_documentation_bucket,
+    migrate_conversion_output_bucket,
+    cleanup_conversion_buckets
 )
 from user_storage_backup import backup_user_storage_table
 
@@ -1027,7 +1029,107 @@ def update_shares_table(old_id: str, new_id: str, all_users_map: dict, dry_run: 
     except Exception as e:
         log(msg % f"Error updating shares for user ID from {old_id} to {new_id}: {e}")
         return False
+
+
+# "DATA_DISCLOSURE_VERSIONS_TABLE": "amplify-v6-data-disclosure-dev-versions",  
+# "DATA_DISCLOSURE_STORAGE_BUCKET": "amplify-v6-data-disclosure-dev-storage", #Marked for deletion
+def update_data_disclosure_table(dry_run: bool) -> bool:
+    """
+    Update DATA_DISCLOSURE_VERSIONS_TABLE s3_reference fields to point to consolidation bucket.
+    Also triggers S3 migration for DATA_DISCLOSURE_STORAGE_BUCKET.
     
+    Processing flow:
+    1. Migrate S3 files from DATA_DISCLOSURE_STORAGE_BUCKET to consolidation bucket
+    2. Update s3_reference fields in DATA_DISCLOSURE_VERSIONS_TABLE to point to new locations
+    
+    Args:
+        dry_run: If True, only show what would be done
+        
+    Returns:
+        bool: Success status
+    """
+    msg = f"[update_data_disclosure_table][dry-run: {dry_run}] %s"
+    
+    versions_table_name = table_names.get("DATA_DISCLOSURE_VERSIONS_TABLE")
+    storage_bucket_name = table_names.get("DATA_DISCLOSURE_STORAGE_BUCKET")
+    consolidation_bucket_name = table_names.get("S3_CONSOLIDATION_BUCKET_NAME")
+    
+    if not versions_table_name:
+        log(msg % "DATA_DISCLOSURE_VERSIONS_TABLE not found in config, skipping")
+        return True
+        
+    if not storage_bucket_name or not consolidation_bucket_name:
+        log(msg % "Required bucket names not found in config, skipping")
+        return True
+    
+    try:
+        # Step 1: Migrate S3 files from storage bucket to consolidation bucket
+        log(msg % "Step 1: Migrating S3 files to consolidation bucket...")
+        
+        if not dry_run:
+            from s3_data_migration import migrate_data_disclosure_storage_bucket
+            if not migrate_data_disclosure_storage_bucket(dry_run=False):
+                log(msg % "Failed to migrate S3 files")
+                return False
+        else:
+            log(msg % "[DRY RUN] Would migrate S3 files from DATA_DISCLOSURE_STORAGE_BUCKET to consolidation bucket")
+        
+        # Step 2: Update DynamoDB s3_reference fields
+        log(msg % "Step 2: Updating s3_reference fields in DATA_DISCLOSURE_VERSIONS_TABLE...")
+        
+        versions_table = dynamodb.Table(versions_table_name)
+        # Scan all records in the table to find ones with old bucket references
+        updated_count = 0
+        
+        # Use direct table scan since we need all records
+        scan_kwargs = {}
+        while True:
+            response = versions_table.scan(**scan_kwargs)
+            
+            for item in response.get("Items", []):
+                old_s3_ref = item.get("s3_reference", "")
+                pdf_id = item.get("pdf_id", "")
+                
+                # Check if this record needs updating (points to old storage bucket)
+                if old_s3_ref and storage_bucket_name in old_s3_ref:
+                    # Update s3_reference to point to consolidation bucket with dataDisclosure/ prefix
+                    new_pdf_id = f"dataDisclosure/{pdf_id}" if not pdf_id.startswith("dataDisclosure/") else pdf_id
+                    new_s3_ref = f"s3://{consolidation_bucket_name}/{new_pdf_id}"
+                    
+                    log(msg % f"Updating: {pdf_id} -> {new_pdf_id} | {old_s3_ref} -> {new_s3_ref}")
+                    
+                    if not dry_run:
+                        # Update the record
+                        versions_table.update_item(
+                            Key={
+                                'key': item['key'],
+                                'version': item['version']
+                            },
+                            UpdateExpression="SET s3_reference = :new_ref, pdf_id = :new_id",
+                            ExpressionAttributeValues={
+                                ':new_ref': new_s3_ref,
+                                ':new_id': new_pdf_id
+                            }
+                        )
+                        log(msg % f"Updated record successfully")
+                    else:
+                        log(msg % f"[DRY RUN] Would update record")
+                    
+                    updated_count += 1
+            
+            # Handle pagination
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        
+        log(msg % f"Data disclosure migration completed. Updated {updated_count} records.")
+        return True
+        
+    except Exception as e:
+        log(msg % f"Error updating data disclosure table: {e}")
+        return False
+
+
 # "OBJECT_ACCESS_DYNAMODB_TABLE" : "amplify-v6-object-access-dev-object-access",
 # DONE
 def update_object_access_table(old_id: str, new_id: str, dry_run: bool) -> bool:
@@ -3075,8 +3177,8 @@ def migrate_all_user_data_storage_ids(users_map: dict, dry_run: bool) -> bool:
                             new_key = old_key
                             key_updated = False
                             
-                            log(msg % f"DEBUG: Processing key update - PK: {pk}, entityType: {entity_type}, old_key: {old_key}")
-                            log(msg % f"DEBUG: Available user mappings: {users_map}")
+                            # log(msg % f"DEBUG: Processing key update - PK: {pk}, entityType: {entity_type}, old_key: {old_key}")
+                            # log(msg % f"DEBUG: Available user mappings: {users_map}")
                             
                             # Replace old user IDs with new user IDs in S3 paths
                             for old_id, new_id in users_map.items():
@@ -3731,388 +3833,336 @@ if __name__ == "__main__":
                         continue
                 
                 ### ONLY RUN IF USER ID MIGRATION IS REQUIRED ###
-                if old_user_id != new_user_id:
+                # if old_user_id != new_user_id:
 
-                    # # Update accounts table (has built-in existence checking)
-                    if validation_results["tables"].get("ACCOUNTS_DYNAMO_TABLE", False):
-                        if not update_accounts(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required.")
-                    else:
-                        log(f"[{old_user_id}] Skipping accounts table - does not exist")
+                #     # # Update accounts table (has built-in existence checking)
+                #     if validation_results["tables"].get("ACCOUNTS_DYNAMO_TABLE", False):
+                #         if not update_accounts(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update accounts for {old_user_id}. Skipping - Manual intervention required.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping accounts table - does not exist")
 
-                    # # Update API keys table (has built-in existence checking)  
-                    if validation_results["tables"].get("API_KEYS_DYNAMODB_TABLE", False):
-                        if not update_api_keys(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys.")
-                    else:
-                        log(f"[{old_user_id}] Skipping API keys table - does not exist")
+                #     # # Update API keys table (has built-in existence checking)  
+                #     if validation_results["tables"].get("API_KEYS_DYNAMODB_TABLE", False):
+                #         if not update_api_keys(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update API keys for {old_user_id}. This is assumed reasonable as not all users have API keys.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping API keys table - does not exist")
 
-                    # # Update ops table
-                    if validation_results["tables"].get("OPS_DYNAMODB_TABLE", False):
-                        if not update_ops_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping ops table - does not exist")
+                #     # # Update ops table
+                #     if validation_results["tables"].get("OPS_DYNAMODB_TABLE", False):
+                #         if not update_ops_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update ops records for {old_user_id}. This is assumed reasonable as not all users have ops records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping ops table - does not exist")
 
-                    # Update OAuth state table
-                    if validation_results["tables"].get("OAUTH_STATE_TABLE", False):
-                        if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping OAuth state table - does not exist")
+                #     # Update OAuth state table
+                #     if validation_results["tables"].get("OAUTH_STATE_TABLE", False):
+                #         if not update_oauth_state_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update OAuth state records for {old_user_id}. This is assumed reasonable as not all users have OAuth state records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping OAuth state table - does not exist")
 
-                    # Update amplify admin table
-                    if validation_results["tables"].get("AMPLIFY_ADMIN_DYNAMODB_TABLE", False):
-                        if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins.")
-                    else:
-                        log(f"[{old_user_id}] Skipping amplify admin table - does not exist")
+                #     # Update amplify admin table
+                #     if validation_results["tables"].get("AMPLIFY_ADMIN_DYNAMODB_TABLE", False):
+                #         if not update_amplify_admin_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update Amplify Admin records for {old_user_id}. This is assumed reasonable as not all users are admins.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping amplify admin table - does not exist")
 
-                    # Update agent event templates table
-                    if validation_results["tables"].get("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE", False):
-                        if not update_agent_event_templates_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates.")
-                    else:
-                        log(f"[{old_user_id}] Skipping agent event templates table - does not exist")
+                #     # Update agent event templates table
+                #     if validation_results["tables"].get("AGENT_EVENT_TEMPLATES_DYNAMODB_TABLE", False):
+                #         if not update_agent_event_templates_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update agent event templates records for {old_user_id}. This is assumed reasonable as not all users have agent event templates.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping agent event templates table - does not exist")
 
-                    # Update object access table
-                    if validation_results["tables"].get("OBJECT_ACCESS_DYNAMODB_TABLE", False):
-                        if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping object access table - does not exist")
+                #     # Update object access table
+                #     if validation_results["tables"].get("OBJECT_ACCESS_DYNAMODB_TABLE", False):
+                #         if not update_object_access_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update object access records for {old_user_id}. This is assumed reasonable as not all users have object access records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping object access table - does not exist")
 
-                    # Update assistants aliases table
-                    if validation_results["tables"].get("ASSISTANTS_ALIASES_DYNAMODB_TABLE", False):
-                        if not update_assistants_aliases_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping assistants aliases table - does not exist")
+                #     # Update assistants aliases table
+                #     if validation_results["tables"].get("ASSISTANTS_ALIASES_DYNAMODB_TABLE", False):
+                #         if not update_assistants_aliases_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update assistants aliases records for {old_user_id}. This is assumed reasonable as not all users have assistants aliases records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping assistants aliases table - does not exist")
 
-                    # Update assistants table
-                    if validation_results["tables"].get("ASSISTANTS_DYNAMODB_TABLE", False):
-                        if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping assistants table - does not exist")
+                #     # Update assistants table
+                #     if validation_results["tables"].get("ASSISTANTS_DYNAMODB_TABLE", False):
+                #         if not update_assistants_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update assistants records for {old_user_id}. This is assumed reasonable as not all users have assistants records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping assistants table - does not exist")
 
-                    # Update assistant groups table
-                    if validation_results["tables"].get("ASSISTANT_GROUPS_DYNAMO_TABLE", False):
-                        if not update_assistant_groups_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update assistant groups records for {old_user_id}. This is assumed reasonable as not all users have assistant groups records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping assistant groups table - does not exist")
+                #     # Update assistant groups table
+                #     if validation_results["tables"].get("ASSISTANT_GROUPS_DYNAMO_TABLE", False):
+                #         if not update_assistant_groups_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update assistant groups records for {old_user_id}. This is assumed reasonable as not all users have assistant groups records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping assistant groups table - does not exist")
 
-                    # Update assistant lookup table
-                    if validation_results["tables"].get("ASSISTANT_LOOKUP_DYNAMODB_TABLE", False):
-                        if not update_assistant_lookup_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update assistant lookup records for {old_user_id}. This is assumed reasonable as not all users have assistant lookup records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping assistant lookup table - does not exist")
+                #     # Update assistant lookup table
+                #     if validation_results["tables"].get("ASSISTANT_LOOKUP_DYNAMODB_TABLE", False):
+                #         if not update_assistant_lookup_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update assistant lookup records for {old_user_id}. This is assumed reasonable as not all users have assistant lookup records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping assistant lookup table - does not exist")
 
-                    # Update assistant threads table
-                    if validation_results["tables"].get("ASSISTANT_THREADS_DYNAMODB_TABLE", False):
-                        if not update_assistant_threads_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update assistant threads records for {old_user_id}. This is assumed reasonable as not all users have assistant threads records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping assistant threads table - does not exist")
+                #     # Update assistant threads table
+                #     if validation_results["tables"].get("ASSISTANT_THREADS_DYNAMODB_TABLE", False):
+                #         if not update_assistant_threads_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update assistant threads records for {old_user_id}. This is assumed reasonable as not all users have assistant threads records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping assistant threads table - does not exist")
 
-                    # Update assistant thread runs table
-                    if validation_results["tables"].get("ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE", False):
-                        if not update_assistant_thread_runs_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update assistant thread runs records for {old_user_id}. This is assumed reasonable as not all users have assistant thread runs records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping assistant thread runs table - does not exist")
+                #     # Update assistant thread runs table
+                #     if validation_results["tables"].get("ASSISTANT_THREAD_RUNS_DYNAMODB_TABLE", False):
+                #         if not update_assistant_thread_runs_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update assistant thread runs records for {old_user_id}. This is assumed reasonable as not all users have assistant thread runs records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping assistant thread runs table - does not exist")
 
-                    # Update chat usage table
-                    if validation_results["tables"].get("CHAT_USAGE_DYNAMO_TABLE", False):
-                        if not update_chat_usage_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update chat usage records for {old_user_id}. This is assumed reasonable as not all users have chat usage records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping chat usage table - does not exist")
+                #     # Update chat usage table
+                #     if validation_results["tables"].get("CHAT_USAGE_DYNAMO_TABLE", False):
+                #         if not update_chat_usage_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update chat usage records for {old_user_id}. This is assumed reasonable as not all users have chat usage records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping chat usage table - does not exist")
 
-                    # Update cost calculations table
-                    if validation_results["tables"].get("COST_CALCULATIONS_DYNAMO_TABLE", False):
-                        if not update_cost_calculations_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update cost calculations records for {old_user_id}. This is assumed reasonable as not all users have cost calculations records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping cost calculations table - does not exist")
+                #     # Update cost calculations table
+                #     if validation_results["tables"].get("COST_CALCULATIONS_DYNAMO_TABLE", False):
+                #         if not update_cost_calculations_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update cost calculations records for {old_user_id}. This is assumed reasonable as not all users have cost calculations records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping cost calculations table - does not exist")
 
-                    # Update data disclosure acceptance table
-                    if validation_results["tables"].get("DATA_DISCLOSURE_ACCEPTANCE_TABLE", False):
-                        if not update_data_disclosure_acceptance_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update data disclosure acceptance records for {old_user_id}. This is assumed reasonable as not all users have data disclosure acceptance records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping data disclosure acceptance table - does not exist")
+                #     # Update data disclosure acceptance table
+                #     if validation_results["tables"].get("DATA_DISCLOSURE_ACCEPTANCE_TABLE", False):
+                #         if not update_data_disclosure_acceptance_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update data disclosure acceptance records for {old_user_id}. This is assumed reasonable as not all users have data disclosure acceptance records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping data disclosure acceptance table - does not exist")
 
-                    # Update db connections table
-                    if validation_results["tables"].get("DB_CONNECTIONS_TABLE", False):
-                        if not update_db_connections_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update db connections records for {old_user_id}. This is assumed reasonable as not all users have db connections records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping db connections table - does not exist")
+                #     # Update db connections table
+                #     if validation_results["tables"].get("DB_CONNECTIONS_TABLE", False):
+                #         if not update_db_connections_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update db connections records for {old_user_id}. This is assumed reasonable as not all users have db connections records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping db connections table - does not exist")
 
-                    # Update email settings table
-                    if validation_results["tables"].get("EMAIL_SETTINGS_DYNAMO_TABLE", False):
-                        if not update_email_settings_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update email settings records for {old_user_id}. This is assumed reasonable as not all users have email settings records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping email settings table - does not exist")
+                #     # Update email settings table
+                #     if validation_results["tables"].get("EMAIL_SETTINGS_DYNAMO_TABLE", False):
+                #         if not update_email_settings_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update email settings records for {old_user_id}. This is assumed reasonable as not all users have email settings records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping email settings table - does not exist")
 
-                    # Update files table
-                    if validation_results["tables"].get("FILES_DYNAMO_TABLE", False):
-                        if not update_files_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update files records for {old_user_id}. This is assumed reasonable as not all users have files records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping files table - does not exist")
+                #     # Update files table
+                #     if validation_results["tables"].get("FILES_DYNAMO_TABLE", False):
+                #         if not update_files_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update files records for {old_user_id}. This is assumed reasonable as not all users have files records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping files table - does not exist")
 
-                    # Update hash files table
-                    if validation_results["tables"].get("HASH_FILES_DYNAMO_TABLE", False):
-                        if not update_hash_files_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update hash files records for {old_user_id}. This is assumed reasonable as not all users have hash files records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping hash files table - does not exist")
+                #     # Update hash files table
+                #     if validation_results["tables"].get("HASH_FILES_DYNAMO_TABLE", False):
+                #         if not update_hash_files_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update hash files records for {old_user_id}. This is assumed reasonable as not all users have hash files records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping hash files table - does not exist")
 
-                    # Update embedding progress table
-                    if validation_results["tables"].get("EMBEDDING_PROGRESS_TABLE", False):
-                        if not update_embedding_progress_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update embedding progress records for {old_user_id}. This is assumed reasonable as not all users have embedding progress records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping embedding progress table - does not exist")
+                #     # Update embedding progress table
+                #     if validation_results["tables"].get("EMBEDDING_PROGRESS_TABLE", False):
+                #         if not update_embedding_progress_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update embedding progress records for {old_user_id}. This is assumed reasonable as not all users have embedding progress records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping embedding progress table - does not exist")
 
-                    # Update history cost calculations table
-                    if validation_results["tables"].get("HISTORY_COST_CALCULATIONS_DYNAMO_TABLE", False):
-                        if not update_history_cost_calculations_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update history cost calculations records for {old_user_id}. This is assumed reasonable as not all users have history cost calculations records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping history cost calculations table - does not exist")
+                #     # Update history cost calculations table
+                #     if validation_results["tables"].get("HISTORY_COST_CALCULATIONS_DYNAMO_TABLE", False):
+                #         if not update_history_cost_calculations_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update history cost calculations records for {old_user_id}. This is assumed reasonable as not all users have history cost calculations records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping history cost calculations table - does not exist")
 
-                    # Update additional charges table
-                    if validation_results["tables"].get("ADDITIONAL_CHARGES_TABLE", False):
-                        if not update_additional_charges_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update additional charges records for {old_user_id}. This is assumed reasonable as not all users have additional charges records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping additional charges table - does not exist")
+                #     # Update additional charges table
+                #     if validation_results["tables"].get("ADDITIONAL_CHARGES_TABLE", False):
+                #         if not update_additional_charges_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update additional charges records for {old_user_id}. This is assumed reasonable as not all users have additional charges records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping additional charges table - does not exist")
 
-                    # Update oauth user table
-                    if validation_results["tables"].get("OAUTH_USER_TABLE", False):
-                        if not update_oauth_user_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update oauth user records for {old_user_id}. This is assumed reasonable as not all users have oauth user records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping oauth user table - does not exist")
+                #     # Update oauth user table
+                #     if validation_results["tables"].get("OAUTH_USER_TABLE", False):
+                #         if not update_oauth_user_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update oauth user records for {old_user_id}. This is assumed reasonable as not all users have oauth user records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping oauth user table - does not exist")
 
-                    # Update user tags table
-                    if validation_results["tables"].get("USER_TAGS_DYNAMO_TABLE", False):
-                        if not update_user_tags_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update user tags records for {old_user_id}. This is assumed reasonable as not all users have user tags records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping user tags table - does not exist")
+                #     # Update user tags table
+                #     if validation_results["tables"].get("USER_TAGS_DYNAMO_TABLE", False):
+                #         if not update_user_tags_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update user tags records for {old_user_id}. This is assumed reasonable as not all users have user tags records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping user tags table - does not exist")
 
-                    # Update memory table
-                    if validation_results["tables"].get("MEMORY_DYNAMO_TABLE", False):
-                        if not update_memory_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update memory records for {old_user_id}. This is assumed reasonable as not all users have memory records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping memory table - does not exist")
+                #     # Update memory table
+                #     if validation_results["tables"].get("MEMORY_DYNAMO_TABLE", False):
+                #         if not update_memory_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update memory records for {old_user_id}. This is assumed reasonable as not all users have memory records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping memory table - does not exist")
 
-                    # Update common data table
-                    if validation_results["tables"].get("COMMON_DATA_DYNAMO_TABLE", False):
-                        if not update_common_data_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update common data records for {old_user_id}. This is assumed reasonable as not all users have common data records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping common data table - does not exist")
+                #     # Update common data table
+                #     if validation_results["tables"].get("COMMON_DATA_DYNAMO_TABLE", False):
+                #         if not update_common_data_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update common data records for {old_user_id}. This is assumed reasonable as not all users have common data records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping common data table - does not exist")
 
-                    # Update dynamic code table
-                    if validation_results["tables"].get("DYNAMO_DYNAMIC_CODE_TABLE", False):
-                        if not update_dynamic_code_table(old_user_id, new_user_id, args.dry_run):
-                            log(f"Unable to update dynamic code records for {old_user_id}. This is assumed reasonable as not all users have dynamic code records.")
-                    else:
-                        log(f"[{old_user_id}] Skipping dynamic code table - does not exist")
+                #     # Update dynamic code table
+                #     if validation_results["tables"].get("DYNAMO_DYNAMIC_CODE_TABLE", False):
+                #         if not update_dynamic_code_table(old_user_id, new_user_id, args.dry_run):
+                #             log(f"Unable to update dynamic code records for {old_user_id}. This is assumed reasonable as not all users have dynamic code records.")
+                #     else:
+                #         log(f"[{old_user_id}] Skipping dynamic code table - does not exist")
 
 
-                ### ALWAYS REQUIRED TO BE RUN REGARDLESS OF ID CHANGE ###
-                ### (These handle S3 migrations and data consolidation) ###
+                # ### ALWAYS REQUIRED TO BE RUN REGARDLESS OF ID CHANGE ###
+                # ### (These handle S3 migrations and data consolidation) ###
 
-                # Update agent state table + S3 bucket migration
-                table_exists = validation_results["tables"].get("AGENT_STATE_DYNAMODB_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("AGENT_STATE_BUCKET", False)
-                if table_exists or bucket_exists:
-                    if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records.")
-                else:
-                    log(f"[{old_user_id}] Skipping agent state migration - table and bucket do not exist")
+                # # Update agent state table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("AGENT_STATE_DYNAMODB_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("AGENT_STATE_BUCKET", False)
+                # if table_exists or bucket_exists:
+                #     if not update_agent_state_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update agent state records for {old_user_id}. This is assumed reasonable as not all users have agent state records.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping agent state migration - table and bucket do not exist")
 
-                # Update artifacts table + S3 bucket migration
-                table_exists = validation_results["tables"].get("ARTIFACTS_DYNAMODB_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("S3_ARTIFACTS_BUCKET", False)
-                if table_exists or bucket_exists:
-                    if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts.")
-                else:
-                    log(f"[{old_user_id}] Skipping artifacts migration - table and bucket do not exist")
+                # # Update artifacts table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("ARTIFACTS_DYNAMODB_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("S3_ARTIFACTS_BUCKET", False)
+                # if table_exists or bucket_exists:
+                #     if not update_artifacts_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update artifacts records for {old_user_id}. This is assumed reasonable as not all users have artifacts.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping artifacts migration - table and bucket do not exist")
                 
-                # Update workflow templates table + S3 bucket migration
-                table_exists = validation_results["tables"].get("WORKFLOW_TEMPLATES_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("WORKFLOW_TEMPLATES_BUCKET", False)
-                if table_exists or bucket_exists:
-                    if not update_workflow_templates_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates.")
+                # # Update workflow templates table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("WORKFLOW_TEMPLATES_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("WORKFLOW_TEMPLATES_BUCKET", False)
+                # if table_exists or bucket_exists:
+                #     if not update_workflow_templates_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update workflow templates records for {old_user_id}. This is assumed reasonable as not all users have workflow templates.")
                     
-                    # CLEANUP: Check for orphaned workflow files in S3 (files without metadata entries)
-                    if bucket_exists:
-                        log(f"[{old_user_id}] Checking for orphaned workflow templates in S3...")
-                        try:
-                            cleanup_success = cleanup_orphaned_workflow_templates_for_user(old_user_id, new_user_id, args.dry_run, AWS_REGION)
-                            if cleanup_success:
-                                log(f"[{old_user_id}] Orphaned workflow templates cleanup completed successfully")
-                            else:
-                                log(f"[{old_user_id}] Warning: Some issues occurred during orphaned workflow cleanup")
-                        except Exception as cleanup_e:
-                            log(f"[{old_user_id}] Warning: Failed to cleanup orphaned workflows: {cleanup_e}")
-                else:
-                    log(f"[{old_user_id}] Skipping workflow templates migration - table and bucket do not exist")
+                #     # CLEANUP: Check for orphaned workflow files in S3 (files without metadata entries)
+                #     if bucket_exists:
+                #         log(f"[{old_user_id}] Checking for orphaned workflow templates in S3...")
+                #         try:
+                #             cleanup_success = cleanup_orphaned_workflow_templates_for_user(old_user_id, new_user_id, args.dry_run, AWS_REGION)
+                #             if cleanup_success:
+                #                 log(f"[{old_user_id}] Orphaned workflow templates cleanup completed successfully")
+                #             else:
+                #                 log(f"[{old_user_id}] Warning: Some issues occurred during orphaned workflow cleanup")
+                #         except Exception as cleanup_e:
+                #             log(f"[{old_user_id}] Warning: Failed to cleanup orphaned workflows: {cleanup_e}")
+                # else:
+                #     log(f"[{old_user_id}] Skipping workflow templates migration - table and bucket do not exist")
 
-                # Update assistant code interpreter table + S3 bucket migration
-                table_exists = validation_results["tables"].get("ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME", False)
-                if table_exists or bucket_exists:
-                    if not update_assistant_code_interpreter_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update assistant code interpreter records for {old_user_id}. This is assumed reasonable as not all users have assistant code interpreter records.")
-                else:
-                    log(f"[{old_user_id}] Skipping assistant code interpreter migration - table and bucket do not exist")
+                # # Update assistant code interpreter table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("ASSISTANT_CODE_INTERPRETER_DYNAMODB_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("ASSISTANTS_CODE_INTERPRETER_FILES_BUCKET_NAME", False)
+                # if table_exists or bucket_exists:
+                #     if not update_assistant_code_interpreter_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update assistant code interpreter records for {old_user_id}. This is assumed reasonable as not all users have assistant code interpreter records.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping assistant code interpreter migration - table and bucket do not exist")
 
-                # Update conversation metadata table + S3 bucket migration
-                table_exists = validation_results["tables"].get("CONVERSATION_METADATA_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("S3_CONVERSATIONS_BUCKET_NAME", False)
-                if table_exists or bucket_exists:
-                    if not update_conversation_metadata_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update conversation metadata records for {old_user_id}. This is assumed reasonable as not all users have conversation metadata records.")
-                else:
-                    log(f"[{old_user_id}] Skipping conversation metadata migration - table and bucket do not exist")
+                # # Update conversation metadata table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("CONVERSATION_METADATA_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("S3_CONVERSATIONS_BUCKET_NAME", False)
+                # if table_exists or bucket_exists:
+                #     if not update_conversation_metadata_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update conversation metadata records for {old_user_id}. This is assumed reasonable as not all users have conversation metadata records.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping conversation metadata migration - table and bucket do not exist")
 
-                # Update group assistant conversations table + S3 bucket migration
-                table_exists = validation_results["tables"].get("GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME", False)
-                if table_exists or bucket_exists:
-                    if not update_group_assistant_conversations_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update group assistant conversations records for {old_user_id}. This is assumed reasonable as not all users have group assistant conversations records.")
-                else:
-                    log(f"[{old_user_id}] Skipping group assistant conversations migration - table and bucket do not exist")
+                # # Update group assistant conversations table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("GROUP_ASSISTANT_CONVERSATIONS_DYNAMO_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("S3_GROUP_ASSISTANT_CONVERSATIONS_BUCKET_NAME", False)
+                # if table_exists or bucket_exists:
+                #     if not update_group_assistant_conversations_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update group assistant conversations records for {old_user_id}. This is assumed reasonable as not all users have group assistant conversations records.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping group assistant conversations migration - table and bucket do not exist")
 
-                # Update scheduled tasks table + S3 bucket migration
-                table_exists = validation_results["tables"].get("SCHEDULED_TASKS_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("SCHEDULED_TASKS_LOGS_BUCKET", False)
-                if table_exists or bucket_exists:
-                    if not update_scheduled_tasks_table(old_user_id, new_user_id, args.dry_run):
-                        log(f"Unable to update scheduled tasks records for {old_user_id}. This is assumed reasonable as not all users have scheduled tasks records.")
-                else:
-                    log(f"[{old_user_id}] Skipping scheduled tasks migration - table and bucket do not exist")
+                # # Update scheduled tasks table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("SCHEDULED_TASKS_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("SCHEDULED_TASKS_LOGS_BUCKET", False)
+                # if table_exists or bucket_exists:
+                #     if not update_scheduled_tasks_table(old_user_id, new_user_id, args.dry_run):
+                #         log(f"Unable to update scheduled tasks records for {old_user_id}. This is assumed reasonable as not all users have scheduled tasks records.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping scheduled tasks migration - table and bucket do not exist")
 
-                # Update shares table + S3 bucket migration
-                table_exists = validation_results["tables"].get("SHARES_DYNAMODB_TABLE", False)
-                bucket_exists = validation_results["buckets"].get("S3_SHARE_BUCKET_NAME", False)
-                if table_exists or bucket_exists:
-                    if not update_shares_table(old_user_id, new_user_id, users_map, args.dry_run):
-                        log(f"Unable to update shares records for {old_user_id}. This is assumed reasonable as not all users have shares records.")
-                else:
-                    log(f"[{old_user_id}] Skipping shares migration - table and bucket do not exist")
+                # # Update shares table + S3 bucket migration
+                # table_exists = validation_results["tables"].get("SHARES_DYNAMODB_TABLE", False)
+                # bucket_exists = validation_results["buckets"].get("S3_SHARE_BUCKET_NAME", False)
+                # if table_exists or bucket_exists:
+                #     if not update_shares_table(old_user_id, new_user_id, users_map, args.dry_run):
+                #         log(f"Unable to update shares records for {old_user_id}. This is assumed reasonable as not all users have shares records.")
+                # else:
+                #     log(f"[{old_user_id}] Skipping shares migration - table and bucket do not exist")
                 
-        # Step 2: Run standalone S3 bucket migrations (data disclosure, API docs)
-        log(f"\n=== STANDALONE S3 BUCKET MIGRATION ===")
-        log(f"Note: User-specific S3 migrations were already handled in the update functions above.")
-        log(f"This step migrates standalone buckets (data disclosure, API documentation).")
-        
-        if args.dry_run:
-            # In dry run mode, automatically run S3 migration dry run
-            log(f"[DRY RUN] Running standalone S3 bucket migration in dry run mode...")
-            try:
-                import sys as sys_module
-                original_argv = sys_module.argv
-                
-                # Set up argv for s3_migration_main with dry-run
-                sys_module.argv = ['s3_data_migration.py', '--bucket', 'all', '--dry-run']
-                
-                # Call S3 migration main function
-                s3_success = s3_migration_main()
-                
-                # Restore original argv
-                sys_module.argv = original_argv
-                
-                if s3_success:
-                    log(f"[DRY RUN] S3 bucket migration dry run completed successfully!")
-                else:
-                    log(f"[DRY RUN] S3 bucket migration dry run encountered issues!")
-                    
-            except Exception as s3_error:
-                log(f"[DRY RUN] Error running S3 migration dry run: {s3_error}")
+        # Update data disclosure table (standalone - run once, not per user)
+        table_exists = validation_results["tables"].get("DATA_DISCLOSURE_VERSIONS_TABLE", False)
+        bucket_exists = validation_results["buckets"].get("DATA_DISCLOSURE_STORAGE_BUCKET", False)
+        if table_exists or bucket_exists:
+            log(f"\n=== DATA DISCLOSURE MIGRATION (STANDALONE) ===")
+            if not update_data_disclosure_table(args.dry_run):
+                log(f"Warning: Data disclosure migration failed. This may be expected if no data disclosure records exist.")
         else:
-            # In real mode, check for confirmation or auto-continue
-            log(f"\n" + "="*60)
-            log(f"USER ID MIGRATION COMPLETED")
-            log(f"="*60)
-            log(f"Next step: Standalone S3 Bucket Migration")
-            log(f"This will migrate data from legacy S3 buckets to consolidation bucket.")
-            log(f"This includes:")
-            log(f"- Data disclosure files")
-            log(f"- API documentation")
-            log(f"Note: User-specific S3 data was already migrated during the table updates above.")
+            log(f"Skipping data disclosure migration - table and bucket do not exist")
+                
+        # Step 2: Run remaining standalone S3 bucket migrations
+        def run_s3_migrations(dry_run):
+            """Run S3 migrations and return success status"""
+            try:
+                api_success = migrate_api_documentation_bucket(dry_run=dry_run)
+                conversion_success = migrate_conversion_output_bucket(dry_run=dry_run)
+                cleanup_success = cleanup_conversion_buckets(dry_run=dry_run)
+                return api_success and conversion_success and cleanup_success
+            except Exception as e:
+                log(f"Error running S3 migrations: {e}")
+                return False
+        
+        # Determine if we should run S3 migration  
+        run_migration = args.dry_run or args.no_confirmation or sys.gettrace() is not None
+        
+        if not run_migration:
+            # Ask user for confirmation
+            sys.stdout, sys.stderr = sys.__stdout__, sys.__stderr__
+            print(f"\n{'='*60}\nUSER ID MIGRATION COMPLETED\n{'='*60}")
+            print("Next: S3 bucket migration (API docs, conversion templates, cleanup)")
+            response = input("Continue? (yes/no): ").lower().strip()
+            sys.stdout, sys.stderr = logfile, logfile
+            run_migration = response in ['yes', 'y']
+        
+        if run_migration:
+            log(f"\n=== STANDALONE S3 BUCKET MIGRATION ===")
+            mode = "[DRY RUN] " if args.dry_run else ""
+            log(f"{mode}Running S3 migrations (API docs, conversion templates, cleanup)...")
             
-            # Check for no-confirmation flag or debug mode
-            if sys.gettrace() is not None:
-                log(f"Debug mode detected - automatically continuing S3 migration...")
-                run_s3_migration = True
-            elif args.no_confirmation:
-                log(f"No confirmation mode - automatically continuing S3 migration...")
-                run_s3_migration = True
-            else:
-                # Restore stdout temporarily to ask user for input
-                sys.stdout = sys.__stdout__
-                sys.stderr = sys.__stderr__
-                
-                print("\n" + "="*60)
-                print("USER ID MIGRATION COMPLETED")
-                print("="*60)
-                print("\nNext step: Standalone S3 Bucket Migration")
-                print("This will migrate data from legacy S3 buckets to consolidation bucket.")
-                print("This includes:")
-                print("- Data disclosure files")
-                print("- API documentation")
-                print("\nNote: User-specific S3 data was already migrated during the table updates above.")
-                
-                response = input("\nDo you want to run the standalone S3 bucket migration now? (yes/no): ").lower().strip()
-                
-                # Restore file logging
-                sys.stdout = logfile
-                sys.stderr = logfile
-                
-                run_s3_migration = response in ['yes', 'y']
-            
-            if run_s3_migration:
-                log(f"User confirmed standalone S3 bucket migration. Starting...")
-                try:
-                    # Run S3 migration in real mode
-                    import sys as sys_module
-                    original_argv = sys_module.argv
-                    
-                    # Set up argv for s3_migration_main
-                    sys_module.argv = ['s3_data_migration.py', '--bucket', 'all']
-                    
-                    # Call S3 migration main function
-                    s3_success = s3_migration_main()
-                    
-                    # Restore original argv
-                    sys_module.argv = original_argv
-                    
-                    if s3_success:
-                        log(f"Standalone S3 bucket migration completed successfully!")
-                    else:
-                        log(f"Standalone S3 bucket migration failed!")
-                        
-                except Exception as s3_error:
-                    log(f"Error running S3 migration: {s3_error}")
-                    
-            else:
-                log(f"Standalone S3 bucket migration skipped. Run manually: python3 s3_data_migration.py --bucket all")
+            success = run_s3_migrations(args.dry_run)
+            result = "completed successfully" if success else "encountered issues"
+            log(f"{mode}S3 bucket migration {result}!")
+        else:
+            log(f"S3 bucket migration skipped.")
 
     except Exception as e:
         log(f"Error processing users: {e}")
