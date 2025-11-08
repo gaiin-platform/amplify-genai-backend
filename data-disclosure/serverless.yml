@@ -116,15 +116,6 @@ functions:
           cors: true
 
 
-  convertDataDisclosure:
-    handler: data_disclosure.convert_uploaded_data_disclosure
-    events:
-      - s3:
-          bucket: !Ref DataDisclosureStorage
-          event: s3:ObjectCreated:*
-          existing: true
-          rules:
-            - suffix: .pdf
 
 
 resources:
@@ -156,8 +147,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: "Allow"
               Action:
                 - "s3:PutObject"
@@ -167,6 +156,8 @@ resources:
               Resource: 
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"   #Marked for future deletion
                 - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  #Marked for future deletion
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
+                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem

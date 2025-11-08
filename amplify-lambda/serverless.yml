@@ -113,6 +113,9 @@ provider:
     EMBEDDING_PROGRESS_TABLE: ${ssm:${self:custom.ssmBasePath}-embedding/EMBEDDING_PROGRESS_TABLE}
     OBJECT_ACCESS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/OBJECT_ACCESS_DYNAMODB_TABLE}
     OPS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda-ops/OPS_DYNAMODB_TABLE}
+    
+    # Data Disclosure Variables (conditional - empty if service not deployed)
+    DATA_DISCLOSURE_VERSIONS_TABLE: ${ssm:${self:custom.ssmBasePath}-data-disclosure/DATA_DISCLOSURE_VERSIONS_TABLE, ""}
 
   iam:
     role:
@@ -519,6 +522,14 @@ functions:
     events:
       - schedule: cron(0 3 * * ? *) # Run daily at 3 AM UTC
 
+  convertDataDisclosure:
+    handler: data_disclosure/convert.convert_uploaded_data_disclosure
+    layers:
+      - Ref: MarkitdownLambdaLayer
+    timeout: 180
+    memorySize: 1024
+    events: []
+
 resources:
   Resources:
     LambdaIAMPolicy:
@@ -636,6 +647,8 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.USER_STORAGE_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}/index/*"
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
@@ -660,6 +673,14 @@ resources:
       Properties:
         Action: lambda:InvokeFunction
         FunctionName: !GetAtt HandlePptxUploadLambdaFunction.Arn
+        Principal: s3.amazonaws.com
+        SourceArn: !Sub arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
+
+    ConvertDataDisclosureInvokePermissionFromS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !GetAtt ConvertDataDisclosureLambdaFunction.Arn
         Principal: s3.amazonaws.com
         SourceArn: !Sub arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
 
@@ -1119,6 +1140,7 @@ resources:
       DependsOn:
         - ConvertInvokePermissionFromS3
         - HandlePptxInvokePermissionFromS3
+        - ConvertDataDisclosureInvokePermissionFromS3
       Properties:
         BucketName: ${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}
         CorsConfiguration:
@@ -1156,6 +1178,15 @@ resources:
                       Value: powerPointTemplates/
                     - Name: suffix
                       Value: .pptx
+            - Event: s3:ObjectCreated:*
+              Function: !GetAtt ConvertDataDisclosureLambdaFunction.Arn
+              Filter:
+                S3Key:
+                  Rules:
+                    - Name: prefix
+                      Value: dataDisclosure/
+                    - Name: suffix
+                      Value: .pdf
     # ---------------------------------------------------------------
 
     AccessLogsBucketPolicy:
