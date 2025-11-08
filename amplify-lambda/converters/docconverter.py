@@ -295,16 +295,52 @@ def handler(event, context):
 
         if template_name and template_name != "":
             try:
-                template_key = f"conversion/templates/{template_name}"
-                suffix = template_key.rsplit(".", 1)[1]
-                logger.debug("template_key: %s, suffix: %s", template_key, suffix)
-                template_file = tempfile.NamedTemporaryFile(
-                    suffix="." + suffix, delete=False
-                )
-                download_file_from_s3(
-                    consolidation_bucket_name, template_key, template_file.name
-                )
-                has_template = True
+                # Try two locations in order:
+                # 1. powerPointTemplates/{template_name} in consolidation bucket (new migrated location)
+                # 2. templates/{template_name} in original conversion output bucket (backward compatibility)
+                
+                template_key = None
+                template_bucket = None
+                template_found = False
+                
+                # Location 1: New migrated location in consolidation bucket
+                new_template_key = f"powerPointTemplates/{template_name}"
+                try:
+                    s3.head_object(Bucket=consolidation_bucket_name, Key=new_template_key)
+                    template_key = new_template_key
+                    template_bucket = consolidation_bucket_name
+                    template_found = True
+                    logger.debug("Found template at new location: s3://%s/%s", template_bucket, template_key)
+                except Exception:
+                    # Location 2: Original bucket (backward compatibility for non-migrated templates)
+                    original_conversion_bucket = os.environ.get("S3_CONVERSION_OUTPUT_BUCKET_NAME")
+                    if original_conversion_bucket:
+                        original_template_key = f"templates/{template_name}"
+                        try:
+                            s3.head_object(Bucket=original_conversion_bucket, Key=original_template_key)
+                            template_key = original_template_key
+                            template_bucket = original_conversion_bucket
+                            template_found = True
+                            logger.debug("Found template at original location: s3://%s/%s", template_bucket, template_key)
+                        except Exception:
+                            logger.warning("Template not found at either location: s3://%s/%s or s3://%s/%s", 
+                                          consolidation_bucket_name, new_template_key, original_conversion_bucket, original_template_key)
+                    else:
+                        logger.warning("Template not found in consolidation bucket and S3_CONVERSION_OUTPUT_BUCKET_NAME not configured")
+                
+                if template_found:
+                    suffix = template_key.rsplit(".", 1)[1]
+                    logger.debug("Using template: s3://%s/%s, suffix: %s", template_bucket, template_key, suffix)
+                    template_file = tempfile.NamedTemporaryFile(
+                        suffix="." + suffix, delete=False
+                    )
+                    download_file_from_s3(
+                        template_bucket, template_key, template_file.name
+                    )
+                    has_template = True
+                else:
+                    logger.error("Template not found: %s", template_name)
+                    
             except Exception as e:
                 logger.error("Error downloading template from S3: %s, template will not be used", str(e))
                 pass
