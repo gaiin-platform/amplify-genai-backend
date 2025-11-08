@@ -34,6 +34,83 @@ def generate_error_response(status_code, message):
     }
 
 
+def _parse_s3_reference_for_pdf_access(s3_reference, pdf_document_name, consolidation_bucket_name):
+    """
+    Smart bucket detection with actual file existence checking for backward compatibility.
+    
+    Tries multiple locations in order and returns the first one where the file actually exists:
+    1. Parsed s3_reference location (if valid S3 URI)
+    2. Consolidation bucket with dataDisclosure/ prefix
+    3. Old DATA_DISCLOSURE_STORAGE_BUCKET (backward compatibility fallback)
+    
+    Args:
+        s3_reference (str): Full S3 URI from DynamoDB record
+        pdf_document_name (str): PDF filename from pdf_id field
+        consolidation_bucket_name (str): Current consolidation bucket name
+        
+    Returns:
+        tuple: (bucket_name, key) for S3 access where file actually exists
+    """
+    logger.debug(f"Finding S3 location for pdf_id='{pdf_document_name}', s3_reference='{s3_reference}'")
+    
+    def check_file_exists(bucket, key):
+        """Check if file exists in S3 bucket"""
+        try:
+            s3.head_object(Bucket=bucket, Key=key)
+            return True
+        except ClientError:
+            return False
+    
+    locations_to_try = []
+    
+    # Location 1: Parse s3_reference if it's a valid S3 URI
+    if s3_reference and s3_reference.startswith("s3://"):
+        try:
+            s3_uri = s3_reference[5:]  # Remove 's3://'
+            bucket_name, key = s3_uri.split("/", 1)
+            locations_to_try.append((bucket_name, key, "s3_reference"))
+        except ValueError:
+            logger.warning(f"Invalid s3_reference format: {s3_reference}")
+    
+    # Location 2: Consolidation bucket with dataDisclosure/ prefix (new migrated location)
+    if pdf_document_name:
+        if pdf_document_name.startswith("dataDisclosure/"):
+            # Already has prefix
+            consolidation_key = pdf_document_name
+        else:
+            # Add prefix for migrated files
+            consolidation_key = f"dataDisclosure/{pdf_document_name}"
+        locations_to_try.append((consolidation_bucket_name, consolidation_key, "consolidation_bucket"))
+    
+    # Location 3: Old DATA_DISCLOSURE_STORAGE_BUCKET (backward compatibility)
+    old_storage_bucket = os.environ.get("DATA_DISCLOSURE_STORAGE_BUCKET")
+    if old_storage_bucket and pdf_document_name:
+        # Old bucket used original filename without prefix
+        old_key = pdf_document_name.replace("dataDisclosure/", "") if pdf_document_name.startswith("dataDisclosure/") else pdf_document_name
+        locations_to_try.append((old_storage_bucket, old_key, "old_storage_bucket"))
+    
+    # Try each location until we find the file
+    for bucket, key, source in locations_to_try:
+        if check_file_exists(bucket, key):
+            if source == "old_storage_bucket":
+                logger.info(f"📁 Data disclosure PDF found in OLD BUCKET (not yet migrated): s3://{bucket}/{key}")
+            elif source == "consolidation_bucket":
+                logger.info(f"✅ Data disclosure PDF found in CONSOLIDATION BUCKET (migrated): s3://{bucket}/{key}")
+            else:
+                logger.info(f"📄 Data disclosure PDF found via s3_reference: s3://{bucket}/{key}")
+            return bucket, key
+    
+    # If file not found anywhere, return the first preference (parsed s3_reference or consolidation)
+    if locations_to_try:
+        bucket, key, source = locations_to_try[0]
+        logger.warning(f"File not found at any location, using first preference ({source}): s3://{bucket}/{key}")
+        return bucket, key
+    
+    # Ultimate fallback
+    logger.error(f"No valid locations to try for pdf_document_name='{pdf_document_name}'")
+    return consolidation_bucket_name, pdf_document_name or ""
+
+
 # Helper function to get the latest version details
 def get_latest_version_details(table):
     response = table.query(
@@ -174,77 +251,6 @@ div.WordSection1 {{
         return generate_error_response(500, "Error converting PDF to HTML")
 
 
-def convert_uploaded_data_disclosure(event, context):
-    s3 = boto3.client("s3")
-    dynamodb = boto3.resource("dynamodb")
-
-    consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    versions_table_name = os.environ["DATA_DISCLOSURE_VERSIONS_TABLE"]
-
-    try:
-        record = event["Records"][0]
-        pdf_key = record["s3"]["object"]["key"]
-    except (IndexError, KeyError) as e:
-        logger.error(f"Error parsing event: {e}")
-        return generate_error_response(400, "Invalid event format, cannot find PDF key")
-
-    # extract time stamp from dd name - handle dataDisclosure/ prefix
-    filename = pdf_key.replace("dataDisclosure/", "")
-    prefix = "data_disclosure_"
-    suffix = ".pdf"
-
-    if filename.startswith(prefix) and filename.endswith(suffix):
-        timestamp = filename[len(prefix) : -len(suffix)]
-    else:
-        raise ValueError("latest_dd_name is not in the expected format.")
-
-    logger.debug(f"PDF Key: {pdf_key}")
-    pdf_local_path = "/tmp/input.pdf"
-
-    try:
-        s3.download_file(consolidation_bucket_name, pdf_key, pdf_local_path)
-        logger.info(f"File downloaded successfully to {pdf_local_path}")
-    except Exception as e:
-        logger.error(f"Error downloading PDF from S3: {e}")
-        return generate_error_response(500, "Error downloading PDF from S3")
-
-    if not os.path.exists(pdf_local_path):
-        logger.error(f"File not found at {pdf_local_path} after download")
-        return generate_error_response(500, "File download failed")
-
-    html_content = convert_pdf(pdf_local_path)
-    if not isinstance(html_content, str):
-        return html_content
-
-    # Update DynamoDB with new version info, including references to both HTML and PDF
-    logger.debug("Update DynamoDB with new version info")
-    versions_table = dynamodb.Table(versions_table_name)
-    latest_version_details = get_latest_version_details(versions_table)
-    new_version = (
-        0 if not latest_version_details else int(latest_version_details["version"]) + 1
-    )
-    logger.debug("version number: %s", new_version)
-
-    # Save the new version information in the DataDisclosureVersionsTable
-    try:
-        # Always use the same key for the latest version
-        versions_table.put_item(
-            Item={
-                "key": "latest",
-                "version": new_version,
-                "pdf_id": pdf_key,
-                "html_content": html_content,
-                "timestamp": timestamp,
-                "s3_reference": f"s3://{consolidation_bucket_name}/{pdf_key}",
-            }
-        )
-        return {
-            "statusCode": 200,
-            "body": json.dumps({"message": "Data disclosure uploaded successfully"}),
-        }
-    except Exception as e:
-        logger.error(str(e))
-        return generate_error_response(500, "Error uploading data disclosure")
 
 
 # helper function to get the latest version number
@@ -340,6 +346,7 @@ def save_data_disclosure_decision(event, context, current_user, name, data):
 @required_env_vars({
     "DATA_DISCLOSURE_VERSIONS_TABLE": [DynamoDBOperation.QUERY],
     "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
+    "DATA_DISCLOSURE_STORAGE_BUCKET": [S3Operation.GET_OBJECT],  # Marked for future deletion - backward compatibility
 })
 @validated(op="get_latest_data_disclosure")
 def get_latest_data_disclosure(event, context, current_user, name, data):
@@ -353,19 +360,25 @@ def get_latest_data_disclosure(event, context, current_user, name, data):
 
         pdf_document_name = latest_version_details["pdf_id"]
         html_content = latest_version_details.get("html_content")
+        s3_reference = latest_version_details.get("s3_reference", "")
+
+        # Smart bucket detection for backward compatibility
+        bucket_name, key = _parse_s3_reference_for_pdf_access(
+            s3_reference, pdf_document_name, consolidation_bucket_name
+        )
 
         # Generate a pre-signed URL for the PDF document
         try:
             pdf_pre_signed_url = s3.generate_presigned_url(
                 "get_object",
                 Params={
-                    "Bucket": consolidation_bucket_name,
-                    "Key": pdf_document_name,
+                    "Bucket": bucket_name,
+                    "Key": key,
                 },
                 ExpiresIn=360,  # URL expires in 6 mins
             )
         except ClientError as e:
-            logger.error(str(e))
+            logger.error(f"Error generating PDF pre-signed URL for {bucket_name}/{key}: {str(e)}")
             return generate_error_response(500, "Error generating PDF pre-signed URL")
 
         return {
