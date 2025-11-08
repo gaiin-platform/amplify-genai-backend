@@ -2677,129 +2677,240 @@ def migrate_api_documentation_bucket(dry_run: bool = False) -> bool:
         return False
 
 
-def main():
+def migrate_conversion_output_bucket(dry_run: bool = False) -> bool:
     """
-    Main function for migrating standalone S3 buckets that are not tied to user tables.
-    This handles buckets that don't require user ID migration triggers.
+    Migrate templates from S3_CONVERSION_OUTPUT_BUCKET_NAME to S3_CONSOLIDATION_BUCKET_NAME.
+    
+    Args:
+        dry_run: If True, analyze and show what would be migrated
+        
+    Returns:
+        bool: Success status of the migration
     """
-    import argparse
     from datetime import datetime
+    
+    msg = f"[migrate_conversion_output_bucket][dry-run: {dry_run}] %s"
     
     def log(*messages):
         for message in messages:
-            print(f"[{datetime.now()}]", message)
-    
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description="Migrate standalone S3 buckets to consolidation bucket."
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true", 
-        help="Do not make any changes, just show what would happen."
-    )
-    parser.add_argument(
-        "--bucket",
-        choices=["all", "data-disclosure", "api-documentation"],
-        default="all",
-        help="Specific bucket to migrate or 'all' for all standalone buckets"
-    )
-    parser.add_argument(
-        "--log",
-        help="Log output to the specified file (auto-generated if not provided)"
-    )
-    
-    args = parser.parse_args()
-    
-    # Set up logging - auto-generate filename if not provided
-    if not args.log:
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        mode = "dry_run" if args.dry_run else "migration"
-        args.log = f"s3_migration_{mode}_{timestamp}.log"
+            print(f"[{datetime.now()}] {msg % message}")
     
     try:
-        print(f"Logging to file: {args.log}")
-        logfile = open(args.log, "w")
+        # Get bucket names from config
+        conversion_output_bucket = S3_CONVERSION_OUTPUT_BUCKET_NAME
+        consolidation_bucket = S3_CONSOLIDATION_BUCKET_NAME
         
-        # Use tee-like functionality to show output in both console and file
-        import sys
-        
-        class TeeOutput:
-            def __init__(self, file1, file2):
-                self.file1 = file1
-                self.file2 = file2
+        if not conversion_output_bucket or not consolidation_bucket:
+            log(f"Missing required bucket configuration: S3_CONVERSION_OUTPUT_BUCKET_NAME or S3_CONSOLIDATION_BUCKET_NAME")
+            return False
             
-            def write(self, data):
-                self.file1.write(data)
-                self.file2.write(data)
-                self.file1.flush()
-                self.file2.flush()
-            
-            def flush(self):
-                self.file1.flush()
-                self.file2.flush()
+        s3_client = boto3.client("s3")
         
-        # Keep original stdout/stderr for console output
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
         
-        # Create tee output to both console and file
-        sys.stdout = TeeOutput(original_stdout, logfile)
-        sys.stderr = TeeOutput(original_stderr, logfile)
+        log(f"Scanning for templates in conversion output bucket")
         
-    except Exception as e:
-        print(f"Error opening log file {args.log}: {e}")
-        return False
-    
-    log(f"Starting standalone S3 bucket migration. Dry run: {args.dry_run}")
-    log(f"Target bucket(s): {args.bucket}")
-    
-    try:
-        success = True
-        
-        # Migrate DATA_DISCLOSURE_STORAGE_BUCKET
-        if args.bucket in ["data-disclosure", "all"]:
-            log(f"\\n--- Migrating DATA_DISCLOSURE_STORAGE_BUCKET ---") 
-            if not migrate_data_disclosure_storage_bucket(args.dry_run):
-                success = False
-        
-        # Migrate S3_API_DOCUMENTATION_BUCKET  
-        if args.bucket in ["api-documentation", "all"]:
-            log(f"\\n--- Migrating S3_API_DOCUMENTATION_BUCKET ---") 
-            if not migrate_api_documentation_bucket(args.dry_run):
-                success = False
-        
-        # Note: S3_CONVERSION_INPUT_BUCKET_NAME uses code-update-only approach
-        # No migration needed - files are temporary and go directly to consolidation bucket
-        log(f"\\n--- Migration Summary ---")
-        if args.bucket == "all":
-            log(f"Migrated DATA_DISCLOSURE_STORAGE_BUCKET and S3_API_DOCUMENTATION_BUCKET")
-        elif args.bucket == "data-disclosure":
-            log(f"Migrated DATA_DISCLOSURE_STORAGE_BUCKET only")
-        elif args.bucket == "api-documentation":
-            log(f"Migrated S3_API_DOCUMENTATION_BUCKET only")
-        log(f"S3_CONVERSION_INPUT_BUCKET_NAME uses code-update-only approach (no migration needed)")
-        
-        return success
-        
-    except Exception as e:
-        log(f"Error during migration: {e}")
-        return False
-    
-    finally:
         try:
-            # Restore original stdout/stderr
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            logfile.close()
-            print(f"S3 migration completed. Full log available in: {args.log}")
-        except:
-            pass
+            # Get list of all objects in templates/ prefix only
+            paginator = s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=conversion_output_bucket, Prefix="templates/")
+            
+            template_files = []
+            for page in page_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        # Only migrate actual files (not folders)
+                        if not obj['Key'].endswith('/'):
+                            template_files.append(obj)
+            
+            if not template_files:
+                log(f"No template files found in templates/ prefix")
+                return True
+                
+            log(f"Found {len(template_files)} template files to migrate")
+            
+            if dry_run:
+                total_size = sum(obj['Size'] for obj in template_files)
+                log(f"Would migrate {len(template_files)} template files ({total_size:,} bytes)")
+                log(f"Source: s3://{conversion_output_bucket}/templates/")
+                log(f"Target: s3://{consolidation_bucket}/powerPointTemplates/")
+                
+                for obj in template_files[:5]:  # Show first 5 files as examples
+                    old_key = obj['Key']
+                    # Remove "templates/" prefix and add "powerPointTemplates/" prefix
+                    template_name = old_key[len("templates/"):]
+                    new_key = f"powerPointTemplates/{template_name}"
+                    log(f"  Would migrate: {old_key} -> {new_key} ({obj['Size']} bytes)")
+                
+                if len(template_files) > 5:
+                    log(f"  ... and {len(template_files) - 5} more files")
+                
+                return True
+            
+            # Perform actual migration
+            successful_migrations = 0
+            failed_migrations = 0
+            
+            for obj in template_files:
+                old_key = obj['Key']
+                # Remove "templates/" prefix and add "powerPointTemplates/" prefix
+                template_name = old_key[len("templates/"):]
+                new_key = f"powerPointTemplates/{template_name}"
+                
+                try:
+                    # Copy object to consolidation bucket
+                    copy_source = {
+                        'Bucket': conversion_output_bucket,
+                        'Key': old_key
+                    }
+                    
+                    s3_client.copy_object(
+                        CopySource=copy_source,
+                        Bucket=consolidation_bucket,
+                        Key=new_key,
+                        MetadataDirective='COPY'
+                    )
+                    
+                    # Verify the copy was successful by checking if object exists
+                    try:
+                        s3_client.head_object(Bucket=consolidation_bucket, Key=new_key)
+                        
+                        # Delete original object after successful copy and verification
+                        try:
+                            s3_client.delete_object(Bucket=conversion_output_bucket, Key=old_key)
+                            successful_migrations += 1
+                            log(f"Successfully migrated and cleaned up: {old_key} -> {new_key}")
+                        except ClientError as delete_e:
+                            successful_migrations += 1  # Still count as successful migration
+                            log(f"Successfully migrated {old_key} -> {new_key}, but failed to delete original: {str(delete_e)}")
+                            
+                    except ClientError:
+                        log(f"Failed to verify migrated template file: {new_key}")
+                        failed_migrations += 1
+                        
+                except ClientError as e:
+                    log(f"Failed to migrate template file {old_key}: {str(e)}")
+                    failed_migrations += 1
+            
+            log(f"Template migration completed: {successful_migrations} successful, {failed_migrations} failed")
+            
+            if failed_migrations > 0:
+                log(f"WARNING: {failed_migrations} template files failed to migrate")
+                return False
+            
+            return True
+            
+        except ClientError as e:
+            log(f"Error listing template files: {str(e)}")
+            return False
+            
+    except Exception as e:
+        log(f"Unexpected error during template migration: {str(e)}")
+        return False
 
 
-if __name__ == "__main__":
-    import sys
-    sys.exit(0 if main() else 1)
+def cleanup_conversion_buckets(dry_run: bool = False) -> bool:
+    """
+    Clean up (empty) old conversion input and output buckets after migration.
+    
+    Args:
+        dry_run: If True, analyze and show what would be cleaned
+        
+    Returns:
+        bool: Success status of the cleanup
+    """
+    from datetime import datetime
+    
+    msg = f"[cleanup_conversion_buckets][dry-run: {dry_run}] %s"
+    
+    def log(*messages):
+        for message in messages:
+            print(f"[{datetime.now()}] {msg % message}")
+    
+    try:
+        conversion_input_bucket = S3_CONVERSION_INPUT_BUCKET_NAME
+        conversion_output_bucket = S3_CONVERSION_OUTPUT_BUCKET_NAME
+        
+        if not conversion_input_bucket or not conversion_output_bucket:
+            log(f"Missing bucket configuration - skipping cleanup")
+            return True
+            
+        s3_client = boto3.client("s3")
+        
+        buckets_to_clean = [
+            ("INPUT", conversion_input_bucket),
+            ("OUTPUT", conversion_output_bucket)
+        ]
+        
+        total_cleaned = 0
+        
+        for bucket_type, bucket_name in buckets_to_clean:
+            log(f"Scanning {bucket_type} bucket for cleanup: s3://{bucket_name}")
+            
+            try:
+                # Get list of all objects in bucket
+                paginator = s3_client.get_paginator('list_objects_v2')
+                page_iterator = paginator.paginate(Bucket=bucket_name)
+                
+                objects_to_delete = []
+                for page in page_iterator:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            objects_to_delete.append({'Key': obj['Key']})
+                
+                if not objects_to_delete:
+                    log(f"No objects found in {bucket_type} bucket - already clean")
+                    continue
+                    
+                log(f"Found {len(objects_to_delete)} objects to delete in {bucket_type} bucket")
+                
+                if dry_run:
+                    total_size = sum(obj.get('Size', 0) for obj in page.get('Contents', []))
+                    log(f"Would delete {len(objects_to_delete)} objects ({total_size:,} bytes) from {bucket_type} bucket")
+                    
+                    # Show first few examples
+                    for obj in objects_to_delete[:3]:
+                        log(f"  Would delete: {obj['Key']}")
+                    if len(objects_to_delete) > 3:
+                        log(f"  ... and {len(objects_to_delete) - 3} more objects")
+                else:
+                    # Delete objects in batches (S3 allows up to 1000 per request)
+                    batch_size = 1000
+                    deleted_count = 0
+                    
+                    for i in range(0, len(objects_to_delete), batch_size):
+                        batch = objects_to_delete[i:i + batch_size]
+                        
+                        try:
+                            response = s3_client.delete_objects(
+                                Bucket=bucket_name,
+                                Delete={'Objects': batch}
+                            )
+                            deleted_count += len(response.get('Deleted', []))
+                            
+                            # Log any errors
+                            for error in response.get('Errors', []):
+                                log(f"Failed to delete {error['Key']}: {error['Message']}")
+                                
+                        except ClientError as e:
+                            log(f"Error deleting batch from {bucket_type} bucket: {str(e)}")
+                            return False
+                    
+                    log(f"Successfully deleted {deleted_count} objects from {bucket_type} bucket")
+                    total_cleaned += deleted_count
+                    
+            except ClientError as e:
+                log(f"Error accessing {bucket_type} bucket {bucket_name}: {str(e)}")
+                continue  # Continue with other bucket
+        
+        log(f"Bucket cleanup completed. Total objects cleaned: {total_cleaned}")
+        return True
+        
+    except Exception as e:
+        log(f"Unexpected error during bucket cleanup: {str(e)}")
+        return False
+
+
+# Note: This file contains migration functions that are called directly from id_migration.py
+# It is not intended to be run as a standalone script.
 
 
