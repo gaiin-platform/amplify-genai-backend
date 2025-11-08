@@ -99,7 +99,6 @@ provider:
     S3_IMAGE_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_IMAGE_INPUT_BUCKET_NAME}
     S3_RAG_INPUT_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_RAG_INPUT_BUCKET_NAME}
     USER_TAGS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_TAGS_DYNAMO_TABLE}
-    # USER_STORAGE_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/USER_STORAGE_TABLE}
 
   iam:
     role:
