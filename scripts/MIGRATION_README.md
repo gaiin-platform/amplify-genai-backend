@@ -663,6 +663,16 @@ environment:
 
 ### Prerequisites
 
+#### Execution Environment Recommendation
+
+💡 **TIP: Run ID migration script on EC2 for best results**
+
+The ID migration script processes large amounts of data across DynamoDB tables and S3 buckets. For optimal performance and reliability:
+
+- **Recommended**: Run from an AWS EC2 instance in the same region as your resources
+- **Benefits**: Better network connectivity, no local timeout issues, faster S3 transfers
+- **Alternative**: Local execution works but may be slower for large datasets
+
 #### Critical Infrastructure Requirements
 
 ⚠️ **MANDATORY: The migration script now performs automatic prerequisite validation**

@@ -1,14 +1,11 @@
-import os
 import json
 import boto3
 import re
 import time
 import uuid
-from typing import Optional, Dict, Any
 from botocore.exceptions import ClientError
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key
-from pycommon.lzw import safe_compress
 from config import get_config
 
 # Load configuration using config.py
@@ -33,6 +30,78 @@ WORKFLOW_TEMPLATES_BUCKET = CONFIG.get("WORKFLOW_TEMPLATES_BUCKET")
 SCHEDULED_TASKS_LOGS_BUCKET = CONFIG.get("SCHEDULED_TASKS_LOGS_BUCKET")
 SCHEDULED_TASKS_TABLE = CONFIG.get("SCHEDULED_TASKS_TABLE")
 S3_ARTIFACTS_BUCKET = CONFIG.get("S3_ARTIFACTS_BUCKET")
+
+
+
+
+def lzw_compress(str_input):
+    if not str_input:
+        return []
+
+    # Initialize the dictionary with single-character mappings
+    dictionary = {chr(i): i for i in range(256)}
+    next_code = 256
+    compressed_output = []
+
+    # Preprocessing to convert Unicode characters to a unique format
+    processed_input = "".join(
+        [f"U+{ord(char):04x}" if ord(char) > 255 else char for char in str_input]
+    )
+
+    current_pattern = ""
+    for character in processed_input:
+        new_pattern = current_pattern + character
+        if new_pattern in dictionary:
+            current_pattern = new_pattern
+        else:
+            compressed_output.append(dictionary[current_pattern])
+            dictionary[new_pattern] = next_code
+            next_code += 1
+            current_pattern = character
+
+    if current_pattern != "":
+        compressed_output.append(dictionary[current_pattern])
+    else:  # pragma: no cover
+        # This branch is logically unreachable in the LZW algorithm
+        # because current_pattern will always contain at least the last character
+        pass
+
+    return compressed_output
+
+
+def safe_compress(data):
+    """
+    Safely attempt to compress data. If compression fails, return the original data.
+
+    Args:
+        data: The data to attempt compression on
+
+    Returns:
+        The compressed data if successful, otherwise the original data
+    """
+    try:
+        # If data is already a string, try to compress it
+        if isinstance(data, str):
+            compressed = lzw_compress(data)
+            # Only return compressed if it actually reduces size meaningfully
+            if len(compressed) < len(data) * 0.8:  # 20% size reduction threshold
+                return compressed
+            return data
+
+        # If data is not a string, try to convert to JSON and compress
+        elif isinstance(data, (dict, list, int, float, bool)) or data is None:
+            json_str = json.dumps(data)
+            compressed = lzw_compress(json_str)
+            # Only return compressed if it reduces size meaningfully
+            if len(compressed) < len(json_str) * 0.8:
+                return compressed
+            return data
+
+    except Exception:
+        # If anything goes wrong, just return the original data
+        pass
+
+    return data
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
