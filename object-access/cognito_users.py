@@ -18,6 +18,8 @@ from schemata.permissions import get_permission_checker
 from pycommon.logger import getLogger
 logger = getLogger("cognito_users")
 
+from pycommon.lzw import lzw_compress
+
 setup_validated(rules, get_permission_checker)
 add_api_access_types([APIAccessType.ASSISTANTS.value, APIAccessType.SHARE.value, 
                       APIAccessType.ADMIN.value, APIAccessType.API_KEY.value,])
@@ -99,14 +101,20 @@ def get_emails(event, context, current_user, name, data):
         logger.debug(f"Built user-email mapping for {len(user_email_map)} users")
         
         # Keep backward compatibility: also return the old "emails" list
-        email_matches = list(user_email_map.keys())  # List of user_ids for backward compat
-        
-        return {
-            "statusCode": 200, 
-            "body": json.dumps({
-                "emails": email_matches,  # Backward compatibility
+        # email_matches = list(user_email_map.keys())  # List of user_ids for backward compat
+
+        data = json.dumps({
                 "user_email_map": user_email_map  # New mapping
             })
+         
+        try:
+            data = lzw_compress(data)
+        except Exception as e:
+            pass
+
+        return {
+            "statusCode": 200, 
+            "body": data
         }
 
     except ClientError as e:
