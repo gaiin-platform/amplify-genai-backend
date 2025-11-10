@@ -51,16 +51,40 @@ def get_emails(event, context, current_user, name, data):
         all_items = []
         last_evaluated_key = None
         
+        # Check if email attribute exists by doing a test scan
+        has_email_attribute = True
+        try:
+            test_response = cognito_user_table.scan(
+                ProjectionExpression="user_id, email",
+                Limit=1
+            )
+        except ClientError as e:
+            if "ValidationException" in str(e) and "email" in str(e):
+                has_email_attribute = False
+                logger.info("Email attribute not found in table schema, proceeding with user_id only")
+            else:
+                raise e
+
         while True:
-            # Prepare scan parameters - now projecting both user_id and email
-            scan_params = {"ProjectionExpression": "user_id, email"}
+            # Prepare scan parameters - project email only if it exists
+            if has_email_attribute:
+                scan_params = {"ProjectionExpression": "user_id, email"}
+            else:
+                scan_params = {"ProjectionExpression": "user_id"}
             
             if email_prefix != "*":  # Add filter if not getting all entries
-                # Now we need to filter by either user_id OR email prefix
-                scan_params.update({
-                    "FilterExpression": "begins_with(user_id, :email_prefix) OR begins_with(email, :email_prefix)",
-                    "ExpressionAttributeValues": {":email_prefix": email_prefix.lower()},
-                })
+                if has_email_attribute:
+                    # Filter by both user_id and email if email exists
+                    scan_params.update({
+                        "FilterExpression": "begins_with(user_id, :email_prefix) OR begins_with(email, :email_prefix)",
+                        "ExpressionAttributeValues": {":email_prefix": email_prefix.lower()},
+                    })
+                else:
+                    # Filter only by user_id if email doesn't exist
+                    scan_params.update({
+                        "FilterExpression": "begins_with(user_id, :email_prefix)",
+                        "ExpressionAttributeValues": {":email_prefix": email_prefix.lower()},
+                    })
             
             # Add pagination token if we have one
             if last_evaluated_key:
@@ -90,11 +114,11 @@ def get_emails(event, context, current_user, name, data):
                 "body": json.dumps({"error": "No matching users found"}),
             }
 
-        # Build dictionary mapping user_id to email (or user_id if no email)
+        # Build dictionary mapping user_id to email (or null if no email)
         user_email_map = {}
         for item in all_items:
             user_id = item.get("user_id")
-            email = item.get("email")  # Default to user_id if no email
+            email = item.get("email") if has_email_attribute else None
             if user_id:
                 user_email_map[user_id] = email
         
