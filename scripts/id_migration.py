@@ -3657,22 +3657,36 @@ if __name__ == "__main__":
             log(f"ℹ️  Backup process skipped (--dont-backup flag used)")
             log(f"ℹ️  Assuming you already have proper backups in place")
         
-        # Generate CSV if --no-id-change flag is present
-        if args.no_id_change:
+        # Generate CSV only if --no-id-change flag is present AND CSV file doesn't exist
+        import os
+        if args.no_id_change and not os.path.exists(args.csv_file):
             log(f"\n=== GENERATING MIGRATION CSV (No ID Changes) ===")
+            log(f"CSV file not found: {args.csv_file}")
             log(f"Pulling all users from Cognito table for S3 consolidation migration...")
-            
-            import os
-            if os.path.exists(args.csv_file) and not args.dry_run:
-                # Backup existing file if it exists
-                backup_name = f"{args.csv_file}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                os.rename(args.csv_file, backup_name)
-                log(f"Existing {args.csv_file} backed up to {backup_name}")
             
             if not generate_no_change_csv(args.csv_file, args.dry_run):
                 log(f"Failed to generate {args.csv_file}")
                 sys.exit(1)
             log(f"Successfully generated {args.csv_file} with no ID changes (data migration only)")
+        elif args.no_id_change and os.path.exists(args.csv_file):
+            log(f"\n=== USING EXISTING MIGRATION CSV ===")
+            log(f"Found existing CSV file: {args.csv_file}")
+            log(f"Using existing CSV for controlled migration (--no-id-change mode)")
+            log(f"ℹ️  Tip: Delete the CSV file if you want to auto-generate from all Cognito users")
+        
+        # Validate CSV file exists (for all migration types)
+        if not os.path.exists(args.csv_file):
+            log(f"\n❌ MIGRATION ERROR: CSV file not found!")
+            log(f"Expected file: {args.csv_file}")
+            if args.no_id_change:
+                log(f"💡 Solution: CSV generation failed or was skipped")
+            else:
+                log(f"💡 Solution: Create the CSV file manually or use --no-id-change flag to auto-generate")
+                log(f"💡 CSV format required:")
+                log(f"   old_id,new_id")
+                log(f"   user1@example.com,user1") 
+                log(f"   user2@example.com,user2")
+            sys.exit(1)
         
         # CRITICAL PREREQUISITES CHECK
         log(f"\n=== PREREQUISITE VALIDATION ===")
