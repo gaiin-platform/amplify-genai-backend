@@ -367,25 +367,26 @@ def generate_no_change_csv(file_path: str, dry_run: bool) -> bool:
         all_users.sort()
         
         if dry_run:
-            log(msg % f"Would generate {file_path} with {len(all_users)} users (same old_id and new_id)")
-            log(msg % "Sample entries that would be created:")
+            log(msg % f"Generating {file_path} with {len(all_users)} users (same old_id and new_id)")
+            log(msg % "Sample entries that will be created:")
             for user in all_users[:5]:  # Show first 5 as sample
                 log(msg % f"  {user},{user}")
             if len(all_users) > 5:
                 log(msg % f"  ... and {len(all_users) - 5} more users")
-            return True
-        else:
-            # Write CSV file
-            with open(file_path, 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(['old_id', 'new_id'])  # Header
+            log(msg % "Note: CSV file will be created even in dry-run mode for migration analysis")
+        
+        # Always create CSV file when --no-id-change is used (needed for migration analysis)
+        # Write CSV file
+        with open(file_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['old_id', 'new_id'])  # Header
+            
+            for user_id in all_users:
+                writer.writerow([user_id, user_id])  # Same ID for both columns
                 
-                for user_id in all_users:
-                    writer.writerow([user_id, user_id])  # Same ID for both columns
-                    
-            log(msg % f"Generated {file_path} with {len(all_users)} users")
-            log(msg % "All users will keep their existing IDs (data migration only)")
-            return True
+        log(msg % f"Generated {file_path} with {len(all_users)} users")
+        log(msg % "All users will keep their existing IDs (data migration only)")
+        return True
             
     except Exception as e:
         log(msg % f"Error generating CSV file: {e}")
