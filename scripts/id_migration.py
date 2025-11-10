@@ -172,8 +172,11 @@ def confirm_step_execution(step_num: int, step_name: str, step_description: str,
     """
     import sys
     
-    log(f"\n🔄 STEP {step_num} CONFIRMATION")
-    log(f"About to execute: {step_name}")
+    # Add dry run indicator
+    dry_run_indicator = " [DRY-RUN]" if args.dry_run else ""
+    
+    log(f"\n🔄 STEP {step_num} CONFIRMATION{dry_run_indicator}")
+    log(f"About to execute: {step_name}{dry_run_indicator}")
     log(f"Description: {step_description}")
     log(f"")
     
@@ -191,8 +194,8 @@ def confirm_step_execution(step_num: int, step_name: str, step_description: str,
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__
         
-        print(f"\n🔄 STEP {step_num} CONFIRMATION")
-        print(f"About to execute: {step_name}")
+        print(f"\n🔄 STEP {step_num} CONFIRMATION{dry_run_indicator}")
+        print(f"About to execute: {step_name}{dry_run_indicator}")
         print(f"Description: {step_description}")
         print("")
         
@@ -3298,12 +3301,13 @@ def migrate_user_storage_to_user_data_storage(users_map: dict, dry_run: bool, ol
     try:
         # First create backup if not exists
         import os
-        backup_csv = "user_storage_backup.csv"
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        backup_csv = os.path.join(script_dir, "user_storage_backup.csv")
         
         if not os.path.exists(backup_csv):
             log(msg % f"Creating backup of {old_table}...")
             if not dry_run:
-                backup_file, item_count = backup_user_storage_table(old_table)
+                backup_file, item_count = backup_user_storage_table(old_table, backup_csv)
                 if not backup_file:
                     log(msg % f"Failed to create backup of {old_table}")
                     return False
@@ -3375,8 +3379,10 @@ def ensure_user_storage_migration(dry_run: bool, old_table: str, new_table: str)
     global dynamodb_client
     msg = f"[ensure_user_storage_migration][dry-run: {dry_run}] %s"
     
-    # Backup CSV filename
-    backup_csv = "user_storage_backup.csv"
+    # Backup CSV filename in scripts directory
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    backup_csv = os.path.join(script_dir, "user_storage_backup.csv")
     
     log(msg % f"Checking user storage migration status...")
     
@@ -3391,7 +3397,7 @@ def ensure_user_storage_migration(dry_run: bool, old_table: str, new_table: str)
                 return True
             else:
                 # Create backup
-                backup_file, item_count = backup_user_storage_table(old_table)
+                backup_file, item_count = backup_user_storage_table(old_table, backup_csv)
                 if not backup_file:
                     log(msg % f"Failed to create backup of {old_table}")
                     return False
@@ -3528,6 +3534,14 @@ if __name__ == "__main__":
     # Parse command line arguments first
     args = parse_args()
     
+    # Ensure all file paths are relative to the scripts directory
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Make CSV file path absolute to scripts directory if not already absolute
+    if not os.path.isabs(args.csv_file):
+        args.csv_file = os.path.join(script_dir, args.csv_file)
+    
     # Initialize AWS region and clients from command line args
     AWS_REGION = args.region
     dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
@@ -3546,6 +3560,10 @@ if __name__ == "__main__":
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             mode = "dry_run" if args.dry_run else "migration"
             args.log = f"id_migration_{mode}_{timestamp}.log"
+        
+        # Make log file path absolute to scripts directory if not already absolute
+        if not os.path.isabs(args.log):
+            args.log = os.path.join(script_dir, args.log)
         
         print(f"Logging to file: {args.log}")
         logfile = open(args.log, "w")
