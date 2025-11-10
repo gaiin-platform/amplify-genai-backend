@@ -94,23 +94,20 @@ def get_emails(event, context, current_user, name, data):
         user_email_map = {}
         for item in all_items:
             user_id = item.get("user_id")
-            email = item.get("email", user_id)  # Default to user_id if no email
+            email = item.get("email")  # Default to user_id if no email
             if user_id:
                 user_email_map[user_id] = email
         
         logger.debug(f"Built user-email mapping for {len(user_email_map)} users")
-        
-        # Keep backward compatibility: also return the old "emails" list
-        # email_matches = list(user_email_map.keys())  # List of user_ids for backward compat
 
-        data = json.dumps({
-                "user_email_map": user_email_map  # New mapping
-            })
+        data = json.dumps({ "user_email_map": user_email_map})
          
         try:
             data = lzw_compress(data)
+            logger.debug("Compressed response data using LZW")
         except Exception as e:
-            pass
+            logger.debug("Error compressing response data using LZW: %s", e)
+            logger.debug("Proceeding to return uncompressed data")
 
         return {
             "statusCode": 200, 
