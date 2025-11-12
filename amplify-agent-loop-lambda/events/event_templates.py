@@ -348,3 +348,148 @@ def is_event_template_tag_available(user, tag, assistant_id=None):
             "data": None,
             "message": "Server error: Unable to check tag availability. Please try again later.",
         }
+
+
+### ==========================
+### 🚀 Group Event Template Functions
+### ==========================
+
+
+def add_group_shared_exchange_template(
+    group_id: str,
+    shared_mailbox_email: str,
+    assistant_id: str,
+    prompt: str,
+) -> dict:
+    """
+    Creates an event template for a group's shared Exchange inbox.
+    
+    Args:
+        group_id (str): The group ID (e.g., "SupportTeam_abc-123").
+        shared_mailbox_email (str): The shared mailbox email (e.g., "support@vanderbilt.edu").
+        assistant_id (str): Assistant ID to use for processing.
+        prompt (str): The event prompt template.
+    
+    Returns:
+        dict: {success, data, message}
+    """
+    try:
+        # Verify assistant exists
+        response = get_assistant_by_alias(group_id, assistant_id)
+        if not response["success"]:
+            return {
+                "success": False,
+                "message": f"Cannot add group exchange template: {response['message']}",
+            }
+
+        # Extract API owner ID from group_id
+        api_owner_id = group_id.replace("_", "/systemKey/")
+        
+        # Use the shared mailbox email as the "tag" for lookup
+        # This allows email routing: support@vanderbilt.ai → group_id lookup
+        item = {
+            "user": group_id,
+            "tag": shared_mailbox_email,  # Use email as tag for routing
+            "prompt": prompt,
+            "apiKeyId": api_owner_id,
+            "assistantId": assistant_id,
+            "sharedMailboxEmail": shared_mailbox_email,
+            "isGroupTemplate": True,  # Flag to identify group templates
+        }
+
+        event_table.put_item(Item=item)
+
+        return {
+            "success": True,
+            "message": f"Group exchange template for '{shared_mailbox_email}' successfully added for group '{group_id}'.",
+            "data": {"group_id": group_id, "shared_mailbox": shared_mailbox_email}
+        }
+
+    except ClientError as e:
+        logger.error("Error adding group exchange template: %s", e)
+        return {
+            "success": False,
+            "message": "Server error: Unable to add group exchange template. Please try again later.",
+        }
+
+
+def remove_group_shared_exchange_template(
+    group_id: str, shared_mailbox_email: str
+) -> dict:
+    """
+    Removes a group's shared Exchange inbox event template.
+    
+    Args:
+        group_id (str): The group ID.
+        shared_mailbox_email (str): The shared mailbox email to remove.
+    
+    Returns:
+        dict: {success, message}
+    """
+    try:
+        # Tag is the shared mailbox email
+        response = event_table.get_item(Key={"user": group_id, "tag": shared_mailbox_email})
+        
+        if "Item" not in response:
+            return {
+                "success": False,
+                "message": f"No template found for mailbox '{shared_mailbox_email}' in group '{group_id}'.",
+            }
+
+        event_table.delete_item(Key={"user": group_id, "tag": shared_mailbox_email})
+        
+        return {
+            "success": True,
+            "message": f"Shared exchange template for '{shared_mailbox_email}' removed successfully.",
+        }
+
+    except ClientError as e:
+        logger.error("Error removing group exchange template: %s", e)
+        return {
+            "success": False,
+            "message": "Server error: Unable to remove group exchange template. Please try again later.",
+        }
+
+
+def list_group_shared_exchange_templates(group_id: str) -> dict:
+    """
+    Lists all shared Exchange inbox templates for a group.
+    
+    Args:
+        group_id (str): The group ID.
+    
+    Returns:
+        dict: {success, data, message}
+    """
+    try:
+        response = event_table.query(
+            KeyConditionExpression=Key("user").eq(group_id)
+        )
+        
+        templates = response.get("Items", [])
+        
+        # Filter for only group templates (those with shared mailbox)
+        group_templates = [
+            t for t in templates if t.get("isGroupTemplate") or t.get("sharedMailboxEmail")
+        ]
+        
+        if not group_templates:
+            return {
+                "success": True,
+                "data": [],
+                "message": f"No shared exchange templates found for group '{group_id}'.",
+            }
+
+        return {
+            "success": True,
+            "data": group_templates,
+            "message": "Group shared exchange templates retrieved successfully.",
+        }
+
+    except ClientError as e:
+        logger.error("Error listing group exchange templates: %s", e)
+        return {
+            "success": False,
+            "data": None,
+            "message": "Server error: Unable to list group exchange templates. Please try again later.",
+        }

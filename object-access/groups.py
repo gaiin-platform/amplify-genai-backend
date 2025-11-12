@@ -1549,3 +1549,33 @@ async def register_ops(token):
         "total_attempted": len(api_doc_ops)
     }
 
+
+@required_env_vars({
+    "ASSISTANT_GROUPS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
+    "API_KEYS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM],
+})
+@validated(op="read")
+def initiate_group_oauth(event, context, current_user, name, data):
+    """
+    Initiates OAuth flow for a group to connect Microsoft Exchange for shared mailboxes.
+    Verifies user has admin access to the group before allowing OAuth initiation.
+    """
+    data = data["data"]
+    group_id = data.get("group_id")
+    integration_type = data.get("integration_type", "microsoft_exchange")
+    
+    if not group_id or not is_valid_group_id(group_id):
+        logger.warning("Invalid or missing group id parameter")
+        return {"message": "Invalid or missing group id parameter", "success": False}
+
+    # Check if user has admin access to group
+    auth_check = authorized_user(group_id, current_user, requires_admin_access=True)
+    
+    if not auth_check["success"]:
+        return auth_check
+
+    item = auth_check["item"]
+    api_key = item["access"]
+    
+    #TODO
+

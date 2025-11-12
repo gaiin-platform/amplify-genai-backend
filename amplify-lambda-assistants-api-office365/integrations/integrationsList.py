@@ -25,6 +25,11 @@ integrations_list = [
         "description": "This integration enables assistants to manage your Outlook emails, contacts, and calendar through Microsoft Graph API.",
     },
     {
+        "name": "Exchange",
+        "id": "microsoft_exchange",
+        "description": "This integration allows assistants to access and manage shared mailboxes and calendars in Microsoft Exchange via Microsoft Graph API.",
+    },
+    {
         "name": "Word",
         "id": "microsoft_word",
         "description": "This integration enables assistants to create, edit, and manage Word documents through Microsoft Graph API.",

@@ -87,6 +87,18 @@ from integrations.o365.outlook import (
     update_message,
 )
 from integrations.o365.outlook import get_attachments as get_attachments_outlook
+from integrations.o365.shared_inbox import (
+    create_shared_mailbox_draft,
+    forward_shared_mailbox_message,
+    get_shared_mailbox_message_details,
+    list_shared_mailbox_folders,
+    list_shared_mailbox_messages,
+    reply_all_shared_mailbox_message,
+    reply_to_shared_mailbox_message,
+    search_shared_mailbox_messages,
+    send_shared_mailbox_draft,
+    send_shared_mailbox_mail,
+)
 from integrations.o365.planner import (
     create_task,
     delete_task,
@@ -2330,6 +2342,376 @@ def search_messages_handler(current_user, data):
     return common_handler(search_messages, search_query=None, top=10)(
         current_user, data
     )
+
+
+# --- Shared Inbox Routes ---
+
+
+@api_tool(
+    path="/microsoft/integrations/list_shared_mailbox_messages",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftListSharedMailboxMessages",
+    description="Lists messages from a shared mailbox with pagination and filtering support.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "folder_id": {
+                "type": "string",
+                "description": "Folder ID or well-known name (default: Inbox)",
+                "default": "Inbox",
+            },
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 10,
+                "description": "Maximum messages to retrieve",
+            },
+            "skip": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Number of messages to skip",
+            },
+            "filter_query": {"type": "string", "description": "OData filter query"},
+        },
+        "required": ["mailbox_email"],
+    },
+)
+def list_shared_mailbox_messages_handler(current_user, data):
+    return common_handler(
+        list_shared_mailbox_messages,
+        mailbox_email=None,
+        folder_id="Inbox",
+        top=10,
+        skip=0,
+        filter_query=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/get_shared_mailbox_message_details",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftGetSharedMailboxMessageDetails",
+    description="Gets detailed information about a specific message from a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {"type": "string", "description": "Message ID"},
+            "include_body": {
+                "type": "boolean",
+                "description": "Whether to include message body",
+                "default": True,
+            },
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def get_shared_mailbox_message_details_handler(current_user, data):
+    return common_handler(
+        get_shared_mailbox_message_details,
+        mailbox_email=None,
+        message_id=None,
+        include_body=True,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/send_shared_mailbox_mail",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftSendSharedMailboxMail",
+    description="Sends an email from a shared mailbox with support for CC, BCC, and importance levels.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "subject": {"type": "string", "description": "Email subject"},
+            "body": {"type": "string", "description": "Email body content"},
+            "to_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of primary recipient email addresses",
+            },
+            "cc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of CC recipient email addresses",
+            },
+            "bcc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of BCC recipient email addresses",
+            },
+            "importance": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "Message importance",
+                "default": "normal",
+            },
+        },
+        "required": ["mailbox_email", "subject", "body", "to_recipients"],
+    },
+)
+def send_shared_mailbox_mail_handler(current_user, data):
+    return common_handler(
+        send_shared_mailbox_mail,
+        mailbox_email=None,
+        subject=None,
+        body=None,
+        to_recipients=None,
+        cc_recipients=None,
+        bcc_recipients=None,
+        importance="normal",
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/reply_to_shared_mailbox_message",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftReplyToSharedMailboxMessage",
+    description="Sends a reply to a specific message in a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "The ID of the message to reply to",
+            },
+            "comment": {
+                "type": "string",
+                "description": "The reply comment content",
+            },
+        },
+        "required": ["mailbox_email", "message_id", "comment"],
+    },
+)
+def reply_to_shared_mailbox_message_handler(current_user, data):
+    return common_handler(
+        reply_to_shared_mailbox_message,
+        mailbox_email=None,
+        message_id=None,
+        comment=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/reply_all_shared_mailbox_message",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftReplyAllSharedMailboxMessage",
+    description="Sends a reply-all to a specific message in a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "The ID of the message to reply to",
+            },
+            "comment": {
+                "type": "string",
+                "description": "The reply comment content",
+            },
+        },
+        "required": ["mailbox_email", "message_id", "comment"],
+    },
+)
+def reply_all_shared_mailbox_message_handler(current_user, data):
+    return common_handler(
+        reply_all_shared_mailbox_message,
+        mailbox_email=None,
+        message_id=None,
+        comment=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/forward_shared_mailbox_message",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftForwardSharedMailboxMessage",
+    description="Forwards a specific message from a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "The ID of the message to forward",
+            },
+            "comment": {
+                "type": "string",
+                "description": "The comment to include with the forwarded message",
+            },
+            "to_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of recipient email addresses to forward the message to",
+            },
+        },
+        "required": ["mailbox_email", "message_id", "comment", "to_recipients"],
+    },
+)
+def forward_shared_mailbox_message_handler(current_user, data):
+    return common_handler(
+        forward_shared_mailbox_message,
+        mailbox_email=None,
+        message_id=None,
+        comment=None,
+        to_recipients=None,
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/list_shared_mailbox_folders",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftListSharedMailboxFolders",
+    description="Lists all mail folders in a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            }
+        },
+        "required": ["mailbox_email"],
+    },
+)
+def list_shared_mailbox_folders_handler(current_user, data):
+    return common_handler(list_shared_mailbox_folders, mailbox_email=None)(
+        current_user, data
+    )
+
+
+@api_tool(
+    path="/microsoft/integrations/search_shared_mailbox_messages",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_read"],
+    name="microsoftSearchSharedMailboxMessages",
+    description="Searches messages in a shared mailbox for a given query string.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "search_query": {
+                "type": "string",
+                "description": "Search query string",
+            },
+            "top": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 10,
+                "description": "Maximum messages to return",
+            },
+        },
+        "required": ["mailbox_email", "search_query"],
+    },
+)
+def search_shared_mailbox_messages_handler(current_user, data):
+    return common_handler(
+        search_shared_mailbox_messages, mailbox_email=None, search_query=None, top=10
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/create_shared_mailbox_draft",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftCreateSharedMailboxDraft",
+    description="Creates a draft message in a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "subject": {"type": "string", "description": "Draft email subject"},
+            "body": {"type": "string", "description": "Draft email body content"},
+            "to_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of primary recipient email addresses",
+            },
+            "cc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of CC recipient email addresses",
+            },
+            "bcc_recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of BCC recipient email addresses",
+            },
+            "importance": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "Message importance",
+                "default": "normal",
+            },
+        },
+        "required": ["mailbox_email", "subject", "body"],
+    },
+)
+def create_shared_mailbox_draft_handler(current_user, data):
+    return common_handler(
+        create_shared_mailbox_draft,
+        mailbox_email=None,
+        subject=None,
+        body=None,
+        to_recipients=None,
+        cc_recipients=None,
+        bcc_recipients=None,
+        importance="normal",
+    )(current_user, data)
+
+
+@api_tool(
+    path="/microsoft/integrations/send_shared_mailbox_draft",
+    tags=["default", "integration", "microsoft_exchange", "microsoft_exchange_write"],
+    name="microsoftSendSharedMailboxDraft",
+    description="Sends a draft message from a shared mailbox.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "mailbox_email": {
+                "type": "string",
+                "description": "Email address of the shared mailbox",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "The ID of the draft message to send",
+            },
+        },
+        "required": ["mailbox_email", "message_id"],
+    },
+)
+def send_shared_mailbox_draft_handler(current_user, data):
+    return common_handler(
+        send_shared_mailbox_draft, mailbox_email=None, message_id=None
+    )(current_user, data)
 
 
 # --- Calendar Routes ---

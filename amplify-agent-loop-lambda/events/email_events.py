@@ -679,3 +679,80 @@ class SESMessageHandler(MessageHandler):
             )
         else:
             logger.warning("No access token found")
+
+
+class SharedExchangeMessageHandler(MessageHandler):
+    """
+    Handler for shared Exchange inbox events triggered by AI domain emails.
+    Example: student.accounts@vanderbilt.ai → triggers group assistant
+    """
+    
+    def can_handle(self, message: Dict[str, Any]) -> bool:
+        try:
+            ses_content = json.loads(message["Message"])
+            
+            # Check if this is an SES message
+            if not all(k in ses_content for k in ["notificationType", "mail", "receipt"]):
+                return False
+            
+            # Check if destination email is for a shared exchange inbox (group)
+            # ### TODO IMPLEMENTATION: Need to determine how to identify shared exchange emails
+            # Perhaps check if the email matches a pattern or if the destination is in a group mapping table
+            mail = ses_content.get("mail", {})
+            destination = mail.get("destination", [])
+            
+            # For now, check if any destination ends with the AI domain and maps to a group
+            # This logic needs to be refined based on actual implementation
+            logger.debug("SharedExchangeMessageHandler checking destinations: %s", destination)
+            
+            # ### TODO IMPLEMENTATION: Query DynamoDB to see if this email maps to a group_id
+            # For now, return False to not interfere with existing flow
+            return False
+            
+        except (KeyError, json.JSONDecodeError) as e:
+            logger.error("Error in SharedExchangeMessageHandler: %s", e)
+            return False
+    
+    def process(self, message: Dict[str, Any], context: Any) -> Dict[str, Any]:
+        """
+        Process shared exchange email and create agent event for group assistant.
+        """
+        sns_message = {"Records": [{"Sns": {"Message": message["Message"]}}]}
+        
+        # ### TODO IMPLEMENTATION: Need to modify process_email to handle group_id
+        # Or create a new process_shared_exchange_email function
+        # The key difference is that currentUser will be a group_id instead of username
+        
+        # For now, delegate to standard email processing
+        # This will need to be updated to:
+        # 1. Extract group_id from destination email lookup
+        # 2. Get group's API key
+        # 3. Get group's assistant configuration with shared mailbox settings
+        # 4. Format prompt with shared mailbox context
+        
+        event = process_email(sns_message, context)
+        return event
+    
+    def onFailure(self, event: Dict[str, Any], error: Exception) -> None:
+        logger.error("SharedExchangeMessageHandler onFailure: %s", error)
+        # ### TODO IMPLEMENTATION: Consider group-specific error handling
+        # e.g., notify group admins of failure
+    
+    def onSuccess(
+        self, agent_input_event: Dict[str, Any], agent_result: Dict[str, Any]
+    ) -> None:
+        """
+        Register the agent conversation for the group.
+        """
+        metadata = agent_input_event.get("metadata", {})
+        accessToken = metadata.get("accessToken")
+        
+        if accessToken:
+            logger.info("Registering shared exchange agent conversation")
+            register_agent_conversation(
+                access_token=accessToken, 
+                input=agent_input_event, 
+                result=agent_result
+            )
+        else:
+            logger.warning("No access token found for shared exchange conversation")

@@ -7,7 +7,7 @@ import boto3
 
 from typing import Dict, Any, List
 
-from events.email_events import SESMessageHandler
+from events.email_events import SESMessageHandler, SharedExchangeMessageHandler
 from scheduled_tasks_events.scheduled_tasks import TasksMessageHandler
 
 from pycommon.logger import getLogger
@@ -193,4 +193,5 @@ def process_and_invoke_agent(event: dict):
 
 
 register_handler(SESMessageHandler())
+register_handler(SharedExchangeMessageHandler())
 register_handler(TasksMessageHandler())
