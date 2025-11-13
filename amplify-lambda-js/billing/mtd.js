@@ -466,17 +466,17 @@ const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
             };
         }
 
-        // Extract pagination parameters
-        const pageSize = body?.data?.pageSize || 50;
+        // Extract pagination parameters with optimized defaults for auto-loading
+        const pageSize = body?.data?.pageSize || 100;
         const lastEvaluatedKey = body?.data?.lastEvaluatedKey || null;
         
         logger.info("Pagination parameters", { pageSize, hasLastEvaluatedKey: !!lastEvaluatedKey });
 
-        if (pageSize > 100) {
+        if (pageSize > 500) {
             logger.warn("Page size too large", { pageSize });
             return {
                 statusCode: 400,
-                body: JSON.stringify({ error: 'Page size cannot exceed 100' }),
+                body: JSON.stringify({ error: 'Page size cannot exceed 500' }),
             };
         }
 
@@ -495,7 +495,7 @@ const internalListAllUserMtdCostsHandler = async (event, context, callback) => {
                 ExpressionAttributeValues: {
                     ':type': 'cost'
                 },
-                Limit: pageSize * 10, // Get more records to ensure we have enough users after aggregation
+                Limit: Math.min(pageSize * 15, 5000), // Optimized: Get more records to aggregate users efficiently
             };
 
             if (lastEvaluatedKey) {
