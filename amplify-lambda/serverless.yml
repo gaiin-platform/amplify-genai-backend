@@ -1160,6 +1160,23 @@ resources:
           BlockPublicPolicy: true
           IgnorePublicAcls: true
           RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+            - Id: TempFilesCleanup
+              Status: Enabled
+              Filter:
+                Prefix: temp/
+              ExpirationInDays: 1
+            - Id: IntegrationFilesCleanup
+              Status: Enabled
+              Filter:
+                Prefix: tempIntegrationFiles/
+              ExpirationInDays: 1
+            - Id: ConversionCleanup
+              Status: Enabled
+              Filter:
+                Prefix: conversion/
+              ExpirationInDays: 1
         NotificationConfiguration:
           LambdaConfigurations:
             - Event: s3:ObjectCreated:*

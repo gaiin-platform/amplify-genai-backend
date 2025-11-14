@@ -49,6 +49,102 @@ This guide outlines the migration process for eliminating the `amplify-lambda-ba
 
 ---
 
+## 🔑 **IMMUTABLE ID CONFIGURATION**
+
+### **Using Cognito Sub as Immutable ID**
+
+The `--use-sub` migration option automatically migrates users from email-based authentication to using Cognito's immutable `sub` field as the user identifier.
+
+#### **Frontend Configuration**
+After migration, configure your frontend to use `sub` as the immutable ID field:
+
+```javascript
+// Environment configuration
+// IMMUTABLE_ID_ATTRIBUTE=sub
+
+// NextAuth.js automatically handles token processing
+// Your session will have: session.user.username = token.immutableId
+
+// When making authenticated requests, include the immutable_id_field parameter
+const requestBody = {
+  // ... your request data
+  immutable_id_field: process.env.IMMUTABLE_ID_ATTRIBUTE  // e.g., "sub"
+};
+
+// Example with fetch
+fetch('/api/endpoint', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${jwtToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify(requestBody)
+});
+```
+
+#### **How It Works**
+1. **JWT Token Processing**: The backend automatically extracts the specified field from the JWT token
+2. **Dynamic Field Selection**: The `immutable_id_field` parameter tells the system which JWT field to use
+3. **Backwards Compatibility**: If no field is specified, defaults to existing behavior
+
+#### **Supported Fields**
+- `sub`: Cognito's immutable user identifier (recommended)  
+- `email`: Email address (mutable, not recommended for long-term use)
+- `username`: Cognito username (depends on your Cognito configuration)
+- **Any custom field**: You can specify ANY JWT token attribute as the immutable ID field
+
+#### **Advanced: Custom Immutable ID Fields**
+
+**🚀 Powerful Flexibility**: You can configure the system to use ANY field from the JWT token as the immutable ID. This works with Cognito pre-token generation triggers to create completely custom authentication flows.
+
+**Example Setup:**
+
+1. **Cognito Pre-Token Trigger**: Add custom attributes to JWT tokens
+```javascript
+// Lambda pre-token generation trigger
+exports.handler = async (event) => {
+    // Add custom immutable_id field to token
+    event.response.claimsToAddOrOverride = {
+        'immutable_id': event.request.userAttributes.sub, // or any custom value
+        'custom_user_field': 'your-custom-identifier'
+    };
+    return event;
+};
+```
+
+2. **Frontend Environment Configuration**:
+```bash
+# Use ANY field name you want
+IMMUTABLE_ID_ATTRIBUTE=immutable_id
+# or
+IMMUTABLE_ID_ATTRIBUTE=custom_user_field  
+# or
+IMMUTABLE_ID_ATTRIBUTE=sub
+```
+
+3. **Request Configuration**:
+```javascript
+const requestBody = {
+  // Tell backend which field contains the immutable ID
+  immutable_id_field: process.env.IMMUTABLE_ID_ATTRIBUTE,
+  // ... your request data
+};
+```
+
+**🎯 Result**: The entire application (Python and Node.js services) will automatically honor whatever field you specify as the immutable ID. This allows for:
+- **Custom business logic** for user identification
+- **Gradual migration** strategies  
+- **Multi-tenant** authentication schemes
+- **Backwards compatibility** with existing systems
+
+**✅ Complete Flow Summary**:
+1. Frontend extracts `IMMUTABLE_ID_ATTRIBUTE` from JWT token profile
+2. Backend copies specified field to `immutable_id` in token payload  
+3. All services use `payload.immutable_id` as the primary user identifier
+4. System falls back to `sub` → `username` if no immutable_id specified
+
+---
+
 ## 🚨 **STEP 1: Configure Deployment Variables (MANDATORY)**
 
 ### ⚠️ **REQUIRED BEFORE RUNNING ANY MIGRATION SCRIPTS - NO EXCEPTIONS**
@@ -261,6 +357,22 @@ serverless amplify-lambda-js:deploy --stage dev
 **What this does:** Migrates all user data from email-based keys to username-based keys + consolidates S3 storage.
 
 #### 4a.1: Create Migration CSV
+
+**Option 1: Auto-Generate from Cognito User Pool (Recommended for Sub Migration)**
+Use the `--use-sub` flag to automatically generate CSV mapping emails to Cognito sub field:
+```bash
+# Auto-generate CSV with email -> sub mapping
+python3 scripts/id_migration.py --use-sub --dry-run --log migration_setup.log
+```
+
+This creates a CSV like:
+```csv
+old_id,new_id
+karely.rodriguez@vanderbilt.edu,1234567890abcdef
+allen.karns@vanderbilt.edu,fedcba0987654321
+```
+
+**Option 2: Manual CSV Creation**
 Create `migration_users.csv` with **different** values in each column:
 ```csv
 old_id,new_id
@@ -272,6 +384,25 @@ allen.karns@vanderbilt.edu,karnsab
 
 **🚨 IMPORTANT: Choose the right command for your situation:**
 
+**For Cognito Sub Migration (Recommended - Auto-generates CSV):**
+```bash
+# 1. ALWAYS start with dry run (auto-generates CSV from Cognito User Pool)
+python3 scripts/id_migration.py --use-sub --dry-run --log migration_dryrun.log
+
+# 2. STANDARD migration with Cognito sub mapping (script handles backups automatically)
+python3 scripts/id_migration.py --use-sub --log migration_full.log
+
+# 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
+python3 scripts/id_migration.py --use-sub --dont-backup --log migration_full.log
+
+# 4. FOR AUTOMATION/CI-CD (no interactive prompts)
+python3 scripts/id_migration.py --use-sub --no-confirmation --log migration_full.log
+
+# 5. IF NOT IN us-east-1 region
+python3 scripts/id_migration.py --use-sub --region us-west-2 --log migration_full.log
+```
+
+**For Manual CSV Migration:**
 ```bash
 # 1. ALWAYS start with dry run to see what will happen
 python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
@@ -1034,7 +1165,16 @@ aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-
 
 ### ⚡ **QUICK MIGRATION COMMANDS**
 
-**For ID Migration (Step 4a):**
+**For Cognito Sub ID Migration (Recommended - Auto-generates CSV):**
+```bash
+# ALWAYS START WITH DRY RUN (auto-generates CSV from Cognito)
+python3 scripts/id_migration.py --use-sub --dry-run --log migration.log
+
+# STANDARD MIGRATION (auto-backup handling)
+python3 scripts/id_migration.py --use-sub --log migration.log
+```
+
+**For Manual ID Migration (Step 4a):**
 ```bash
 # ALWAYS START WITH DRY RUN
 python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv
