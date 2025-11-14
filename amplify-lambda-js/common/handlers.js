@@ -1,7 +1,7 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {DynamoDBClient, QueryCommand, UpdateItemCommand} from "@aws-sdk/client-dynamodb";
+import {DynamoDBClient, QueryCommand, UpdateItemCommand, GetItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
@@ -35,6 +35,29 @@ const verifier = CognitoJwtVerifier.create({
     tokenUse: "access",
     clientId: clientId,
 });
+
+// Helper function to check if user exists in cognito table
+const checkUserInCognitoTable = async (userId) => {
+    const cognitoTable = process.env.COGNITO_USERS_DYNAMODB_TABLE;
+    if (!cognitoTable) {
+        logger.debug("COGNITO_USERS_DYNAMODB_TABLE not set, skipping lookup");
+        return false;
+    }
+
+    const dynamodbClient = new DynamoDBClient({});
+    try {
+        const command = new GetItemCommand({
+            TableName: cognitoTable,
+            Key: { 'user_id': { S: userId } }
+        });
+        
+        const response = await dynamodbClient.send(command);
+        return !!response.Item;
+    } catch (error) {
+        logger.debug(`Error checking cognito table for user ${userId}:`, error);
+        return false;
+    }
+};
 
 export const extractParams = async (event) => {
 
@@ -84,7 +107,25 @@ export const extractParams = async (event) => {
         const user = payload.username;
         const extractIdpPrefix = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
 
-        const current_user = payload.immutable_id ?? extractIdpPrefix();
+        let current_user = null;
+     
+        // First try sub - check if it exists in cognito table
+        if (payload.immutable_id ) {
+            current_user = payload.immutable_id;
+            logger.info(`Using immutable_id for user: ${current_user}`);
+        } else if (payload.sub) {
+            const subExists = await checkUserInCognitoTable(payload.sub);
+            if (subExists) {
+                current_user = payload.sub;
+                logger.info(`Using sub for user: ${current_user}`);
+            }
+        }
+        
+        // If sub not found, fallback to old IDP prefix username logic
+        if (!current_user) {
+            logger.debug(`Extracting username from: ${user}`);
+            current_user = extractIdpPrefix();
+        }
        
         logger.debug("Current user: " + current_user);
 

@@ -61,6 +61,7 @@ provider:
     # Imported Variables from Parameter Store
     ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
     API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
+    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
     COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
     ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
     S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
@@ -147,6 +148,7 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
+                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
             - Effect: "Allow"
               Action:
                 - "s3:PutObject"

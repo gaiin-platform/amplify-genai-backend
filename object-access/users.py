@@ -40,11 +40,6 @@ def _get_user_identifier(token_payload: dict) -> tuple[str, str]:
         
         return user, "username"
     
-    # Fall back to email field if present - COMMENTED OUT
-    # No code in our codebase relies on email for auth
-    # email = token_payload.get("email")
-    # if email and email.strip():
-    #     return email, "email"
     
     raise ValueError("No valid user identifier found in token")
 
@@ -143,7 +138,9 @@ def _update_admin_groups(user: UserABC) -> None:
 
 
 @required_env_vars({
-    "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "COGNITO_USERS_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+    "AMPLIFY_ADMIN_DYNAMODB_TABLE": [DynamoDBOperation.GET_ITEM, DynamoDBOperation.PUT_ITEM, DynamoDBOperation.UPDATE_ITEM],
+
 })
 def create_or_update_user(event, context):
     """Lambda function to create or update a user based on Cognito data.
@@ -213,9 +210,19 @@ def create_or_update_user(event, context):
             issuer=base_url,
         )
 
+        # Check if request specifies which field to use as immutable_id
+        body = json.loads(event.get("body", "{}"))
+        immutable_id_field = body.get("immutable_id_field")
+
+        # If no immutable_id in token but we have a field specified, copy it
+        if not payload.get("immutable_id") and immutable_id_field and payload.get(immutable_id_field):
+            logger.debug(f"Using field {immutable_id_field} as immutable_id")
+            payload["immutable_id"] = payload[immutable_id_field]
+
         # get the payload to search in the DAL
         # support both immutable_id and email-based systems
         user_id, id_type = _get_user_identifier(payload)
+        logger.info(f"Identified user: {user_id} (type: {id_type})")
         
         # Try to find existing user by the identified user_id
         user, prop_name = _find_user_by_property({id_type: user_id})

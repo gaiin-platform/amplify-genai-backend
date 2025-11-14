@@ -239,6 +239,11 @@ def parse_args():
         help="Generate migration_users.csv with same old_id and new_id for S3 consolidation only (no username changes).",
     )
     parser.add_argument(
+        "--use-sub",
+        action="store_true",
+        help="Generate migration_users.csv from Cognito User Pool mapping email (old_id) to sub (new_id). Requires access to Cognito User Pool."
+    )
+    parser.add_argument(
         "--dont-backup",
         action="store_true",
         help="Skip both backup creation and verification (for users who already have backups)"
@@ -393,6 +398,90 @@ def generate_no_change_csv(file_path: str, dry_run: bool) -> bool:
             
     except Exception as e:
         log(msg % f"Error generating CSV file: {e}")
+        return False
+
+
+def generate_cognito_sub_csv(file_path: str, dry_run: bool) -> bool:
+    """
+    Generate migration_users.csv by calling generate_migration_csv.py script.
+    Maps email addresses (old_id) to Cognito sub field (new_id) for immutable ID migration.
+    
+    Args:
+        file_path: Path to write the CSV file
+        dry_run: If True, only show what would be done
+        
+    Returns:
+        bool: Success status
+    """
+    import subprocess
+    
+    msg = f"[generate_cognito_sub_csv][dry-run: {dry_run}] %s"
+    
+    try:
+        # Get the script directory and path to generate_migration_csv.py
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        generate_script_path = os.path.join(script_dir, "generate_migration_csv.py")
+        
+        if not os.path.exists(generate_script_path):
+            log(msg % f"generate_migration_csv.py not found at {generate_script_path}")
+            return False
+        
+        log(msg % "Calling generate_migration_csv.py to create Cognito User Pool CSV...")
+        log(msg % "This will map email addresses (old_id) to Cognito sub field (new_id)")
+        
+        if dry_run:
+            log(msg % f"Would execute: python3 {generate_script_path}")
+            log(msg % f"Would generate: {file_path}")
+            log(msg % "Note: CSV file will NOT be created in dry-run mode")
+            return True
+        
+        # Execute the generate_migration_csv.py script
+        result = subprocess.run([
+            sys.executable, generate_script_path
+        ], capture_output=True, text=True, cwd=script_dir)
+        
+        if result.returncode != 0:
+            log(msg % f"generate_migration_csv.py failed with return code {result.returncode}")
+            if result.stderr:
+                log(msg % f"Error output: {result.stderr}")
+            if result.stdout:
+                log(msg % f"Standard output: {result.stdout}")
+            return False
+        
+        # Check if CSV file was created
+        if not os.path.exists(file_path):
+            log(msg % f"CSV file was not created at expected location: {file_path}")
+            return False
+        
+        # Verify CSV content and show sample
+        try:
+            with open(file_path, 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                rows = list(reader)
+                if len(rows) < 2:  # Header + at least one data row
+                    log(msg % "CSV file appears to be empty or only has header")
+                    return False
+                
+                log(msg % f"Successfully generated {file_path}")
+                log(msg % f"Total users: {len(rows) - 1}")  # Exclude header
+                log(msg % "Sample mapping (email -> sub):")
+                
+                # Show first few mappings
+                for i, row in enumerate(rows[1:6]):  # Skip header, show first 5
+                    if len(row) >= 2:
+                        log(msg % f"  {row[0]} -> {row[1]}")
+                
+                if len(rows) > 6:
+                    log(msg % f"  ... and {len(rows) - 6} more users")
+                    
+        except Exception as read_error:
+            log(msg % f"Warning: Could not read generated CSV for verification: {read_error}")
+            
+        log(msg % "✅ Cognito User Pool CSV generation completed successfully")
+        return True
+            
+    except Exception as e:
+        log(msg % f"Error generating Cognito sub CSV: {str(e)}")
         return False
 
 
@@ -3534,6 +3623,14 @@ if __name__ == "__main__":
     # Parse command line arguments first
     args = parse_args()
     
+    # Validate mutually exclusive flags
+    if args.use_sub and args.no_id_change:
+        print("Error: --use-sub and --no-id-change flags are mutually exclusive.", file=sys.stderr)
+        print("--use-sub: Creates email -> sub migration (ID changes occur)", file=sys.stderr)
+        print("--no-id-change: Creates same ID migration (no ID changes)", file=sys.stderr)
+        print("Choose one migration type.", file=sys.stderr)
+        sys.exit(1)
+    
     # Ensure all file paths are relative to the scripts directory
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -3657,9 +3754,24 @@ if __name__ == "__main__":
             log(f"ℹ️  Backup process skipped (--dont-backup flag used)")
             log(f"ℹ️  Assuming you already have proper backups in place")
         
-        # Generate CSV only if --no-id-change flag is present AND CSV file doesn't exist
+        # Generate CSV based on flags
         import os
-        if args.no_id_change and not os.path.exists(args.csv_file):
+        if args.use_sub and not os.path.exists(args.csv_file):
+            log(f"\n=== GENERATING COGNITO SUB MIGRATION CSV ===")
+            log(f"CSV file not found: {args.csv_file}")
+            log(f"Pulling all users from Cognito User Pool for email -> sub migration...")
+            log(f"⚠️  This will create ID changes: email addresses -> immutable sub field")
+            
+            if not generate_cognito_sub_csv(args.csv_file, args.dry_run):
+                log(f"Failed to generate {args.csv_file}")
+                sys.exit(1)
+            log(f"Successfully generated {args.csv_file} mapping emails to sub field")
+        elif args.use_sub and os.path.exists(args.csv_file):
+            log(f"\n=== USING EXISTING COGNITO SUB CSV ===")
+            log(f"Found existing CSV file: {args.csv_file}")
+            log(f"Using existing CSV for email -> sub migration (--use-sub mode)")
+            log(f"ℹ️  Tip: Delete the CSV file if you want to auto-generate from Cognito User Pool")
+        elif args.no_id_change and not os.path.exists(args.csv_file):
             log(f"\n=== GENERATING MIGRATION CSV (No ID Changes) ===")
             log(f"CSV file not found: {args.csv_file}")
             log(f"Pulling all users from Cognito table for S3 consolidation migration...")
@@ -3678,11 +3790,16 @@ if __name__ == "__main__":
         if not os.path.exists(args.csv_file):
             log(f"\n❌ MIGRATION ERROR: CSV file not found!")
             log(f"Expected file: {args.csv_file}")
-            if args.no_id_change:
+            if args.use_sub:
+                log(f"💡 Solution: Cognito User Pool CSV generation failed or was skipped")
+                log(f"💡 Troubleshooting: Check that COGNITO_USER_POOL_ID is available in environment or /var/{{stage}}-var.yml files")
+            elif args.no_id_change:
                 log(f"💡 Solution: CSV generation failed or was skipped")
             else:
-                log(f"💡 Solution: Create the CSV file manually or use --no-id-change flag to auto-generate")
-                log(f"💡 CSV format required:")
+                log(f"💡 Solution: Create the CSV file manually, or use migration flags:")
+                log(f"   --use-sub: Auto-generate from Cognito User Pool (email -> sub)")
+                log(f"   --no-id-change: Auto-generate for S3 consolidation only")
+                log(f"💡 Manual CSV format required:")
                 log(f"   old_id,new_id")
                 log(f"   user1@example.com,user1") 
                 log(f"   user2@example.com,user2")
@@ -3747,7 +3864,7 @@ if __name__ == "__main__":
             if ids_changing:
                 log(f"Step 1 - USER_DATA_STORAGE ID migration: ✅ NEEDED")
             else:
-                log(f"Step 1 - USER_DATA_STORAGE ID migration: ⏭️  SKIPPED (no ID changes, --no-id-change mode)")
+                log(f"Step 1 - USER_DATA_STORAGE ID migration: ⏭️  SKIPPED (no ID changes detected)")
         else:
             log(f"Step 1 - USER_DATA_STORAGE ID migration: ⏭️  SKIPPED (table missing)")
         log(f"Step 2 - Old→New table migration: {'✅ NEEDED' if steps_needed['old_to_new_table_migration'] else '⏭️  SKIPPED (tables missing)'}")
@@ -3792,7 +3909,7 @@ if __name__ == "__main__":
                     else:
                         log(f"USER_DATA_STORAGE ID migration completed successfully.")
             else:
-                log(f"⏭️  Skipping USER_DATA_STORAGE ID migration - no user IDs are changing (--no-id-change mode)")
+                log(f"⏭️  Skipping USER_DATA_STORAGE ID migration - no user IDs are changing")
         else:
             log(f"⏭️  Skipping USER_DATA_STORAGE ID migration - table does not exist")
         
