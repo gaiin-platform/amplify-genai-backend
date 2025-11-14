@@ -1987,24 +1987,31 @@ def delete_event_handler(current_user, data):
     path="/microsoft/integrations/get_event_details",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="microsoftGetEventDetails",
-    description="Gets details for a specific calendar event.",
+    description="Gets details for a specific calendar event with timezone support.",
     parameters={
         "type": "object",
         "properties": {
-            "event_id": {"type": "string", "description": "Event ID to retrieve"}
+            "event_id": {"type": "string", "description": "Event ID to retrieve"},
+            "user_timezone": {
+                "type": "string",
+                "description": "User's preferred timezone in Windows format (optional)",
+                "default": "UTC",
+            },
         },
         "required": ["event_id"],
     },
 )
 def get_event_details_handler(current_user, data):
-    return common_handler(get_event_details, event_id=None)(current_user, data)
+    return common_handler(get_event_details, event_id=None, user_timezone="UTC")(
+        current_user, data
+    )
 
 
 @api_tool(
     path="/microsoft/integrations/get_events_between_dates",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="microsoftGetEventsBetweenDates",
-    description="Retrieves events between two dates.",
+    description="Retrieves events between two dates with timezone support.",
     parameters={
         "type": "object",
         "properties": {
@@ -2023,13 +2030,22 @@ def get_event_details_handler(current_user, data):
                 "description": "Maximum number of events to retrieve per page (optional)",
                 "default": 50,
             },
+            "user_timezone": {
+                "type": "string",
+                "description": "User's preferred timezone in Windows format (e.g., 'Pacific Standard Time', 'Eastern Standard Time') (optional)",
+                "default": "UTC",
+            },
         },
         "required": ["start_dt", "end_dt"],
     },
 )
 def get_events_between_dates_handler(current_user, data):
     return common_handler(
-        get_events_between_dates, start_dt=None, end_dt=None, page_size=50
+        get_events_between_dates,
+        start_dt=None,
+        end_dt=None,
+        page_size=50,
+        user_timezone="UTC",
     )(current_user, data)
 
 
@@ -2329,15 +2345,24 @@ def search_messages_handler(current_user, data):
     path="/microsoft/integrations/list_calendar_events",
     tags=["default", "integration", "microsoft_calendar", "microsoft_calendar_read"],
     name="microsoftListCalendarEvents",
-    description="Lists events for a given calendar.",
+    description="Lists events for a given calendar with timezone support.",
     parameters={
         "type": "object",
-        "properties": {"calendar_id": {"type": "string", "description": "Calendar ID"}},
+        "properties": {
+            "calendar_id": {"type": "string", "description": "Calendar ID"},
+            "user_timezone": {
+                "type": "string",
+                "description": "User's preferred timezone in Windows format (optional)",
+                "default": "UTC",
+            },
+        },
         "required": ["calendar_id"],
     },
 )
 def list_calendar_events_handler(current_user, data):
-    return common_handler(list_calendar_events, calendar_id=None)(current_user, data)
+    return common_handler(list_calendar_events, calendar_id=None, user_timezone="UTC")(
+        current_user, data
+    )
 
 
 @api_tool(
@@ -2951,9 +2976,9 @@ def list_charts_handler(current_user, data):
     },
 )
 def get_chart_handler(current_user, data):
-    return common_handler(get_chart, item_id=None, worksheet_name=None, chart_name=None)(
-        current_user, data
-    )
+    return common_handler(
+        get_chart, item_id=None, worksheet_name=None, chart_name=None
+    )(current_user, data)
 
 
 @api_tool(
@@ -3021,9 +3046,9 @@ def create_chart_handler(current_user, data):
     },
 )
 def delete_chart_handler(current_user, data):
-    return common_handler(delete_chart, item_id=None, worksheet_name=None, chart_name=None)(
-        current_user, data
-    )
+    return common_handler(
+        delete_chart, item_id=None, worksheet_name=None, chart_name=None
+    )(current_user, data)
 
 
 @api_tool(
