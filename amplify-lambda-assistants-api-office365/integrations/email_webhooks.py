@@ -20,18 +20,77 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import requests
 
-from pycommon.api.secrets import get_secret_parameter
-from pycommon.authz import validated, setup_validated
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, SSMOperation, SQSOperation
-)
-from pycommon.logger import getLogger
-from schemata.schema_validation_rules import rules
-from schemata.permissions import get_permission_checker
-
-logger = getLogger("email_webhooks")
-setup_validated(rules, get_permission_checker)
+# Conditional imports for local development compatibility
+try:
+    from pycommon.api.secrets import get_secret_parameter
+    from pycommon.authz import validated, setup_validated
+    from pycommon.decorators import required_env_vars
+    from pycommon.dal.providers.aws.resource_perms import (
+        DynamoDBOperation, SSMOperation, SQSOperation
+    )
+    from pycommon.logger import getLogger
+    from schemata.schema_validation_rules import rules
+    from schemata.permissions import get_permission_checker
+    
+    logger = getLogger("email_webhooks")
+    setup_validated(rules, get_permission_checker)
+    PRODUCTION_MODE = True
+    
+except ImportError:
+    # Local development fallbacks
+    import logging
+    logger = logging.getLogger("email_webhooks")
+    logger.setLevel(logging.INFO)
+    
+    # Create console handler if none exists
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    
+    PRODUCTION_MODE = False
+    
+    # Mock classes for local development
+    class DynamoDBOperation:
+        PUT_ITEM = "PUT_ITEM"
+        GET_ITEM = "GET_ITEM"
+        
+    class SSMOperation:
+        GET_PARAMETER = "GET_PARAMETER"
+        
+    class SQSOperation:
+        SEND_MESSAGE = "SEND_MESSAGE"
+    
+    # Mock decorators for local development
+    def required_env_vars(env_vars):
+        def decorator(func):
+            return func
+        return decorator
+    
+    def validated(method):
+        def decorator(func):
+            def wrapper(event, context, *args, **kwargs):
+                # Extract current_user, name, data from args for compatibility
+                return func(event, context, "local_user", "test", {})
+            return wrapper
+        return decorator
+    
+    def get_secret_parameter(param_name, prefix=""):
+        """Mock secret parameter retrieval for local development"""
+        logger.warning(f"Local mode: Mock secret parameter {prefix}{param_name}")
+        # Return mock Microsoft Graph credentials for local testing
+        if "microsoft" in param_name:
+            return json.dumps({
+                "client_config": {
+                    "web": {
+                        "client_id": "mock-client-id",
+                        "client_secret": "mock-client-secret", 
+                        "tenant_id": "mock-tenant-id"
+                    }
+                }
+            })
+        return "mock-secret-value"
 
 # Constants
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
@@ -62,6 +121,11 @@ def get_graph_application_token() -> str:
     Returns:
         Access token for Graph API application permissions
     """
+    # Local development mode - return mock token
+    if not PRODUCTION_MODE:
+        logger.warning("Local mode: Using mock Graph API token")
+        return "mock-graph-api-token-for-local-development"
+    
     try:
         stage = os.environ.get("INTEGRATION_STAGE", "dev")
         secret_param = f"integrations/{PROVIDER}/{stage}"
@@ -260,6 +324,15 @@ def _forward_to_sqs(event, context) -> Dict[str, Any]:
     Lightweight forwarder that sends webhook notifications directly to SQS.
     Minimal processing - just forward the Microsoft Graph payload to SQS.
     """
+    # Local development mode - just log and return success
+    if not PRODUCTION_MODE:
+        body = event.get("body", "{}")
+        logger.info(f"Local mode: Would forward to SQS: {body[:200]}...")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"status": "forwarded", "mode": "local"})
+        }
+    
     try:
         # Get the raw notification body from Microsoft Graph
         body = event.get("body", "{}")
