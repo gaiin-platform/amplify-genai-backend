@@ -25,9 +25,9 @@ Ensure your Azure AD application has the following **application permissions** (
 Before deploying, you must create the webhook client state secret:
 
 ```bash
-# Generate a secure random client state
+# Generate a secure random client state (follows existing oauth pattern)
 aws ssm put-parameter \
-  --name "/amplify-assistants-office365-office365/dev/email/webhook/client-state" \
+  --name "/oauth/integrations/microsoft/dev/email-webhook-client-state" \
   --value "$(openssl rand -base64 32)" \
   --type "SecureString" \
   --description "Client state secret for email webhook validation"
@@ -178,7 +178,7 @@ Monitor these log groups:
 aws ssm get-parameter --name "/oauth/integrations/microsoft/dev"
 
 # Check webhook client state
-aws ssm get-parameter --name "/amplify-assistants-office365-office365/dev/email/webhook/client-state" --with-decryption
+aws ssm get-parameter --name "/oauth/integrations/microsoft/dev/email-webhook-client-state" --with-decryption
 ```
 
 #### 2. Webhook Validation Fails

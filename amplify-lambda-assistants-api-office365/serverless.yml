@@ -57,7 +57,7 @@ provider:
     # Email Webhook Configuration
     EMAIL_NOTIFICATIONS_QUEUE: ${self:service}-${sls:stage}-email-notifications
     EMAIL_SUBSCRIPTIONS_TABLE: ${self:service}-${sls:stage}-email-subscriptions
-    EMAIL_WEBHOOK_CLIENT_STATE: ${ssm:/${self:service}/${sls:stage}/email/webhook/client-state}
+    EMAIL_WEBHOOK_CLIENT_STATE: ${ssm:/oauth/integrations/microsoft/${sls:stage}/email-webhook-client-state}
     
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
@@ -197,8 +197,6 @@ resources:
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.OAUTH_ENCRYPTION_PARAMETER}*"
-                # Email webhook client state parameter
-                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/email/webhook/client-state"
             - Effect: Allow
               Action:
                 - dynamodb:DescribeStream
