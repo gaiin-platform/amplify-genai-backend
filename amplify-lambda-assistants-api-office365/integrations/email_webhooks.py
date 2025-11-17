@@ -110,6 +110,94 @@ def get_graph_headers() -> Dict[str, str]:
     }
 
 
+def get_user_guid_from_email(user_email: str) -> Optional[str]:
+    """
+    Get Azure AD User GUID from email address using Microsoft Graph API.
+    
+    Args:
+        user_email: User's email address (e.g., "max.moundas@vanderbilt.edu")
+    
+    Returns:
+        User GUID string or None if not found
+    """
+    try:
+        headers = get_graph_headers()
+        
+        # Query user by userPrincipalName (email)
+        url = f"{GRAPH_ENDPOINT}/users/{user_email}"
+        
+        # Select only the id field for efficiency
+        params = {"$select": "id,userPrincipalName,displayName"}
+        
+        logger.info(f"Looking up user GUID for email: {user_email}")
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            user_id = user_data.get("id")
+            logger.info(f"Found user GUID {user_id} for {user_email}")
+            return user_id
+        elif response.status_code == 404:
+            logger.warning(f"User not found in Azure AD: {user_email}")
+            return None
+        else:
+            logger.error(f"Graph API error getting user: {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Failed to get user GUID for {user_email}: {str(e)}")
+        return None
+
+
+def get_all_organization_users(page_size: int = 100) -> List[Dict[str, str]]:
+    """
+    Get all users in the organization with their GUIDs and email addresses.
+    
+    Args:
+        page_size: Number of users to fetch per page (max 999)
+    
+    Returns:
+        List of user dictionaries with 'id', 'userPrincipalName', 'displayName'
+    """
+    try:
+        headers = get_graph_headers()
+        all_users = []
+        
+        # Start with first page
+        url = f"{GRAPH_ENDPOINT}/users"
+        params = {
+            "$select": "id,userPrincipalName,displayName,accountEnabled",
+            "$filter": "accountEnabled eq true",  # Only active users
+            "$top": page_size
+        }
+        
+        logger.info("Fetching all organization users from Azure AD")
+        
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                users = data.get("value", [])
+                all_users.extend(users)
+                
+                # Get next page URL if it exists
+                url = data.get("@odata.nextLink")
+                params = None  # Next link already contains query params
+                
+                logger.info(f"Fetched {len(users)} users, total: {len(all_users)}")
+            else:
+                logger.error(f"Failed to fetch users: {response.status_code} - {response.text}")
+                break
+        
+        logger.info(f"Retrieved {len(all_users)} total users from organization")
+        return all_users
+        
+    except Exception as e:
+        logger.error(f"Failed to get organization users: {str(e)}")
+        return []
+
+
 @required_env_vars({
     "EMAIL_WEBHOOK_CLIENT_STATE": [SSMOperation.GET_PARAMETER],
 })
@@ -472,17 +560,34 @@ def create_subscription(event, context, current_user, name, data):
         
         # Parse request body
         request_body = json.loads(event.get("body", "{}"))
-        user_id = request_body.get("userId", "USER_ID_PLACEHOLDER")
-        user_email = request_body.get("userEmail", "max.moundas@vanderbilt.edu")
+        user_id = request_body.get("userId")
+        user_email = request_body.get("userEmail")
         
-        if not user_id or user_id == "USER_ID_PLACEHOLDER":
+        # Validate inputs
+        if not user_email:
             return {
                 "statusCode": 400,
                 "body": json.dumps({
                     "success": False,
-                    "error": "userId is required. Please provide the Azure AD user GUID."
+                    "error": "userEmail is required."
                 })
             }
+        
+        # If no userId provided, automatically get it from email address
+        if not user_id:
+            logger.info(f"No userId provided, looking up GUID for email: {user_email}")
+            user_id = get_user_guid_from_email(user_email)
+            
+            if not user_id:
+                return {
+                    "statusCode": 404,
+                    "body": json.dumps({
+                        "success": False,
+                        "error": f"User not found in Azure AD: {user_email}"
+                    })
+                }
+            
+            logger.info(f"Automatically found User GUID: {user_id} for {user_email}")
         
         # Create webhook subscription
         subscription_data = _create_graph_subscription(user_id, user_email)
@@ -570,6 +675,131 @@ def _create_graph_subscription(user_id: str, user_email: str) -> Optional[Dict[s
     except Exception as e:
         logger.error(f"Failed to create Graph subscription: {str(e)}")
         return None
+
+
+@required_env_vars({
+    "EMAIL_SUBSCRIPTIONS_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
+})
+@validated("get")
+def get_user_guid_api(event, context, current_user, name, data):
+    """
+    API endpoint to get Azure AD User GUID from email address.
+    
+    GET /integrations/email/user-guid?email=user@example.com
+    
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "userEmail": "user@example.com",
+                "userId": "guid-123-456",
+                "displayName": "User Name"
+            }
+        }
+    """
+    try:
+        query_params = event.get("queryStringParameters") or {}
+        user_email = query_params.get("email")
+        
+        if not user_email:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({
+                    "success": False,
+                    "error": "email parameter is required"
+                })
+            }
+        
+        # Get user info from Azure AD
+        headers = get_graph_headers()
+        url = f"{GRAPH_ENDPOINT}/users/{user_email}"
+        params = {"$select": "id,userPrincipalName,displayName"}
+        
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "success": True,
+                    "data": {
+                        "userEmail": user_data.get("userPrincipalName"),
+                        "userId": user_data.get("id"),
+                        "displayName": user_data.get("displayName")
+                    }
+                })
+            }
+        elif response.status_code == 404:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "success": False,
+                    "error": f"User not found: {user_email}"
+                })
+            }
+        else:
+            return {
+                "statusCode": 500,
+                "body": json.dumps({
+                    "success": False,
+                    "error": "Failed to query Azure AD"
+                })
+            }
+            
+    except Exception as e:
+        logger.error(f"Get user GUID API error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "success": False,
+                "error": str(e)
+            })
+        }
+
+
+@required_env_vars({
+    "EMAIL_SUBSCRIPTIONS_TABLE": [DynamoDBOperation.PUT_ITEM, DynamoDBOperation.GET_ITEM],
+})
+@validated("get")
+def list_organization_users(event, context, current_user, name, data):
+    """
+    API endpoint to get all users in the organization for bulk operations.
+    
+    GET /integrations/email/organization/users?page_size=100
+    
+    Phase 2: Use this for bulk subscription creation
+    """
+    try:
+        query_params = event.get("queryStringParameters") or {}
+        page_size = int(query_params.get("page_size", 100))
+        
+        # Limit page size to prevent timeouts
+        page_size = min(page_size, 500)
+        
+        users = get_all_organization_users(page_size)
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "success": True,
+                "data": {
+                    "users": users,
+                    "count": len(users),
+                    "pageSize": page_size
+                }
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"List organization users API error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "success": False,
+                "error": str(e)
+            })
+        }
 
 
 def _store_subscription_record(subscription_data: Dict[str, Any], user_id: str, user_email: str):
