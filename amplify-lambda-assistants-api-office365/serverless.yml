@@ -134,7 +134,6 @@ functions:
       - sqs:
           arn: !GetAtt EmailNotificationsQueue.Arn
           batchSize: 10
-          maximumBatchingWindowInSeconds: 5
           functionResponseType: ReportBatchItemFailures
 
   createEmailSubscription:
@@ -144,6 +143,25 @@ functions:
       - http:
           path: integrations/email/subscription/create
           method: post
+          cors: false
+
+  # Phase 2: Programmatic User GUID Functions
+  getUserGuid:
+    handler: integrations/email_webhooks.get_user_guid_api
+    timeout: 30
+    events:
+      - http:
+          path: integrations/email/user-guid
+          method: get
+          cors: false
+
+  listOrganizationUsers:
+    handler: integrations/email_webhooks.list_organization_users
+    timeout: 60
+    events:
+      - http:
+          path: integrations/email/organization/users
+          method: get
           cors: false
 
 resources:
