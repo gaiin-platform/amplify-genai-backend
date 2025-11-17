@@ -1164,18 +1164,15 @@ resources:
           Rules:
             - Id: TempFilesCleanup
               Status: Enabled
-              Filter:
-                Prefix: temp/
+              Prefix: temp/
               ExpirationInDays: 1
             - Id: IntegrationFilesCleanup
               Status: Enabled
-              Filter:
-                Prefix: tempIntegrationFiles/
+              Prefix: tempIntegrationFiles/
               ExpirationInDays: 1
             - Id: ConversionCleanup
               Status: Enabled
-              Filter:
-                Prefix: conversion/
+              Prefix: conversion/
               ExpirationInDays: 1
         NotificationConfiguration:
           LambdaConfigurations:
