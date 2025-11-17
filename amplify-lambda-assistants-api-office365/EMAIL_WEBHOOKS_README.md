@@ -11,10 +11,10 @@ Microsoft Graph API (monitors user mailboxes)
            ↓
     Webhook Subscription (per user)
            ↓
-    API Gateway + webhookHandler Lambda
-           ↓ 
+    API Gateway + webhookHandler Lambda (lightweight forwarder)
+           ↓ (forwards directly with minimal processing)
     SQS Queue
-           ↓
+           ↓ (triggers processor)
     emailProcessor Lambda
            ↓
     CloudWatch Logs + DynamoDB Storage
@@ -26,9 +26,10 @@ Microsoft Graph API (monitors user mailboxes)
 
 ### 1. Webhook Handler
 - **Path**: `/integrations/email/webhook`
-- **Methods**: GET (validation), POST (notifications)
-- **Purpose**: Receives Microsoft Graph webhook notifications
+- **Methods**: GET (validation), POST (forward to SQS)
+- **Purpose**: Lightweight handler that validates webhooks and forwards notifications to SQS
 - **Handler**: `integrations/email_webhooks.webhook_handler`
+- **Performance**: Minimal processing overhead - forwards directly to SQS
 
 ### 2. Create Email Subscription  
 - **Path**: `/integrations/email/subscription/create`
