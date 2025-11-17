@@ -54,6 +54,11 @@ provider:
     SERVICE_NAME: ${self:service}
     STAGE: ${sls:stage}
     
+    # Email Webhook Configuration
+    EMAIL_NOTIFICATIONS_QUEUE: ${self:service}-${sls:stage}-email-notifications
+    EMAIL_SUBSCRIPTIONS_TABLE: ${self:service}-${sls:stage}-email-subscriptions
+    EMAIL_WEBHOOK_CLIENT_STATE: ${ssm:/${self:service}/${sls:stage}/email/webhook/client-state}
+    
     # Locally Defined Variables
     LAMBDA_API_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
 
@@ -106,6 +111,41 @@ functions:
           batchSize: 1
           startingPosition: TRIM_HORIZON
 
+  # Email Webhook System Functions
+  webhookHandler:
+    handler: integrations/email_webhooks.webhook_handler
+    timeout: 30
+    events:
+      - http:
+          path: integrations/email/webhook
+          method: post
+          cors: false
+      - http:
+          path: integrations/email/webhook
+          method: get
+          cors: false
+    environment:
+      EMAIL_NOTIFICATIONS_QUEUE_URL: !Ref EmailNotificationsQueue
+
+  emailProcessor:
+    handler: integrations/email_webhooks.email_processor
+    timeout: 300
+    events:
+      - sqs:
+          arn: !GetAtt EmailNotificationsQueue.Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 5
+          functionResponseType: ReportBatchItemFailures
+
+  createEmailSubscription:
+    handler: integrations/email_webhooks.create_subscription
+    timeout: 30
+    events:
+      - http:
+          path: integrations/email/subscription/create
+          method: post
+          cors: false
+
 resources:
   Resources:
     LambdaAPIIAMPolicy:
@@ -137,6 +177,19 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.OPS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
+                # Email webhook system resources
+                - !GetAtt EmailSubscriptionsTable.Arn
+                - !Sub "${EmailSubscriptionsTable}/index/*"
+
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource:
+                - !GetAtt EmailNotificationsQueue.Arn
+                - !GetAtt EmailNotificationsDLQ.Arn
 
             - Effect: Allow
               Action:
@@ -144,6 +197,8 @@ resources:
               Resource:
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/oauth/*"
                 - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:provider.environment.OAUTH_ENCRYPTION_PARAMETER}*"
+                # Email webhook client state parameter
+                - "arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter/${self:service}/${sls:stage}/email/webhook/client-state"
             - Effect: Allow
               Action:
                 - dynamodb:DescribeStream
@@ -169,4 +224,47 @@ resources:
                 - ssm:GetParameters
                 - ssm:GetParametersByPath
               Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*
+
+    # Email Webhook System Resources
+    EmailNotificationsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.EMAIL_NOTIFICATIONS_QUEUE}
+        VisibilityTimeout: 300
+        MessageRetentionPeriod: 345600  # 4 days
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt EmailNotificationsDLQ.Arn
+          maxReceiveCount: 3
+
+    EmailNotificationsDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.EMAIL_NOTIFICATIONS_QUEUE}-dlq
+        MessageRetentionPeriod: 1209600  # 14 days
+
+    EmailSubscriptionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.EMAIL_SUBSCRIPTIONS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: subscription_id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: subscription_id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: user_id-index
+            KeySchema:
+              - AttributeName: user_id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
