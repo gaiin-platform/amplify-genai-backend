@@ -115,14 +115,14 @@ def get_graph_headers() -> Dict[str, str]:
 })
 def webhook_handler(event, context):
     """
-    Handle Microsoft Graph webhook notifications for incoming emails.
+    Lightweight Microsoft Graph webhook handler.
     
-    This function handles two types of requests:
-    1. Validation requests (GET with validationToken parameter)
-    2. Notification requests (POST with notification data)
+    This function:
+    1. Handles validation requests (GET with validationToken parameter)
+    2. Forwards notification requests (POST) directly to SQS with minimal processing
     
-    For validation: Returns the validationToken as plain text
-    For notifications: Validates clientState and sends to SQS queue
+    Microsoft Graph requires the same URL for both validation and notifications.
+    This handler provides minimal overhead while forwarding to SQS for processing.
     
     Must respond within 3 seconds or Microsoft will retry.
     """
@@ -148,9 +148,9 @@ def webhook_handler(event, context):
                     "body": "Missing validationToken parameter"
                 }
         
-        # Handle notification request (POST with notification data)
+        # Handle notification request (POST) - forward directly to SQS
         elif event.get("httpMethod") == "POST":
-            return _handle_notification(event, context)
+            return _forward_to_sqs(event, context)
         
         else:
             logger.warning(f"Unsupported HTTP method: {event.get('httpMethod')}")
@@ -167,145 +167,13 @@ def webhook_handler(event, context):
         }
 
 
-def _handle_notification(event, context) -> Dict[str, Any]:
-    """Handle POST notification from Microsoft Graph"""
-    try:
-        # Parse notification body
-        body = event.get("body", "{}")
-        if isinstance(body, str):
-            notification_data = json.loads(body)
-        else:
-            notification_data = body
-            
-        logger.info(f"Received notification: {json.dumps(notification_data)}")
-        
-        # Extract notifications array
-        notifications = notification_data.get("value", [])
-        if not notifications:
-            logger.warning("No notifications in request body")
-            return {"statusCode": 200, "body": "OK"}
-        
-        # Validate and process each notification
-        processed_count = 0
-        for notification in notifications:
-            if _process_single_notification(notification):
-                processed_count += 1
-        
-        logger.info(f"Successfully processed {processed_count}/{len(notifications)} notifications")
-        
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "processed": processed_count,
-                "total": len(notifications)
-            })
-        }
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in notification body: {str(e)}")
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "Invalid JSON"})
-        }
-    except Exception as e:
-        logger.error(f"Notification processing error: {str(e)}")
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"error": "Processing failed"})
-        }
+def _forward_to_sqs(event, context) -> Dict[str, Any]:\n    \"\"\"\n    Lightweight forwarder that sends webhook notifications directly to SQS.\n    Minimal processing - just forward the Microsoft Graph payload to SQS.\n    \"\"\"\n    try:\n        # Get the raw notification body from Microsoft Graph\n        body = event.get(\"body\", \"{}\")\n        \n        # Send directly to SQS with minimal processing\n        queue_url = _get_sqs_queue_url()\n        sqs = boto3.client(\"sqs\")\n        \n        response = sqs.send_message(\n            QueueUrl=queue_url,\n            MessageBody=body,  # Forward raw Microsoft Graph webhook payload\n            MessageAttributes={\n                \"source\": {\n                    \"StringValue\": \"microsoft-graph-webhook\",\n                    \"DataType\": \"String\"\n                },\n                \"timestamp\": {\n                    \"StringValue\": datetime.now(timezone.utc).isoformat(),\n                    \"DataType\": \"String\"\n                }\n            }\n        )\n        \n        logger.info(f\"Forwarded webhook notification to SQS: MessageId={response['MessageId']}\")\n        \n        # Return success immediately\n        return {\n            \"statusCode\": 200,\n            \"body\": json.dumps({\"status\": \"forwarded\"})\n        }\n        \n    except Exception as e:\n        logger.error(f\"Failed to forward notification to SQS: {str(e)}\")\n        return {\n            \"statusCode\": 500,\n            \"body\": json.dumps({\"error\": \"Forwarding failed\"})\n        }
 
 
-def _process_single_notification(notification: Dict[str, Any]) -> bool:
-    """Process a single notification and send to SQS"""
-    try:
-        # Validate required fields
-        subscription_id = notification.get("subscriptionId")
-        client_state = notification.get("clientState")
-        change_type = notification.get("changeType")
-        resource = notification.get("resource")
-        
-        if not all([subscription_id, client_state, change_type, resource]):
-            logger.error(f"Missing required fields in notification: {notification}")
-            return False
-        
-        # Validate clientState for security
-        expected_client_state = os.environ.get("EMAIL_WEBHOOK_CLIENT_STATE")
-        if client_state != expected_client_state:
-            logger.error(f"Invalid clientState: {client_state}")
-            raise ValidationError("Invalid clientState")
-        
-        # Extract message ID and user info from resource
-        # Resource format: users/{userId}/mailFolders('Inbox')/messages/{messageId}
-        if "/messages/" not in resource:
-            logger.warning(f"Unexpected resource format: {resource}")
-            return False
-            
-        # Parse user ID and message ID from resource
-        # Example: users/user@example.com/mailFolders('Inbox')/messages/AAMkAG...
-        resource_parts = resource.split("/")
-        user_id = resource_parts[1] if len(resource_parts) > 1 else None
-        message_id = resource_parts[-1] if len(resource_parts) > 0 else None
-        
-        if not user_id or not message_id:
-            logger.error(f"Could not parse user_id or message_id from resource: {resource}")
-            return False
-        
-        # Prepare message for SQS
-        sqs_message = {
-            "subscriptionId": subscription_id,
-            "changeType": change_type,
-            "resource": resource,
-            "userId": user_id,
-            "messageId": message_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "resourceData": notification.get("resourceData", {})
-        }
-        
-        # Send to SQS queue
-        queue_url = _get_sqs_queue_url()
-        sqs = boto3.client("sqs")
-        
-        response = sqs.send_message(
-            QueueUrl=queue_url,
-            MessageBody=json.dumps(sqs_message),
-            MessageAttributes={
-                "subscriptionId": {
-                    "StringValue": subscription_id,
-                    "DataType": "String"
-                },
-                "changeType": {
-                    "StringValue": change_type,
-                    "DataType": "String"
-                },
-                "userId": {
-                    "StringValue": user_id,
-                    "DataType": "String"
-                }
-            }
-        )
-        
-        logger.info(f"Sent notification to SQS: MessageId={response['MessageId']}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to process notification: {str(e)}")
-        return False
+# Helper functions for SQS forwarding
 
 
-def _get_sqs_queue_url() -> str:
-    """Get SQS queue URL from environment or construct it"""
-    queue_url = os.environ.get("EMAIL_NOTIFICATIONS_QUEUE_URL")
-    if queue_url:
-        return queue_url
-    
-    # Fallback: construct URL from queue name
-    queue_name = os.environ.get("EMAIL_NOTIFICATIONS_QUEUE")
-    if not queue_name:
-        raise EmailWebhookError("No SQS queue configuration found")
-    
-    region = os.environ.get("AWS_REGION", "us-east-1")
-    account_id = boto3.client("sts").get_caller_identity()["Account"]
-    return f"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}"
+def _get_sqs_queue_url() -> str:\n    \"\"\"Get SQS queue URL from environment or construct it\"\"\"\n    queue_url = os.environ.get(\"EMAIL_NOTIFICATIONS_QUEUE_URL\")\n    if queue_url:\n        return queue_url\n    \n    # Fallback: construct URL from queue name\n    queue_name = os.environ.get(\"EMAIL_NOTIFICATIONS_QUEUE\")\n    if not queue_name:\n        raise EmailWebhookError(\"No SQS queue configuration found\")\n    \n    region = os.environ.get(\"AWS_REGION\", \"us-east-1\")\n    account_id = boto3.client(\"sts\").get_caller_identity()[\"Account\"]\n    return f\"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}\"
 
 
 @required_env_vars({
@@ -316,12 +184,14 @@ def email_processor(event, context):
     Process email notifications from SQS queue.
     
     This function:
-    1. Receives email notification messages from SQS
-    2. Fetches full email content from Graph API
-    3. Logs email details for Phase 1
-    4. Placeholder for future AI assistant integration
+    1. Receives Microsoft Graph webhook notifications from SQS (sent directly)
+    2. Validates clientState for security
+    3. Fetches full email content from Graph API
+    4. Logs email details for Phase 1
+    5. Placeholder for future AI assistant integration
     
     Handles multiple messages in a batch for efficiency.
+    SQS now receives webhook notifications directly from Microsoft Graph.
     """
     try:
         logger.info(f"Email processor called with {len(event.get('Records', []))} messages")
@@ -331,15 +201,52 @@ def email_processor(event, context):
         
         for record in event.get("Records", []):
             try:
-                # Parse SQS message
+                # Parse SQS message (contains raw Microsoft Graph webhook format)
                 message_body = json.loads(record["body"])
-                logger.info(f"Processing email notification: {message_body}")
+                logger.info(f"Processing Microsoft Graph webhook notification: {message_body}")
                 
-                # Extract notification details
-                user_id = message_body["userId"]
-                message_id = message_body["messageId"]
-                subscription_id = message_body["subscriptionId"]
-                change_type = message_body["changeType"]
+                # Microsoft Graph sends notifications in a 'value' array
+                notifications = message_body.get("value", [])
+                if not notifications:
+                    logger.warning("No notifications in Microsoft Graph webhook message")
+                    processed_count += 1
+                    continue
+                
+                # Process each notification in the webhook
+                for notification in notifications:
+                    # Validate required fields
+                    subscription_id = notification.get("subscriptionId")
+                    client_state = notification.get("clientState")
+                    change_type = notification.get("changeType")
+                    resource = notification.get("resource")
+                    
+                    if not all([subscription_id, client_state, change_type, resource]):
+                        logger.error(f"Missing required fields in notification: {notification}")
+                        continue
+                    
+                    # Validate clientState for security
+                    expected_client_state = os.environ.get("EMAIL_WEBHOOK_CLIENT_STATE")
+                    if client_state != expected_client_state:
+                        logger.error(f"Invalid clientState: {client_state}")
+                        failed_count += 1
+                        continue
+                    
+                    # Extract message ID and user info from resource
+                    # Resource format: users/{userId}/mailFolders('Inbox')/messages/{messageId}
+                    if "/messages/" not in resource:
+                        logger.warning(f"Unexpected resource format: {resource}")
+                        continue
+                        
+                    # Parse user ID and message ID from resource
+                    # Example: users/user@example.com/mailFolders('Inbox')/messages/AAMkAG...
+                    resource_parts = resource.split("/")
+                    user_id = resource_parts[1] if len(resource_parts) > 1 else None
+                    message_id = resource_parts[-1] if len(resource_parts) > 0 else None
+                    
+                    if not user_id or not message_id:
+                        logger.error(f"Could not parse user_id or message_id from resource: {resource}")
+                        failed_count += 1
+                        continue
                 
                 # Skip non-creation events for Phase 1
                 if change_type != "created":
@@ -355,7 +262,15 @@ def email_processor(event, context):
                     _log_email_details(email_data, user_id, subscription_id)
                     
                     # Store notification in DynamoDB for tracking
-                    _store_email_notification(message_body, email_data)
+                    notification_record = {
+                        "subscriptionId": subscription_id,
+                        "userId": user_id,
+                        "messageId": message_id,
+                        "changeType": change_type,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "resourceData": notification.get("resourceData", {})
+                    }
+                    _store_email_notification(notification_record, email_data)
                     
                     # TODO Phase 2: Call AI assistant API
                     # assistant_response = _call_ai_assistant(user_id, email_data)
