@@ -167,13 +167,67 @@ def webhook_handler(event, context):
         }
 
 
-def _forward_to_sqs(event, context) -> Dict[str, Any]:\n    \"\"\"\n    Lightweight forwarder that sends webhook notifications directly to SQS.\n    Minimal processing - just forward the Microsoft Graph payload to SQS.\n    \"\"\"\n    try:\n        # Get the raw notification body from Microsoft Graph\n        body = event.get(\"body\", \"{}\")\n        \n        # Send directly to SQS with minimal processing\n        queue_url = _get_sqs_queue_url()\n        sqs = boto3.client(\"sqs\")\n        \n        response = sqs.send_message(\n            QueueUrl=queue_url,\n            MessageBody=body,  # Forward raw Microsoft Graph webhook payload\n            MessageAttributes={\n                \"source\": {\n                    \"StringValue\": \"microsoft-graph-webhook\",\n                    \"DataType\": \"String\"\n                },\n                \"timestamp\": {\n                    \"StringValue\": datetime.now(timezone.utc).isoformat(),\n                    \"DataType\": \"String\"\n                }\n            }\n        )\n        \n        logger.info(f\"Forwarded webhook notification to SQS: MessageId={response['MessageId']}\")\n        \n        # Return success immediately\n        return {\n            \"statusCode\": 200,\n            \"body\": json.dumps({\"status\": \"forwarded\"})\n        }\n        \n    except Exception as e:\n        logger.error(f\"Failed to forward notification to SQS: {str(e)}\")\n        return {\n            \"statusCode\": 500,\n            \"body\": json.dumps({\"error\": \"Forwarding failed\"})\n        }
+def _forward_to_sqs(event, context) -> Dict[str, Any]:
+    """
+    Lightweight forwarder that sends webhook notifications directly to SQS.
+    Minimal processing - just forward the Microsoft Graph payload to SQS.
+    """
+    try:
+        # Get the raw notification body from Microsoft Graph
+        body = event.get("body", "{}")
+        
+        # Send directly to SQS with minimal processing
+        queue_url = _get_sqs_queue_url()
+        sqs = boto3.client("sqs")
+        
+        response = sqs.send_message(
+            QueueUrl=queue_url,
+            MessageBody=body,  # Forward raw Microsoft Graph webhook payload
+            MessageAttributes={
+                "source": {
+                    "StringValue": "microsoft-graph-webhook",
+                    "DataType": "String"
+                },
+                "timestamp": {
+                    "StringValue": datetime.now(timezone.utc).isoformat(),
+                    "DataType": "String"
+                }
+            }
+        )
+        
+        logger.info(f"Forwarded webhook notification to SQS: MessageId={response['MessageId']}")
+        
+        # Return success immediately
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"status": "forwarded"})
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to forward notification to SQS: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Forwarding failed"})
+        }
 
 
 # Helper functions for SQS forwarding
 
 
-def _get_sqs_queue_url() -> str:\n    \"\"\"Get SQS queue URL from environment or construct it\"\"\"\n    queue_url = os.environ.get(\"EMAIL_NOTIFICATIONS_QUEUE_URL\")\n    if queue_url:\n        return queue_url\n    \n    # Fallback: construct URL from queue name\n    queue_name = os.environ.get(\"EMAIL_NOTIFICATIONS_QUEUE\")\n    if not queue_name:\n        raise EmailWebhookError(\"No SQS queue configuration found\")\n    \n    region = os.environ.get(\"AWS_REGION\", \"us-east-1\")\n    account_id = boto3.client(\"sts\").get_caller_identity()[\"Account\"]\n    return f\"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}\"
+def _get_sqs_queue_url() -> str:
+    """Get SQS queue URL from environment or construct it"""
+    queue_url = os.environ.get("EMAIL_NOTIFICATIONS_QUEUE_URL")
+    if queue_url:
+        return queue_url
+    
+    # Fallback: construct URL from queue name
+    queue_name = os.environ.get("EMAIL_NOTIFICATIONS_QUEUE")
+    if not queue_name:
+        raise EmailWebhookError("No SQS queue configuration found")
+    
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    account_id = boto3.client("sts").get_caller_identity()["Account"]
+    return f"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}"
 
 
 @required_env_vars({
