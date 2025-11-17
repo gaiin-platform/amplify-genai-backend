@@ -104,9 +104,9 @@ serverless deploy --stage dev
 
 ### 3. Setup
 ```bash
-# Create webhook client state secret
+# Create webhook client state secret (matches existing oauth pattern)
 aws ssm put-parameter \
-  --name "/amplify-assistants-office365-office365/dev/email/webhook/client-state" \
+  --name "/oauth/integrations/microsoft/dev/email-webhook-client-state" \
   --value "$(openssl rand -base64 32)" \
   --type "SecureString"
 ```
