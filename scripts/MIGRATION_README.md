@@ -49,6 +49,8 @@ This guide outlines the migration process for eliminating the `amplify-lambda-ba
 
 ---
 
+
+<a name="step-1-configure-deployment-variables-mandatory"></a>
 ## 🚨 **STEP 1: Configure Deployment Variables (MANDATORY)**
 
 ### ⚠️ **REQUIRED BEFORE RUNNING ANY MIGRATION SCRIPTS - NO EXCEPTIONS**
@@ -87,6 +89,7 @@ These variables will be used to generate correct table and bucket names for your
 
 ---
 
+<a name="step-2-parameter-store-setup-mandatory"></a>
 ## 🚨 **STEP 2: Parameter Store Setup (MANDATORY)**
 
 ### ⚠️ **ALL Lambda services now depend on AWS Parameter Store for shared configuration variables.**
@@ -142,6 +145,7 @@ shared_var_names = [
 
 ## 🟠 **STEP 3: Deploy Services** 
 
+<a name="step-3a-if-you-have-basic-ops-service"></a>
 ### 🟡 **STEP 3a: IF YOU HAVE Basic Ops Service**
 
 **How to check if you have Basic Ops service:**
@@ -168,6 +172,7 @@ aws dynamodb scan --table-name amplify-v6-lambda-basic-ops-dev-user-storage --se
 - **If COUNT = 0 or table doesn't exist**: ➡️ Go to [3a.2a: No Data Path](#3a2a-no-data-path)
 - **If COUNT > 0**: ➡️ Go to [3a.2b: Has Data Path](#3a2b-has-data-path) 
 
+<a name="3a2a-no-data-path"></a>
 #### 3a.2a: No Data Path (Safe to Remove Basic Ops)
 **Since you have no user storage data, you can completely remove basic-ops:**
 
@@ -184,6 +189,7 @@ cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
 
 **➡️ Skip to [3a.3: Deploy Other Services](#3a3-deploy-other-services)**
 
+<a name="3a2b-has-data-path"></a>
 #### 3a.2b: Has Data Path (Must Keep Basic Ops Until Migration)
 **Since you have user storage data, you must keep basic-ops until Step 4 migration:**
 
@@ -215,6 +221,7 @@ cd amplify-lambda/markitdown && ./markitdown.sh && cd ../..
 
 **⚠️ Important:** Keep basic-ops data accessible until Step 4 migration completes
 
+<a name="3a3-deploy-other-services"></a>
 #### 3a.3: Deploy Other Services
 ```bash  
 # Deploy remaining services
@@ -229,6 +236,7 @@ serverless amplify-lambda-js:deploy --stage dev
 
 ---
 
+<a name="step-3b-if-you-dont-have-basic-ops-service"></a>
 ### 🟢 **STEP 3b: IF YOU DON'T HAVE Basic Ops Service**
 
 **This is the simpler path!**
@@ -252,8 +260,10 @@ serverless amplify-lambda-js:deploy --stage dev
 
 ---
 
+<a name="step-4-data-migration"></a>
 ## 🔄 **STEP 4: Data Migration**
 
+<a name="step-4a-if-you-need-user-id-migration"></a>
 ### 🟡 **STEP 4a: IF YOU NEED User ID Migration** 
 
 **Use this if:** Your users currently authenticate with a mutable field, but you want immutable usernames.
@@ -261,6 +271,48 @@ serverless amplify-lambda-js:deploy --stage dev
 **What this does:** Migrates all user data from email-based keys to username-based keys + consolidates S3 storage.
 
 #### 4a.1: Create Migration CSV
+
+<a name="option-1-auto-generate-cognito-sub"></a>
+### **Option 1: Auto-Generate from Cognito User Pool (Recommended for Sub Migration)**
+
+⚠️ **THIS IS NOT REQUIRED** - Only use this option if you want to switch to Cognito's built-in immutable user identifier (`sub` field).
+
+**When to use this option:**
+- ✅ You want to use Cognito's immutable `sub` field as user IDs (never changes, cryptographically secure)
+- ✅ You're willing to run the complete ID migration script (migrates all user data to new IDs)
+- ✅ You want maximum future-proofing against user attribute changes
+
+**When to skip this option:**
+- ✅ You're okay with your existing usernames/email-based IDs
+- ✅ You only need S3 consolidation (see [Step 4b](#step-4b-if-you-only-need-s3-consolidation-highly-recommended))
+- ✅ You want to choose your own custom user ID mappings (see [Option 2](#option-2-manual-csv-creation) below)
+
+Use the `--use-sub` flag to automatically generate CSV mapping emails to Cognito sub field:
+```bash
+# Auto-generate CSV with email -> sub mapping
+python3 scripts/id_migration.py --use-sub --dry-run --log migration_setup.log
+```
+
+This creates a CSV like:
+```csv
+old_id,new_id
+karely.rodriguez@vanderbilt.edu,1234567890abcdef
+allen.karns@vanderbilt.edu,fedcba0987654321
+```
+
+#### **Frontend Configuration for Sub Migration:**
+After using `--use-sub` migration, configure your frontend:
+```bash
+# Environment configuration (.env.local)
+IMMUTABLE_ID_ATTRIBUTE=sub
+```
+
+**How it works:** Cognito's `sub` field is automatically available in JWT tokens - no additional setup required!
+
+
+
+<a name="option-2-manual-csv-creation"></a>
+### **Option 2: Manual CSV Creation**
 Create `migration_users.csv` with **different** values in each column:
 ```csv
 old_id,new_id
@@ -268,33 +320,54 @@ karely.rodriguez@vanderbilt.edu,rodrikm1
 allen.karns@vanderbilt.edu,karnsab
 ```
 
-#### 4a.2: Run Migration
-
-**🚨 IMPORTANT: Choose the right command for your situation:**
-
+#### **Frontend Configuration for Custom ID Migration:**
+After manual CSV migration, configure your frontend:
 ```bash
-# 1. ALWAYS start with dry run to see what will happen
-python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
-
-# 2. STANDARD migration (script will handle backups automatically)
-python3 scripts/id_migration.py --csv-file migration_users.csv --log migration_full.log
-
-# 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
-python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv --log migration_full.log
-
-# 4. FOR AUTOMATION/CI-CD (no interactive prompts)
-python3 scripts/id_migration.py --no-confirmation --csv-file migration_users.csv --log migration_full.log
-
-# 5. IF NOT IN us-east-1 region
-python3 scripts/id_migration.py --region us-west-2 --csv-file migration_users.csv --log migration_full.log
+# Environment configuration (.env.local)  
+IMMUTABLE_ID_ATTRIBUTE=immutable_id
 ```
 
-**📚 Need more options?** See [ID Migration Scripts Technical Details](#id-migration-scripts-technical-details) for all command-line options.
+**⚠️ Important:** You **MUST deploy a Cognito Pre-Token Generation Lambda trigger** to inject the `immutable_id` field into JWT tokens. Unlike Cognito's built-in `sub` field, custom fields require this additional setup.
 
-**✅ Result:** All user data migrated from email-based keys to username-based keys + S3 consolidation completed.
+## 🔐 **Authentication System Overview**
+
+
+### **How Authentication Works with Backend Services**
+
+We currently support only these two special fields:
+
+- **`sub`**: Cognito's built-in immutable user identifier (automatically available in JWT tokens)
+- **`immutable_id`**: Custom field that requires Cognito Pre-Token Generation Lambda trigger injection
+
+All Python and Node.js services use this same authentication logic:
+
+1. **First Priority**: `payload.immutable_id` (if present in JWT token)
+2. **Second Priority**: `payload.sub` (if user exists in Cognito users table)  
+3. **Fallback**: `payload.username` (with IDP prefix stripping)
+
+
+### **Why Explicit Configuration is Required**
+
+We require you to explicitly set `IMMUTABLE_ID_ATTRIBUTE` because:
+
+- **User Choice**: Some deployments have Cognito `sub` available but prefer username-based authentication
+- **Migration Safety**: You can inject fields for testing without accidentally switching production authentication  
+- **Clear Intent**: Makes it obvious which authentication method your deployment uses
+- **Flexibility**: Easy to switch between methods during migration periods
+
+
+### **Field Requirements Summary**
+
+| Field | Setup Required | Automatically Available |
+|-------|----------------|------------------------|
+| `sub` | Set `IMMUTABLE_ID_ATTRIBUTE=sub` | ✅ In all Cognito JWT tokens |
+| `immutable_id` | Set `IMMUTABLE_ID_ATTRIBUTE=immutable_id` + Deploy Pre-Token Trigger | ❌ Requires Lambda trigger injection |
+| `username` | No env var needed (default fallback) | ✅ In all Cognito JWT tokens |
+
 
 ---
 
+<a name="step-4b-if-you-only-need-s3-consolidation-highly-recommended"></a>
 ### 🟠 **STEP 4b: IF YOU ONLY NEED S3 Consolidation (HIGHLY RECOMMENDED)**
 
 **Use this if:** Your user IDs are already immutable, but you need S3 bucket consolidation.
@@ -343,6 +416,55 @@ python3 scripts/id_migration.py --no-id-change --region us-west-2 --log migratio
 **✅ Result:** User IDs remain unchanged, but S3 data gets consolidated and organized for future cleanup.
 
 ---
+
+
+#### 4a.2: Run Migration
+
+**🚨 IMPORTANT: Choose the right command for your situation:**
+
+**For Cognito Sub Migration (Recommended - Auto-generates CSV):**
+```bash
+# 1. ALWAYS start with dry run (auto-generates CSV from Cognito User Pool)
+python3 scripts/id_migration.py --use-sub --dry-run --log migration_dryrun.log
+
+# 2. STANDARD migration with Cognito sub mapping (script handles backups automatically)
+python3 scripts/id_migration.py --use-sub --log migration_full.log
+
+# 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
+python3 scripts/id_migration.py --use-sub --dont-backup --log migration_full.log
+
+# 4. FOR AUTOMATION/CI-CD (no interactive prompts)
+python3 scripts/id_migration.py --use-sub --no-confirmation --log migration_full.log
+
+# 5. IF NOT IN us-east-1 region
+python3 scripts/id_migration.py --use-sub --region us-west-2 --log migration_full.log
+```
+
+**For Manual CSV Migration:**
+```bash
+# 1. ALWAYS start with dry run to see what will happen
+python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv --log migration_dryrun.log
+
+# 2. STANDARD migration (script will handle backups automatically)
+python3 scripts/id_migration.py --csv-file migration_users.csv --log migration_full.log
+
+# 3. IF YOU ALREADY HAVE BACKUPS (skip backup verification)
+python3 scripts/id_migration.py --dont-backup --csv-file migration_users.csv --log migration_full.log
+
+# 4. FOR AUTOMATION/CI-CD (no interactive prompts)
+python3 scripts/id_migration.py --no-confirmation --csv-file migration_users.csv --log migration_full.log
+
+# 5. IF NOT IN us-east-1 region
+python3 scripts/id_migration.py --region us-west-2 --csv-file migration_users.csv --log migration_full.log
+```
+
+**📚 Need more options?** See [ID Migration Scripts Technical Details](#id-migration-scripts-technical-details) for all command-line options.
+
+**✅ Result:** All user data migrated from email-based keys to username-based keys + S3 consolidation completed.
+
+---
+
+<a name="frontend-configuration-for-id-migration"></a>
 
 ## 🧹 **STEP 5: Final Cleanup (For Basic Ops Users Only)**
 
@@ -426,6 +548,7 @@ def my_lambda_function(event, context):
 - **Error Prevention**: Early failure if required variables are missing
 - **Compliance**: Detailed logging of AWS resource access patterns
 
+<a name="backup-strategy-recommended"></a>
 ## 📊 **BACKUP STRATEGY (RECOMMENDED)**
 
 ### **Understanding Backups vs Migration Verification**
@@ -626,6 +749,7 @@ environment:
 - **Monitoring**: Watch CloudWatch logs during the migration for any issues
 - **User Storage**: Data migration happens automatically during ID migration - no manual steps needed
 
+<a name="id-migration-scripts-technical-details"></a>
 ### **ID Migration Scripts Technical Details**
 
 **Detailed technical reference for the migration scripts used in Step 4:**
@@ -937,6 +1061,7 @@ If issues occur:
 - **Size Monitoring**: Warns about DynamoDB 400KB item limit approaches
 - **Data Safety**: Verifies successful copy/creation before deleting original data
 
+<a name="troubleshooting"></a>
 ## Troubleshooting
 
 ### Migration Script Issues
@@ -1034,7 +1159,16 @@ aws cloudformation describe-stacks --stack-name amplify-{DEP_NAME}-lambda-basic-
 
 ### ⚡ **QUICK MIGRATION COMMANDS**
 
-**For ID Migration (Step 4a):**
+**For Cognito Sub ID Migration (Recommended - Auto-generates CSV):**
+```bash
+# ALWAYS START WITH DRY RUN (auto-generates CSV from Cognito)
+python3 scripts/id_migration.py --use-sub --dry-run --log migration.log
+
+# STANDARD MIGRATION (auto-backup handling)
+python3 scripts/id_migration.py --use-sub --log migration.log
+```
+
+**For Manual ID Migration (Step 4a):**
 ```bash
 # ALWAYS START WITH DRY RUN
 python3 scripts/id_migration.py --dry-run --csv-file migration_users.csv
