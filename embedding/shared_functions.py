@@ -78,7 +78,7 @@ def preprocess_text(text):
 
 def generate_embeddings(content):
     if not embedding_model_name:
-        logging.error(f"No Models Provided:\nembedding: {embedding_model_name}")
+        logger.error(f"No Models Provided:\nembedding: {embedding_model_name}")
         return {"success": False, "error": f"No Models Provided:\nembedding: {embedding_model_name}"}
     if embedding_provider == PROVIDERS.BEDROCK.value:
         return generate_bedrock_embeddings(content)
@@ -318,7 +318,7 @@ def get_original_creator(textLocationKey):
             )
             most_recent_item = sorted_items[0]
 
-            logging.info(
+            logger.info(
                 f"Fetched originalCreator: {most_recent_item.get('originalCreator')}"
             )
             originalCreator = most_recent_item.get("originalCreator")
