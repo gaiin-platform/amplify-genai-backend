@@ -4,8 +4,6 @@ from google.oauth2.credentials import Credentials
 
 integration_name = "google_docs"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 def create_new_document(current_user, title, access_token=None):
     service = get_docs_service(current_user, access_token)

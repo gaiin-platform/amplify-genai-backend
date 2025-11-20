@@ -1,16 +1,13 @@
 //Copyright (c) 2024 Vanderbilt University  
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
-import {DynamoDBClient, QueryCommand, UpdateItemCommand, GetItemCommand} from "@aws-sdk/client-dynamodb";
+import {DynamoDBClient, QueryCommand, UpdateItemCommand} from "@aws-sdk/client-dynamodb";
 import {unmarshall} from "@aws-sdk/util-dynamodb";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { TokenV1 } from './api_utils.js';
-import { getLogger } from './logging.js';
-
-const logger = getLogger("handlers");
 
 // Since __dirname is not available in ES module scope, you have to construct the path differently.
 const __filename = fileURLToPath(import.meta.url);
@@ -35,29 +32,6 @@ const verifier = CognitoJwtVerifier.create({
     tokenUse: "access",
     clientId: clientId,
 });
-
-// Helper function to check if user exists in cognito table
-const checkUserInCognitoTable = async (userId) => {
-    const cognitoTable = process.env.COGNITO_USERS_DYNAMODB_TABLE;
-    if (!cognitoTable) {
-        logger.debug("COGNITO_USERS_DYNAMODB_TABLE not set, skipping lookup");
-        return false;
-    }
-
-    const dynamodbClient = new DynamoDBClient({});
-    try {
-        const command = new GetItemCommand({
-            TableName: cognitoTable,
-            Key: { 'user_id': { S: userId } }
-        });
-        
-        const response = await dynamodbClient.send(command);
-        return !!response.Item;
-    } catch (error) {
-        logger.debug(`Error checking cognito table for user ${userId}:`, error);
-        return false;
-    }
-};
 
 export const extractParams = async (event) => {
 
@@ -96,7 +70,7 @@ export const extractParams = async (event) => {
             );
 
         } catch (e) {
-            logger.error(e);
+            console.error(e);
 
             return {
                 statusCode: 401,
@@ -105,29 +79,8 @@ export const extractParams = async (event) => {
         }
 
         const user = payload.username;
-        const extractIdpPrefix = () => idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
-
-        let current_user = null;
-     
-        // First try sub - check if it exists in cognito table
-        if (payload.immutable_id ) {
-            current_user = payload.immutable_id;
-            logger.info(`Using immutable_id for user: ${current_user}`);
-        } else if (payload.sub) {
-            const subExists = await checkUserInCognitoTable(payload.sub);
-            if (subExists) {
-                current_user = payload.sub;
-                logger.info(`Using sub for user: ${current_user}`);
-            }
-        }
-        
-        // If sub not found, fallback to old IDP prefix username logic
-        if (!current_user) {
-            logger.debug(`Extracting username from: ${user}`);
-            current_user = extractIdpPrefix();
-        }
-       
-        logger.debug("Current user: " + current_user);
+        const current_user = idpPrefix && user.startsWith(idpPrefix) ? user.slice(idpPrefix.length + 1) : user;
+        console.log("Current user: " + current_user);
 
         let requestBody;
         try {
@@ -148,7 +101,7 @@ const api_authenticator = async (apiKey, event) => {
     const dynamodbClient = new DynamoDBClient({});
 
     if (!apiTable) {
-        logger.error("API_KEYS_DYNAMODB_TABLE is not provided in the environment variables.");
+        console.log("API_KEYS_DYNAMODB_TABLE is not provided in the environment variables.");
         throw new Error("API_KEYS_DYNAMODB_TABLE is not provided in the environment variables.");
     }
 
@@ -171,13 +124,13 @@ const api_authenticator = async (apiKey, event) => {
         });
         
 
-        logger.debug("Checking API key validity.");
+        console.log("Checking API key validity.");
         const response = await dynamodbClient.send(command);
         //FOR GSI 
         const item = response.Items[0];
 
         if (!item) {
-            logger.warn("API key does not exist.");
+            console.log("API key does not exist.");
             return {
                 statusCode: 404,
                 body: JSON.stringify({ message: "API key not found." })
@@ -189,7 +142,7 @@ const api_authenticator = async (apiKey, event) => {
 
         // Check if the API key is active
         if (!apiData.active) {
-            logger.warn("API key is inactive.");
+            console.log("API key is inactive.");
             return {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key is inactive." })
@@ -198,7 +151,7 @@ const api_authenticator = async (apiKey, event) => {
 
         // Optionally check the expiration date if applicable
         if (apiData.expirationDate && new Date(apiData.expirationDate) <= new Date()) {
-            logger.warn("API key has expired.");
+            console.log("API key has expired.");
             return {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key has expired." })
@@ -208,7 +161,7 @@ const api_authenticator = async (apiKey, event) => {
         const access = apiData.accessTypes.flat()
 
         if (!(access && (access.includes('chat') || access.includes('full_access')))) {
-            logger.warn("API doesn't have access to chat");
+            console.log("API doesn't have access to chat");
             return {
                 statusCode: 403,
                 body: JSON.stringify({ message: "API key does not have access to chat functionality" })
@@ -224,7 +177,7 @@ const api_authenticator = async (apiKey, event) => {
                 ':now': { S: new Date().toISOString() }
             }
         });
-        logger.debug("Last Access updated")
+        console.log("Last Access updated")
 
         await dynamodbClient.send(updateItemCommand);
 
@@ -254,12 +207,12 @@ const api_authenticator = async (apiKey, event) => {
         }
         requestBody.options.api_accessed = true;
         requestBody.options.rateLimit = apiData.rateLimit;
-        logger.debug("Current User: ", currentUser);
+        console.log("Current User: ", currentUser);
         // Return the validated user and additional data
         return {user: currentUser, body: requestBody, accessToken: apiKey, apiKeyId: apiData.api_owner_id}; 
 
     } catch (error) {
-        logger.error("Error during DynamoDB operation:", error);
+        console.error("Error during DynamoDB operation:", error);
         return {
             statusCode: 500,
             body: JSON.stringify({ message: "Internal server error occurred." })
@@ -281,7 +234,7 @@ const determine_api_user = (data) => {
         case 'system':
             return data.systemId;
         default:
-            logger.error("Unknown or missing key type in api_owner_id:", keyType);
+            console.error("Unknown or missing key type in api_owner_id:", keyType);
             return {
                 statusCode: 400,
                 body: JSON.stringify({ message: "Invalid or unrecognized key type." })

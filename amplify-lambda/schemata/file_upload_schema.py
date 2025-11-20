@@ -5,7 +5,7 @@ file_upload_schema = {
         "name": {"type": "string"},
         "knowledgeBase": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string"}},
-        "data": {"type": ["object", "null"]},
+        "data": {"type": "object"},
         "groupId": {"type": ["string", "null"]},
         "ragOn": {"type": "boolean"},
     },

@@ -9,8 +9,6 @@ from email.mime.multipart import MIMEMultipart
 
 integration_name = "google_gmail"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 def get_gmail_service(current_user, access_token):
     user_credentials = get_user_credentials(

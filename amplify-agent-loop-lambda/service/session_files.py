@@ -9,8 +9,7 @@ from pathlib import Path
 from botocore.exceptions import ClientError
 import shutil
 import requests
-from pycommon.logger import getLogger
-logger = getLogger("session_files")
+
 
 class LambdaFileTracker:
     def __init__(self, current_user: str, session_id: str, working_dir: str = "/tmp"):
@@ -19,8 +18,7 @@ class LambdaFileTracker:
         self.existing_mappings: Dict[str, str] = {}
         self.initial_state: Dict[str, Dict] = {}
         self.s3_client = boto3.client("s3")
-        self.consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
-        self.legacy_bucket = os.getenv("AGENT_STATE_BUCKET")  # Marked for deletion
+        self.bucket = os.getenv("AGENT_STATE_BUCKET")
         self.data_sources: Dict[str, str] = {}  # Maps source ID -> local filename
         self.deleted_files: List[str] = []  # Track files that have been deleted
 
@@ -34,7 +32,7 @@ class LambdaFileTracker:
             if os.path.exists(self.working_dir):
                 shutil.rmtree(self.working_dir)
         except Exception as e:
-            logger.error("Error cleaning up temporary files: %s", e)
+            print(f"Error cleaning up temporary files: {e}")
 
     def get_file_info(self, filepath: str) -> Dict:
         """Get file size and hash for a given file."""
@@ -51,19 +49,19 @@ class LambdaFileTracker:
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, self.working_dir)
                 try:
-                    logger.debug("Found file %s", rel_path)
+                    print(f"Found file {rel_path}")
                     file_info[rel_path] = self.get_file_info(full_path)
                 except (IOError, OSError) as e:
-                    logger.error("Error reading file %s: %s", full_path, e)
+                    print(f"Error reading file {full_path}: {e}")
         return file_info
 
     def find_existing_session(self) -> Optional[Dict]:
-        """Look for existing session files in S3 with backward compatibility."""
+        """Look for existing session files in S3."""
         try:
-            # Try consolidation bucket first (migrated records)
-            consolidation_index_key = f"agentState/{self.current_user}/{self.session_id}/index.json"
+            # Look for index.json directly under user/session_id
+            index_key = f"{self.current_user}/{self.session_id}/index.json"
             try:
-                response = self.s3_client.get_object(Bucket=self.consolidation_bucket, Key=consolidation_index_key)
+                response = self.s3_client.get_object(Bucket=self.bucket, Key=index_key)
                 session_data = json.loads(response["Body"].read().decode("utf-8"))
                 # Store existing mappings when session is found
                 self.existing_mappings = session_data.get("mappings", {})
@@ -71,54 +69,21 @@ class LambdaFileTracker:
                 self.data_sources = session_data.get("data_sources", {})
                 # Load list of deleted files
                 self.deleted_files = session_data.get("deleted_files", [])
-                # Mark as using consolidation bucket
-                session_data["_bucket_type"] = "consolidation"
                 return session_data
 
             except ClientError as e:
-                if e.response["Error"]["Code"] == "NoSuchKey" and self.legacy_bucket:
-                    # Fallback to legacy bucket
-                    legacy_index_key = f"{self.current_user}/{self.session_id}/index.json"
-                    try:
-                        response = self.s3_client.get_object(Bucket=self.legacy_bucket, Key=legacy_index_key)
-                        session_data = json.loads(response["Body"].read().decode("utf-8"))
-                        # Store existing mappings when session is found
-                        self.existing_mappings = session_data.get("mappings", {})
-                        # Load data sources mapping
-                        self.data_sources = session_data.get("data_sources", {})
-                        # Load list of deleted files
-                        self.deleted_files = session_data.get("deleted_files", [])
-                        # Mark as using legacy bucket
-                        session_data["_bucket_type"] = "legacy"
-                        return session_data
-
-                    except ClientError as legacy_e:
-                        logger.error("Error checking for existing session in both buckets: consolidation=%s, legacy=%s", e, legacy_e)
-                        if legacy_e.response["Error"]["Code"] == "NoSuchKey":
-                            return None
-                        raise legacy_e
-                else:
-                    logger.error("Error checking for existing session in consolidation bucket: %s", e)
-                    if e.response["Error"]["Code"] == "NoSuchKey":
-                        return None
-                    raise
+                print(f"Error checking for existing session: {e}")
+                if e.response["Error"]["Code"] == "NoSuchKey":
+                    return None
+                raise
 
         except Exception as e:
-            logger.error("Error checking for existing session: %s", e)
+            print(f"Error checking for existing session: {e}")
             return None
 
     def restore_session_files(self, index_content: Dict) -> bool:
         """Restore files from a previous session to the working directory."""
         try:
-            # Determine which bucket and key prefix to use
-            bucket_type = index_content.get("_bucket_type", "legacy")
-            if bucket_type == "consolidation":
-                bucket_to_use = self.consolidation_bucket
-                key_prefix = f"agentState/{self.current_user}/{self.session_id}/"
-            else:
-                bucket_to_use = self.legacy_bucket
-                key_prefix = f"{self.current_user}/{self.session_id}/"
-
             # Load list of files that were previously deleted
             deleted_files = index_content.get("deleted_files", [])
             files_restored = 0
@@ -131,13 +96,13 @@ class LambdaFileTracker:
                     original_path in deleted_files
                     or original_path in self.deleted_files
                 ):
-                    logger.info("Skipping previously deleted file: %s", original_path)
+                    print(f"Skipping previously deleted file: {original_path}")
                     files_skipped += 1
                     continue
 
-                # Construct the S3 key based on bucket type
-                s3_key = f"{key_prefix}{s3_name}"
-                logger.info("Restoring %s from %s (bucket: %s)", original_path, s3_key, bucket_to_use)
+                # Construct the S3 key without date
+                s3_key = f"{self.current_user}/{self.session_id}/{s3_name}"
+                print(f"Restoring {original_path} from {s3_key}")
                 local_path = os.path.join(self.working_dir, original_path)
 
                 # Ensure the target directory exists
@@ -145,19 +110,19 @@ class LambdaFileTracker:
 
                 try:
                     # Download the file
-                    self.s3_client.download_file(bucket_to_use, s3_key, local_path)
+                    self.s3_client.download_file(self.bucket, s3_key, local_path)
                     files_restored += 1
                 except ClientError as e:
-                    logger.error("Error downloading file %s: %s", s3_key, e)
+                    print(f"Error downloading file {s3_key}: {e}")
                     continue
 
-            logger.info(
-                "Files restored: %d, files skipped (previously deleted): %d", files_restored, files_skipped
+            print(
+                f"Files restored: {files_restored}, files skipped (previously deleted): {files_skipped}"
             )
             return True
 
         except Exception as e:
-            logger.error("Error restoring session files: %s", e)
+            print(f"Error restoring session files: {e}")
             return False
 
     def write_file(self, filename: str, content: bytes | str) -> str:
@@ -182,26 +147,26 @@ class LambdaFileTracker:
 
     def start_tracking(self) -> Dict:
         """Start tracking files, optionally restoring from a previous session."""
-        logger.info("Checking for existing session")
+        print("Checking for existing session...")
 
         existing_session = self.find_existing_session()
 
         if existing_session:
-            logger.info("Found existing session:")
+            print("Found existing session:")
 
             # Print the full existing session details
-            logger.debug("%s", json.dumps(existing_session, indent=2))
+            print(json.dumps(existing_session, indent=2))
 
             if self.restore_session_files(existing_session):
-                logger.info("Successfully restored session files")
+                print("Successfully restored session files")
             else:
-                logger.warning("Failed to restore some session files")
+                print("Failed to restore some session files")
         else:
-            logger.info("No existing session found, starting fresh tracking")
+            print("No existing session found, starting fresh tracking")
 
         # Start tracking current state
         self.initial_state = self.scan_directory()
-        logger.info("Now tracking %d files", len(self.initial_state))
+        print(f"Now tracking {len(self.initial_state)} files")
 
         return {
             "session_restored": existing_session is not None,
@@ -214,36 +179,20 @@ class LambdaFileTracker:
         Now uses S3 filenames as IDs for consistency.
         """
         current_files = self.scan_directory()
-        logger.info("Found %d files in working directory", len(current_files))
+        print(f"Found {len(current_files)} files in working directory")
 
-        # First get index for mappings and existing files with backward compatibility
+        # First get index for mappings and existing files
         tracked_files = {}
         try:
-            filename_mappings = {}
-            version_history = {}
-            
-            # Try consolidation bucket first
-            consolidation_index_key = f"agentState/{self.current_user}/{self.session_id}/index.json"
+            index_key = f"{self.current_user}/{self.session_id}/index.json"
             try:
-                response = self.s3_client.get_object(Bucket=self.consolidation_bucket, Key=consolidation_index_key)
+                response = self.s3_client.get_object(Bucket=self.bucket, Key=index_key)
                 index_data = json.loads(response["Body"].read().decode("utf-8"))
                 filename_mappings = index_data.get("mappings", {})
                 version_history = index_data.get("version_history", {})
-            except ClientError as e:
-                if e.response["Error"]["Code"] == "NoSuchKey" and self.legacy_bucket:
-                    # Fallback to legacy bucket
-                    legacy_index_key = f"{self.current_user}/{self.session_id}/index.json"
-                    try:
-                        response = self.s3_client.get_object(Bucket=self.legacy_bucket, Key=legacy_index_key)
-                        index_data = json.loads(response["Body"].read().decode("utf-8"))
-                        filename_mappings = index_data.get("mappings", {})
-                        version_history = index_data.get("version_history", {})
-                    except ClientError:
-                        filename_mappings = {}
-                        version_history = {}
-                else:
-                    filename_mappings = {}
-                    version_history = {}
+            except ClientError:
+                filename_mappings = {}
+                version_history = {}
 
             for filepath, info in current_files.items():
                 # Get the S3 filename from mappings if it exists
@@ -267,7 +216,7 @@ class LambdaFileTracker:
                     tracked_files[file_id]["versions"] = version_history[filepath]
 
         except Exception as e:
-            logger.error("Error getting tracked files: %s", e)
+            print(f"Error getting tracked files: {e}")
 
         return tracked_files
 
@@ -280,14 +229,14 @@ class LambdaFileTracker:
             source_name: Name of the source for logging purposes
         """
         try:
-            logger.debug("Checking if image needs base64 decoding: %s", source_name)
+            print(f"Checking if image needs base64 decoding: {source_name}")
             # Read the file content
             with open(file_path, "rb") as f:
                 content = f.read()
 
             # Skip if file is empty
             if not content:
-                logger.debug("Empty file, skipping base64 check: %s", source_name)
+                print(f"Empty file, skipping base64 check: {source_name}")
                 return
 
             # Check if content appears to be base64
@@ -302,18 +251,18 @@ class LambdaFileTracker:
                 is_printable = all(
                     c.isprintable() or c.isspace() for c in content_str[:1000]
                 )
-                logger.debug("Content is printable: %s", is_printable)
+                print(f"Content is printable: {is_printable}")
                 has_data_uri = content_str.startswith("data:")
-                logger.debug("Content has data URI prefix: %s", has_data_uri)
+                print(f"Content has data URI prefix: {has_data_uri}")
                 looks_like_base64 = is_printable or (
                     has_data_uri or "," in content_str[:100]
                 )
-                logger.debug("Looks like base64: %s", looks_like_base64)
+                print(f"Looks like base64: {looks_like_base64}")
 
                 if looks_like_base64:
                     import base64
 
-                    logger.info(f"Decoding base64 image data for {source_name}")
+                    print(f"Decoding base64 image data for {source_name}")
 
                     # If it has the data:image prefix, extract just the base64 part
                     if has_data_uri:
@@ -330,17 +279,17 @@ class LambdaFileTracker:
                         decoded_data = base64.b64decode(base64_data)
                         with open(file_path, "wb") as f:
                             f.write(decoded_data)
-                        logger.info("Successfully decoded base64 image: %s", source_name)
+                        print(f"Successfully decoded base64 image: {source_name}")
                     except Exception as decode_error:
-                        logger.error("Error decoding base64 data: %s", decode_error)
+                        print(f"Error decoding base64 data: {decode_error}")
             except UnicodeDecodeError:
                 # If we can't decode as UTF-8, it's likely already binary
-                logger.debug(
-                    "File appears to be binary already, no decoding needed: %s", source_name
+                print(
+                    f"File appears to be binary already, no decoding needed: {source_name}"
                 )
 
         except Exception as e:
-            logger.error("Error checking/decoding image: %s", e)
+            print(f"Error checking/decoding image: {e}")
             # We don't raise the exception - continue with original file if decoding fails
 
     def add_data_source(self, data_source: Dict) -> Dict:
@@ -354,8 +303,8 @@ class LambdaFileTracker:
         Returns:
             A dictionary with status and information about the data source
         """
-        if not self.consolidation_bucket:
-            raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
+        if not self.bucket:
+            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
         # Extract information from the data source
         source_id = data_source.get("id")
@@ -364,13 +313,13 @@ class LambdaFileTracker:
         source_ref = data_source.get("ref")  # URL or content reference
         source_format = data_source.get("format")  # signedUrl or content
 
-        logger.info(
-            "Adding data source %s of type %s with name %s, format: %s", source_id, source_type, source_name, source_format
+        print(
+            f"Adding data source {source_id} of type {source_type} with name {source_name}, format: {source_format}"
         )
-        logger.debug("Full data source: %s", json.dumps(data_source, indent=2))
+        print(f"Full data source: {json.dumps(data_source, indent=2)}")
 
         if not source_id:
-            logger.error("Data source missing required id field")
+            print("Data source missing required id field")
             return {
                 "status": "error",
                 "message": "Data source missing required id field",
@@ -388,13 +337,13 @@ class LambdaFileTracker:
                     ext = source_type.split("/")[-1]
                     source_name += f".{ext}"
 
-        logger.debug("Using filename: %s", source_name)
+        print(f"Using filename: {source_name}")
 
         # Check if this data source has already been added
         if source_id in self.data_sources:
             local_path = os.path.join(self.working_dir, self.data_sources[source_id])
             if os.path.exists(local_path):
-                logger.info("Data source %s already exists at %s", source_id, local_path)
+                print(f"Data source {source_id} already exists at {local_path}")
                 return {
                     "status": "success",
                     "message": "Data source already downloaded",
@@ -411,7 +360,7 @@ class LambdaFileTracker:
         try:
             # Handling based on the format and reference
             if source_format == "signedUrl" and source_ref:
-                logger.info("Downloading from signed URL: %s", source_ref)
+                print(f"Downloading from signed URL: {source_ref}")
 
                 try:
                     response = requests.get(source_ref)
@@ -425,9 +374,9 @@ class LambdaFileTracker:
                     if source_type and source_type.startswith("image/"):
                         self._decode_image_if_base64(local_path, source_name)
 
-                    logger.info("Downloaded data source from signed URL to %s", local_path)
+                    print(f"Downloaded data source from signed URL to {local_path}")
                 except requests.exceptions.RequestException as e:
-                    logger.error("Error downloading from signed URL: %s", e)
+                    print(f"Error downloading from signed URL: {e}")
                     return {
                         "status": "error",
                         "message": f"Error downloading from signed URL: {str(e)}",
@@ -435,7 +384,7 @@ class LambdaFileTracker:
                     }
 
             elif source_format == "content" and source_ref:
-                logger.info("Saving content directly to file")
+                print(f"Saving content directly to file")
 
                 # Handle base64 encoded images
                 if (
@@ -444,7 +393,7 @@ class LambdaFileTracker:
                     and isinstance(source_ref, str)
                     and source_ref.startswith("data:")
                 ):
-                    logger.info("Decoding base64 image data for %s", source_name)
+                    print(f"Decoding base64 image data for {source_name}")
                     try:
                         # Extract the base64 content after the data URI prefix
                         import base64
@@ -457,7 +406,7 @@ class LambdaFileTracker:
                         with open(local_path, "wb") as f:
                             f.write(decoded_data)
                     except Exception as e:
-                        logger.error("Error decoding base64 image: %s", e)
+                        print(f"Error decoding base64 image: {e}")
                         return {
                             "status": "error",
                             "message": f"Error decoding base64 image: {str(e)}",
@@ -483,18 +432,18 @@ class LambdaFileTracker:
                     if source_type and source_type.startswith("image/") and mode == "w":
                         self._decode_image_if_base64(local_path, source_name)
 
-                logger.info("Saved data source content to %s", local_path)
+                print(f"Saved data source content to {local_path}")
 
             # Legacy S3 download logic as fallback
             else:
-                logger.info("Downloading data source from S3")
+                print("Downloading data source from S3...")
                 # Parse the S3 URI to get bucket and key
                 # Assuming format: s3://user/date/uuid.json
                 if source_id.startswith("s3://"):
                     # Remove 's3://' prefix and split by '/'
                     parts = source_id[5:].split("/")
                     if len(parts) < 3:
-                        logger.error("Invalid S3 URI format: %s", source_id)
+                        print(f"Invalid S3 URI format: {source_id}")
                         return {
                             "status": "error",
                             "message": f"Invalid S3 URI format: {source_id}",
@@ -510,18 +459,17 @@ class LambdaFileTracker:
                     # If not an S3 URI, use as-is
                     s3_key = source_id
 
-                logger.info("Downloading %s to %s", s3_key, local_path)
+                print(f"Downloading {s3_key} to {local_path}")
 
                 try:
-                    # Use consolidation bucket for new data source downloads
-                    self.s3_client.download_file(self.consolidation_bucket, s3_key, local_path)
-                    logger.info("Downloaded data source %s to %s", source_id, local_path)
+                    self.s3_client.download_file(self.bucket, s3_key, local_path)
+                    print(f"Downloaded data source {source_id} to {local_path}")
 
                     # Convert base64 encoded images to binary if needed
                     if source_type and source_type.startswith("image/"):
                         self._decode_image_if_base64(local_path, source_name)
                 except ClientError as e:
-                    logger.error("Error downloading data source %s: %s", source_id, e)
+                    print(f"Error downloading data source {source_id}: {e}")
                     return {
                         "status": "error",
                         "message": f"Error downloading data source: {str(e)}",
@@ -542,7 +490,7 @@ class LambdaFileTracker:
             }
 
         except Exception as e:
-            logger.error("Unexpected error adding data source %s: %s", source_id, e)
+            print(f"Unexpected error adding data source {source_id}: {e}")
             return {
                 "status": "error",
                 "message": f"Unexpected error: {str(e)}",
@@ -587,9 +535,9 @@ class LambdaFileTracker:
         return changed_files, filename_mapping, version_info, deleted_files
 
     def upload_changed_files(self) -> Dict:
-        """Upload changed files to consolidation S3 bucket and return upload information."""
-        if not self.consolidation_bucket:
-            raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
+        """Upload changed files to S3 and return upload information."""
+        if not self.bucket:
+            raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
         changed_files, filename_mapping, version_info, deleted_files = (
             self.get_changed_files()
@@ -604,10 +552,10 @@ class LambdaFileTracker:
             }
 
         try:
-            # Get existing index if it exists - always use consolidation bucket for new uploads
-            consolidation_index_key = f"agentState/{self.current_user}/{self.session_id}/index.json"
+            # Get existing index if it exists
             try:
-                response = self.s3_client.get_object(Bucket=self.consolidation_bucket, Key=consolidation_index_key)
+                index_key = f"{self.current_user}/{self.session_id}/index.json"
+                response = self.s3_client.get_object(Bucket=self.bucket, Key=index_key)
                 existing_index = json.loads(response["Body"].read().decode("utf-8"))
                 # Ensure version_history exists
                 if "version_history" not in existing_index:
@@ -645,7 +593,7 @@ class LambdaFileTracker:
 
             # Update deleted files list in the index
             if deleted_files:
-                logger.info("Deleted files removed from mappings: %s", deleted_files)
+                print(f"Deleted files removed from mappings: {deleted_files}")
                 # Add new deleted files to the list, avoiding duplicates
                 for df in deleted_files:
                     if df not in existing_index["deleted_files"]:
@@ -654,24 +602,24 @@ class LambdaFileTracker:
                 # Save deleted files to instance variable for next session
                 self.deleted_files = existing_index["deleted_files"]
 
-            # Upload index file to consolidation bucket
+            # Upload index file
             self.s3_client.put_object(
-                Bucket=self.consolidation_bucket,
-                Key=consolidation_index_key,
+                Bucket=self.bucket,
+                Key=index_key,
                 Body=json.dumps(existing_index, indent=2),
                 ContentType="application/json",
             )
 
-            # Upload changed files to consolidation bucket with agentState/ prefix
+            # Upload changed files
             upload_results = {}
             for original_path in changed_files:
                 safe_name = filename_mapping[original_path]
-                s3_key = f"agentState/{self.current_user}/{self.session_id}/{safe_name}"
+                s3_key = f"{self.current_user}/{self.session_id}/{safe_name}"
                 local_path = os.path.join(self.working_dir, original_path)
 
                 try:
                     with open(local_path, "rb") as file:
-                        self.s3_client.upload_fileobj(file, self.consolidation_bucket, s3_key)
+                        self.s3_client.upload_fileobj(file, self.bucket, s3_key)
                     upload_results[original_path] = {
                         "status": "success",
                         "s3_key": s3_key,
@@ -688,7 +636,7 @@ class LambdaFileTracker:
                 "deleted_files": deleted_files,
                 "mappings": filename_mapping,
                 "upload_results": upload_results,
-                "index_location": {"bucket": self.consolidation_bucket, "key": consolidation_index_key},
+                "index_location": {"bucket": self.bucket, "key": index_key},
             }
 
         except Exception as e:
@@ -716,8 +664,8 @@ def create_file_tracker(
         # At the end of your function
         results = tracker.upload_changed_files()
     """
-    logger.info(
-        "Creating file tracker for %s/%s with working directory %s", current_user, session_id, working_dir
+    print(
+        f"Creating file tracker for {current_user}/{session_id} with working directory {working_dir}"
     )
 
     tracker = LambdaFileTracker(current_user, session_id, working_dir)
@@ -733,7 +681,7 @@ def get_file_versions(self, filepath: str) -> Optional[List[Dict]]:
         index_data = json.loads(response["Body"].read().decode("utf-8"))
         return index_data.get("version_history", {}).get(filepath, [])
     except Exception as e:
-        logger.error("Error retrieving file versions: %s", e)
+        print(f"Error retrieving file versions: {e}")
         return None
 
 
@@ -741,7 +689,7 @@ def get_presigned_url_by_id(
     current_user: str, session_id: str, file_id: str, expiration: int = 3600
 ) -> Optional[str]:
     """
-    Generate a presigned URL for a file version with backward compatibility for consolidation and legacy buckets.
+    Generate a presigned URL for a file version in the agent state bucket.
 
     Args:
         current_user (str): The user ID
@@ -749,69 +697,46 @@ def get_presigned_url_by_id(
         file_id (str): The UUID string representing either the current file or a specific version
     """
     s3_client = boto3.client("s3")
-    consolidation_bucket = os.getenv("S3_CONSOLIDATION_BUCKET_NAME")
-    legacy_bucket = os.getenv("AGENT_STATE_BUCKET")  # Marked for deletion
+    bucket = os.getenv("AGENT_STATE_BUCKET")
 
-    if not consolidation_bucket:
-        raise ValueError("S3_CONSOLIDATION_BUCKET_NAME environment variable not set")
+    if not bucket:
+        raise ValueError("AGENT_STATE_BUCKET environment variable not set")
 
-    # Try consolidation bucket first (migrated records)
-    consolidation_index_key = f"agentState/{current_user}/{session_id}/index.json"
+    index_key = f"{current_user}/{session_id}/index.json"
     try:
-        response = s3_client.get_object(Bucket=consolidation_bucket, Key=consolidation_index_key)
+        response = s3_client.get_object(Bucket=bucket, Key=index_key)
         index_content = json.loads(response["Body"].read().decode("utf-8"))
 
-        # Found in consolidation bucket - use agentState/ prefix
-        bucket_to_use = consolidation_bucket
-        key_prefix = f"agentState/{current_user}/{session_id}/"
-        
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "NoSuchKey" and legacy_bucket:
-            # Fallback to legacy bucket
-            legacy_index_key = f"{current_user}/{session_id}/index.json"
-            try:
-                response = s3_client.get_object(Bucket=legacy_bucket, Key=legacy_index_key)
-                index_content = json.loads(response["Body"].read().decode("utf-8"))
-                bucket_to_use = legacy_bucket
-                key_prefix = f"{current_user}/{session_id}/"
-            except ClientError:
-                logger.warning("File index not found in either bucket for session %s", session_id)
-                return None
-        else:
-            logger.error("Error accessing consolidation bucket index: %s", e)
-            return None
-    
-    # Search for file in mappings and version history
-    filename_mappings = index_content.get("mappings", {})
-    s3_key = None
-    
-    # First check current mappings
-    for _, s3_filename in filename_mappings.items():
-        if s3_filename.rsplit(".", 1)[0] == file_id:
-            s3_key = f"{key_prefix}{s3_filename}"
-            break
-    
-    # If not found in current mappings, check version history
-    if not s3_key:
-        version_history = index_content.get("version_history", {})
-        for _, versions in version_history.items():
-            for version in versions:
-                if version.get("s3_name", "").rsplit(".", 1)[0] == file_id:
-                    s3_key = f"{key_prefix}{version['s3_name']}"
-                    break
-            if s3_key:
+        # First check current mappings
+        filename_mappings = index_content.get("mappings", {})
+        for _, s3_filename in filename_mappings.items():
+            if s3_filename.rsplit(".", 1)[0] == file_id:
+                s3_key = f"{current_user}/{session_id}/{s3_filename}"
                 break
+        else:
+            # If not found in current mappings, check version history
+            version_history = index_content.get("version_history", {})
+            s3_key = None
+            for _, versions in version_history.items():
+                for version in versions:
+                    if version.get("s3_name", "").rsplit(".", 1)[0] == file_id:
+                        s3_key = f"{current_user}/{session_id}/{version['s3_name']}"
+                        break
+                if s3_key:
+                    break
 
-    if not s3_key:
-        logger.warning("File ID %s not found in session mappings or version history", file_id)
-        return None
+            if not s3_key:
+                print(
+                    f"File ID {file_id} not found in session mappings or version history"
+                )
+                return None
 
-    try:
         # Generate the presigned URL
         url = s3_client.generate_presigned_url(
-            "get_object", Params={"Bucket": bucket_to_use, "Key": s3_key}, ExpiresIn=expiration
+            "get_object", Params={"Bucket": bucket, "Key": s3_key}, ExpiresIn=expiration
         )
         return url
+
     except ClientError as e:
-        logger.error("Error generating presigned URL: %s", e)
+        print(f"Error generating presigned URL: {e}")
         return None

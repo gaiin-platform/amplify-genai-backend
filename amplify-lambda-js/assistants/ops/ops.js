@@ -1,7 +1,4 @@
 import Handlebars from "handlebars";
-import {getLogger} from "../../common/logging.js";
-
-const logger = getLogger("assistants.ops");
 
 
 const apiUrl = process.env.API_BASE_URL + '/ops';
@@ -66,7 +63,7 @@ export const formatOps = async (ops, format, noEscape = false) => {
         const result = template({"__assistantOps": ops});
         return result;
     } catch (e) {
-        logger.error("Error formatting ops:", e);
+        console.error(e);
         return "";
     }
 }
@@ -88,14 +85,14 @@ export const getOps = async (accessToken, tag) => {
     });
 
     if (!response.ok) {
-        logger.error("Error fetching ops:", response.statusText);
+        console.error("Error fetching ops: ", response.statusText);
         return [];
     }
 
     const data = await response.json();
 
     if(!data || !data.data) {
-        logger.error("Missing data in ops response:", response.statusText);
+        console.error("Missing data in ops response: ", response.statusText);
         return [];
     }
 

@@ -4,71 +4,7 @@ import boto3
 import uuid
 from boto3.dynamodb.types import TypeSerializer, TypeDeserializer
 import json
-import ast
-from pycommon.api.user_data import load_user_data, save_user_data, delete_user_data
-from pycommon.logger import getLogger
-logger = getLogger("workflow_template_registry")
 
-
-def _fix_python_dict_strings_in_data(data):
-    """
-     Recursively detect and parse Python dict strings in data structure.
-    This prevents Python dict strings from causing frontend crashes.
-    
-    Detects patterns like: "{'key': 'value'}" and converts them to proper dict objects.
-    """
-    if isinstance(data, dict):
-        # Recursively process all values in dictionary
-        fixed_dict = {}
-        for key, value in data.items():
-            fixed_dict[key] = _fix_python_dict_strings_in_data(value)
-        return fixed_dict
-    elif isinstance(data, list):
-        # Process each item in list (this is where workflow steps corruption happens)
-        fixed_list = []
-        for item in data:
-            if isinstance(item, str):
-                # Check if this string looks like a Python dict representation
-                item_stripped = item.strip()
-                
-                # DEBUG: Log what we're checking
-                starts_with = item_stripped.startswith("{'")
-                ends_with = item_stripped.endswith("}")  # FIXED: Check for } not '}
-                has_colon = "': " in item_stripped
-                quote_count = item_stripped.count("'")
-                logger.debug(" Checking string - starts_with=%s, ends_with=%s, has_colon=%s, quote_count=%s", 
-                           starts_with, ends_with, has_colon, quote_count)
-                logger.debug(" Full string: %s", item_stripped)
-                
-                if (starts_with and ends_with and has_colon and quote_count >= 4):
-                    try:
-                        logger.info(" Attempting to parse Python dict string...")
-                        # Safely parse the Python dict string to an actual dict
-                        parsed_item = ast.literal_eval(item_stripped)
-                        if isinstance(parsed_item, dict):
-                            logger.info(" Successfully converted Python dict string to object: %s", item_stripped[:50])
-                            # Recursively fix any nested Python dict strings
-                            fixed_list.append(_fix_python_dict_strings_in_data(parsed_item))
-                        else:
-                            logger.warning(" Parsed item is not dict, type=%s", type(parsed_item))
-                            fixed_list.append(item)  # Keep original if not dict
-                    except (ValueError, SyntaxError) as e:
-                        logger.warning(" Failed to parse potential dict string: %s - Error: %s", item_stripped[:50], str(e))
-                        fixed_list.append(item)  # Keep original on parse error
-                else:
-                    # Regular string, keep as-is
-                    logger.debug(" Keeping as normal string (doesn't match Python dict pattern)")
-                    fixed_list.append(item)
-            else:
-                # Non-string item, recursively process
-                fixed_list.append(_fix_python_dict_strings_in_data(item))
-        return fixed_list
-    else:
-        # Primitive type (string, number, boolean, null), return as-is
-        return data
-
-def get_app_id() -> str:
-    return "amplify-workflows"
 
 def register_workflow_template(
     current_user,
@@ -79,60 +15,41 @@ def register_workflow_template(
     output_schema,
     is_base_template,
     is_public,
-    access_token,
 ):
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
 
-    if not table_name:
+    if not table_name or not bucket_name:
         raise ValueError(
-            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
+            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
+    s3 = boto3.client("s3")
 
     # Generate a unique UUID for the new workflow template
     template_id = str(uuid.uuid4())  # Changed from template_uuid to template_id
-    logger.info("Registering workflow template: %s", template_id)
-    
-    # DEBUG: Log the incoming template to see if corruption is already present
-    logger.debug("Incoming template type: %s", type(template))
-    logger.debug("Incoming template content: %s", json.dumps(template, indent=2))
-    if "steps" in template:
-        logger.debug("Steps type: %s", type(template["steps"]))
-        if isinstance(template["steps"], list):
-            for i, step in enumerate(template["steps"]):
-                logger.debug("Step %d type: %s, content: %s", i, type(step), str(step)[:100])
-    
+    s3_key = f"{current_user}/{template_id}.json"
+    print("registering workflow template: ", template_id)
     try:
-        #  Clean any Python dict strings from the template before saving
-        logger.info("Applying Python dict string safety fix to template: %s", template_id)
-        cleaned_template = _fix_python_dict_strings_in_data(template)
-        
-        # DEBUG: Log the cleaned template to see if anything changed
-        logger.debug("Cleaned template content: %s", json.dumps(cleaned_template, indent=2))
-        if "steps" in cleaned_template:
-            if isinstance(cleaned_template["steps"], list):
-                for i, step in enumerate(cleaned_template["steps"]):
-                    logger.debug("Cleaned Step %d type: %s, content: %s", i, type(step), str(step)[:100])
-        
-        # Save the cleaned template to USER_STORAGE_TABLE (new approach - no more S3)
-        app_id = get_app_id()
-        result = save_user_data(access_token, app_id, "workflow-templates", template_id, cleaned_template)
-        
-        if result is None:
-            raise RuntimeError("Failed to save workflow template to USER_STORAGE_TABLE")
+        # Save the template to S3
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=s3_key,
+            Body=json.dumps(template),
+            ContentType="application/json",
+        )
 
         # Prepare the item to be inserted into the DynamoDB table using camel case
-        # NOTE: No s3Key field for new workflows - this is how we detect migrated workflows
         serializer = TypeSerializer()
         item = {
             "user": serializer.serialize(current_user),
             "templateId": serializer.serialize(template_id),  # Use camel case
             "isBaseTemplate": serializer.serialize(is_base_template),
             "isPublic": {"N": "1" if is_public else "0"},
-            # "s3Key": REMOVED - new workflows don't have s3Key
+            "s3Key": serializer.serialize(s3_key),  # Use camel case
             "name": serializer.serialize(name),
             "description": serializer.serialize(description),
             "inputSchema": serializer.serialize(input_schema),  # Use camel case
@@ -145,24 +62,25 @@ def register_workflow_template(
 
         return template_id  # Changed from template_uuid to template_id
     except Exception as e:
-        logger.error("Error registering workflow template: %s", e)
+        print(f"Error registering workflow template: {e}")
         raise RuntimeError(f"Failed to register workflow template: {e}")
 
 
 def get_workflow_template(
-    current_user, template_id, access_token
+    current_user, template_id
 ):  # Changed from template_uuid to template_id
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") #Marked for future deletion
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
 
-    if not table_name:
+    if not table_name or not bucket_name:
         raise ValueError(
-            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
+            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
+    s3 = boto3.client("s3")
 
     try:
         # Lookup the workflow template in the DynamoDB table by hash = current_user, range = template_id
@@ -189,37 +107,7 @@ def get_workflow_template(
             if "Items" in is_public_response and is_public_response["Items"]:
                 response = {"Item": is_public_response["Items"][0]}
             else:
-                # FALLBACK: Check if this is a migrated template with missing metadata
-                logger.info("Template metadata not found, checking USER_DATA_STORAGE_TABLE directly: %s", template_id)
-                
-                app_id = get_app_id()
-                template_data = load_user_data(access_token, app_id, "workflow-templates", template_id)
-                
-                if template_data is not None:
-                    logger.info("Found migrated template data, creating default metadata")
-                    
-                    #  Apply comprehensive Python dict string fix to fallback template data
-                    logger.info("Applying fallback Python dict string safety fix to template: %s", template_id)
-                    template_data = _fix_python_dict_strings_in_data(template_data)
-                    
-                    # Flatten steps for consistency
-                    if "data" in template_data and "steps" in template_data["data"]:
-                        template_data["steps"] = template_data["data"]["steps"]
-                        logger.info(f"Fallback flattened {len(template_data['steps']) if isinstance(template_data['steps'], list) else 'non-list'} workflow steps")
-                    
-                    # Return template with default metadata
-                    return {
-                        "name": f"Migrated Template {template_id[:8]}",
-                        "description": "Migrated workflow template",
-                        "inputSchema": {},
-                        "outputSchema": {},
-                        "templateId": template_id,
-                        "template": template_data,
-                        "isPublic": False,
-                        "isBaseTemplate": False,
-                    }
-                
-                logger.warning("No template found for template_id: %s", template_id)
+                print(f"No public template found for template_id: {template_id}")
                 return None
 
         # Deserialize the response item
@@ -229,39 +117,10 @@ def get_workflow_template(
             for key, value in response["Item"].items()
         }
 
-        # BACKWARDS COMPATIBILITY: Check if this is a migrated workflow or legacy S3 workflow
-        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
-            # Legacy workflow: Fetch template from S3
-            logger.info("Retrieving legacy workflow template from S3: %s", template_id)
-            
-            if not bucket_name:
-                raise ValueError(
-                    "Environment variable 'WORKFLOW_TEMPLATES_BUCKET' must be set for legacy workflows."
-                )
-            
-            s3 = boto3.client("s3")
-            s3_key = deserialized_item["s3Key"]  # Use camel case
-            s3_response = s3.get_object(Bucket=bucket_name, Key=s3_key)
-            template = json.loads(s3_response["Body"].read().decode("utf-8"))
-        else:
-            # New workflow: Fetch template from USER_STORAGE_TABLE
-            logger.info("Retrieving migrated workflow template from USER_STORAGE_TABLE: %s", template_id)
-            
-            app_id = get_app_id()
-            template = load_user_data(access_token, app_id, "workflow-templates", template_id)
-            
-            if template is None:
-                raise RuntimeError(f"Workflow template not found in USER_STORAGE_TABLE: {template_id}")
-            
-            #  Apply comprehensive Python dict string fix to entire template
-            logger.info("Applying comprehensive Python dict string safety fix to template: %s", template_id)
-            template = _fix_python_dict_strings_in_data(template)
-            
-            # Extract steps from nested structure for USER_STORAGE_TABLE workflows
-            if "data" in template and "steps" in template["data"]:
-                # Flatten the structure - move steps to root level
-                template["steps"] = template["data"]["steps"]
-                logger.info(f"Flattened {len(template['steps']) if isinstance(template['steps'], list) else 'non-list'} workflow steps to root level")
+        # Fetch the template from S3 using the s3Key
+        s3_key = deserialized_item["s3Key"]  # Use camel case
+        s3_response = s3.get_object(Bucket=bucket_name, Key=s3_key)
+        template = json.loads(s3_response["Body"].read().decode("utf-8"))
 
         # Combine metadata and template into a single object using camel case
         result = {
@@ -275,7 +134,7 @@ def get_workflow_template(
             "isBaseTemplate": deserialized_item.get("isBaseTemplate", False),
         }
 
-        # Remove s3Key from result (should not be exposed)
+        # Remove s3Key
         result.pop("s3Key", None)
 
         return result
@@ -350,22 +209,23 @@ def list_workflow_templates(current_user, include_public_templates=False):
         return templates
 
     except Exception as e:
-        logger.error("Error listing workflow templates: %s", e)
+        print(f"Error listing workflow templates: {e}")
         raise RuntimeError(f"Failed to list workflow templates: {e}")
 
 
-def delete_workflow_template(current_user, template_id, access_token):
+def delete_workflow_template(current_user, template_id):
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") #Marked for future deletion
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
 
-    if not table_name:
+    if not table_name or not bucket_name:
         raise ValueError(
-            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
+            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
+    s3 = boto3.client("s3")
 
     try:
         # First, check if the template exists and belongs to the user
@@ -381,44 +241,17 @@ def delete_workflow_template(current_user, template_id, access_token):
                 "message": "Template not found or you don't have permission to delete it",
             }
 
-        # Deserialize the response item to check for s3Key
-        deserializer = TypeDeserializer()
-        deserialized_item = {
-            key: deserializer.deserialize(value)
-            for key, value in response["Item"].items()
-        }
+        # Get the S3 key before deleting the DynamoDB record
+        s3_key = TypeDeserializer().deserialize(response["Item"]["s3Key"])
 
-        # BACKWARDS COMPATIBILITY: Delete template content from either S3 or USER_STORAGE_TABLE
-        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
-            # Legacy workflow: Delete from S3
-            logger.info("Deleting legacy workflow template from S3: %s", template_id)
-            
-            if not bucket_name:
-                raise ValueError(
-                    "Environment variable 'WORKFLOW_TEMPLATES_BUCKET' must be set for legacy workflows."
-                )
-            
-            s3 = boto3.client("s3")
-            s3_key = deserialized_item["s3Key"]
-            s3.delete_object(Bucket=bucket_name, Key=s3_key)
-        else:
-            # New workflow: Delete from USER_STORAGE_TABLE
-            logger.info("Deleting migrated workflow template from USER_STORAGE_TABLE: %s", template_id)
-            
-            app_id = get_app_id()
-            result = delete_user_data(access_token, app_id, "workflow-templates", template_id)
-            
-            if result is None:
-                return {
-                    "success": False,
-                    "message": "Failed to delete workflow template from USER_STORAGE_TABLE",
-                }
-
-        # Delete the metadata from DynamoDB (always done regardless of storage type)
+        # Delete the template from DynamoDB
         dynamodb.delete_item(
             TableName=table_name,
             Key={"user": {"S": current_user}, "templateId": {"S": template_id}},
         )
+
+        # Delete the template from S3
+        s3.delete_object(Bucket=bucket_name, Key=s3_key)
 
         return {
             "success": True,
@@ -426,7 +259,7 @@ def delete_workflow_template(current_user, template_id, access_token):
         }
 
     except Exception as e:
-        logger.error("Error deleting workflow template: %s", e)
+        print(f"Error deleting workflow template: {e}")
         raise RuntimeError(f"Failed to delete workflow template: {e}")
 
 
@@ -440,19 +273,19 @@ def update_workflow_template(
     output_schema,
     is_base_template,
     is_public,
-    access_token,
 ):
     # Get environment variables
     table_name = os.environ.get("WORKFLOW_TEMPLATES_TABLE")
-    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET") #Marked for future deletion
+    bucket_name = os.environ.get("WORKFLOW_TEMPLATES_BUCKET")
 
-    if not table_name:
+    if not table_name or not bucket_name:
         raise ValueError(
-            "Environment variable 'WORKFLOW_TEMPLATES_TABLE' must be set."
+            "Environment variables 'WORKFLOW_TEMPLATES_TABLE' and 'WORKFLOW_TEMPLATES_BUCKET' must be set."
         )
 
     # Initialize AWS clients
     dynamodb = boto3.client("dynamodb")
+    s3 = boto3.client("s3")
 
     try:
         # First, check if the template exists and belongs to the user
@@ -468,47 +301,16 @@ def update_workflow_template(
                 "message": "Template not found or you don't have permission to update it",
             }
 
-        # Deserialize the response item to check for s3Key
-        deserializer = TypeDeserializer()
-        deserialized_item = {
-            key: deserializer.deserialize(value)
-            for key, value in response["Item"].items()
-        }
+        # Get the existing S3 key
+        s3_key = TypeDeserializer().deserialize(response["Item"]["s3Key"])
 
-        # BACKWARDS COMPATIBILITY: Update template content in either S3 or USER_STORAGE_TABLE
-        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
-            # Legacy workflow: Update S3
-            logger.info("Updating legacy workflow template in S3: %s", template_id)
-            
-            if not bucket_name:
-                raise ValueError(
-                    "Environment variable 'WORKFLOW_TEMPLATES_BUCKET' must be set for legacy workflows."
-                )
-            
-            s3 = boto3.client("s3")
-            s3_key = deserialized_item["s3Key"]
-            s3.put_object(
-                Bucket=bucket_name,
-                Key=s3_key,
-                Body=json.dumps(template),
-                ContentType="application/json",
-            )
-        else:
-            # New workflow: Update USER_STORAGE_TABLE
-            logger.info("Updating migrated workflow template in USER_STORAGE_TABLE: %s", template_id)
-            
-            #  Clean any Python dict strings from the template before updating
-            logger.info("Applying Python dict string safety fix to updated template: %s", template_id)
-            cleaned_template = _fix_python_dict_strings_in_data(template)
-            
-            app_id = get_app_id()
-            result = save_user_data(access_token, app_id, "workflow-templates", template_id, cleaned_template)
-            
-            if result is None:
-                return {
-                    "success": False,
-                    "message": "Failed to update workflow template in USER_STORAGE_TABLE",
-                }
+        # Update the template in S3
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=s3_key,
+            Body=json.dumps(template),
+            ContentType="application/json",
+        )
 
         # Prepare the updated item for DynamoDB using camel case
         serializer = TypeSerializer()
@@ -517,16 +319,13 @@ def update_workflow_template(
             "templateId": serializer.serialize(template_id),
             "isBaseTemplate": serializer.serialize(is_base_template),
             "isPublic": {"N": "1" if is_public else "0"},
+            "s3Key": serializer.serialize(s3_key),
             "name": serializer.serialize(name),
             "description": serializer.serialize(description),
             "inputSchema": serializer.serialize(input_schema),
             "outputSchema": serializer.serialize(output_schema),
             "updatedAt": serializer.serialize(datetime.now().isoformat()),
         }
-        
-        # Only include s3Key if it existed in the original record (legacy workflows)
-        if "s3Key" in deserialized_item and deserialized_item["s3Key"]:
-            updated_item["s3Key"] = serializer.serialize(deserialized_item["s3Key"])
 
         # Preserve the original creation timestamp if it exists
         if "createdAt" in response["Item"]:
@@ -544,5 +343,5 @@ def update_workflow_template(
         }
 
     except Exception as e:
-        logger.error("Error updating workflow template: %s", e)
+        print(f"Error updating workflow template: {e}")
         raise RuntimeError(f"Failed to update workflow template: {e}")

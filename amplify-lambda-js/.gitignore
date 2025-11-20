@@ -7,6 +7,3 @@ jspm_packages
 local_test_data
 # Serverless directories
 .serverless
-
-# Lambda layer build artifacts (keep source files, ignore built python directory)
-litellm-layer/python/

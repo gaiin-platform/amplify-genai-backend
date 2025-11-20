@@ -8,8 +8,6 @@ import re
 
 integration_name = "google_calendar"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 def validate_email(email):
     """
@@ -248,7 +246,7 @@ def check_event_conflicts(
                 }
         except Exception as e:
             # If we can't access a calendar, skip it but log the error
-            logger.warning("Error checking calendar %s: %s", calendar_id, str(e))
+            print(f"Error checking calendar {calendar_id}: {str(e)}")
             continue
 
     has_conflict = len(all_conflicts) > 0
@@ -380,7 +378,7 @@ def normalize_date(date_string):
     except ValueError:
         pass
 
-    logger.warning("Could not parse date %s", date_string)
+    print(f"Could not parse date {date_string}")
     # If no formats were valid, return None or raise an exception
     raise ValueError(
         f"Could not parse date {date_string}. Please use %Y-%m-%dT%H:%M:%SZ format."
@@ -408,7 +406,7 @@ def get_free_time_slots(
         current_user, start_date, end_date, access_token=access_token
     )
 
-    logger.debug("User time zone: %s", user_time_zone)
+    print(f"User time zone: {user_time_zone}")
 
     free_slots_by_date = {}
     usertz = ZoneInfo(user_time_zone)
@@ -509,7 +507,7 @@ def get_free_time_slots(
 #     service = get_calendar_service(current_user)
 #     events = get_events_between_dates(current_user, start_date, end_date)
 #
-#     logger.debug("User time zone: %s", user_time_zone)
+#     print(f"User time zone: {user_time_zone}")
 #
 #     free_slots_by_date = {}
 #     usertz = ZoneInfo(user_time_zone)

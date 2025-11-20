@@ -9,15 +9,9 @@ from pycommon.api.ops import api_tool
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation
-)
 
 setup_validated(rules, get_permission_checker)
 
-from pycommon.logger import getLogger
-logger = getLogger("accounts")
 
 def convert_decimal_in_dict(obj):
     """Recursively finds Decimal values in dict/list structures and converts them to float"""
@@ -41,16 +35,16 @@ def get_accounts_for_user(user):
         response = users_table.get_item(Key={"user": user})
         # Check if 'Item' exists in the response and has an 'accounts' attribute.
         if "Item" in response and "accounts" in response["Item"]:
-            logger.info("Accounts found for user %s", user)
+            print(f"Accounts found for user {user}")
             # Return the list of accounts.
             return response["Item"]["accounts"]
         else:
             # Return an empty list if 'accounts' is not found.
-            logger.info("No accounts found for user %s", user)
+            print(f"No accounts found for user {user}")
             return []
     except Exception as e:
         # Handle potential errors and return an empty list.
-        logger.error("An error occurred while retrieving accounts for user %s: %s", user, e)
+        print(f"An error occurred while retrieving accounts for user {user}: {e}")
         return []
 
 
@@ -71,14 +65,14 @@ def save_accounts_for_user(user, accounts_list):
 
         # Check if the response was successful
         if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
-            logger.info("Accounts for user %s saved successfully", user)
+            print(f"Accounts for user {user} saved successfully")
             return {"success": True, "message": "Accounts saved successfully"}
         else:
-            logger.error("Failed to save accounts for user %s", user)
+            print(f"Failed to save accounts for user {user}")
             return {"success": False, "message": "Failed to save accounts"}
     except Exception as e:
         # Handle potential errors
-        logger.error("An error occurred while saving accounts for user %s: %s", user, e)
+        print(f"An error occurred while saving accounts for user {user}: {e}")
         return {"success": False, "message": "An error occurred while saving accounts"}
 
 
@@ -129,9 +123,6 @@ def save_accounts_for_user(user, accounts_list):
         "required": ["success", "message", "data"],
     },
 )
-@required_env_vars({
-    "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.GET_ITEM],
-})
 @validated("get")
 def get_accounts(event, context, user, name, data):
     # accounts/get
@@ -144,9 +135,7 @@ def get_accounts(event, context, user, name, data):
         "data": accounts,
     }
 
-@required_env_vars({
-    "ACCOUNTS_DYNAMO_TABLE": [DynamoDBOperation.PUT_ITEM],
-})
+
 @validated("save")
 def save_accounts(event, context, user, name, data):
     # accounts/get

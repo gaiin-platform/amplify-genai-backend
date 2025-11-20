@@ -1,8 +1,7 @@
 import json
+import os
 import requests
-from pycommon.api.get_endpoint import get_endpoint, EndpointType
-from pycommon.logger import getLogger
-logger = getLogger("data_sources")
+
 
 def resolve_datasources(datasource_request, authorization_token=None, endpoint=None):
     """
@@ -30,14 +29,13 @@ def resolve_datasources(datasource_request, authorization_token=None, endpoint=N
     Returns:
         dict: The resolved datasources with signed URLs
     """
-    
-    resolver_endpoint = get_endpoint(EndpointType.CHAT_ENDPOINT)
+    resolver_endpoint = endpoint or os.environ.get("DATASOURCES_RESOLVER_ENDPOINT")
     if not resolver_endpoint:
         raise ValueError(
             "No datasource resolver endpoint provided or configured in DATASOURCES_RESOLVER_ENDPOINT"
         )
 
-    logger.info("Resolving datasources %s", json.dumps(datasource_request))
+    print(f"Resolving datasources {json.dumps(datasource_request)}")
 
     headers = {"Content-Type": "application/json"}
 
@@ -54,7 +52,10 @@ def resolve_datasources(datasource_request, authorization_token=None, endpoint=N
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error("Error resolving datasources: %s", e, exc_info=True)
+        import traceback
+
+        traceback.print_exc()
+        print(f"Error resolving datasources: {e}")
         if hasattr(e, "response") and e.response:
-            logger.error("Response: %s", e.response.text)
+            print(f"Response: {e.response.text}")
         return {"error": f"Failed to resolve datasources: {str(e)}", "dataSources": []}

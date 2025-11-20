@@ -4,8 +4,6 @@ from google.oauth2.credentials import Credentials
 
 integration_name = "google_contacts"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 def get_people_service(current_user, access_token):
     user_credentials = get_user_credentials(

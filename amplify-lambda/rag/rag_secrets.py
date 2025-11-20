@@ -4,8 +4,6 @@ import boto3
 from pycommon.api.secrets import store_secret_parameter, get_secret_parameter, delete_secret_parameter
 from pycommon.encoders import SmartDecimalEncoder
 
-from pycommon.logger import getLogger
-logger = getLogger("rag_secrets")
 
 def get_parameter_name(ds_key):
     """
@@ -24,9 +22,6 @@ def store_ds_secrets_for_rag(ds_key, user_details):
     
     Returns:
         dict: Dictionary with success status
-        
-    Raises:
-        Exception: If storing secrets fails, terminates Lambda execution
     """
     try:
         # Create a safe parameter name from the S3 key
@@ -35,23 +30,20 @@ def store_ds_secrets_for_rag(ds_key, user_details):
         # Convert user_details to JSON string for storage
         secrets_json = json.dumps(user_details, cls=SmartDecimalEncoder)
         
-        logger.info("Storing RAG secrets for document: %s as parameter: %s", ds_key, parameter_name)
+        print(f"Storing RAG secrets for document: {ds_key} as parameter: {parameter_name}")
         
         # Store the secrets using the existing store_secret_parameter function
         response = store_secret_parameter(parameter_name, secrets_json)
         
         if response:
-            logger.info("Successfully stored RAG secrets for document: %s", ds_key)
+            print(f"Successfully stored RAG secrets for document: {ds_key}")
             return {"success": True}
-        else:
-            error_msg = f"Failed to store RAG secrets for document: {ds_key} - store_secret_parameter returned False"
-            logger.error("Failed to store RAG secrets for document: %s - store_secret_parameter returned False", ds_key)
-            raise Exception(error_msg)
             
     except Exception as e:
-        error_msg = f"Critical error storing RAG secrets for document {ds_key}: {str(e)}"
-        logger.error("Critical error storing RAG secrets for document %s: %s", ds_key, str(e))
-        raise Exception(error_msg)
+        print(f"Error storing RAG secrets for document {ds_key}: {str(e)}")
+
+    print(f"Failed to store RAG secrets for document: {ds_key}")    
+    return {"success": False}
 
 
 def get_rag_secrets_for_document(ds_key):
@@ -63,14 +55,11 @@ def get_rag_secrets_for_document(ds_key):
     
     Returns:
         dict: Dictionary containing user details, or success status if not found
-        
-    Raises:
-        Exception: If retrieving secrets fails, terminates Lambda execution
     """
     try:
         parameter_name = get_parameter_name(ds_key)
         
-        logger.debug("Retrieving RAG secrets for document: %s from parameter: %s", ds_key, parameter_name)
+        print(f"Retrieving RAG secrets for document: {ds_key} from parameter: {parameter_name}")
         
         # Retrieve the secrets using the existing get_secret_parameter function
         secrets_json = get_secret_parameter(parameter_name)
@@ -78,21 +67,16 @@ def get_rag_secrets_for_document(ds_key):
         if secrets_json:
             # Parse the JSON string back to dictionary
             user_details = json.loads(secrets_json)
-            logger.debug("Successfully retrieved RAG secrets for document: %s", ds_key)
+            print(f"Successfully retrieved RAG secrets for document: {ds_key}")
             return {"success": True, "data": user_details}
-        else:
-            error_msg = f"No RAG secrets found for document: {ds_key} - document processing cannot continue without credentials"
-            logger.error("No RAG secrets found for document: %s - document processing cannot continue without credentials", ds_key)
-            raise Exception(error_msg)
+        print(f"No RAG secrets found for document: {ds_key}")
             
     except json.JSONDecodeError as e:
-        error_msg = f"Critical error parsing RAG secrets JSON for document {ds_key}: {str(e)}"
-        logger.error("Critical error parsing RAG secrets JSON for document %s: %s", ds_key, str(e))
-        raise Exception(error_msg)
+        print(f"Error parsing RAG secrets JSON for document {ds_key}: {str(e)}")
     except Exception as e:
-        error_msg = f"Critical error retrieving RAG secrets for document {ds_key}: {str(e)}"
-        logger.error("Critical error retrieving RAG secrets for document %s: %s", ds_key, str(e))
-        raise Exception(error_msg)
+        print(f"Error retrieving RAG secrets for document {ds_key}: {str(e)}")
+
+    return {"success": False}
 
 
 def delete_rag_secrets_for_document(ds_key):
@@ -103,31 +87,21 @@ def delete_rag_secrets_for_document(ds_key):
         ds_key (str): The S3 key/document identifier (e.g., "user@example.com/2024/document.pdf")
     
     Returns:
-        dict: Dictionary with success status
-        
-    Raises:
-        Exception: If deleting secrets fails, terminates Lambda execution
+        bool: True if successful, False otherwise
     """
     try:
         parameter_name = get_parameter_name(ds_key)
         
-        logger.info("Deleting RAG secrets for document: %s from parameter: %s", ds_key, parameter_name)
+        print(f"Deleting RAG secrets for document: {ds_key} from parameter: {parameter_name}")
         
         # Delete the secrets using the existing delete_secret_parameter function
         success = delete_secret_parameter(parameter_name)
-        logger.debug("Rag secret deleted: %s", success)
-        
-        if success:
-            return {"success": True}
-        else:
-            error_msg = f"Failed to delete RAG secrets for document: {ds_key} - delete_secret_parameter returned False"
-            logger.error("Failed to delete RAG secrets for document: %s - delete_secret_parameter returned False", ds_key)
-            raise Exception(error_msg)
+        print(f"Rag secret deleted: {success}")
+        return {"success": success}
             
     except Exception as e:
-        error_msg = f"Critical error deleting RAG secrets for document {ds_key}: {str(e)}"
-        logger.error("Critical error deleting RAG secrets for document %s: %s", ds_key, str(e))
-        raise Exception(error_msg)
+        print(f"Error deleting RAG secrets for document {ds_key}: {str(e)}")
+    return {"success": False}
 
 
 def cleanup_missed_rag_secrets():
@@ -144,7 +118,7 @@ def cleanup_missed_rag_secrets():
         stage = os.environ.get('STAGE', 'dev')
         prefix = f"/rag-ds/{stage}/"
         
-        logger.info("Starting cleanup of RAG secrets with prefix: %s", prefix)
+        print(f"Starting cleanup of RAG secrets with prefix: {prefix}")
         
         # Get all parameters with the RAG prefix using get_parameters_by_path
         paginator = ssm.get_paginator('get_parameters_by_path')
@@ -162,14 +136,14 @@ def cleanup_missed_rag_secrets():
             for param in parameters:
                 param_name = param['Name']
                 try:
-                    logger.info("Deleting orphaned RAG secret: %s", param_name)
+                    print(f"Deleting orphaned RAG secret: {param_name}")
                     
                     # Delete the parameter
                     ssm.delete_parameter(Name=param_name)
                     deleted_count += 1
                     
                 except Exception as delete_error:
-                    logger.error("Failed to delete parameter %s: %s", param_name, str(delete_error))
+                    print(f"Failed to delete parameter {param_name}: {str(delete_error)}")
                     error_count += 1
         
         result = {
@@ -179,12 +153,12 @@ def cleanup_missed_rag_secrets():
             "message": f"Cleanup completed. Deleted {deleted_count} parameters, {error_count} errors."
         }
         
-        logger.info("RAG secrets cleanup completed: %s", result)
+        print(f"RAG secrets cleanup completed: {result}")
         return result
         
     except Exception as e:
         error_msg = f"Error during RAG secrets cleanup: {str(e)}"
-        logger.error("%s", error_msg)
+        print(error_msg)
         return {
             "success": False,
             "deleted_count": 0,
@@ -206,7 +180,7 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        logger.error("Lambda handler error: %s", str(e))
+        print(f"Lambda handler error: {str(e)}")
         return {
             'statusCode': 500,
             'body': json.dumps({

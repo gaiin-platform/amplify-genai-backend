@@ -10,8 +10,6 @@ import yaml
 from inspect import signature, Parameter, Signature
 from pycommon.api.get_endpoint import get_endpoint, EndpointType
 from pycommon.llm.chat import chat
-from pycommon.logger import getLogger
-logger = getLogger("llm_chat")
 
 
 def extract_and_parse_yaml(input_string):
@@ -52,7 +50,7 @@ def chat_llm(
 
     prompt_template = f"{system_prompt}\n{docstring}\nInputs:\n{input_descriptions}\nOutputs:\n{output_descriptions}"
 
-    # logger.debug("Prompt Template: %s", prompt_template)
+    # print(f"Prompt Template: {prompt_template}")
 
     system_data_prompt = f"""
     Follow the user's instructions very carefully.
@@ -133,7 +131,7 @@ def chat_llm(
 
 def chat_simple(access_token, model, system_instructions, prompt_instructions):
 
-    logger.info("Chatting with model: %s", model)
+    print(f"Chatting with model: {model}")
 
     access_token = access_token if access_token else os.getenv("AMPLIFY_API_KEY")
 
@@ -174,7 +172,7 @@ def chat_simple(access_token, model, system_instructions, prompt_instructions):
 
 def chat_simple_messages(access_token, model, messages):
 
-    logger.info("Chatting with model: %s", model)
+    print(f"Chatting with model: {model}")
 
     access_token = access_token if access_token else os.getenv("AMPLIFY_API_KEY")
 
@@ -187,7 +185,7 @@ def chat_simple_messages(access_token, model, messages):
     chat_endpoint = get_endpoint(EndpointType.CHAT_ENDPOINT)
     if not chat_endpoint:
         raise ValueError("Couldnt retrieve 'CHAT_ENDPOINT' from secrets manager.")
-    logger.debug("Chat Endpoint: %s", chat_endpoint)
+    print(f"Chat Endpoint: {chat_endpoint}")
 
     response, meta = chat(
         chat_endpoint,

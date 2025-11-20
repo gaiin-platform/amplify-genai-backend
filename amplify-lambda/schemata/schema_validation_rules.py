@@ -1,3 +1,4 @@
+from .add_charge_schema import add_charge_schema
 from .share_schema import share_schema
 from .share_load_schema import share_load_schema
 from .set_metadata_schema import set_metadata_schema
@@ -16,31 +17,6 @@ from .register_conversation_schema import register_conversation_schema
 from .conversation_ids_schema import conversation_ids_schema
 from .save_settings_schema import save_settings_schema
 from .tools_op_schema import tools_op_schema
-from .user_data_put_schema import user_data_put_schema
-from .user_data_get_schema import user_data_get_schema
-from .user_data_uuid_get_schema import user_data_uuid_get_schema
-from .user_data_query_range_schema import user_data_query_range_schema
-from .user_data_query_prefix_schema import user_data_query_prefix_schema
-from .user_data_query_type_schema import user_data_query_type_schema
-from .user_data_delete_schema import user_data_delete_schema
-from .user_data_batch_put_schema import user_data_batch_put_schema
-from .user_data_batch_get_schema import user_data_batch_get_schema
-from .user_data_batch_delete_schema import user_data_batch_delete_schema
-from .user_data_uuid_delete_schema import user_data_uuid_delete_schema
-
-user_data_validators = {
-    "/user-data/put": user_data_put_schema,
-    "/user-data/get": user_data_get_schema,
-    "/user-data/get-by-uuid": user_data_uuid_get_schema,
-    "/user-data/query-range": user_data_query_range_schema,
-    "/user-data/query-prefix": user_data_query_prefix_schema,
-    "/user-data/query-type": user_data_query_type_schema,
-    "/user-data/delete": user_data_delete_schema,
-    "/user-data/batch-put": user_data_batch_put_schema,
-    "/user-data/batch-get": user_data_batch_get_schema,
-    "/user-data/batch-delete": user_data_batch_delete_schema,
-    "/user-data/delete-by-uuid": user_data_uuid_delete_schema,
-}
 
 rules = {
     "validators": {
@@ -56,6 +32,7 @@ rules = {
         "/files/tags/list": {"list": {}},
         "/files/query": {"query": file_query_schema},
         "/chat/convert": {"convert": convert_schema},
+        "/state/accounts/charge": {"create_charge": add_charge_schema},
         "/state/accounts/save": {"save": save_accounts_schema},
         "/state/accounts/get": {"get": {}},
         "/state/conversation/upload": {
@@ -81,7 +58,6 @@ rules = {
         "/state/settings/get": {"get": {}},
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/state/register_ops": {"register_ops": tools_op_schema}, 
-        **user_data_validators,
     },
     "api_validators": {
         "/state/share": {"read": {}},
@@ -103,6 +79,5 @@ rules = {
         "/files/reprocess/rag": {"upload": key_request_schema},
         "/files/delete": {"delete": file_delete_schema},
         "/state/register_ops": {"register_ops": tools_op_schema}, 
-        **user_data_validators,
     },
 }

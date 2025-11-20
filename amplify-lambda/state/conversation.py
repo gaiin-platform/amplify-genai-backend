@@ -6,10 +6,6 @@ import time
 from pycommon.authz import validated, setup_validated
 from schemata.schema_validation_rules import rules
 from schemata.permissions import get_permission_checker
-from pycommon.decorators import required_env_vars
-from pycommon.dal.providers.aws.resource_perms import (
-    DynamoDBOperation, S3Operation
-)
 setup_validated(rules, get_permission_checker)
 from botocore.exceptions import BotoCoreError, ClientError
 import boto3
@@ -19,9 +15,6 @@ from datetime import datetime, timezone, timedelta
 from pycommon.api.ops import api_tool
 from pycommon.db_utils import convert_floats_to_decimal
 from pycommon.lzw import lzw_compress, lzw_uncompress
-
-from pycommon.logger import getLogger
-logger = getLogger("conversations")
 
 def update_conversation_cache(user_id, conversation_data, folder=None):
     """Update conversation metadata cache when conversation changes"""
@@ -62,44 +55,33 @@ def update_conversation_cache(user_id, conversation_data, folder=None):
         
         table.put_item(Item=item)
 
-        logger.debug("Updated cache for conversation %s", metadata.get('id', ''))
+        print(f"Updated cache for conversation {metadata.get('id', '')}")
 
     except Exception as e:
-        logger.warning("Failed to update conversation cache (non-blocking): %s", str(e))
+        print(f"Failed to update conversation cache (non-blocking): {str(e)}")
 
 
 def upload_to_s3(key, conversation, folder=None):
     s3 = boto3.client("s3")
-    # Use consolidation bucket for new conversations
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    
-    # Convert legacy key format to consolidation bucket format
-    if "/" in key:
-        user_id, conversation_id = key.split("/", 1)
-        consolidation_key = f"conversations/{user_id}/{conversation_id}"
-    else:
-        consolidation_key = f"conversations/{key}"
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
 
     try:
         s3.put_object(
-            Bucket=consolidation_bucket,
-            Key=consolidation_key,
+            Bucket=conversations_bucket,
+            Key=key,
             Body=json.dumps({"conversation": conversation, "folder": folder}),
         )
-        logger.info("Successfully uploaded conversation to consolidation bucket: %s", consolidation_key)
-        return {"success": True, "message": "Successfully uploaded conversation to consolidation bucket"}
+        print(f"Successfully uploaded conversation to s3: {key}")
+        return {"success": True, "message": "Succesfully uploaded conversation to s3"}
     except (BotoCoreError, ClientError) as e:
-        logger.error("Error: %s", str(e))
+        print(str(e))
         return {
             "success": False,
-            "message": "Failed to upload conversation to consolidation bucket",
+            "message": "Failed to uploaded conversation to s3",
             "error": str(e),
         }
-@required_env_vars({
-    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.PUT_ITEM],
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT], #Marked for deletion
-})
+
+
 @validated("conversation_upload")
 def upload_conversation(event, context, current_user, name, data):
     data = data["data"]
@@ -119,7 +101,7 @@ def upload_conversation(event, context, current_user, name, data):
                     current_user, decompressed_conversation, folder
                 )
         except Exception as e:
-            logger.warning("Failed to update cache after upload (non-blocking): %s", str(e))
+            print(f"Failed to update cache after upload (non-blocking): {str(e)}")
 
     return result
 
@@ -181,11 +163,6 @@ def upload_conversation(event, context, current_user, name, data):
         "required": ["success"],
     },
 )
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT],
-    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.PUT_ITEM],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT], #Marked for deletion
-})
 @validated("conversation_upload")
 def register_conversation(event, context, current_user, name, data):
     data = data["data"]
@@ -214,10 +191,7 @@ def register_conversation(event, context, current_user, name, data):
     conversation_key = f"{current_user}/{conversation['id']}"
     return upload_to_s3(conversation_key, compressed_conversation, None)
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.GET_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.GET_OBJECT], #Marked for deletion
-})
+
 @validated("read")
 def get_conversation(event, context, current_user, name, data):
     query_param = get_conversation_query_param(event.get("queryStringParameters", {}))
@@ -226,44 +200,28 @@ def get_conversation(event, context, current_user, name, data):
 
     conversation_id = query_param["query_value"]
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
 
-    # Try consolidation bucket first (new format)
-    consolidation_key = f"conversations/{current_user}/{conversation_id}"
-    
+    conversation_key = f"{current_user}/{conversation_id}"
+
     try:
-        response = s3.get_object(Bucket=consolidation_bucket, Key=consolidation_key)
+        response = s3.get_object(Bucket=conversations_bucket, Key=conversation_key)
         conversation_body = response["Body"].read().decode("utf-8")
         conversation_data = json.loads(conversation_body)
         return {"success": True, "conversation": conversation_data["conversation"]}
+
     except (BotoCoreError, ClientError) as e:
-        if e.response["Error"]["Code"] != "NoSuchKey":
-            logger.error("Unexpected error accessing consolidation bucket: %s", str(e))
-            return {
-                "success": False,
-                "message": "Failed to retrieve conversation from consolidation bucket",
-                "error": str(e),
-            }
+        error = {
+            "success": False,
+            "message": "Failed to retrieve conversation from S3",
+            "error": str(e),
+        }
 
-    # Fallback to legacy bucket if not found in consolidation bucket
-    if conversations_bucket:
-        legacy_key = f"{current_user}/{conversation_id}"
-        try:
-            response = s3.get_object(Bucket=conversations_bucket, Key=legacy_key)
-            conversation_body = response["Body"].read().decode("utf-8")
-            conversation_data = json.loads(conversation_body)
-            return {"success": True, "conversation": conversation_data["conversation"]}
-        except (BotoCoreError, ClientError) as e:
-            logger.debug("Conversation not found in legacy bucket either: %s", str(e))
+        print(str(e))
+        if e.response["Error"]["Code"] == "NoSuchKey":
+            error["type"] = "NoSuchKey"
 
-    # Conversation not found in either bucket
-    return {
-        "success": False,
-        "message": "Conversation not found",
-        "error": "NoSuchKey",
-        "type": "NoSuchKey"
-    }
+        return error
 
 
 def pick_conversation_attributes(conversation, include_timestamp=False):
@@ -287,10 +245,6 @@ def pick_conversation_attributes(conversation, include_timestamp=False):
         )
 
     return result
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT], #Marked for deletion
-})
 
 
 @validated("read")
@@ -320,10 +274,6 @@ def get_all_conversations(event, context, current_user, name, data):
 
     presigned_urls = get_presigned_urls(current_user, conversations)
     return {"success": True, "presignedUrls": presigned_urls}
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT], #Marked for deletion
-})
 
 
 @validated("read")
@@ -357,146 +307,98 @@ def get_empty_conversations(event, context, current_user, name, data):
 
 def get_all_complete_conversations(current_user, days=None):
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
-    
-    # Prefixes for different bucket formats
-    consolidation_prefix = f"conversations/{current_user}/"
-    legacy_prefix = f"{current_user}/"
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
+    user_prefix = current_user + "/"
 
     # Calculate cutoff date if days parameter is provided
     cutoff_date = None
     if days is not None:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-        logger.debug("Filtering conversations newer than: %s", cutoff_date)
+        print(f"Filtering conversations newer than: {cutoff_date}")
 
-    all_objects = []
-    
-    # Get conversations from consolidation bucket first
     try:
-        response = s3.list_objects_v2(Bucket=consolidation_bucket, Prefix=consolidation_prefix)
-        if "Contents" in response:
+        # List all objects in the bucket with the given prefix
+        response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
+        if "Contents" not in response:
+            return []
+        
+        print(f"Number of conversations in list obj: {len(response['Contents'])}")
+
+        filtered_objects = []
+        
+        # Filter objects by date if cutoff_date is specified
+        if cutoff_date:
             for obj in response["Contents"]:
-                obj["_bucket"] = consolidation_bucket
-                obj["_key_type"] = "consolidation"
-                all_objects.append(obj)
-            logger.info("Found %d conversations in consolidation bucket", len(response['Contents']))
-    except (BotoCoreError, ClientError) as e:
-        logger.error("Error accessing consolidation bucket: %s", str(e))
+                if (obj["LastModified"] >= cutoff_date):
+                    filtered_objects.append(obj) 
+            print(f"Number of conversations after date filtering: {len(filtered_objects)}")
+        else:
+            filtered_objects = response["Contents"]
 
-    # Get conversations from legacy bucket if available
-    if conversations_bucket:
-        try:
-            response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=legacy_prefix)
-            if "Contents" in response:
-                for obj in response["Contents"]:
-                    obj["_bucket"] = conversations_bucket
-                    obj["_key_type"] = "legacy"
-                    all_objects.append(obj)
-                logger.info("Found %d conversations in legacy bucket", len(response['Contents']))
-        except (BotoCoreError, ClientError) as e:
-            logger.error("Error accessing legacy bucket: %s", str(e))
-
-    if not all_objects:
-        return []
-        
-    logger.info("Total conversations found: %d", len(all_objects))
-
-    # Filter objects by date if cutoff_date is specified
-    filtered_objects = []
-    if cutoff_date:
-        for obj in all_objects:
-            if obj["LastModified"] >= cutoff_date:
-                filtered_objects.append(obj)
-        logger.debug("Conversations after date filtering: %d", len(filtered_objects))
-    else:
-        filtered_objects = all_objects
-
-    conversations = []
-    for obj in filtered_objects:
-        conversation_key = obj["Key"]
-        bucket = obj["_bucket"]
-        
-        try:
-            conversation_response = s3.get_object(Bucket=bucket, Key=conversation_key)
-            conversation_body = conversation_response["Body"].read().decode("utf-8")
-            conversation = json.loads(conversation_body)
-            uncompressed_conversation = lzw_uncompress(conversation["conversation"])
-            if uncompressed_conversation:
-                conversations.append(
-                    {
-                        "conversation": uncompressed_conversation,
-                        "folder": conversation["folder"],
-                    }
+           
+        conversations = []
+        for obj in filtered_objects:
+            conversation_key = obj["Key"]
+            # Get each conversation object
+            try:
+                conversation_response = s3.get_object(
+                    Bucket=conversations_bucket, Key=conversation_key
                 )
-            else:
-                logger.warning("Conversation failed to uncompress")
-        except (BotoCoreError, ClientError) as e:
-            logger.error("Failed to retrieve %s from %s: %s", conversation_key, bucket, str(e))
+                conversation_body = conversation_response["Body"].read().decode("utf-8")
+                conversation = json.loads(conversation_body)
+                uncompressed_conversation = lzw_uncompress(conversation["conversation"])
+                if uncompressed_conversation:
+                    conversations.append(
+                        {
+                            "conversation": uncompressed_conversation,
+                            "folder": conversation["folder"],
+                        }
+                    )
+                else:
+                    print("Conversation failed to uncompress")
+            except (BotoCoreError, ClientError) as e:
+                print(f"Failed to retrieve : {obj} with error: {str(e)}")
+        print("Number of conversations retrieved: ", len(conversations))
 
-    logger.info("Successfully retrieved %d conversations", len(conversations))
-    return conversations
+        return conversations
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT], #Marked for deletion
-})
+    except (BotoCoreError, ClientError) as e:
+        print(str(e))
+        return None
+
+
 @validated("get_multiple_conversations")
 def get_multiple_conversations(event, context, current_user, name, data):
     data = data["data"]
     conversation_ids = data["conversationIds"]
 
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
+    user_prefix = current_user + "/"
 
     try:
         conversations = []
         failedToFetchConversations = []
         noSuchKeyConversations = []
 
-        for conv_id in conversation_ids:
-            conversation_data = None
-            
-            # Try consolidation bucket first (new format)
-            consolidation_key = f"conversations/{current_user}/{conv_id}"
+        for id in conversation_ids:
+            conversation_key = user_prefix + id
+            # Get each conversation object
             try:
                 conversation_response = s3.get_object(
-                    Bucket=consolidation_bucket, Key=consolidation_key
+                    Bucket=conversations_bucket, Key=conversation_key
                 )
                 conversation_body = conversation_response["Body"].read().decode("utf-8")
                 conversation_data = json.loads(conversation_body)
                 conversations.append(conversation_data["conversation"])
-                continue  # Successfully found in consolidation bucket
-                
-            except (BotoCoreError, ClientError) as e:
-                if e.response["Error"]["Code"] != "NoSuchKey":
-                    logger.error("Unexpected error accessing consolidation bucket for %s: %s", conv_id, str(e))
-                    failedToFetchConversations.append(conv_id)
-                    continue
 
-            # Fallback to legacy bucket if not found in consolidation bucket
-            if conversations_bucket:
-                legacy_key = f"{current_user}/{conv_id}"
-                try:
-                    conversation_response = s3.get_object(
-                        Bucket=conversations_bucket, Key=legacy_key
-                    )
-                    conversation_body = conversation_response["Body"].read().decode("utf-8")
-                    conversation_data = json.loads(conversation_body)
-                    conversations.append(conversation_data["conversation"])
-                    continue  # Successfully found in legacy bucket
-                    
-                except (BotoCoreError, ClientError) as e:
-                    if e.response["Error"]["Code"] == "NoSuchKey":
-                        logger.warning("Conversation %s not found in either bucket", conv_id)
-                        noSuchKeyConversations.append(conv_id)
-                    else:
-                        logger.error("Failed to retrieve conversation %s from legacy bucket: %s", conv_id, str(e))
-                        failedToFetchConversations.append(conv_id)
-            else:
-                # No legacy bucket configured and not found in consolidation bucket
-                noSuchKeyConversations.append(conv_id)
+            except (BotoCoreError, ClientError) as e:
+                print(f"Failed to retrieve conversation id: {id} with error: {str(e)}")
+                if e.response["Error"]["Code"] == "NoSuchKey":
+                    print("added to no such key list: ", id)
+                    noSuchKeyConversations.append(id)
+                else:
+                    failedToFetchConversations.append(id)
 
         # Generate a pre-signed URL for the uploaded file
         presigned_urls = get_presigned_urls(current_user, conversations, 100)
@@ -509,7 +411,7 @@ def get_multiple_conversations(event, context, current_user, name, data):
         }
 
     except (BotoCoreError, ClientError) as e:
-        logger.error("Error: %s", str(e))
+        print(str(e))
         return {
             "success": False,
             "message": "Failed to retrieve conversations from S3",
@@ -518,8 +420,7 @@ def get_multiple_conversations(event, context, current_user, name, data):
 
 
 def get_presigned_urls(current_user, conversations, chunk_size=400):
-    # Use consolidation bucket for temporary presigned URL files
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
     s3 = boto3.client("s3")
 
     total_chunks = math.ceil(len(conversations) / chunk_size)
@@ -533,11 +434,10 @@ def get_presigned_urls(current_user, conversations, chunk_size=400):
         chunk_data = conversations[start_index:end_index]
         chunk_json = json.dumps(chunk_data)
 
-        # Use consolidation bucket format for temporary files
         chunk_key = f"temp/{current_user}/conversations_chunk_{i}.json"
 
         s3.put_object(
-            Bucket=consolidation_bucket,
+            Bucket=conversations_bucket,
             Key=chunk_key,
             Body=chunk_json,
             ContentType="application/json",
@@ -546,18 +446,15 @@ def get_presigned_urls(current_user, conversations, chunk_size=400):
         # Generate a GET presigned URL for this chunk
         presigned_url = s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": consolidation_bucket, "Key": chunk_key},
+            Params={"Bucket": conversations_bucket, "Key": chunk_key},
             ExpiresIn=3600,  # 1 hour
         )
 
         presigned_urls.append(presigned_url)
-    logger.debug("Number of presigned urls needed: %d", len(presigned_urls))
+    print("Number of presigned urls needed: ", len(presigned_urls))
     return presigned_urls
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
-})
+
 @validated("delete")
 def delete_conversation(event, context, current_user, name, data):
     query_param = get_conversation_query_param(event.get("queryStringParameters", {}))
@@ -566,116 +463,57 @@ def delete_conversation(event, context, current_user, name, data):
 
     conversation_id = query_param["query_value"]
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
 
-    # Try to delete from consolidation bucket first (new format)
-    consolidation_key = f"conversations/{current_user}/{conversation_id}"
+    conversation_key = current_user + "/" + conversation_id
+
     try:
-        s3.delete_object(Bucket=consolidation_bucket, Key=consolidation_key)
-        return {"success": True, "message": "Successfully deleted conversation from consolidation bucket"}
+        s3.delete_object(Bucket=conversations_bucket, Key=conversation_key)
+        return {"success": True, "message": "Successfully deleted conversation from S3"}
+
     except (BotoCoreError, ClientError) as e:
-        if e.response["Error"]["Code"] != "NoSuchKey":
-            logger.error("Unexpected error deleting from consolidation bucket: %s", str(e))
-            return {
-                "success": False,
-                "message": "Failed to delete conversation from consolidation bucket",
-                "error": str(e),
-            }
+        print(str(e))
+        return {
+            "success": False,
+            "message": "Failed to delete conversation from S3",
+            "error": str(e),
+        }
 
-    # Fallback to legacy bucket if not found in consolidation bucket
-    if conversations_bucket:
-        legacy_key = f"{current_user}/{conversation_id}"
-        try:
-            s3.delete_object(Bucket=conversations_bucket, Key=legacy_key)
-            return {"success": True, "message": "Successfully deleted conversation from legacy bucket"}
-        except (BotoCoreError, ClientError) as e:
-            logger.error("Failed to delete from legacy bucket: %s", str(e))
-            return {
-                "success": False,
-                "message": "Failed to delete conversation from legacy bucket",
-                "error": str(e),
-            }
-    
-    # Conversation not found in either bucket
-    return {
-        "success": False,
-        "message": "Conversation not found in either bucket",
-        "error": "NoSuchKey"
-    }
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.DELETE_OBJECT],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.DELETE_OBJECT], #Marked for deletion
-})
 @validated("delete_multiple_conversations")
 def delete_multiple_conversations(event, context, current_user, name, data):
     data = data["data"]
     conversation_ids = data["conversationIds"]
 
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
+    user_prefix = current_user + "/"
 
     try:
-        failed_deletions = []
-        successful_deletions = []
-
-        for conv_id in conversation_ids:
-            deleted = False
-            
-            # Try to delete from consolidation bucket first (new format)
-            consolidation_key = f"conversations/{current_user}/{conv_id}"
+        for id in conversation_ids:
+            conversation_key = user_prefix + id
+            # Get each conversation object
             try:
-                s3.delete_object(Bucket=consolidation_bucket, Key=consolidation_key)
-                successful_deletions.append(conv_id)
-                deleted = True
+                s3.delete_object(Bucket=conversations_bucket, Key=conversation_key)
             except (BotoCoreError, ClientError) as e:
-                if e.response["Error"]["Code"] != "NoSuchKey":
-                    logger.error("Unexpected error deleting %s from consolidation bucket: %s", conv_id, str(e))
-                    failed_deletions.append(conv_id)
-                    continue
-
-            # Fallback to legacy bucket if not found in consolidation bucket
-            if not deleted and conversations_bucket:
-                legacy_key = f"{current_user}/{conv_id}"
-                try:
-                    s3.delete_object(Bucket=conversations_bucket, Key=legacy_key)
-                    successful_deletions.append(conv_id)
-                    deleted = True
-                except (BotoCoreError, ClientError) as e:
-                    logger.error("Failed to delete %s from legacy bucket: %s", conv_id, str(e))
-                    failed_deletions.append(conv_id)
-            elif not deleted:
-                # Not found in either bucket
-                logger.warning("Conversation %s not found in either bucket", conv_id)
-                failed_deletions.append(conv_id)
-
-        if failed_deletions:
-            return {
-                "success": False,
-                "message": f"Failed to delete {len(failed_deletions)} out of {len(conversation_ids)} conversations",
-                "failed": failed_deletions,
-                "successful": successful_deletions,
-            }
+                print(f"Failed to delete conversation id: {id} with error: {str(e)}")
 
         return {
             "success": True,
-            "message": f"Successfully deleted all {len(successful_deletions)} conversations",
-            "successful": successful_deletions,
+            "message": "Successfully deleted all conversations from S3",
         }
 
     except (BotoCoreError, ClientError) as e:
-        logger.error("Error: %s", str(e))
+        print(str(e))
         return {
             "success": False,
-            "message": "Failed to delete conversations from S3",
+            "message": "Failed to delete all conversations from S3",
             "error": str(e),
         }
 
 
 def get_conversation_query_param(query_params):
-    logger.debug("Query params: %s", query_params)
+    print("Query params: ", query_params)
     conversation_id = query_params.get("conversationId", "")
     if (not conversation_id) or (not is_valid_uuidv4(conversation_id)):
         return {
@@ -695,63 +533,37 @@ def is_valid_uuidv4(uuid):
 def get_conversations_metadata_lightweight(current_user):
     """Optimized function to get only conversation metadata without full download"""
     s3 = boto3.client("s3")
-    consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-    conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
-    
-    # Prefixes for different bucket formats
-    consolidation_prefix = f"conversations/{current_user}/"
-    legacy_prefix = f"{current_user}/"
+    conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
+    user_prefix = current_user + "/"
 
-    all_objects = []
-    
     try:
-        # Get conversations from consolidation bucket first
-        try:
-            response = s3.list_objects_v2(Bucket=consolidation_bucket, Prefix=consolidation_prefix)
-            if "Contents" in response:
-                for obj in response["Contents"]:
-                    obj["_bucket"] = consolidation_bucket
-                    obj["_key_type"] = "consolidation"
-                    all_objects.append(obj)
-                logger.info("Found %d conversations in consolidation bucket", len(response['Contents']))
-        except (BotoCoreError, ClientError) as e:
-            logger.error("Error accessing consolidation bucket: %s", str(e))
-
-        # Get conversations from legacy bucket if available
-        if conversations_bucket:
-            try:
-                response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=legacy_prefix)
-                if "Contents" in response:
-                    for obj in response["Contents"]:
-                        obj["_bucket"] = conversations_bucket
-                        obj["_key_type"] = "legacy"
-                        all_objects.append(obj)
-                    logger.info("Found %d conversations in legacy bucket", len(response['Contents']))
-            except (BotoCoreError, ClientError) as e:
-                logger.error("Error accessing legacy bucket: %s", str(e))
-
-        if not all_objects:
+        # List all objects to get S3 metadata (timestamps, sizes) without downloading content
+        response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
+        if "Contents" not in response:
             return []
 
         metadata = []
-        logger.info("Processing %d conversations for metadata", len(all_objects))
+        print(f"Processing {len(response['Contents'])} conversations for metadata")
 
-        for obj in all_objects:
+        for obj in response["Contents"]:
             conversation_key = obj["Key"]
-            bucket = obj["_bucket"]
-            
-            # Extract conversation ID based on key format
-            conversation_id = conversation_key.split("/")[-1]  # Extract ID from key path
+            conversation_id = conversation_key.split("/")[
+                -1
+            ]  # Extract ID from key path
             s3_last_modified = int(obj["LastModified"].timestamp() * 1000)
 
             try:
-                # Download and decompress just to get basic metadata
-                conversation_response = s3.get_object(Bucket=bucket, Key=conversation_key)
+                # Download and decompress just to get basic metadata - but do it efficiently
+                conversation_response = s3.get_object(
+                    Bucket=conversations_bucket, Key=conversation_key
+                )
                 conversation_body = conversation_response["Body"].read().decode("utf-8")
                 conversation_data = json.loads(conversation_body)
 
                 # Only decompress to get the metadata fields we need
-                uncompressed_conversation = lzw_uncompress(conversation_data["conversation"])
+                uncompressed_conversation = lzw_uncompress(
+                    conversation_data["conversation"]
+                )
                 if uncompressed_conversation:
                     # Extract only metadata attributes
                     conv_meta = pick_conversation_attributes(
@@ -766,7 +578,7 @@ def get_conversations_metadata_lightweight(current_user):
                     metadata.append(conv_meta)
 
             except (BotoCoreError, ClientError) as e:
-                logger.error("Failed to process conversation %s: %s", conversation_id, str(e))
+                print(f"Failed to process conversation {conversation_id}: {str(e)}")
                 # Create basic metadata from S3 info only
                 metadata.append(
                     {
@@ -786,7 +598,7 @@ def get_conversations_metadata_lightweight(current_user):
         return metadata
 
     except (BotoCoreError, ClientError) as e:
-        logger.error("Error listing conversations: %s", str(e))
+        print(f"Error listing conversations: {str(e)}")
         return None
 
 
@@ -802,11 +614,11 @@ def get_cached_conversation_metadata(current_user):
             )
         )
 
-        logger.debug("Cache query returned %d items", len(response['Items']))
+        print(f"Cache query returned {len(response['Items'])} items")
         return response["Items"]
 
     except Exception as e:
-        logger.error("Cache query failed: %s", str(e))
+        print(f"Cache query failed: {str(e)}")
         return []
 
 
@@ -819,9 +631,8 @@ def populate_cache_async(current_user, metadata_list):
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(os.environ.get("CONVERSATION_METADATA_TABLE"))
 
-        logger.info(
-            "Populating cache with %d conversations for %s",
-            len(metadata_list), current_user
+        print(
+            f"Populating cache with {len(metadata_list)} conversations for {current_user}"
         )
 
         # Batch write for efficiency
@@ -855,25 +666,20 @@ def populate_cache_async(current_user, metadata_list):
                 item = convert_floats_to_decimal(item)
                 batch.put_item(Item=item)
 
-        logger.info(
-            "Successfully cached %d conversations for %s",
-            len(metadata_list), current_user
+        print(
+            f"Successfully cached {len(metadata_list)} conversations for {current_user}"
         )
 
     except Exception as e:
-        logger.warning("Error populating cache (non-blocking): %s", str(e))
+        print(f"Error populating cache (non-blocking): {str(e)}")
         # Non-blocking - cache population failure doesn't break the API
 
-@required_env_vars({
-    "CONVERSATION_METADATA_TABLE": [DynamoDBOperation.QUERY, DynamoDBOperation.PUT_ITEM],
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT, S3Operation.LIST_BUCKET],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT, S3Operation.LIST_BUCKET], #Marked for deletion
-})
+
 @validated("read")
 def get_conversations_metadata_only(event, context, current_user, name, data):
     """Get metadata with lazy cache population and S3 fallback"""
     try:
-        logger.debug("Getting conversation metadata for user: %s", current_user)
+        print(f"Getting conversation metadata for user: {current_user}")
 
         # Try cache first (will be empty for existing users initially)
         cached_metadata = []
@@ -881,12 +687,11 @@ def get_conversations_metadata_only(event, context, current_user, name, data):
             if os.environ.get("CONVERSATION_METADATA_TABLE"):
                 cached_metadata = get_cached_conversation_metadata(current_user)
         except Exception as e:
-            logger.warning("Cache lookup failed, falling back to S3: %s", str(e))
+            print(f"Cache lookup failed, falling back to S3: {str(e)}")
 
         if cached_metadata:
-            logger.debug(
-                "Cache hit: Retrieved %d conversations from cache",
-                len(cached_metadata)
+            print(
+                f"Cache hit: Retrieved {len(cached_metadata)} conversations from cache"
             )
             return {
                 "success": True,
@@ -896,7 +701,7 @@ def get_conversations_metadata_only(event, context, current_user, name, data):
             }
 
         # Cache miss - fallback to S3 and populate cache
-        logger.info("Cache miss - reading from S3 and populating cache")
+        print("Cache miss - reading from S3 and populating cache")
         s3_metadata = get_conversations_metadata_lightweight(current_user)
 
         if s3_metadata is None:
@@ -910,9 +715,9 @@ def get_conversations_metadata_only(event, context, current_user, name, data):
             try:
                 populate_cache_async(current_user, s3_metadata)
             except Exception as e:
-                logger.warning("Cache population failed (non-blocking): %s", str(e))
+                print(f"Cache population failed (non-blocking): {str(e)}")
 
-        logger.info("Retrieved %d conversations from S3", len(s3_metadata))
+        print(f"Retrieved {len(s3_metadata)} conversations from S3")
         return {
             "success": True,
             "conversations": s3_metadata,
@@ -921,16 +726,13 @@ def get_conversations_metadata_only(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        logger.error("Error getting conversation metadata: %s", str(e))
+        print(f"Error getting conversation metadata: {str(e)}")
         return {
             "success": False,
             "message": f"Failed to get conversation metadata: {str(e)}",
         }
 
-@required_env_vars({
-    "S3_CONSOLIDATION_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT, S3Operation.LIST_BUCKET],
-    # "S3_CONVERSATIONS_BUCKET_NAME": [S3Operation.PUT_OBJECT, S3Operation.GET_OBJECT, S3Operation.LIST_BUCKET], #Marked for deletion
-})
+
 @validated("read")
 def get_conversations_since_timestamp(event, context, current_user, name, data):
     """Get conversations modified after a specific timestamp"""
@@ -945,44 +747,15 @@ def get_conversations_since_timestamp(event, context, current_user, name, data):
         except ValueError:
             return {"success": False, "message": "Invalid timestamp format"}
 
-        logger.debug("Getting conversations since %s for user: %s", since_timestamp, current_user)
+        print(f"Getting conversations since {since_timestamp} for user: {current_user}")
 
         s3 = boto3.client("s3")
-        consolidation_bucket = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
-        conversations_bucket = os.environ.get("S3_CONVERSATIONS_BUCKET_NAME")  # Legacy bucket
-        
-        # Prefixes for different bucket formats
-        consolidation_prefix = f"conversations/{current_user}/"
-        legacy_prefix = f"{current_user}/"
+        conversations_bucket = os.environ["S3_CONVERSATIONS_BUCKET_NAME"]
+        user_prefix = current_user + "/"
 
-        all_objects = []
-        
-        # Get conversations from consolidation bucket first
-        try:
-            response = s3.list_objects_v2(Bucket=consolidation_bucket, Prefix=consolidation_prefix)
-            if "Contents" in response:
-                for obj in response["Contents"]:
-                    obj["_bucket"] = consolidation_bucket
-                    obj["_key_type"] = "consolidation"
-                    all_objects.append(obj)
-                logger.info("Found %d conversations in consolidation bucket", len(response['Contents']))
-        except (BotoCoreError, ClientError) as e:
-            logger.error("Error accessing consolidation bucket: %s", str(e))
-
-        # Get conversations from legacy bucket if available
-        if conversations_bucket:
-            try:
-                response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=legacy_prefix)
-                if "Contents" in response:
-                    for obj in response["Contents"]:
-                        obj["_bucket"] = conversations_bucket
-                        obj["_key_type"] = "legacy"
-                        all_objects.append(obj)
-                    logger.info("Found %d conversations in legacy bucket", len(response['Contents']))
-            except (BotoCoreError, ClientError) as e:
-                logger.error("Error accessing legacy bucket: %s", str(e))
-
-        if not all_objects:
+        # Use list_objects_v2 to get timestamps efficiently
+        response = s3.list_objects_v2(Bucket=conversations_bucket, Prefix=user_prefix)
+        if "Contents" not in response:
             return {
                 "success": True,
                 "presignedUrls": [],
@@ -992,24 +765,28 @@ def get_conversations_since_timestamp(event, context, current_user, name, data):
         changed_conversations = []
 
         # Filter conversations by timestamp using S3 metadata
-        for obj in all_objects:
+        for obj in response["Contents"]:
             last_modified_ms = int(obj["LastModified"].timestamp() * 1000)
 
             if last_modified_ms > since_timestamp:
                 conversation_key = obj["Key"]
-                bucket = obj["_bucket"]
                 conversation_id = conversation_key.split("/")[-1]
-                logger.debug(
-                    "Conversation %s modified at %s (after %s)",
-                    conversation_id, last_modified_ms, since_timestamp
+                print(
+                    f"Conversation {conversation_id} modified at {last_modified_ms} (after {since_timestamp})"
                 )
 
                 try:
                     # Now download and decompress only the changed conversations
-                    conversation_response = s3.get_object(Bucket=bucket, Key=conversation_key)
-                    conversation_body = conversation_response["Body"].read().decode("utf-8")
+                    conversation_response = s3.get_object(
+                        Bucket=conversations_bucket, Key=conversation_key
+                    )
+                    conversation_body = (
+                        conversation_response["Body"].read().decode("utf-8")
+                    )
                     conversation_data = json.loads(conversation_body)
-                    uncompressed_conversation = lzw_uncompress(conversation_data["conversation"])
+                    uncompressed_conversation = lzw_uncompress(
+                        conversation_data["conversation"]
+                    )
 
                     if uncompressed_conversation:
                         changed_conversations.append(
@@ -1020,13 +797,12 @@ def get_conversations_since_timestamp(event, context, current_user, name, data):
                         )
 
                 except (BotoCoreError, ClientError) as e:
-                    logger.error(
-                        "Failed to retrieve changed conversation %s: %s",
-                        conversation_id, str(e)
+                    print(
+                        f"Failed to retrieve changed conversation {conversation_id}: {str(e)}"
                     )
                     continue
 
-        logger.info("Found %d changed conversations", len(changed_conversations))
+        print(f"Found {len(changed_conversations)} changed conversations")
 
         if not changed_conversations:
             return {
@@ -1044,7 +820,7 @@ def get_conversations_since_timestamp(event, context, current_user, name, data):
         }
 
     except Exception as e:
-        logger.error("Error getting conversations since timestamp: %s", str(e))
+        print(f"Error getting conversations since timestamp: {str(e)}")
         return {
             "success": False,
             "message": f"Failed to get conversations since timestamp: {str(e)}",

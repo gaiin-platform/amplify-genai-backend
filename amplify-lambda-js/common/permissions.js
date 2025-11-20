@@ -2,9 +2,6 @@
 //Authors: Jules White, Allen Karns, Karely Rodriguez, Max Moundas
 
 import {extractKey} from "../datasource/datasources.js";
-import {getLogger} from "./logging.js";
-
-const logger = getLogger("permissions");
 
 const permissionsEndpoint = process.env.API_BASE_URL + "/utilities/can_access_objects";
 
@@ -37,10 +34,10 @@ export const canReadDataSources = async (accessToken, dataSources) => {
 
         const responseBody = await response.json();  // Extracting the response body as JSON as per Allens code returning statusCode in body
         const statusCode = responseBody.statusCode || undefined;
-        logger.debug("Response body:", responseBody);
+        console.log("Response body:", responseBody);
 
         if (response.status !== 200 || statusCode !== 200) {
-            logger.warn("User does not have access to datasources: " + response.status);
+            console.error("User does not have access to datasources: " + response.status);
             return false;
         }
         else if(response.status === 200 && statusCode === 200) {
@@ -48,7 +45,7 @@ export const canReadDataSources = async (accessToken, dataSources) => {
         }
     }
     catch (e) {
-        logger.error("Error checking access on data sources: " + e);
+        console.error("Error checking access on data sources: " + e);
         return false;
     }
 

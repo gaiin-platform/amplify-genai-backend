@@ -8,7 +8,7 @@ authors = ["Allen Karns <131373444+karnsab@users.noreply.github.com>"]
 python = ">=3.11,<3.12"
 
 # Core dependencies from requirements.txt
-litellm = "~1.78.7"
+litellm = "~1.57.1"
 boto3 = "1.29.1"
 jose = "1.0.0" 
 python-jose = "3.3.0"

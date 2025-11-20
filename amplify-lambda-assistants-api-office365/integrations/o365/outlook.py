@@ -7,8 +7,6 @@ from integrations.oauth import get_ms_graph_session
 integration_name = "microsoft_outlook"
 GRAPH_ENDPOINT = "https://graph.microsoft.com/v1.0"
 
-from pycommon.logger import getLogger
-logger = getLogger(integration_name)
 
 class OutlookError(Exception):
     """Base exception for Outlook operations"""
@@ -439,14 +437,14 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
     if not extended_properties:
         return sensitivity_info
     
-    # logger.debug(f"DEBUG: Extended properties found: {len(extended_properties)}")
+    # print(f"DEBUG: Extended properties found: {len(extended_properties)}")
     
     # Check for MSIP labels property
     for prop in extended_properties:
         prop_id = prop.get("id", "")
         prop_value = prop.get("value", "")
         
-        # logger.debug(f"DEBUG: Property ID: {prop_id}, Value: {prop_value}")
+        # print(f"DEBUG: Property ID: {prop_id}, Value: {prop_value}")
         
         # Check for MSIP labels property
         if "msip_labels" in prop_id.lower():
@@ -478,7 +476,7 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "confidential",
                             "is_sensitive": True
                         })
-                        logger.debug("Detected level 4 sensitivity from MSIP label name")
+                        print(f"DEBUG: Detected level 4 sensitivity from MSIP label name")
                     
                     # Level 3 (Private/Internal) - check for level 3 or internal keywords
                     elif any(keyword in label_lower for keyword in [
@@ -489,7 +487,7 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "private",
                             "is_sensitive": False
                         })
-                        logger.debug("Detected level 3 sensitivity from MSIP label name")
+                        print(f"DEBUG: Detected level 3 sensitivity from MSIP label name")
                     
                     # Level 2 (Personal) - check for level 2 or personal keywords
                     elif any(keyword in label_lower for keyword in [
@@ -500,7 +498,7 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "personal",
                             "is_sensitive": False
                         })
-                        logger.debug("Detected level 2 sensitivity from MSIP label name")
+                        print(f"DEBUG: Detected level 2 sensitivity from MSIP label name")
                     
                     # Level 1 (Public/Normal) - check for level 1 or public keywords
                     elif any(keyword in label_lower for keyword in [
@@ -511,17 +509,17 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "normal",
                             "is_sensitive": False
                         })
-                        logger.debug("Detected level 1 (public) sensitivity from MSIP label name")
+                        print(f"DEBUG: Detected level 1 (public) sensitivity from MSIP label name")
                     
                     else:
-                        logger.debug("MSIP label name found but no sensitivity keywords matched: %s", name_match)
+                        print(f"DEBUG: MSIP label name found but no sensitivity keywords matched: {name_match}")
                     
                     # Store both the extracted name and the full metadata
                     sensitivity_info["displayName"] = name_match
                     sensitivity_info["fullMetadata"] = prop_value
                     
                 else:
-                    # logger.debug(f"DEBUG: Could not extract Name field from MSIP label metadata")
+                    # print(f"DEBUG: Could not extract Name field from MSIP label metadata")
                     # Fallback to searching the entire metadata string for patterns
                     metadata_lower = prop_value.lower()
                     if any(keyword in metadata_lower for keyword in ["level 4", "critical", "confidential"]):
@@ -530,21 +528,21 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                             "label": "confidential", 
                             "is_sensitive": True
                         })
-                        logger.debug("Detected level 4 sensitivity from full metadata fallback")
+                        print(f"DEBUG: Detected level 4 sensitivity from full metadata fallback")
                     elif any(keyword in metadata_lower for keyword in ["level 3", "internal", "private"]):
                         sensitivity_info.update({
                             "level": 3,
                             "label": "private",
                             "is_sensitive": False
                         })
-                        logger.debug("Detected level 3 sensitivity from full metadata fallback")
+                        print(f"DEBUG: Detected level 3 sensitivity from full metadata fallback")
                     elif any(keyword in metadata_lower for keyword in ["level 2", "personal"]):
                         sensitivity_info.update({
                             "level": 2,
                             "label": "personal",
                             "is_sensitive": False
                         })
-                        logger.debug("Detected level 2 sensitivity from full metadata fallback")
+                        print(f"DEBUG: Detected level 2 sensitivity from full metadata fallback")
                     else:
                         # If we have MSIP metadata but can't parse it, check if this is a known sensitive GUID
                         # The GUID 123ebcca-f57c-4bc1-a7cd-943e207777a8 appears to be your Level 4 label
@@ -554,16 +552,16 @@ def parse_msip_label(extended_properties: List[Dict]) -> Dict:
                                 "label": "confidential",
                                 "is_sensitive": True
                             })
-                            logger.debug("Detected level 4 sensitivity from known GUID pattern")
+                            print(f"DEBUG: Detected level 4 sensitivity from known GUID pattern")
                         else:
-                            logger.debug("MSIP metadata found but could not determine sensitivity level")
+                            print(f"DEBUG: MSIP metadata found but could not determine sensitivity level")
                     
                     # Store the metadata we have
                     sensitivity_info["fullMetadata"] = prop_value
                 
                 break
     
-    # logger.debug(f"DEBUG: Final sensitivity info: {sensitivity_info}")
+    # print(f"DEBUG: Final sensitivity info: {sensitivity_info}")
     return sensitivity_info
 
 

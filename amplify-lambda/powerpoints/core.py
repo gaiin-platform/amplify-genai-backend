@@ -7,12 +7,10 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource("dynamodb")
 admin_table = dynamodb.Table(os.environ.get("AMPLIFY_ADMIN_DYNAMODB_TABLE"))
 s3_client = boto3.client("s3")
-consolidation_bucket_name = os.environ["S3_CONSOLIDATION_BUCKET_NAME"]
+output_bucket_name = os.environ["S3_CONVERSION_OUTPUT_BUCKET_NAME"]
 
 PPTX_TEMPLATES = "powerPointTemplates"
 
-from pycommon.logger import getLogger
-logger = getLogger("powerpoints")
 
 def handle_pptx_upload(event, context):
     records = event.get("Records", [])
@@ -22,20 +20,20 @@ def handle_pptx_upload(event, context):
         object_key = s3_info.get("object", {}).get("key")
 
         if not bucket_name or not object_key:
-            logger.warning("Skipping record: missing bucket_name or object_key.")
+            print("Skipping record: missing bucket_name or object_key.")
             continue
 
-        # Make sure this is in the powerPointTemplates/ prefix
-        if not object_key.startswith("powerPointTemplates/"):
-            logger.info("Skipping record: object %s is not in powerPointTemplates/ prefix.", object_key)
+        # Make sure this is in the templates/ prefix
+        if not object_key.startswith("templates/"):
+            print(f"Skipping record: object {object_key} is not in templates/ prefix.")
             continue
 
-        template_name = object_key.replace("powerPointTemplates/", "")
+        template_name = object_key.replace("templates/", "")
 
         try:
             obj_head = s3_client.head_object(Bucket=bucket_name, Key=object_key)
         except ClientError as e:
-            logger.error("Could not find object %s in %s: %s", object_key, bucket_name, str(e))
+            print(f"Could not find object {object_key} in {bucket_name}: {str(e)}")
             continue
 
         # Extract metadata
@@ -51,31 +49,12 @@ def handle_pptx_upload(event, context):
             else []
         )
 
-        # Retrieve existing templates and check for idempotency
-        try:
-            config_item = admin_table.get_item(Key={"config_id": PPTX_TEMPLATES})
-            if "Item" in config_item:
-                existing_templates = config_item["Item"]["data"]
-                
-                # Check if template already exists with same metadata (idempotency check)
-                for existing_template in existing_templates:
-                    if (existing_template["name"] == template_name and
-                        existing_template["isAvailable"] == is_available and
-                        existing_template["amplifyGroups"] == amplify_groups):
-                        logger.info(f"Template {template_name} already processed with same metadata, skipping")
-                        skip_record = True
-                        break
-                else:
-                    skip_record = False
-                
-                if skip_record:
-                    continue
-            else:
-                # If not present, initialize as empty
-                existing_templates = []
-                
-        except Exception as e:
-            logger.warning(f"Could not check for existing template {template_name}: {e}. Proceeding with processing.")
+        # Retrieve existing templates
+        config_item = admin_table.get_item(Key={"config_id": PPTX_TEMPLATES})
+        if "Item" in config_item:
+            existing_templates = config_item["Item"]["data"]
+        else:
+            # If not present, initialize as empty
             existing_templates = []
 
         # Convert list to dict for easy update
@@ -97,8 +76,8 @@ def handle_pptx_upload(event, context):
                     "last_updated": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            logger.info("Template '%s' registered successfully in DynamoDB.", template_name)
+            print(f"Template '{template_name}' registered successfully in DynamoDB.")
         except Exception as e:
-            logger.error("Error registering template '%s': %s", template_name, str(e))
+            print(f"Error registering template '{template_name}': {str(e)}")
 
     return {"status": "done"}

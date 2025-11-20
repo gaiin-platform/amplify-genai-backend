@@ -1,0 +1,45 @@
+{
+  "data": {
+    "context":{},
+    "template": {
+      "id": "idea_analyzer",
+      "context": {
+        "idea": "Should be provided in the context to the workflow!"
+      },
+      "steps": [
+        {
+          "id": "analysis_approaches",
+          "prompt": "Idea:\n----------\n{{idea}}\n----------\n\nThink of five different ways of analyzing the provided idea. Describe each form of analysis in three detailed paragraphs.",
+          "output": {
+            "analysis_methods": [
+              "str - three detailed paragraphs of how to analyze the idea",
+              "a completely different analysis appraoch in three detailed paragraphs",
+              "...string"
+            ]
+          }
+        },
+        {
+          "id": "analyze",
+          "input": "analysis_approaches.analysis_methods",
+          "item_key": "analysis_method",
+          "result_key": "analysis",
+          "map": "Idea\n----------\n{{idea}}\n----------\n\nPerform the following analysis on the idea: {{analysis_method}}",
+          "output": {
+            "results": [
+              "str - the result of the analysis as a long description with multiple paragraphs"
+            ]
+          }
+        },
+        {
+          "id": "summary",
+          "prompt": "This idea was analyzed:\n----------\n{{idea}}\n----------\n\nFindings:\n------\n{{analyze}}\n------\n\nSummarize the findings.",
+          "output": {
+            "summary": [
+              "str - a detailed summary of the idea in markdown"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

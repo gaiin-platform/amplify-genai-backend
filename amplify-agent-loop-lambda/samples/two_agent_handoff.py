@@ -14,8 +14,6 @@ import agent.tools.file_handling
 import agent.tools.agent_communication
 import agent.agents.summarizer_agent
 from agent.prompt import generate_response
-from pycommon.logger import getLogger
-logger = getLogger("two_agent_handoff")
 
 if __name__ == "__main__":
 
@@ -54,4 +52,4 @@ if __name__ == "__main__":
     user_input = input("Enter a prompt for the agent: ")
 
     result = agent.run(user_input=user_input, action_context_props=action_context_props)
-    logger.info("Agent handoff result: %s", result)
+    print(result)

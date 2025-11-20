@@ -3,28 +3,17 @@
 
 import tiktokenModel from '@dqbd/tiktoken/encoders/cl100k_base.json' with {type: 'json'};
 import { Tiktoken } from '@dqbd/tiktoken/lite';
-import {getLogger} from "../common/logging.js";
-
-const logger = getLogger("azure.tokens");
-
-// Global encoder instance - reused across all requests
-let globalEncoder = null;
-
-// Token count cache
-const tokenCountCache = new Map();
-const TOKEN_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 
-export const createTokenCounter = () => {
-    // Reuse global encoder instance
-    if (!globalEncoder) {
-        globalEncoder = new Tiktoken(
-            tiktokenModel.bpe_ranks,
-            tiktokenModel.special_tokens,
-            tiktokenModel.pat_str,
-        );
-    }
-    const encoding = globalEncoder;
+export const createTokenCounter = (model) => {
+
+    // We only do OpenAI for now, so we ignore the model
+
+    const encoding = new Tiktoken(
+        tiktokenModel.bpe_ranks,
+        tiktokenModel.special_tokens,
+        tiktokenModel.pat_str,
+    );
 
     return {
         countTokens: (text) => {
@@ -32,37 +21,12 @@ export const createTokenCounter = () => {
                 return 0;
             }
 
-            // Check cache first
-            const cacheKey = `${text.substring(0, 100)}:${text.length}`;
-            const cached = tokenCountCache.get(cacheKey);
-            if (cached && (Date.now() - cached.timestamp) < TOKEN_CACHE_TTL) {
-                return cached.count;
-            }
-
             try {
                 const tokens = encoding.encode(text);
-                const count = tokens.length;
-                
-                // Cache the result
-                tokenCountCache.set(cacheKey, {
-                    count,
-                    timestamp: Date.now()
-                });
-                
-                // Clean up old cache entries if too many
-                if (tokenCountCache.size > 10000) {
-                    const now = Date.now();
-                    for (const [key, value] of tokenCountCache.entries()) {
-                        if (now - value.timestamp > TOKEN_CACHE_TTL) {
-                            tokenCountCache.delete(key);
-                        }
-                    }
-                }
-                
-                return count;
+                return tokens.length;
             } catch (e) {
-                logger.error("Uncountable token text:", text);
-                logger.error("Error counting tokens:", e);
+                console.error("Uncountable token text: ", text);
+                console.error("Error counting tokens: ", e);
                 return 0;
             }
         },
@@ -72,8 +36,7 @@ export const createTokenCounter = () => {
             return count;
         },
         free: () => {
-            // Don't free the global encoder - keep it alive for reuse
-            // encoding.free();
+            encoding.free();
         }
     };
 }

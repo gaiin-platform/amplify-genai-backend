@@ -4,13 +4,11 @@ import boto3
 import json
 import base64
 
-from pycommon.logger import getLogger
-logger = getLogger("office365_oauth_encryption")
 
 def decrypt_oauth_data(data):
     ssm_client = boto3.client("ssm")
     parameter_name = os.getenv("OAUTH_ENCRYPTION_PARAMETER")
-    logger.debug("Parameter name being accessed: %s", parameter_name)
+    print("Parameter name being accessed:", parameter_name)
     if not parameter_name:
         raise ValueError(
             "The environment variable OAUTH_ENCRYPTION_PARAMETER is not set"
@@ -33,7 +31,7 @@ def decrypt_oauth_data(data):
         return oauth_data
 
     except Exception as e:
-        logger.error(
-            "Error during parameter retrieval or decryption for %s: %s", parameter_name, str(e)
+        print(
+            f"Error during parameter retrieval or decryption for {parameter_name}: {str(e)}"
         )
         return None

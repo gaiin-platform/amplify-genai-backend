@@ -2,12 +2,9 @@ import os
 import requests
 import json
 
-from pycommon.logger import getLogger
-logger = getLogger("admin_supported_models")
-
 
 def get_supported_models(access_token):
-    logger.info("Initiate get supported models call")
+    print("Initiate get supported models call")
 
     update_model_endpoint = os.environ["API_BASE_URL"] + "/supported_models/get"
 
@@ -21,7 +18,7 @@ def get_supported_models(access_token):
             update_model_endpoint,
             headers=headers,
         )
-        logger.debug("Response: %s", response.content)
+        print("Response: ", response.content)
         response_content = (
             response.json()
         )  # to adhere to object access return response dict
@@ -32,12 +29,12 @@ def get_supported_models(access_token):
             return response_content
 
     except Exception as e:
-        logger.error("Error getting supported models: %s", e)
+        print(f"Error getting supported models: {e}")
         return {"success": False, "data": None}
 
 
 def update_supported_models(access_token, data):
-    logger.info("Initiate update supported models call")
+    print("Initiate update supported models call")
 
     update_model_endpoint = os.environ["API_BASE_URL"] + "/supported_models/update"
 
@@ -52,7 +49,7 @@ def update_supported_models(access_token, data):
         response = requests.post(
             update_model_endpoint, headers=headers, data=json.dumps(request)
         )
-        logger.debug("Response: %s", response.content)
+        print("Response: ", response.content)
         response_content = (
             response.json()
         )  # to adhere to object access return response dict
@@ -68,5 +65,5 @@ def update_supported_models(access_token, data):
             return response_content
 
     except Exception as e:
-        logger.error("Error updating supported Models: %s", e)
+        print(f"Error updating supported Models: {e}")
         return {"success": False, "message": "Failed to make request"}

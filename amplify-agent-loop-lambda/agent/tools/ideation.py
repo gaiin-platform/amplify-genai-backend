@@ -4,8 +4,7 @@ from agent.components.tool import register_tool
 from agent.core import ActionContext
 from agent.prompt import Prompt
 from agent.tools.prompt_tools import prompt2
-from pycommon.logger import getLogger
-logger = getLogger("tool_ideation")
+
 
 @register_tool(tags=["ideation"])
 def critique_and_improve_content(action_context: ActionContext, content: str):
@@ -39,7 +38,7 @@ def ideate(
 
     ideas = []
     for i in range(iterations):
-        logger.info("Generating idea %s of %s", i+1, iterations)
+        print(f"Generating idea {i+1} of {iterations}")
         response = generate_response(
             Prompt(messages=[{"role": "user", "content": generator_instructions}])
         )
@@ -51,7 +50,7 @@ def ideate(
 
     variation_prompts = []
     for i in range(iterations):
-        logger.info("Generating prompt variation %s of %s", i+1, iterations)
+        print(f"Generating prompt variation {i+1} of {iterations}")
         response = generate_response(
             Prompt(
                 messages=[
@@ -69,7 +68,7 @@ def ideate(
     # Generate new ideas with the prompt variations
     new_ideas = []
     for i in range(iterations):
-        logger.info("Generating new idea with prompt variation %s of %s", i+1, iterations)
+        print(f"Generating new idea with prompt variation {i+1} of {iterations}")
         response = generate_response(
             Prompt(messages=[{"role": "user", "content": variation_prompts[i]}])
         )
@@ -81,7 +80,7 @@ def ideate(
 
     combined_content = "\n".join(ideas + new_ideas)
 
-    logger.info("Generating best of breed content from %s ideas", len(ideas + new_ideas))
+    print(f"Generating best of breed content from {len(ideas + new_ideas)} ideas")
     best_of_breed = generate_response(
         Prompt(
             messages=[

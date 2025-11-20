@@ -155,7 +155,7 @@ export const isKilled = async (user, responseStream, chatRequest) => {
 
             const key = getKillSwitchKey(user, requestId);
             if (killedCache.get(key)) {
-                logger.info("Killswitch triggered (cached), exiting.");
+                logger.info("Killswitch triggered, exiting.");
                 return true;
             }
 
@@ -168,56 +168,11 @@ export const isKilled = async (user, responseStream, chatRequest) => {
                     logger.error("Error deleting request state: " + e);
                 }
 
-                if (responseStream && !responseStream.writableEnded) {
-                    responseStream.end();
-                }
+                responseStream.end();
                 logger.info("Killswitch triggered, exiting.");
                 return true;
             }
         }
     }
-    return false;
-}
-
-/**
- * Non-blocking killswitch check that fires and forgets
- * Returns immediately while checking asynchronously
- * If killed, it will end the stream and cache for future checks
- */
-export const checkKillswitchAsync = (user, responseStream, chatRequest) => {
-    if (!chatRequest?.options?.requestId) return false;
-    
-    const requestId = chatRequest.options.requestId;
-    const key = getKillSwitchKey(user, requestId);
-    
-    // Quick synchronous cache check
-    if (killedCache.get(key)) {
-        logger.info("Killswitch triggered (cached), exiting.");
-        if (responseStream && !responseStream.writableEnded) {
-            responseStream.end();
-        }
-        return true;
-    }
-    
-    // Fire and forget async check
-    shouldKill(user, requestId)
-        .then(doExit => {
-            if (doExit) {
-                killedCache.set(key, true);
-                deleteRequestState(user, requestId).catch(e => {
-                    logger.error("Error deleting request state: " + e);
-                });
-                
-                if (responseStream && !responseStream.writableEnded) {
-                    responseStream.end();
-                }
-                logger.info("Killswitch triggered (async), stream ended.");
-            }
-        })
-        .catch(error => {
-            logger.error("Error checking killswitch async:", error);
-        });
-    
-    // Return false immediately - the async check will handle killing if needed
     return false;
 }

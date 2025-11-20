@@ -9,8 +9,6 @@ from enum import Enum
 from rag.handlers.text import TextExtractionHandler
 from rag.handlers.shared_functions import hash_visual_data, format_visual_chunk_data
 
-from pycommon.logger import getLogger
-logger = getLogger("rag_pdf")
 
 PNG = "image/png"
 
@@ -78,7 +76,7 @@ class PDFHandler(TextExtractionHandler):
                     textpage.close()
 
                 except Exception as e:
-                    logger.error("Error processing page %d: %s", page_number, e)
+                    print(f"Error processing page {page_number}: {e}")
                     continue
 
         finally:
@@ -101,7 +99,7 @@ class PDFHandler(TextExtractionHandler):
         try:
             pdf = pdfium.PdfDocument(buffer)
         except Exception as e:
-            logger.error("Error opening PDF for visual preprocessing: %s", e)
+            print(f"Error opening PDF for visual preprocessing: {e}")
             # Return original content with empty visual map if PDF can't be opened
             return file_content, {}
 
@@ -118,7 +116,7 @@ class PDFHandler(TextExtractionHandler):
                     page_visuals = self.extract_page_visuals(page, page_number)
                     visual_map.update(page_visuals)
                 except Exception as e:
-                    logger.error("Error processing page %d: %s", page_number, e)
+                    print(f"Error processing page {page_number}: {e}")
                     continue
 
         finally:
@@ -126,7 +124,7 @@ class PDFHandler(TextExtractionHandler):
             pdf.close()
             buffer.close()
 
-        logger.debug("Extracted %d visual markers from PDF", len(visual_map))
+        print(f"[DEBUG] Extracted {len(visual_map)} visual markers from PDF")
         
         if not visual_map:
             # No visuals found, return original content
@@ -198,19 +196,19 @@ class PDFHandler(TextExtractionHandler):
                             # print(f"[DEBUG] Added text annotation {marker} at default position on page {page_number}")
                             
                 except Exception as e:
-                    logger.error("Error adding text to page %d: %s", page_number, e)
+                    print(f"Error adding text to page {page_number}: {e}")
                     continue
             
             # Save the modified PDF to bytes
             modified_pdf_bytes = doc.write()
             doc.close()
             
-            logger.info("Created modified PDF with %d visual markers embedded as text", len(visual_map))
+            print(f"Created modified PDF with {len(visual_map)} visual markers embedded as text")
             
             return modified_pdf_bytes
             
         except Exception as e:
-            logger.error("Error creating modified PDF with PyMuPDF: %s", e)
+            print(f"[DEBUG] Error creating modified PDF with PyMuPDF: {e}")
             # Fallback to original content if modification fails
             return file_content
 
@@ -293,7 +291,7 @@ class PDFHandler(TextExtractionHandler):
             return fitz.Point(insertion_x, insertion_y)
             
         except Exception as e:
-            logger.debug("Error finding text flow insertion point: %s", e)
+            print(f"[DEBUG] Error finding text flow insertion point: {e}")
             # Ultimate fallback
             return fitz.Point(50, 100)
 
@@ -318,7 +316,7 @@ class PDFHandler(TextExtractionHandler):
             visuals.update(image_visuals)
 
         except Exception as e:
-            logger.error("Error extracting visuals from page %d: %s", page_number, e)
+            print(f"Error extracting visuals from page {page_number}: {e}")
 
         return visuals
 
@@ -343,7 +341,7 @@ class PDFHandler(TextExtractionHandler):
                         visuals[marker] = visual_data
 
         except Exception as e:
-            logger.error("Error extracting images from page %d: %s", page_number, e)
+            print(f"Error extracting images from page {page_number}: {e}")
 
         return visuals
 
@@ -358,7 +356,7 @@ class PDFHandler(TextExtractionHandler):
             try:
                 bounds = image_obj.get_pos()
             except Exception as e:
-                logger.warning("Could not get image bounds on page %d: %s", page_number, e)
+                print(f"Could not get image bounds on page {page_number}: {e}")
                 # Use default bounds if we can't get actual ones
                 bounds = [0, 0, page_width * 0.5, page_height * 0.5]
 
@@ -379,30 +377,30 @@ class PDFHandler(TextExtractionHandler):
                     if image_bytes and len(image_bytes) > 0:
                         original_format = "image/png"
                     else:
-                        logger.warning("No image data extracted from PDF object on page %d", page_number)
+                        print(f"No image data extracted from PDF object on page {page_number}")
                         return None
                         
                 except Exception as extract_error:
-                    logger.warning("Could not extract image data from PDF object on page %d: %s", page_number, extract_error)
+                    print(f"Could not extract image data from PDF object on page {page_number}: {extract_error}")
                     buffer.close()
                     return None
                     
             except Exception as buffer_error:
-                logger.error("Buffer error during image extraction on page %d: %s", page_number, buffer_error)
+                print(f"Buffer error during image extraction on page {page_number}: {buffer_error}")
                 return None
 
             # Generate hash for deduplication
             try:
                 content_hash = hash_visual_data(image_bytes)
             except Exception as hash_error:
-                logger.warning("Could not generate hash for image on page %d: %s", page_number, hash_error)
+                print(f"Could not generate hash for image on page {page_number}: {hash_error}")
                 content_hash = f"image_{page_number}_{hash(str(bounds))}"
 
             # Calculate position and size
             try:
                 position_info = self.calculate_position_info(bounds, page_width, page_height)
             except Exception as pos_error:
-                logger.warning("Could not calculate position info for image on page %d: %s", page_number, pos_error)
+                print(f"Could not calculate position info for image on page {page_number}: {pos_error}")
                 position_info = {"region": "unknown"}
 
             return {
@@ -419,7 +417,7 @@ class PDFHandler(TextExtractionHandler):
             }
 
         except Exception as e:
-            logger.error("Image extraction failed on page %d: %s", page_number, e)
+            print(f"Image extraction failed on page {page_number}: {e}")
             # Return a placeholder visual data instead of None to maintain marker consistency
             return {
                 "type": VisualType.IMAGE.value,

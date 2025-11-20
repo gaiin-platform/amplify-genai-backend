@@ -1,4 +1,4 @@
-service: amplify-${self:custom.depName}-data-disclosure
+service: amplify-${self:custom.stageVars.DEP_NAME}-data-disclosure
 
 frameworkVersion: "3"
 
@@ -14,20 +14,17 @@ plugins:
   - serverless-cloudformation-changesets  
 
 custom:
-  stageVars: ${file(../var/${self:provider.stage}-var.yml)}
-  depName: ${self:custom.stageVars.DEP_NAME}
   pythonRequirements:
     dockerizePip: true
 
   cf-changesets:
-    requireChangeSet: ${ssm:/amplify/${sls:stage}/CHANGE_SET_BOOLEAN} 
+    requireChangeSet: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
+
+  stageVars: ${file(../var/${self:provider.stage}-var.yml)} 
   stages:
     - dev
     - staging
     - prod
-
-  # Base paths for Parameter Store
-  ssmBasePath: /amplify/${sls:stage}/amplify-${self:custom.depName}
 
 provider:
   name: aws
@@ -43,28 +40,18 @@ provider:
       Fn::ImportValue: !Sub "${sls:stage}-RestApiRootResourceId"
   environment:
     CHANGE_SET_BOOLEAN: ${self:custom.stageVars.CHANGE_SET_BOOLEAN}
-    LOG_LEVEL: ${self:custom.stageVars.LOG_LEVEL}
-    
-    API_BASE_URL: https://${ssm:/amplify/${sls:stage}/CUSTOM_API_DOMAIN}
-    IDP_PREFIX: ${ssm:/amplify/${sls:stage}/IDP_PREFIX}
-    OAUTH_AUDIENCE: ${ssm:/amplify/${sls:stage}/OAUTH_AUDIENCE}
-    OAUTH_ISSUER_BASE_URL: ${ssm:/amplify/${sls:stage}/OAUTH_ISSUER_BASE_URL}
-    SERVICE_NAME: ${self:service}
-    STAGE: ${sls:stage}
-
-    # Locally Defined Variables
-    DATA_DISCLOSURE_ACCEPTANCE_TABLE: ${self:service}-${sls:stage}-acceptance
-    DATA_DISCLOSURE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
-    DATA_DISCLOSURE_STORAGE_BUCKET: ${self:service}-${sls:stage}-storage #Marked for future deletion
     DATA_DISCLOSURE_VERSIONS_TABLE: ${self:service}-${sls:stage}-versions
+    DATA_DISCLOSURE_ACCEPTANCE_TABLE: ${self:service}-${sls:stage}-acceptance
+    DATA_DISCLOSURE_STORAGE_BUCKET: ${self:service}-${sls:stage}-storage
+    OAUTH_AUDIENCE: ${self:custom.stageVars.OAUTH_AUDIENCE}
+    OAUTH_ISSUER_BASE_URL: ${self:custom.stageVars.OAUTH_ISSUER_BASE_URL}
+    ACCOUNTS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-accounts
+    API_KEYS_DYNAMODB_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-object-access-${sls:stage}-api-keys
+    COST_CALCULATIONS_DYNAMO_TABLE: amplify-${self:custom.stageVars.DEP_NAME}-lambda-${sls:stage}-cost-calculations
+    DATA_DISCLOSURE_IAM_POLICY_NAME: ${self:service}-${sls:stage}-iam-policy
+    API_BASE_URL: https://${self:custom.stageVars.CUSTOM_API_DOMAIN}
+    IDP_PREFIX: ${self:custom.stageVars.IDP_PREFIX}
 
-    # Imported Variables from Parameter Store
-    ACCOUNTS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ACCOUNTS_DYNAMO_TABLE}
-    API_KEYS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/API_KEYS_DYNAMODB_TABLE}
-    COGNITO_USERS_DYNAMODB_TABLE: ${ssm:${self:custom.ssmBasePath}-object-access/COGNITO_USERS_DYNAMODB_TABLE}
-    COST_CALCULATIONS_DYNAMO_TABLE: ${ssm:${self:custom.ssmBasePath}-amplify-js/COST_CALCULATIONS_DYNAMO_TABLE}
-    ENV_VARS_TRACKING_TABLE: ${ssm:${self:custom.ssmBasePath}-lambda/ENV_VARS_TRACKING_TABLE}
-    S3_CONSOLIDATION_BUCKET_NAME: ${ssm:${self:custom.ssmBasePath}-lambda/S3_CONSOLIDATION_BUCKET_NAME}
 
   iam:
     role:
@@ -117,6 +104,15 @@ functions:
           cors: true
 
 
+  convertDataDisclosure:
+    handler: data_disclosure.convert_uploaded_data_disclosure
+    events:
+      - s3:
+          bucket: !Ref DataDisclosureStorage
+          event: s3:ObjectCreated:*
+          existing: true
+          rules:
+            - suffix: .pdf
 
 
 resources:
@@ -148,7 +144,6 @@ resources:
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.API_KEYS_DYNAMODB_TABLE}/index/*"
                 - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ACCOUNTS_DYNAMO_TABLE}/index/*"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.COGNITO_USERS_DYNAMODB_TABLE}"
             - Effect: "Allow"
               Action:
                 - "s3:PutObject"
@@ -156,26 +151,8 @@ resources:
                 - "s3:HeadObject"
                 - "s3:PutBucketNotification"
               Resource: 
-                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"   #Marked for future deletion
-                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  #Marked for future deletion
-                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}"
-                - "arn:aws:s3:::${self:provider.environment.S3_CONSOLIDATION_BUCKET_NAME}/*"
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-                - dynamodb:UpdateItem
-                - dynamodb:Query
-              Resource:
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}"
-                - "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.ENV_VARS_TRACKING_TABLE}/index/*" 
-            - Effect: Allow
-              Action:
-                - ssm:GetParameter
-                - ssm:GetParameters
-                - ssm:GetParametersByPath
-              Resource:
-                - arn:aws:ssm:${self:provider.region}:${aws:accountId}:parameter${self:custom.ssmBasePath}-*   
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}"  
+                - "arn:aws:s3:::${self:provider.environment.DATA_DISCLOSURE_STORAGE_BUCKET}/*"  
     # contains records of what emails have accepted the data disclosure
     DataDisclosureAcceptanceTable:
       Type: 'AWS::DynamoDB::Table'
@@ -215,7 +192,7 @@ resources:
         TableName: ${self:provider.environment.DATA_DISCLOSURE_VERSIONS_TABLE}
 
     # contains all versions of the data disclosure
-    DataDisclosureStorage: #Marked for future deletion
+    DataDisclosureStorage:
       Type: 'AWS::S3::Bucket'
       DependsOn: DataDisclosureIAMPolicy
       Properties:

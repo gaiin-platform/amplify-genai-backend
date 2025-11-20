@@ -6,8 +6,6 @@ from agent.prompt import Prompt
 from inspect import signature, Parameter
 import functools
 import json
-from pycommon.logger import getLogger
-logger = getLogger("tool_prompt")
 
 
 @register_tool(tags=["prompts"])
@@ -47,8 +45,8 @@ def prompt_with_retries(
                 else:
                     return response
         except Exception as e:
-            logger.error("Error generating response: %s", e)
-            logger.info("Retrying...")
+            print(f"Error generating response: {e}")
+            print("Retrying...")
 
     return None
 
@@ -258,7 +256,7 @@ def qa_check(
         args_dict = json.loads(args)
         return args_dict["passed"]
     except Exception as e:
-        logger.error("Error parsing QA check result: %s", e)
+        print(f"Error parsing QA check result: {e}")
         return False
 
 
@@ -337,8 +335,8 @@ def prompt_llm_for_json(action_context: ActionContext, schema: dict, prompt: str
         except Exception as e:
             if i == 2:
                 raise e
-            logger.error("Error generating response: %s", e)
-            logger.info("Retrying...")
+            print(f"Error generating response: {e}")
+            print("Retrying...")
 
 
 @register_tool(tags=["prompts"])

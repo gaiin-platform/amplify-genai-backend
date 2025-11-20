@@ -12,11 +12,6 @@ import { getBudgetTokens } from "../common/params.js";
 
 const logger = getLogger("gemini");
 
-// Always fetch API key fresh for security - no caching of secrets
-const getGeminiApiKey = async () => {
-    return await getSecretApiKey("GEMINI_API_KEY");
-};
-
 const constructGeminiUrl = () => {
     return `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
 }
@@ -33,7 +28,7 @@ export const chat = async (chatBody, writable) => {
         let tools = options.tools;
         if(!tools && options.functions){
             tools = options.functions.map((fn)=>{return {type: 'function', function: fn}});
-            // Removed debug logging for performance
+            logger.debug(tools);
         }
 
         let tool_choice = options.tool_choice;
@@ -44,10 +39,10 @@ export const chat = async (chatBody, writable) => {
             else {
                 tool_choice = {type: 'function', function: {name: options.function_call}};
             }
-            // Removed debug logging for performance
+            logger.debug(tool_choice);
         }
 
-        // Removed debug logging for performance
+        logger.debug("Calling Gemini API with modelId: "+modelId);
 
         let data = {
             ...body,
@@ -135,7 +130,7 @@ export const chat = async (chatBody, writable) => {
             data.messages = data.messages.map(message => {
                 // Handle message with empty content
                 if (!message.content) {
-                    // Empty message content, adding placeholder text
+                    logger.debug("Found empty message content, adding placeholder text");
                     return { ...message, content: "..." };
                 }
                 
@@ -143,7 +138,7 @@ export const chat = async (chatBody, writable) => {
                 if (Array.isArray(message.content)) {
                     const updatedContent = message.content.map(item => {
                         if (item.type === "text" && (!item.text || item.text.trim() === "")) {
-                            // Empty text field in multimodal content, adding placeholder text
+                            logger.debug("Found empty text field in multimodal content, adding placeholder text");
                             return { ...item, text: "..." };
                         }
                         return item;
@@ -152,7 +147,7 @@ export const chat = async (chatBody, writable) => {
                     // Ensure at least one text item exists in the content array
                     const hasTextItem = updatedContent.some(item => item.type === "text" && item.text);
                     if (!hasTextItem) {
-                        // No text items found in multimodal content, adding placeholder text
+                        logger.debug("No text items found in multimodal content, adding placeholder text");
                         updatedContent.push({ type: "text", text: "..." });
                     }
                     
@@ -166,16 +161,44 @@ export const chat = async (chatBody, writable) => {
 
         const headers = {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + await getGeminiApiKey()  // Fresh API key fetch for security
+            'Authorization': 'Bearer ' + await getSecretApiKey("GEMINI_API_KEY")
         };
 
         const url = constructGeminiUrl();
 
-        // Removed debug logging for performance
+        logger.debug("Calling Gemini API with url: "+url);
         trace(options.requestId, ["chat","gemini"], {modelId, url, data});
         
-        // No status timer - let the actual response be the indication
-        return streamAxiosResponseToWritable(url, writable, null, data, headers);
+        // Set up status message timer for long-running Gemini requests
+        let statusTimer = null;
+        const statusInterval = model.supportsReasoning ? 15000: 8000;
+        
+        const sendStatusMessage = (responseStream) => {
+            const statusInfo = newStatus({
+                animated: true,
+                inProgress: true,
+                sticky: true,
+                summary: getThinkingMessage(),
+                icon: "info",
+            });
+
+            sendStatusEventToStream(responseStream, statusInfo);
+            // Force flush to ensure client receives the message
+            sendStatusEventToStream(responseStream, newStatus({
+                inProgress: false,
+                message: " ".repeat(100000)
+            }));
+        };
+
+        const handleSendStatusMessage = () => {
+            sendStatusMessage(writable);
+            statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
+        };
+
+        // Start the status timer
+        statusTimer = setTimeout(handleSendStatusMessage, statusInterval);
+
+        return streamAxiosResponseToWritable(url, writable, statusTimer, data, headers);
     } catch (error) {
         console.error('Exception in chat function:', error);
         
@@ -202,6 +225,7 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
         })
         .then(response => {
             let responseEnded = false;
+            let chunkCounter = 0;
             
             const streamError = (err) => {
                 if (responseEnded) return;
@@ -223,14 +247,21 @@ function streamAxiosResponseToWritable(url, writableStream, statusTimer, data, h
                 return;
             }
             
-            // Simplified SSE formatting check
+            // Add event counter logging for debugging
             response.data.on('data', (chunk) => {
+                chunkCounter++;
+                if (chunkCounter % 10 === 0) {
+                    logger.debug(`Received ${chunkCounter} chunks from Gemini API`);
+                }
+                
+                // Check for missing SSE format and fix if needed
                 const data = chunk.toString();
                 if (data && data.trim() && !data.startsWith('data:') && !writableStream.writableEnded) {
                     try {
-                        // Validate it's JSON then format as SSE
-                        JSON.parse(data);
-                        writableStream.write(`data: ${data}\n\n`);
+                        // Try to parse as JSON and then format as SSE
+                        const jsonObj = JSON.parse(data);
+                        const sseFormatted = `data: ${data}\n\n`;
+                        writableStream.write(sseFormatted);
                         return; // Skip the pipe for this chunk since we handled it
                     } catch (e) {
                         // Not valid JSON, continue with normal pipe
